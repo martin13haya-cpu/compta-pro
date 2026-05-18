@@ -2,8 +2,8 @@ import { createClient } from '@supabase/supabase-js'
 import { useState, useEffect, useCallback } from 'react'
 
 // ── CONFIG ─────────────────────────────────────────────────────────────────
-const SUPABASE_URL      = 'https://rducxnyxgqrmtyvqwfzw.supabase.co'
-const SUPABASE_ANON_KEY = 'sb_publishable_2K8GkCgsLbHzSy-1FhP2cg_cWIVD-vH'
+const SUPABASE_URL      = 'VOTRE_SUPABASE_URL'
+const SUPABASE_ANON_KEY = 'VOTRE_SUPABASE_ANON_KEY'
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
 
 // ── RESPONSIVE HOOK ─────────────────────────────────────────────────────────
