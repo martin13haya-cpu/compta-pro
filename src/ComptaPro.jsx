@@ -2,8 +2,9 @@ import { createClient } from '@supabase/supabase-js'
 import { useState, useEffect, useCallback } from 'react'
 
 // ── CONFIG ─────────────────────────────────────────────────────────────────
-const SUPABASE_URL      = 'https://proehigsikgqdrxjltmq.supabase.co'
-const SUPABASE_ANON_KEY = 'sb_publishable_DqCGxDWGqJ5K0rnnzDv6Hg_gWG7wzfX'
+const SUPABASE_URL       = 'https://proehigsikgqdrxjltmq.supabase.co'
+const SUPABASE_ANON_KEY  = 'sb_publishable_DqCGxDWGqJ5K0rnnzDv6Hg_gWG7wzfX'
+const SUPER_ADMIN_EMAIL  = 'martin13haya@gmail.com'
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
 
 // ── RESPONSIVE HOOK ─────────────────────────────────────────────────────────
@@ -225,44 +226,212 @@ function Row({ children, style={} }) {
   return <div style={{ display:'flex', gap:8, justifyContent:'flex-end', marginTop:8, ...style }}>{children}</div>
 }
 
-// ── LOGIN PAGE ──────────────────────────────────────────────────────────────
+// ── AUTH PAGES ──────────────────────────────────────────────────────────────
 function LoginPage({ onLogin }) {
-  const [form, setForm]   = useState({ email:'', password:'' })
+  const [mode, setMode]     = useState('login') // login | register
+  const [form, setForm]     = useState({ email:'', password:'', nom:'' })
   const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
+  const [error, setError]   = useState('')
+  const [success, setSuccess] = useState('')
   const set = e => setForm(f=>({...f,[e.target.name]:e.target.value}))
 
-  const submit = async e => {
+  const submitLogin = async e => {
     e.preventDefault(); setLoading(true); setError('')
-    const { data, error:err } = await supabase.auth.signInWithPassword(form)
+    const { data, error:err } = await supabase.auth.signInWithPassword({ email:form.email, password:form.password })
     setLoading(false)
-    if (err) { setError(err.message); return }
+    if (err) { setError('Identifiants incorrects'); return }
     onLogin(data.user)
   }
 
+  const submitRegister = async e => {
+    e.preventDefault(); setLoading(true); setError('')
+    const { error:err } = await supabase.auth.signUp({ email:form.email, password:form.password })
+    setLoading(false)
+    if (err) { setError(err.message); return }
+    // Update nom in profile
+    setSuccess('Compte créé ! En attente de validation par l\'administrateur.')
+    setMode('login')
+    setForm({ email:'', password:'', nom:'' })
+  }
+
+  const panel = (
+    <div style={{ width:'40%', background:'linear-gradient(160deg,#1d4ed8,#2563eb)', padding:'48px 40px', color:'white', display:'flex', flexDirection:'column', justifyContent:'space-between' }}>
+      <div>
+        <div style={{ display:'flex', alignItems:'center', gap:14, marginBottom:32 }}>
+          <div style={{ width:52, height:52, background:'rgba(255,255,255,.15)', borderRadius:14, display:'flex', alignItems:'center', justifyContent:'center', fontSize:24 }}>📊</div>
+          <div><div style={{ fontSize:22, fontWeight:800 }}>Compta Pro</div><div style={{ fontSize:12, opacity:.75 }}>Gestion Commerciale & Stock</div></div>
+        </div>
+        {['Gestion multi-sociétés','Documents commerciaux','Stocks & Production riz','Clients & Fournisseurs','Paiements & Règlements'].map(f=>(
+          <div key={f} style={{ display:'flex', alignItems:'center', gap:10, marginBottom:12, fontSize:13.5, opacity:.85 }}>
+            <span style={{ color:'#93c5fd' }}>✓</span>{f}
+          </div>
+        ))}
+      </div>
+      <div style={{ fontSize:11, opacity:.4 }}>© Compta Pro — Bénin</div>
+    </div>
+  )
+
   return (
     <div style={{ minHeight:'100vh', background:'linear-gradient(135deg,#0f2044,#1a3a6e)', display:'flex', alignItems:'center', justifyContent:'center', padding:16 }}>
-      <div style={{ display:'flex', width:'100%', maxWidth:860, borderRadius:20, overflow:'hidden', boxShadow:'0 30px 80px rgba(0,0,0,.4)', flexDirection: window.innerWidth < 640 ? 'column' : 'row' }}>
-        {window.innerWidth >= 640 && (
-        <div style={{ width:'40%', background:'linear-gradient(160deg,#1d4ed8,#2563eb)', padding:'48px 40px', color:'white', display:'flex', flexDirection:'column', justifyContent:'space-between' }}>
-          <div>
-            <div style={{ display:'flex', alignItems:'center', gap:14, marginBottom:32 }}>
-              <div style={{ width:52, height:52, background:'rgba(255,255,255,.15)', borderRadius:14, display:'flex', alignItems:'center', justifyContent:'center', fontSize:24 }}>📊</div>
-              <div>
-                <div style={{ fontSize:22, fontWeight:800 }}>Compta Pro</div>
-                <div style={{ fontSize:12, opacity:.75 }}>Gestion Commerciale & Stock</div>
-              </div>
-            </div>
-            {['Gestion multi-sociétés','Documents commerciaux','Stocks & Production riz','Clients & Fournisseurs','Paiements & Règlements'].map(f=>(
-              <div key={f} style={{ display:'flex', alignItems:'center', gap:10, marginBottom:12, fontSize:13.5, opacity:.85 }}>
-                <span style={{ color:'#93c5fd' }}>✓</span>{f}
-              </div>
-            ))}
-          </div>
-          <div style={{ fontSize:11, opacity:.4 }}>© Compta Pro — Bénin</div>
-        </div>
-        )}
+      <div style={{ display:'flex', width:'100%', maxWidth:860, borderRadius:20, overflow:'hidden', boxShadow:'0 30px 80px rgba(0,0,0,.4)' }}>
+        {window.innerWidth >= 640 && panel}
         <div style={{ flex:1, background:'white', padding:'40px 32px', display:'flex', flexDirection:'column', justifyContent:'center' }}>
+          <h3 style={{ margin:'0 0 6px', fontSize:24, fontWeight:800, color:'#0f172a' }}>
+            {mode==='login' ? 'Connexion' : 'Créer un compte'}
+          </h3>
+          <p style={{ margin:'0 0 20px', color:'#64748b', fontSize:13.5 }}>
+            {mode==='login' ? 'Accédez à votre espace de gestion' : 'Votre compte sera activé par l\'administrateur'}
+          </p>
+          {error   && <div style={{ background:'#fee2e2', color:'#dc2626', padding:'10px 14px', borderRadius:10, marginBottom:16, fontSize:13 }}>{error}</div>}
+          {success && <div style={{ background:'#dcfce7', color:'#16a34a', padding:'10px 14px', borderRadius:10, marginBottom:16, fontSize:13 }}>{success}</div>}
+          <form onSubmit={mode==='login'?submitLogin:submitRegister}>
+            {mode==='register' && (
+              <div style={{ marginBottom:16 }}>
+                <label style={{ display:'block', fontSize:12.5, fontWeight:700, color:'#374151', marginBottom:6 }}>Nom complet</label>
+                <input type="text" name="nom" value={form.nom} onChange={set} required placeholder="Votre nom"
+                  style={{ width:'100%', padding:'11px 16px', borderRadius:10, border:'1.5px solid #e2e8f0', fontSize:14, boxSizing:'border-box' }} />
+              </div>
+            )}
+            <div style={{ marginBottom:16 }}>
+              <label style={{ display:'block', fontSize:12.5, fontWeight:700, color:'#374151', marginBottom:6 }}>Email</label>
+              <input type="email" name="email" value={form.email} onChange={set} required placeholder="votre@email.bj"
+                style={{ width:'100%', padding:'11px 16px', borderRadius:10, border:'1.5px solid #e2e8f0', fontSize:14, boxSizing:'border-box' }} />
+            </div>
+            <div style={{ marginBottom:24 }}>
+              <label style={{ display:'block', fontSize:12.5, fontWeight:700, color:'#374151', marginBottom:6 }}>Mot de passe</label>
+              <input type="password" name="password" value={form.password} onChange={set} required placeholder="••••••••" minLength={6}
+                style={{ width:'100%', padding:'11px 16px', borderRadius:10, border:'1.5px solid #e2e8f0', fontSize:14, boxSizing:'border-box' }} />
+            </div>
+            <button type="submit" disabled={loading} style={{ width:'100%', background:ACCENT, color:'white', border:'none', borderRadius:10, padding:12, fontSize:15, fontWeight:700, cursor:'pointer', opacity:loading?.7:1 }}>
+              {loading ? 'Chargement...' : mode==='login' ? '→ Se connecter' : '→ Créer mon compte'}
+            </button>
+          </form>
+          <div style={{ marginTop:20, textAlign:'center', fontSize:13, color:'#64748b' }}>
+            {mode==='login' ? (
+              <span>Pas encore de compte ? <span onClick={()=>{setMode('register');setError('');setSuccess('')}} style={{ color:ACCENT, cursor:'pointer', fontWeight:600 }}>S'inscrire</span></span>
+            ) : (
+              <span>Déjà un compte ? <span onClick={()=>{setMode('login');setError('');setSuccess('')}} style={{ color:ACCENT, cursor:'pointer', fontWeight:600 }}>Se connecter</span></span>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function PendingPage({ onLogout }) {
+  return (
+    <div style={{ minHeight:'100vh', background:'#f1f5f9', display:'flex', alignItems:'center', justifyContent:'center' }}>
+      <div style={{ background:'white', borderRadius:16, padding:'48px 40px', maxWidth:480, textAlign:'center', boxShadow:'0 4px 20px rgba(0,0,0,.1)' }}>
+        <div style={{ fontSize:64, marginBottom:16 }}>⏳</div>
+        <h2 style={{ margin:'0 0 12px', color:'#0f172a' }}>Compte en attente</h2>
+        <p style={{ color:'#64748b', fontSize:14, lineHeight:1.6, marginBottom:24 }}>
+          Votre compte a été créé avec succès. L'administrateur doit valider votre accès avant que vous puissiez utiliser l'application.
+        </p>
+        <div style={{ background:'#eff6ff', border:'1px solid #bfdbfe', borderRadius:10, padding:'12px 16px', fontSize:13, color:'#1d4ed8', marginBottom:24 }}>
+          📧 Vous recevrez une notification une fois votre compte activé.
+        </div>
+        <button onClick={onLogout} style={{ background:'#f1f5f9', border:'1px solid #e2e8f0', borderRadius:8, padding:'10px 24px', fontSize:13, cursor:'pointer', fontWeight:600, color:'#374151' }}>
+          Se déconnecter
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ── GESTION UTILISATEURS (Super Admin) ───────────────────────────────────────
+function UsersManagementPage({ toast }) {
+  const [users, setUsers] = useState([])
+  const [loading, setLoading] = useState(true)
+
+  const load = useCallback(async()=>{
+    setLoading(true)
+    const { data } = await supabase.from('compta_profiles').select('*').order('created_at', { ascending:false })
+    setUsers(data||[]); setLoading(false)
+  },[])
+
+  useEffect(()=>{ load() },[load])
+
+  const updateStatut = async (id, statut) => {
+    const { error } = await supabase.from('compta_profiles').update({ statut }).eq('id', id)
+    if (error) { toast.error(error.message); return }
+    toast.success(statut==='active' ? 'Compte activé !' : 'Compte suspendu.')
+    load()
+  }
+
+  const updateRole = async (id, role) => {
+    await supabase.from('compta_profiles').update({ role }).eq('id', id)
+    toast.success('Rôle mis à jour !'); load()
+  }
+
+  const STATUT_STYLE = {
+    pending:   { bg:'#fef9c3', c:'#ca8a04', label:'En attente' },
+    active:    { bg:'#dcfce7', c:'#16a34a', label:'Actif' },
+    suspended: { bg:'#fee2e2', c:'#dc2626', label:'Suspendu' },
+  }
+
+  return (
+    <div>
+      <PageHeader title="Gestion des utilisateurs" subtitle={`${users.length} compte(s)`} />
+      {loading ? <div style={{padding:24}}>Chargement...</div> : (
+        <div style={{ background:'white', borderRadius:12, border:'1px solid #e2e8f0', overflow:'hidden' }}>
+          <table style={{ width:'100%', borderCollapse:'collapse' }}>
+            <thead><tr>
+              <TH>Email</TH><TH>Nom</TH><TH>Rôle</TH><TH>Statut</TH><TH>Inscrit le</TH><TH>Actions</TH>
+            </tr></thead>
+            <tbody>
+              {users.map(u => {
+                const s = STATUT_STYLE[u.statut] || STATUT_STYLE.pending
+                const isSelf = u.email === SUPER_ADMIN_EMAIL
+                return (
+                  <TR key={u.id}>
+                    <TD bold>{u.email}</TD>
+                    <TD>{u.nom || '—'}</TD>
+                    <TD>
+                      {isSelf ? (
+                        <span style={{ background:'#fef3c7', color:'#d97706', padding:'3px 10px', borderRadius:20, fontSize:11, fontWeight:700 }}>👑 Super Admin</span>
+                      ) : (
+                        <select value={u.role} onChange={e=>updateRole(u.id,e.target.value)}
+                          style={{ padding:'4px 8px', borderRadius:6, border:'1px solid #d1d5db', fontSize:12 }}>
+                          <option value="admin">Admin</option>
+                          <option value="super_admin">Super Admin</option>
+                        </select>
+                      )}
+                    </TD>
+                    <TD>
+                      <span style={{ background:s.bg, color:s.c, padding:'3px 10px', borderRadius:20, fontSize:11, fontWeight:600 }}>{s.label}</span>
+                    </TD>
+                    <TD sm>{u.created_at?.slice(0,10)}</TD>
+                    <TD>
+                      {!isSelf && (
+                        <div style={{ display:'flex', gap:6 }}>
+                          {u.statut !== 'active' && (
+                            <Btn sm variant="success" onClick={()=>updateStatut(u.id,'active')}>✓ Activer</Btn>
+                          )}
+                          {u.statut === 'active' && (
+                            <Btn sm variant="danger" onClick={()=>updateStatut(u.id,'suspended')}>⊘ Suspendre</Btn>
+                          )}
+                          {u.statut === 'pending' && (
+                            <Btn sm variant="danger" onClick={()=>updateStatut(u.id,'suspended')}>✕ Rejeter</Btn>
+                          )}
+                        </div>
+                      )}
+                    </TD>
+                  </TR>
+                )
+              })}
+            </tbody>
+          </table>
+          {users.filter(u=>u.statut==='pending').length > 0 && (
+            <div style={{ padding:'12px 20px', background:'#fffbeb', borderTop:'1px solid #fde68a', fontSize:13, color:'#92400e' }}>
+              ⚠️ {users.filter(u=>u.statut==='pending').length} compte(s) en attente de validation
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
           <h3 style={{ margin:'0 0 6px', fontSize:24, fontWeight:800, color:'#0f172a' }}>Connexion</h3>
           <p style={{ margin:'0 0 28px', color:'#64748b', fontSize:13.5 }}>Accédez à votre espace de gestion</p>
           {error && <div style={{ background:'#fee2e2', color:'#dc2626', padding:'10px 14px', borderRadius:10, marginBottom:16, fontSize:13 }}>{error}</div>}
@@ -314,15 +483,21 @@ const NAV = [
   { id:'etuvage_paiements',  icon:'💰', label:'Paiements étuvage' },
 ]
 
-function Sidebar({ page, setPage, user, onLogout, open, onClose }) {
+const NAV_ADMIN = [
+  { section:'Administration' },
+  { id:'users',              icon:'👤', label:'Utilisateurs' },
+]
+
+function Sidebar({ page, setPage, user, profile, onLogout, open, onClose }) {
   const { isMobile, isTablet } = useResponsive()
   const collapsed = isMobile || isTablet
+  const isSuperAdmin = profile?.role === 'super_admin'
+  const navItems = isSuperAdmin ? [...NAV, ...NAV_ADMIN] : NAV
 
   const handleNav = (id) => { setPage(id); if (onClose) onClose() }
 
   return (
     <>
-      {/* Overlay mobile */}
       {collapsed && open && (
         <div onClick={onClose} style={{ position:'fixed', inset:0, background:'rgba(0,0,0,.5)', zIndex:999 }} />
       )}
@@ -330,20 +505,22 @@ function Sidebar({ page, setPage, user, onLogout, open, onClose }) {
         position:'fixed', top:0, left:0, height:'100vh', width:260,
         background:SIDEBAR, display:'flex', flexDirection:'column', zIndex:1000,
         transform: collapsed ? (open ? 'translateX(0)' : 'translateX(-100%)') : 'translateX(0)',
-        transition:'transform .3s ease', boxShadow: collapsed && open ? '4px 0 20px rgba(0,0,0,.3)' : 'none',
+        transition:'transform .3s ease',
       }}>
         <div style={{ padding:'20px 20px 16px', borderBottom:'1px solid rgba(255,255,255,.08)', display:'flex', alignItems:'center', justifyContent:'space-between' }}>
           <div style={{ display:'flex', alignItems:'center', gap:10 }}>
             <div style={{ width:36, height:36, background:ACCENT, borderRadius:10, display:'flex', alignItems:'center', justifyContent:'center', fontSize:18 }}>📊</div>
             <div>
               <div style={{ color:'white', fontWeight:700, fontSize:14 }}>Compta Pro</div>
-              <div style={{ color:'rgba(255,255,255,.5)', fontSize:10 }}>Gestion & Stock</div>
+              {isSuperAdmin
+                ? <div style={{ color:'#fbbf24', fontSize:10, fontWeight:600 }}>👑 Super Admin</div>
+                : <div style={{ color:'rgba(255,255,255,.5)', fontSize:10 }}>Gestion & Stock</div>}
             </div>
           </div>
           {collapsed && <span onClick={onClose} style={{ color:'rgba(255,255,255,.5)', cursor:'pointer', fontSize:20, lineHeight:1 }}>✕</span>}
         </div>
         <div style={{ flex:1, overflowY:'auto', padding:'12px 0' }}>
-          {NAV.map((item,i) => {
+          {navItems.map((item,i) => {
             if (item.section) return (
               <div key={i} style={{ padding:'8px 16px 4px', fontSize:10, fontWeight:700, letterSpacing:1.2, color:'rgba(255,255,255,.35)', textTransform:'uppercase' }}>{item.section}</div>
             )
@@ -363,11 +540,12 @@ function Sidebar({ page, setPage, user, onLogout, open, onClose }) {
         </div>
         <div style={{ padding:'14px 20px', borderTop:'1px solid rgba(255,255,255,.08)' }}>
           <div style={{ display:'flex', alignItems:'center', gap:10 }}>
-            <div style={{ width:32, height:32, background:ACCENT, borderRadius:'50%', display:'flex', alignItems:'center', justifyContent:'center', color:'white', fontWeight:700, fontSize:13, flexShrink:0 }}>
+            <div style={{ width:32, height:32, background:isSuperAdmin?'#f59e0b':ACCENT, borderRadius:'50%', display:'flex', alignItems:'center', justifyContent:'center', color:'white', fontWeight:700, fontSize:13, flexShrink:0 }}>
               {(user?.email||'U')[0].toUpperCase()}
             </div>
             <div style={{ flex:1, overflow:'hidden' }}>
               <div style={{ color:'white', fontSize:11, fontWeight:600, textOverflow:'ellipsis', overflow:'hidden', whiteSpace:'nowrap' }}>{user?.email}</div>
+              <div style={{ color:'rgba(255,255,255,.4)', fontSize:10 }}>{isSuperAdmin?'Super Admin':'Admin'}</div>
             </div>
             <span onClick={onLogout} style={{ color:'rgba(255,255,255,.4)', cursor:'pointer', fontSize:14 }} title="Déconnexion">🚪</span>
           </div>
@@ -1910,6 +2088,7 @@ function PaiementsEtuvagePage({ companies, companyId, lots, toast }) {
 // ── APP PRINCIPAL ─────────────────────────────────────────────────────────────
 export default function ComptaPro() {
   const [user,      setUser]      = useState(null)
+  const [profile,   setProfile]   = useState(null)
   const [loading,   setLoading]   = useState(true)
   const [page,      setPage]      = useState('dashboard')
   const [companies, setCompanies] = useState([])
@@ -1920,11 +2099,24 @@ export default function ComptaPro() {
   const toast = useToast()
   const { isMobile, isTablet } = useResponsive()
   const collapsed = isMobile || isTablet
+  const isSuperAdmin = profile?.role === 'super_admin'
 
-  // Auth
+  // Auth + Profile
   useEffect(()=>{
-    supabase.auth.getSession().then(({data:{session}})=>{ setUser(session?.user??null); setLoading(false) })
-    const { data:{subscription} } = supabase.auth.onAuthStateChange((_,session)=>setUser(session?.user??null))
+    const loadProfile = async (u) => {
+      if (!u) { setProfile(null); setLoading(false); return }
+      const { data } = await supabase.from('compta_profiles').select('*').eq('id', u.id).single()
+      setProfile(data || null)
+      setLoading(false)
+    }
+    supabase.auth.getSession().then(({data:{session}})=>{
+      setUser(session?.user??null)
+      loadProfile(session?.user??null)
+    })
+    const { data:{subscription} } = supabase.auth.onAuthStateChange((_,session)=>{
+      setUser(session?.user??null)
+      loadProfile(session?.user??null)
+    })
     return ()=>subscription.unsubscribe()
   },[])
 
@@ -1957,6 +2149,20 @@ export default function ComptaPro() {
     </div>
   )
   if (!user) return <LoginPage onLogin={setUser} />
+  if (profile?.statut === 'pending') return <PendingPage onLogout={()=>{ supabase.auth.signOut(); setUser(null); setProfile(null) }} />
+  if (profile?.statut === 'suspended') return (
+    <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',background:'#f1f5f9'}}>
+      <div style={{background:'white',borderRadius:16,padding:'48px 40px',maxWidth:400,textAlign:'center'}}>
+        <div style={{fontSize:64,marginBottom:16}}>🚫</div>
+        <h2 style={{color:'#dc2626'}}>Compte suspendu</h2>
+        <p style={{color:'#64748b',marginBottom:24}}>Contactez l'administrateur pour réactiver votre compte.</p>
+        <button onClick={()=>{ supabase.auth.signOut(); setUser(null); setProfile(null) }}
+          style={{background:'#f1f5f9',border:'1px solid #e2e8f0',borderRadius:8,padding:'10px 24px',cursor:'pointer',fontWeight:600}}>
+          Se déconnecter
+        </button>
+      </div>
+    </div>
+  )
 
   const sp = { companies, companyId, toast }
 
@@ -2023,7 +2229,7 @@ export default function ComptaPro() {
   }
 
   const PAGE_TITLES = {
-    dashboard:'Tableau de bord', companies:'Sociétés', clients:'Clients',
+    users:'Gestion des utilisateurs',
     fournisseurs:'Fournisseurs', stock:'Articles & Stock', 'stock-entree':'Entrée de stock',
     'stock-sortie':'Sortie de stock', mouvements:'Mouvements de stock', inventaire:'Inventaire',
     commercial:'Documents commerciaux', 'commercial-view':'Détail document', lots:'Lots Production',
@@ -2062,7 +2268,7 @@ export default function ComptaPro() {
       case 'achats':        return <AchatsSemisPage {...sp} />
       case 'reglements':    return <ReglementsPage {...sp} />
       case 'etuvage_paiements': return <PaiementsEtuvagePage {...sp} lots={lots} />
-      default:              return <Dashboard {...sp} setPage={setPage} />
+      case 'users':          return isSuperAdmin ? <UsersManagementPage toast={toast} /> : <Dashboard {...sp} setPage={setPage} />
     }
   }
 
@@ -2072,12 +2278,12 @@ export default function ComptaPro() {
     return PAGE_TITLES[page] || 'Compta Pro'
   }
 
-  const logout = async ()=>{ await supabase.auth.signOut(); setUser(null) }
+  const logout = async ()=>{ await supabase.auth.signOut(); setUser(null); setProfile(null) }
 
   return (
     <div style={{ fontFamily:"'Segoe UI',system-ui,sans-serif", background:'#f1f5f9', color:'#1e293b', minHeight:'100vh' }}>
       <Toasts toasts={toast.toasts} />
-      <Sidebar page={page} setPage={setPage} user={user} onLogout={logout}
+      <Sidebar page={page} setPage={setPage} user={user} profile={profile} onLogout={logout}
         open={sidebarOpen} onClose={()=>setSidebarOpen(false)} />
       <div style={{ marginLeft:collapsed ? 0 : 260, minHeight:'100vh', display:'flex', flexDirection:'column' }}>
         {/* Topbar */}
