@@ -2380,22 +2380,28 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
       </div>
       <Modal open={modal} onClose={close} title={`Nouveau — ${title}`} size="lg">
         <form onSubmit={save}>
+          {/* Bandeau résultats conditionnement — toujours visible */}
+          {tableName === 'compta_conditionnement' && (
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:16,padding:'12px 16px',background:'#0f2044',borderRadius:10}}>
+              <div style={{textAlign:'center'}}>
+                <div style={{fontSize:10,fontWeight:700,color:'rgba(255,255,255,.6)',textTransform:'uppercase',letterSpacing:.5,marginBottom:4}}>Total conditionné</div>
+                <div style={{fontSize:22,fontWeight:800,color:'#60a5fa'}}>{condTotal.toFixed(2)} <span style={{fontSize:13}}>kg</span></div>
+              </div>
+              <div style={{textAlign:'center'}}>
+                <div style={{fontSize:10,fontWeight:700,color:'rgba(255,255,255,.6)',textTransform:'uppercase',letterSpacing:.5,marginBottom:4}}>Écart</div>
+                <div style={{fontSize:22,fontWeight:800,color:condEcart===0?'#4ade80':condEcart<0?'#f87171':'#fbbf24'}}>{condEcart.toFixed(2)} <span style={{fontSize:13}}>kg</span></div>
+              </div>
+            </div>
+          )}
           <Grid cols={2} gap={14} style={{marginBottom:16}}>
             <Sel label="Société *" name="company_id" value={form.company_id||''} onChange={set}
               options={[{value:'',label:'— Choisir —'},...companies.map(c=>({value:c.id,label:c.raison_sociale}))]} required />
             <Sel label="Lot de production" name="lot_id" value={form.lot_id||''} onChange={set}
               options={[{value:'',label:'— Aucun —'},...lots.map(l=>({value:l.id,label:l.numero_lot}))]} />
             <Input label="Date" name="date_etape" type="date" value={form.date_etape||''} onChange={set} />
-            {fields.map(f=> f.type==='select'
+            {fields.filter(f => !f.calc).map(f=> f.type==='select'
               ? <Sel key={f.name} label={f.label} name={f.name} value={form[f.name]||''} onChange={set} options={f.options||[]} />
-              : f.calc
-                ? <div key={f.name}>
-                    <label style={{display:'block',fontSize:12.5,fontWeight:600,color:'#374151',marginBottom:5}}>{f.label} <span style={{color:ACCENT,fontSize:10,fontWeight:700}}>calculé</span></label>
-                    <div style={{padding:'9px 12px',background:'#eff6ff',borderRadius:8,border:'1px solid #bfdbfe',fontSize:13.5,fontWeight:700,color:ACCENT}}>
-                      {getCalcValue(f.name).toFixed(3)}{f.unit ? ` ${f.unit}` : ''}
-                    </div>
-                  </div>
-                : <Input key={f.name} label={f.label} name={f.name} type={f.type||'text'} value={form[f.name]??''} onChange={set} min={f.type==='number'?'0':undefined} step={f.type==='number'?'0.001':undefined} placeholder={f.placeholder} />
+              : <Input key={f.name} label={f.label} name={f.name} type={f.type||'text'} value={form[f.name]??''} onChange={set} min={f.type==='number'?'0':undefined} step={f.type==='number'?'0.001':undefined} placeholder={f.placeholder} />
             )}
           </Grid>
           <Row><Btn variant="secondary" onClick={close}>Annuler</Btn><Btn type="submit" disabled={saving}>{saving?'...':'Enregistrer'}</Btn></Row>
