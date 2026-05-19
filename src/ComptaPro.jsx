@@ -2261,21 +2261,26 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
 
   useEffect(()=>{ load() },[load])
 
-  // ── Calcul conditionnement : valeurs dérivées calculées à chaque rendu ─────
-  const condCalc = (() => {
-    if (tableName !== 'compta_conditionnement') return null
+  // ── Calcul conditionnement ────────────────────────────────────────────────
+  // Valeurs calculées en direct à chaque rendu (pas de state, pas d'effet)
+  let condTotal = 0
+  let condEcart = 0
+  if (tableName === 'compta_conditionnement') {
     const s5   = parseFloat(form.nb_sac_5kg)   || 0
     const s25  = parseFloat(form.nb_sac_25kg)  || 0
     const s50  = parseFloat(form.nb_sac_50kg)  || 0
     const s5x5 = parseFloat(form.nb_sac_5x5kg) || 0
     const recu = parseFloat(form.poids_recu)   || 0
     const rest = parseFloat(form.reste)        || 0
-    const total = (s5*5) + (s25*25) + (s50*50) + (s5x5*25)
-    return {
-      poids_total_conditionne: Math.round(total * 1000) / 1000,
-      ecart:                   Math.round((recu - total - rest) * 1000) / 1000,
-    }
-  })()
+    condTotal = (s5*5) + (s25*25) + (s50*50) + (s5x5*25)
+    condEcart = recu - condTotal - rest
+  }
+
+  const getCalcValue = (fname) => {
+    if (fname === 'poids_total_conditionne') return Math.round(condTotal * 1000) / 1000
+    if (fname === 'ecart')                   return Math.round(condEcart * 1000) / 1000
+    return 0
+  }
 
   const set = e => {
     const { name, value } = e.target
@@ -2284,7 +2289,7 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
 
   const openAdd = () => {
     const df = { company_id:companyId||companies[0]?.id||'', lot_id:'', date_etape:today() }
-    fields.forEach(f => { df[f.name] = f.type==='number' ? '' : '' })
+    fields.forEach(f => { df[f.name] = '' })
     setForm(df); setModal(true)
   }
   const close = () => setModal(false)
@@ -2294,8 +2299,8 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
     const uid = (await supabase.auth.getUser()).data?.user?.id
     const pay = { company_id:form.company_id, lot_id:form.lot_id||null, date_etape:form.date_etape, user_id:uid }
     fields.forEach(f => {
-      if (f.calc && condCalc) {
-        pay[f.name] = condCalc[f.name] ?? 0
+      if (f.calc) {
+        pay[f.name] = getCalcValue(f.name)
       } else {
         pay[f.name] = f.type==='number' ? (parseFloat(form[f.name])||0) : (form[f.name]||'')
       }
@@ -2387,7 +2392,7 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
                 ? <div key={f.name}>
                     <label style={{display:'block',fontSize:12.5,fontWeight:600,color:'#374151',marginBottom:5}}>{f.label} <span style={{color:ACCENT,fontSize:10,fontWeight:700}}>calculé</span></label>
                     <div style={{padding:'9px 12px',background:'#eff6ff',borderRadius:8,border:'1px solid #bfdbfe',fontSize:13.5,fontWeight:700,color:ACCENT}}>
-                      {(condCalc ? condCalc[f.name] : (parseFloat(form[f.name])||0)).toFixed(3)}{f.unit?` ${f.unit}`:''}
+                      {getCalcValue(f.name).toFixed(3)}{f.unit ? ` ${f.unit}` : ''}
                     </div>
                   </div>
                 : <Input key={f.name} label={f.label} name={f.name} type={f.type||'text'} value={form[f.name]??''} onChange={set} min={f.type==='number'?'0':undefined} step={f.type==='number'?'0.001':undefined} placeholder={f.placeholder} />
