@@ -63,50 +63,54 @@ const CSS_PRINT = `
   .notes { background: #fffde7; border-left: 3px solid #f59e0b; padding: 8px 12px; font-size: 9.5pt; margin-top: 10px; }
   .signatures { display: flex; justify-content: space-between; margin-top: 40px; }
   .sig-box { width: 44%; text-align: center; border-top: 1px solid #ccc; padding-top: 8px; font-size: 9.5pt; }
-  .print-btn { position: fixed; top: 12px; right: 12px; background: #0f2044; color: white; border: none; padding: 10px 20px; border-radius: 6px; font-size: 13px; cursor: pointer; z-index: 999; }
+  .print-btn { position: fixed; top: 12px; right: 12px; background: #0f2044; color: white; border: none; padding: 10px 20px; border-radius: 6px; font-size: 13px; cursor: pointer; z-index: 999; font-family: Arial, sans-serif; }
   @media print { .print-btn { display: none; } }
 `
 
-function printCommercialDoc(doc, lignes) {
-  const cli = doc.compta_clients
-  const cliNom = cli ? (cli.type==='morale' ? cli.nom_societe : `${cli.nom||''} ${cli.prenom||''}`) : null
-  const comp = doc.compta_companies
+const CSS_PRINT_LANDSCAPE = CSS_PRINT.replace('@page { size: A4;', '@page { size: A4 landscape;')
 
-  const lignesHtml = lignes.map((l,i) => `
+function printCommercialDoc(doc, lignes) {
+  const cli  = doc.compta_clients
+  const comp = doc.compta_companies
+  const cliNom = cli ? (cli.type==='morale' ? cli.nom_societe : `${cli.nom||''} ${cli.prenom||''}`.trim()) : null
+
+  const lignesHtml = (lignes||[]).length > 0
+    ? (lignes||[]).map((l,i) => `
     <tr>
       <td>${i+1}</td>
-      <td>${l.designation}</td>
-      <td class="r">${l.unite}</td>
-      <td class="r">${(l.quantite||0).toFixed(3)}</td>
-      <td class="r">${Math.round(l.prix_unitaire||0).toLocaleString('fr-FR')}</td>
-      <td class="r"><strong>${Math.round(l.montant_ligne||0).toLocaleString('fr-FR')}</strong></td>
+      <td>${l.designation||''}</td>
+      <td class="r">${l.unite||''}</td>
+      <td class="r">${(+(l.quantite)||0).toFixed(3)}</td>
+      <td class="r">${Math.round(+(l.prix_unitaire)||0).toLocaleString('fr-FR')}</td>
+      <td class="r"><strong>${Math.round(+(l.montant_ligne)||0).toLocaleString('fr-FR')}</strong></td>
     </tr>`).join('')
+    : `<tr><td colspan="6" style="text-align:center;color:#888;padding:16px">Aucune ligne enregistrée</td></tr>`
 
   const html = `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">
     <title>${doc.numero}</title>
     <style>${CSS_PRINT}</style></head><body>
-    <button class="print-btn" onclick="window.print()">🖨️ Imprimer / PDF</button>
+    <button class="print-btn" onclick="window.print()">Imprimer / PDF</button>
     <div class="header">
       <div>
         <div class="company-name">${comp?.raison_sociale||''}</div>
         <div class="company-info">
           ${comp?.rccm ? `RCCM : ${comp.rccm}<br>` : ''}
-          ${comp?.adresse||''} ${comp?.tel ? `— Tél : ${comp.tel}` : ''}
+          ${comp?.adresse||''} ${comp?.tel ? `&mdash; T&eacute;l : ${comp.tel}` : ''}
         </div>
       </div>
       <div class="doc-title">
         <h1>${TYPE_DOC_LABELS[doc.type_doc]||doc.type_doc}</h1>
-        <div class="doc-numero">N° ${doc.numero}</div>
-        <div class="doc-date">Date : ${doc.date_doc}${doc.date_echeance?` — Échéance : ${doc.date_echeance}`:''}</div>
+        <div class="doc-numero">N&deg; ${doc.numero}</div>
+        <div class="doc-date">Date : ${doc.date_doc}${doc.date_echeance?` &mdash; &Eacute;ch&eacute;ance : ${doc.date_echeance}`:''}</div>
       </div>
     </div>
-    ${cliNom ? `<div class="client-box"><strong>Client :</strong> ${cliNom}${cli?.telephone?` — Tél : ${cli.telephone}`:''}${cli?.ifu?` — IFU : ${cli.ifu}`:''}</div>` : ''}
+    ${cliNom ? `<div class="client-box"><strong>Client :</strong> ${cliNom}${cli?.telephone?` &mdash; T&eacute;l : ${cli.telephone}`:''}${cli?.ifu?` &mdash; IFU : ${cli.ifu}`:''}</div>` : ''}
     <table>
       <thead><tr>
         <th style="width:30px">#</th>
-        <th>Désignation</th>
-        <th class="r" style="width:50px">Unité</th>
-        <th class="r" style="width:80px">Quantité</th>
+        <th>D&eacute;signation</th>
+        <th class="r" style="width:55px">Unit&eacute;</th>
+        <th class="r" style="width:80px">Quantit&eacute;</th>
         <th class="r" style="width:110px">Prix U. (FCFA)</th>
         <th class="r" style="width:120px">Montant (FCFA)</th>
       </tr></thead>
@@ -116,7 +120,7 @@ function printCommercialDoc(doc, lignes) {
       <div class="row"><span>Montant HT</span><span>${Math.round(doc.montant_ht||0).toLocaleString('fr-FR')} FCFA</span></div>
       ${(doc.tva_pct||0)>0 ? `<div class="row"><span>TVA (${doc.tva_pct}%)</span><span>${Math.round(doc.montant_tva||0).toLocaleString('fr-FR')} FCFA</span></div>` : ''}
       <div class="ttc"><span>TOTAL TTC</span><span>${Math.round(doc.montant_ttc||0).toLocaleString('fr-FR')} FCFA</span></div>
-      ${(doc.montant_paye||0)>0 ? `<div class="row" style="margin-top:4px"><span>Payé</span><span style="color:#16a34a">${Math.round(doc.montant_paye||0).toLocaleString('fr-FR')} FCFA</span></div>` : ''}
+      ${(doc.montant_paye||0)>0 ? `<div class="row" style="margin-top:4px"><span>Pay&eacute;</span><span style="color:#16a34a">${Math.round(doc.montant_paye||0).toLocaleString('fr-FR')} FCFA</span></div>` : ''}
     </div>
     ${doc.notes ? `<div class="notes"><strong>Notes :</strong> ${doc.notes}</div>` : ''}
     <div class="signatures">
@@ -210,6 +214,46 @@ function printReglement(row) {
   const w = window.open('', '_blank')
   w.document.write(html)
   w.document.close()
+}
+
+function printProductionStage(items, title, fields, companyName) {
+  const headers = ['Date','N&deg; Lot',...fields.map(f=>f.label),'Responsable']
+  const rows = (items||[]).map(it => {
+    const cols = [
+      it.date_etape||it.date_reception||'&mdash;',
+      it.compta_lots_production?.numero_lot||it.numero_lot||'&mdash;',
+      ...fields.map(f => {
+        const val = it[f.name]
+        if (f.type==='number') return (+(val||0)).toFixed(f.dec||2)+(f.unit?` ${f.unit}`:'')
+        return val||'&mdash;'
+      }),
+      it.responsable_section||'&mdash;',
+    ]
+    return `<tr>${cols.map((c,i)=>`<td style="text-align:${i>1&&fields[i-2]?.type==='number'?'right':'left'}">${c}</td>`).join('')}</tr>`
+  }).join('')
+
+  const html = `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">
+    <title>${title}</title>
+    <style>${CSS_PRINT_LANDSCAPE}
+      body { font-size: 9.5pt; }
+      h1 { font-size: 14pt; color: #0f2044; margin-bottom: 4px; }
+      .subtitle { font-size: 10pt; color: #555; margin-bottom: 16px; border-bottom: 1px solid #e2e8f0; padding-bottom: 8px; }
+      table { font-size: 8.5pt; }
+      th { font-size: 8pt; white-space: nowrap; padding: 6px 8px; }
+      td { padding: 5px 8px; white-space: nowrap; }
+    </style></head><body>
+    <button class="print-btn" onclick="window.print()">Imprimer / PDF</button>
+    <h1>${title}</h1>
+    <div class="subtitle">${companyName||''} &mdash; ${(items||[]).length} enregistrement(s) &mdash; &Eacute;dit&eacute; le ${new Date().toLocaleDateString('fr-FR')}</div>
+    <table>
+      <thead><tr>${headers.map(h=>`<th>${h}</th>`).join('')}</tr></thead>
+      <tbody>${rows||`<tr><td colspan="${headers.length}" style="text-align:center;color:#888;padding:20px">Aucun enregistrement</td></tr>`}</tbody>
+    </table>
+  </body></html>`
+
+  const w2 = window.open('', '_blank')
+  w2.document.write(html)
+  w2.document.close()
 }
 
 function useToast() {
@@ -1916,7 +1960,12 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
 
   return (
     <div>
-      <PageHeader title={title} subtitle={`${items.length} enregistrement(s)`} actions={<Btn onClick={openAdd}>+ Nouveau</Btn>} />
+      <PageHeader title={title} subtitle={`${items.length} enregistrement(s)`}
+        actions={<>
+          <Btn sm variant="danger" onClick={()=>printProductionStage(items, title, fields, companies.find(c=>c.id===companyId)?.raison_sociale)}>PDF</Btn>
+          <Btn onClick={openAdd}>+ Nouveau</Btn>
+        </>}
+      />
       <div style={{background:'white',borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
         {items.length===0 ? (
           <div style={{textAlign:'center',padding:'48px 24px',color:'#64748b'}}>{title} — Aucun enregistrement</div>
