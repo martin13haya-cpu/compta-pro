@@ -485,6 +485,75 @@ function Row({ children, style={} }) {
   return <div style={{ display:'flex', gap:8, justifyContent:'flex-end', marginTop:8, ...style }}>{children}</div>
 }
 
+// ── PERIOD FILTER — composant réutilisable ────────────────────────────────────
+function PeriodFilter({ dateFrom, dateTo, onFrom, onTo, onReset }) {
+  return (
+    <Card style={{marginBottom:16,padding:'10px 16px'}}>
+      <div style={{display:'flex',alignItems:'center',gap:12,flexWrap:'wrap'}}>
+        <span style={{fontSize:12.5,fontWeight:700,color:'#374151',whiteSpace:'nowrap'}}>📅 Période :</span>
+        <div style={{display:'flex',alignItems:'center',gap:6}}>
+          <label style={{fontSize:12,color:'#64748b',whiteSpace:'nowrap'}}>Du</label>
+          <input type="date" value={dateFrom} onChange={e=>onFrom(e.target.value)}
+            style={{padding:'5px 9px',borderRadius:7,border:'1px solid #d1d5db',fontSize:12.5}} />
+        </div>
+        <div style={{display:'flex',alignItems:'center',gap:6}}>
+          <label style={{fontSize:12,color:'#64748b',whiteSpace:'nowrap'}}>Au</label>
+          <input type="date" value={dateTo} onChange={e=>onTo(e.target.value)}
+            style={{padding:'5px 9px',borderRadius:7,border:'1px solid #d1d5db',fontSize:12.5}} />
+        </div>
+        {(dateFrom||dateTo) && (
+          <Btn sm variant="secondary" onClick={onReset}>✕ Réinitialiser</Btn>
+        )}
+        {(dateFrom||dateTo) && (
+          <span style={{fontSize:11,color:'#64748b',fontStyle:'italic'}}>
+            Filtre actif{dateFrom&&dateTo?` : ${dateFrom} → ${dateTo}`:dateFrom?` : depuis ${dateFrom}`:` : jusqu'au ${dateTo}`}
+          </span>
+        )}
+      </div>
+    </Card>
+  )
+}
+
+// ── PRINT FILTERED LIST — fonction générique ──────────────────────────────────
+function printFilteredList({ title, subtitle='', headers, rows, companyName='', dateFrom='', dateTo='', totals=[] }) {
+  const period = dateFrom||dateTo
+    ? `Période : ${dateFrom||'—'} → ${dateTo||'—'}`
+    : 'Toutes dates'
+  const rowsHtml = rows.length > 0
+    ? rows.map((r,i)=>`<tr>${r.map((c,j)=>`<td style="text-align:${headers[j]?.r?'right':'left'}">${c??'—'}</td>`).join('')}</tr>`).join('')
+    : `<tr><td colspan="${headers.length}" style="text-align:center;color:#888;padding:16px">Aucun enregistrement</td></tr>`
+  const totalsHtml = totals.map(t=>`
+    <div style="display:flex;justify-content:space-between;padding:5px 10px;border-bottom:1px solid #e2e8f0;font-size:10.5pt">
+      <span>${t.label}</span><strong>${t.value}</strong>
+    </div>`).join('')
+  const html = `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">
+    <title>${title}</title>
+    <style>${CSS_PRINT_LANDSCAPE}
+      body { font-size: 9.5pt; }
+      h1 { font-size: 14pt; color: #0f2044; margin-bottom: 3px; }
+      .meta { font-size: 9.5pt; color: #555; margin-bottom: 14px; border-bottom: 1px solid #e2e8f0; padding-bottom: 8px; }
+      table { font-size: 8.5pt; }
+      th { font-size: 8pt; white-space: nowrap; padding: 6px 8px; }
+      td { padding: 5px 8px; white-space: nowrap; }
+      .totals-wrap { margin-top: 16px; margin-left: auto; width: 320px; border: 1px solid #e2e8f0; border-radius: 4px; overflow: hidden; }
+    </style></head><body>
+    <button class="print-btn" onclick="window.print()">🖨️ Imprimer / PDF</button>
+    <h1>${title}</h1>
+    <div class="meta">
+      ${companyName ? `<strong>${companyName}</strong> &mdash; ` : ''}${period}
+      &mdash; ${rows.length} enregistrement(s)
+      &mdash; Édité le ${new Date().toLocaleDateString('fr-FR')}
+      ${subtitle ? `<br>${subtitle}` : ''}
+    </div>
+    <table>
+      <thead><tr>${headers.map(h=>`<th style="text-align:${h.r?'right':'left'}">${h.label}</th>`).join('')}</tr></thead>
+      <tbody>${rowsHtml}</tbody>
+    </table>
+    ${totals.length>0?`<div class="totals-wrap">${totalsHtml}</div>`:''}
+  </body></html>`
+  const w = window.open('','_blank'); w.document.write(html); w.document.close()
+}
+
 // ── AUTH PAGES ──────────────────────────────────────────────────────────────
 function LoginPage({ onLogin }) {
   const [mode, setMode]     = useState('login') // login | register
@@ -1562,16 +1631,20 @@ function CommercialPage({ companies, companyId, setPage, setDocId, toast }) {
   const [docs, setDocs] = useState([])
   const [typeF, setTypeF]   = useState('')
   const [statF, setStatF]   = useState('')
-  const [preview, setPreview] = useState(null) // {doc, lignes}
+  const [preview, setPreview] = useState(null)
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo,   setDateTo]   = useState('')
 
   const load = useCallback(async()=>{
     const uid = (await supabase.auth.getUser()).data?.user?.id
-    let q = supabase.from('compta_documents').select('*,compta_clients(nom,prenom,nom_societe,type),compta_companies(raison_sociale)').eq('user_id',uid).order('created_at',{ascending:false})
+    let q = supabase.from('compta_documents').select('*,compta_clients(nom,prenom,nom_societe,type),compta_companies(raison_sociale)').eq('user_id',uid).order('date_doc',{ascending:false})
     if (companyId) q=q.eq('company_id',companyId)
-    if (typeF) q=q.eq('type_doc',typeF)
-    if (statF) q=q.eq('statut',statF)
+    if (typeF)     q=q.eq('type_doc',typeF)
+    if (statF)     q=q.eq('statut',statF)
+    if (dateFrom)  q=q.gte('date_doc',dateFrom)
+    if (dateTo)    q=q.lte('date_doc',dateTo)
     const { data } = await q; setDocs(data||[])
-  },[companyId,typeF,statF])
+  },[companyId,typeF,statF,dateFrom,dateTo])
 
   useEffect(()=>{ load() },[load])
 
@@ -1585,19 +1658,41 @@ function CommercialPage({ companies, companyId, setPage, setDocId, toast }) {
   const ttc = docs.reduce((s,d)=>s+(d.montant_ttc||0),0)
   const pay = docs.reduce((s,d)=>s+(d.montant_paye||0),0)
   const cliName = d => { const c=d.compta_clients; return c?(c.type==='morale'?c.nom_societe:`${c.nom||''} ${c.prenom||''}`):null }
+  const companyName = companies.find(c=>c.id===companyId)?.raison_sociale||''
+
+  const printFiltered = () => {
+    const headers = [{label:'N° Doc'},{label:'Type'},{label:'Client'},{label:'Date'},{label:'Statut'},{label:'Montant TTC',r:true},{label:'Payé',r:true},{label:'Reste dû',r:true}]
+    const rows = docs.map(d=>[
+      d.numero, TYPE_DOC_LABELS[d.type_doc]||d.type_doc, cliName(d)||'—',
+      d.date_doc, d.statut,
+      Math.round(d.montant_ttc||0).toLocaleString('fr-FR')+' FCFA',
+      Math.round(d.montant_paye||0).toLocaleString('fr-FR')+' FCFA',
+      Math.round((d.montant_ttc||0)-(d.montant_paye||0)).toLocaleString('fr-FR')+' FCFA',
+    ])
+    printFilteredList({ title:'Documents Commerciaux', companyName, headers, rows, dateFrom, dateTo,
+      totals:[
+        {label:'Total TTC', value:Math.round(ttc).toLocaleString('fr-FR')+' FCFA'},
+        {label:'Total Payé', value:Math.round(pay).toLocaleString('fr-FR')+' FCFA'},
+        {label:'Reste dû',  value:Math.round(ttc-pay).toLocaleString('fr-FR')+' FCFA'},
+      ]})
+  }
 
   return (
     <div>
       <PageHeader title="Documents commerciaux" subtitle={`${docs.length} document(s)`}
-        actions={Object.entries(TYPE_DOC_LABELS).map(([t,l])=>(
-          <Btn key={t} sm onClick={()=>{ setDocId(null); setPage('commercial-new-'+t) }}>+ {l}</Btn>
-        ))}
+        actions={<>
+          <Btn sm variant="danger" onClick={printFiltered}>🖨️ PDF liste</Btn>
+          {Object.entries(TYPE_DOC_LABELS).map(([t,l])=>(
+            <Btn key={t} sm onClick={()=>{ setDocId(null); setPage('commercial-new-'+t) }}>+ {l}</Btn>
+          ))}
+        </>}
       />
       <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:12,marginBottom:16}}>
         {[{l:'Total TTC',v:fcfa(ttc),c:ACCENT},{l:'Payé',v:fcfa(pay),c:'#16a34a'},{l:'Reste dû',v:fcfa(ttc-pay),c:'#dc2626'}].map(s=>(
           <Card key={s.l}><div style={{fontSize:12,color:'#64748b',marginBottom:4}}>{s.l}</div><div style={{fontSize:20,fontWeight:800,color:s.c}}>{s.v}</div></Card>
         ))}
       </div>
+      <PeriodFilter dateFrom={dateFrom} dateTo={dateTo} onFrom={setDateFrom} onTo={setDateTo} onReset={()=>{setDateFrom('');setDateTo('')}} />
       <Card style={{marginBottom:16,padding:'12px 20px'}}>
         <div style={{display:'flex',gap:12}}>
           <select value={typeF} onChange={e=>setTypeF(e.target.value)} style={{padding:'7px 12px',borderRadius:8,border:'1px solid #d1d5db',fontSize:13}}>
@@ -1948,13 +2043,17 @@ function LotsProductionPage({ companies, companyId, toast }) {
   const [modal, setModal]   = useState(null)
   const [form,  setForm]    = useState({})
   const [saving,setSaving]  = useState(false)
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo,   setDateTo]   = useState('')
 
   const load = useCallback(async()=>{
     const uid = (await supabase.auth.getUser()).data?.user?.id
-    let q = supabase.from('compta_lots_production').select('*,compta_companies(raison_sociale)').eq('user_id',uid).order('created_at',{ascending:false})
+    let q = supabase.from('compta_lots_production').select('*,compta_companies(raison_sociale)').eq('user_id',uid).order('date_debut',{ascending:false})
     if (companyId) q=q.eq('company_id',companyId)
+    if (dateFrom)  q=q.gte('date_debut',dateFrom)
+    if (dateTo)    q=q.lte('date_debut',dateTo)
     const { data } = await q; setLots(data||[])
-  },[companyId])
+  },[companyId,dateFrom,dateTo])
 
   useEffect(()=>{ load() },[load])
 
@@ -1973,9 +2072,23 @@ function LotsProductionPage({ companies, companyId, toast }) {
     toast.success('Lot enregistré !'); close(); load()
   }
 
+  const companyName = companies.find(c=>c.id===companyId)?.raison_sociale||''
+
+  const printFiltered = () => {
+    const headers = [{label:'N° Lot'},{label:'Date début'},{label:'Date fin'},{label:'Qté paddy (kg)',r:true},{label:'Statut'},{label:'Notes'}]
+    const rows = lots.map(l=>[l.numero_lot,l.date_debut,l.date_fin||'—',(l.qte_paddy_entree||0).toFixed(2)+' kg',l.statut,l.notes||'—'])
+    printFilteredList({ title:'Lots de Production', companyName, headers, rows, dateFrom, dateTo })
+  }
+
   return (
     <div>
-      <PageHeader title="Lots de Production" subtitle={`${lots.length} lot(s)`} actions={<Btn onClick={()=>open()}>+ Nouveau Lot</Btn>} />
+      <PageHeader title="Lots de Production" subtitle={`${lots.length} lot(s)`}
+        actions={<>
+          <Btn sm variant="danger" onClick={printFiltered}>🖨️ PDF</Btn>
+          <Btn onClick={()=>open()}>+ Nouveau Lot</Btn>
+        </>}
+      />
+      <PeriodFilter dateFrom={dateFrom} dateTo={dateTo} onFrom={setDateFrom} onTo={setDateTo} onReset={()=>{setDateFrom('');setDateTo('')}} />
       <div style={{background:'white',borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
         {lots.length===0 ? (
           <div style={{textAlign:'center',padding:'48px 24px',color:'#64748b'}}>🏭 Aucun lot de production</div>
@@ -2021,13 +2134,17 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
   const [modal, setModal]   = useState(false)
   const [form,  setForm]    = useState({})
   const [saving,setSaving]  = useState(false)
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo,   setDateTo]   = useState('')
 
   const load = useCallback(async()=>{
     const uid = (await supabase.auth.getUser()).data?.user?.id
-    let q = supabase.from(tableName).select('*,compta_lots_production(numero_lot)').eq('user_id',uid).order('created_at',{ascending:false})
+    let q = supabase.from(tableName).select('*,compta_lots_production(numero_lot)').eq('user_id',uid).order('date_etape',{ascending:false})
     if (companyId) q=q.eq('company_id',companyId)
+    if (dateFrom)  q=q.gte('date_etape',dateFrom)
+    if (dateTo)    q=q.lte('date_etape',dateTo)
     const { data } = await q; setItems(data||[])
-  },[tableName,companyId])
+  },[tableName,companyId,dateFrom,dateTo])
 
   useEffect(()=>{ load() },[load])
 
@@ -2083,15 +2200,32 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
   }
 
   const summaryFields = fields.filter(f=>f.summary).slice(0,4)
+  const companyName = companies.find(c=>c.id===companyId)?.raison_sociale||''
+
+  const printFiltered = () => {
+    const headers = [
+      {label:'Date'},{label:'N° Lot'},
+      ...summaryFields.map(f=>({label:f.label,r:f.type==='number'})),
+      {label:'Responsable'}
+    ]
+    const rows = items.map(it=>[
+      it.date_etape||it.date_reception||'—',
+      it.compta_lots_production?.numero_lot||it.numero_lot||'—',
+      ...summaryFields.map(f=>f.type==='number'?(+(it[f.name]||0)).toFixed(f.dec||2)+(f.unit?` ${f.unit}`:''):(it[f.name]||'—')),
+      it.responsable_section||'—',
+    ])
+    printFilteredList({ title, companyName, headers, rows, dateFrom, dateTo })
+  }
 
   return (
     <div>
       <PageHeader title={title} subtitle={`${items.length} enregistrement(s)`}
         actions={<>
-          <Btn sm variant="danger" onClick={()=>printProductionStage(items, title, fields, companies.find(c=>c.id===companyId)?.raison_sociale)}>PDF</Btn>
+          <Btn sm variant="danger" onClick={printFiltered}>🖨️ PDF</Btn>
           <Btn onClick={openAdd}>+ Nouveau</Btn>
         </>}
       />
+      <PeriodFilter dateFrom={dateFrom} dateTo={dateTo} onFrom={setDateFrom} onTo={setDateTo} onReset={()=>{setDateFrom('');setDateTo('')}} />
       <div style={{background:'white',borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
         {items.length===0 ? (
           <div style={{textAlign:'center',padding:'48px 24px',color:'#64748b'}}>{title} — Aucun enregistrement</div>
@@ -2229,13 +2363,17 @@ function PrestationPage({ companies, companyId, toast }) {
   const [form,   setForm]   = useState({})
   const [saving, setSaving] = useState(false)
   const [preview, setPreview] = useState(null)
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo,   setDateTo]   = useState('')
 
   const load = useCallback(async()=>{
     const uid = (await supabase.auth.getUser()).data?.user?.id
-    let q = supabase.from('compta_prestations').select('*,compta_companies(raison_sociale)').eq('user_id',uid).order('created_at',{ascending:false})
+    let q = supabase.from('compta_prestations').select('*,compta_companies(raison_sociale)').eq('user_id',uid).order('date_prestation',{ascending:false})
     if (companyId) q=q.eq('company_id',companyId)
+    if (dateFrom)  q=q.gte('date_prestation',dateFrom)
+    if (dateTo)    q=q.lte('date_prestation',dateTo)
     const { data } = await q; setItems(data||[])
-  },[companyId])
+  },[companyId,dateFrom,dateTo])
 
   useEffect(()=>{ load() },[load])
 
@@ -2277,11 +2415,22 @@ function PrestationPage({ companies, companyId, toast }) {
   const total = items.reduce((s,r)=>s+(r.montant||0),0)
   const companyName = companies.find(c=>c.id===companyId)?.raison_sociale||''
 
+  const printFilteredP = () => {
+    const headers = [{label:'N° Facture'},{label:'Date'},{label:'Client'},{label:'Description'},{label:'Qté',r:true},{label:'Prix U.',r:true},{label:'Montant',r:true}]
+    const rows = items.map(r=>[r.numero_facture||'—',r.date_prestation,r.nom_client||'—',r.description||'—',(r.quantite||0).toFixed(2),Math.round(r.prix||0).toLocaleString('fr-FR')+' FCFA',Math.round(r.montant||0).toLocaleString('fr-FR')+' FCFA'])
+    printFilteredList({ title:'Prestations', companyName, headers, rows, dateFrom, dateTo,
+      totals:[{label:'Total', value:Math.round(total).toLocaleString('fr-FR')+' FCFA'}]})
+  }
+
   return (
     <div>
       <PageHeader title="Prestations" subtitle={`${items.length} prestation(s) — Total : ${fcfa(total)}`}
-        actions={<Btn onClick={openAdd}>+ Nouvelle Prestation</Btn>}
+        actions={<>
+          <Btn sm variant="danger" onClick={printFilteredP}>🖨️ PDF liste</Btn>
+          <Btn onClick={openAdd}>+ Nouvelle Prestation</Btn>
+        </>}
       />
+      <PeriodFilter dateFrom={dateFrom} dateTo={dateTo} onFrom={setDateFrom} onTo={setDateTo} onReset={()=>{setDateFrom('');setDateTo('')}} />
       <div style={{background:'white',borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
         {items.length===0 ? (
           <div style={{textAlign:'center',padding:'48px 24px',color:'#64748b'}}>
@@ -2353,13 +2502,17 @@ function AchatsSemisPage({ companies, companyId, toast }) {
   const [modal, setModal]   = useState(false)
   const [form,  setForm]    = useState({})
   const [saving,setSaving]  = useState(false)
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo,   setDateTo]   = useState('')
 
   const load = useCallback(async()=>{
     const uid = (await supabase.auth.getUser()).data?.user?.id
-    let q = supabase.from('compta_achats_semi_finis').select('*,compta_companies(raison_sociale)').eq('user_id',uid).order('created_at',{ascending:false})
+    let q = supabase.from('compta_achats_semi_finis').select('*,compta_companies(raison_sociale)').eq('user_id',uid).order('date_achat',{ascending:false})
     if (companyId) q=q.eq('company_id',companyId)
+    if (dateFrom)  q=q.gte('date_achat',dateFrom)
+    if (dateTo)    q=q.lte('date_achat',dateTo)
     const { data } = await q; setItems(data||[])
-  },[companyId])
+  },[companyId,dateFrom,dateTo])
 
   useEffect(()=>{ load() },[load])
 
@@ -2385,9 +2538,22 @@ function AchatsSemisPage({ companies, companyId, toast }) {
     toast.success('Achat enregistré !'); close(); load()
   }
 
+  const companyNameA = companies.find(c=>c.id===companyId)?.raison_sociale||''
+  const printFilteredA = () => {
+    const headers = [{label:'N° Fact.'},{label:'Date'},{label:'Entité'},{label:'Fournisseur'},{label:'Provenance'},{label:'Produit'},{label:'Qté (kg)',r:true},{label:'P.U.',r:true},{label:'Montant',r:true},{label:'Statut'}]
+    const rows = items.map(r=>[r.numero_fact||'—',r.date_achat,r.entite||'—',r.nom_fournisseur||'—',r.provenance||'—',r.nature_produit||'—',(r.quantite||0).toFixed(2),Math.round(r.prix_unitaire||0).toLocaleString('fr-FR')+' FCFA',Math.round(r.montant||0).toLocaleString('fr-FR')+' FCFA',r.statut||'—'])
+    printFilteredList({ title:'Achats Semi-finis', companyName:companyNameA, headers, rows, dateFrom, dateTo,
+      totals:[{label:'Total', value:Math.round(total).toLocaleString('fr-FR')+' FCFA'}]})
+  }
+
   return (
     <div>
-      <PageHeader title="Achats Semi-finis" subtitle={`${items.length} achat(s) — Total : ${fcfa(total)}`} actions={<Btn onClick={openAdd}>+ Nouvel Achat</Btn>} />
+      <PageHeader title="Achats Semi-finis" subtitle={`${items.length} achat(s) — Total : ${fcfa(total)}`}
+        actions={<>
+          <Btn sm variant="danger" onClick={printFilteredA}>🖨️ PDF liste</Btn>
+          <Btn onClick={openAdd}>+ Nouvel Achat</Btn>
+        </>} />
+      <PeriodFilter dateFrom={dateFrom} dateTo={dateTo} onFrom={setDateFrom} onTo={setDateTo} onReset={()=>{setDateFrom('');setDateTo('')}} />
       <div style={{background:'white',borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
         {items.length===0 ? (
           <div style={{textAlign:'center',padding:'48px 24px',color:'#64748b'}}>🛒 Aucun achat semi-fini</div>
@@ -2446,37 +2612,40 @@ function ReglementsPage({ companies, companyId, toast }) {
   const [modal, setModal]   = useState(false)
   const [form,  setForm]    = useState({})
   const [saving,setSaving]  = useState(false)
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo,   setDateTo]   = useState('')
 
   const load = useCallback(async()=>{
     const uid = (await supabase.auth.getUser()).data?.user?.id
-    let q = supabase.from('compta_reglements').select('*,compta_companies(raison_sociale)').eq('user_id',uid).order('created_at',{ascending:false})
+    let q = supabase.from('compta_reglements').select('*,compta_companies(raison_sociale)').eq('user_id',uid).order('date_paiement',{ascending:false})
     if (companyId) q=q.eq('company_id',companyId)
+    if (dateFrom)  q=q.gte('date_paiement',dateFrom)
+    if (dateTo)    q=q.lte('date_paiement',dateTo)
     const { data } = await q; setItems(data||[])
-  },[companyId])
+  },[companyId,dateFrom,dateTo])
 
   useEffect(()=>{ load() },[load])
 
   const total = items.reduce((s,r)=>s+(r.montant_paye||0),0)
   const set = e=>setForm(f=>({...f,[e.target.name]:e.target.value}))
+  const companyNameR = companies.find(c=>c.id===companyId)?.raison_sociale||''
 
-  const openAdd = ()=>{ setForm({company_id:companyId||companies[0]?.id||'',numero_facture:'',date_paiement:today(),entite:'',tiers_type:'client',tiers_nom:'',provenance:'',acheteur_vendeur:'',nature_produit:'',montant_paye:0,solde:0,mode_paiement:'espèce',reference_paiement:'',notes:''}); setModal(true) }
-  const close = ()=>setModal(false)
-
-  const save = async e=>{
-    e.preventDefault(); setSaving(true)
-    const uid = (await supabase.auth.getUser()).data?.user?.id
-    const { company_id,numero_facture,date_paiement,entite,tiers_type,tiers_nom,provenance,acheteur_vendeur,nature_produit,montant_paye,solde,mode_paiement,reference_paiement,notes } = form
-    const { error } = await supabase.from('compta_reglements').insert({ company_id,user_id:uid,numero_facture,date_paiement,entite,tiers_type,tiers_nom,provenance,acheteur_vendeur,nature_produit,montant_paye:+montant_paye,solde:+solde,mode_paiement,reference_paiement,notes })
-    setSaving(false)
-    if (error) { toast.error(error.message); return }
-    toast.success('Règlement enregistré !'); close(); load()
+  const printFilteredR = () => {
+    const headers = [{label:'N° Fact.'},{label:'Date'},{label:'Entité'},{label:'Type'},{label:'Tiers'},{label:'Provenance'},{label:'Produit'},{label:'Mode'},{label:'Montant payé',r:true},{label:'Solde',r:true}]
+    const rows = items.map(r=>[r.numero_facture||'—',r.date_paiement,r.entite||'—',r.tiers_type==='client'?'Client':'Fourn.',r.tiers_nom||'—',r.provenance||'—',r.nature_produit||'—',r.mode_paiement||'—',Math.round(r.montant_paye||0).toLocaleString('fr-FR')+' FCFA',Math.round(r.solde||0).toLocaleString('fr-FR')+' FCFA'])
+    printFilteredList({ title:'Règlements Clients / Fournisseurs', companyName:companyNameR, headers, rows, dateFrom, dateTo,
+      totals:[{label:'Total payé', value:Math.round(total).toLocaleString('fr-FR')+' FCFA'}]})
   }
 
   return (
     <div>
       <PageHeader title="Règlements Clients / Fournisseurs"
         subtitle={`${items.length} règlement(s) — Total payé : ${fcfa(total)}`}
-        actions={<Btn onClick={openAdd}>+ Nouveau Règlement</Btn>} />
+        actions={<>
+          <Btn sm variant="danger" onClick={printFilteredR}>🖨️ PDF liste</Btn>
+          <Btn onClick={openAdd}>+ Nouveau Règlement</Btn>
+        </>} />
+      <PeriodFilter dateFrom={dateFrom} dateTo={dateTo} onFrom={setDateFrom} onTo={setDateTo} onReset={()=>{setDateFrom('');setDateTo('')}} />
       <div style={{background:'white',borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
         {items.length===0 ? (
           <div style={{textAlign:'center',padding:'48px 24px',color:'#64748b'}}>💳 Aucun règlement enregistré</div>
