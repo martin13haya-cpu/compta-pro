@@ -432,29 +432,6 @@ function UsersManagementPage({ toast }) {
     </div>
   )
 }
-          <h3 style={{ margin:'0 0 6px', fontSize:24, fontWeight:800, color:'#0f172a' }}>Connexion</h3>
-          <p style={{ margin:'0 0 28px', color:'#64748b', fontSize:13.5 }}>Accédez à votre espace de gestion</p>
-          {error && <div style={{ background:'#fee2e2', color:'#dc2626', padding:'10px 14px', borderRadius:10, marginBottom:16, fontSize:13 }}>{error}</div>}
-          <form onSubmit={submit}>
-            <div style={{ marginBottom:20 }}>
-              <label style={{ display:'block', fontSize:12.5, fontWeight:700, color:'#374151', marginBottom:6 }}>Email</label>
-              <input type="email" name="email" value={form.email} onChange={set} required placeholder="votre@email.bj"
-                style={{ width:'100%', padding:'11px 16px', borderRadius:10, border:'1.5px solid #e2e8f0', fontSize:14, boxSizing:'border-box' }} />
-            </div>
-            <div style={{ marginBottom:24 }}>
-              <label style={{ display:'block', fontSize:12.5, fontWeight:700, color:'#374151', marginBottom:6 }}>Mot de passe</label>
-              <input type="password" name="password" value={form.password} onChange={set} required placeholder="••••••••"
-                style={{ width:'100%', padding:'11px 16px', borderRadius:10, border:'1.5px solid #e2e8f0', fontSize:14, boxSizing:'border-box' }} />
-            </div>
-            <button type="submit" disabled={loading} style={{ width:'100%', background:ACCENT, color:'white', border:'none', borderRadius:10, padding:12, fontSize:15, fontWeight:700, cursor:'pointer' }}>
-              {loading ? 'Connexion...' : '→ Se connecter'}
-            </button>
-          </form>
-        </div>
-      </div>
-    </div>
-  )
-}
 
 // ── SIDEBAR ─────────────────────────────────────────────────────────────────
 const NAV = [
