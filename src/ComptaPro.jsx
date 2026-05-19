@@ -37,7 +37,181 @@ const STATUT_COLORS = {
   brouillon:'secondary', validé:'info', livré:'info', payé:'success', annulé:'danger',
 }
 
-// ── TOAST ───────────────────────────────────────────────────────────────────
+// ── PDF PRINT ────────────────────────────────────────────────────────────────
+const CSS_PRINT = `
+  @page { size: A4; margin: 1.8cm; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Times New Roman', serif; font-size: 11pt; color: #1a1a1a; }
+  .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; border-bottom: 2px solid #0f2044; padding-bottom: 12px; }
+  .company-name { font-size: 16pt; font-weight: 800; color: #0f2044; }
+  .company-info { font-size: 9.5pt; color: #555; line-height: 1.6; }
+  .doc-title { text-align: right; }
+  .doc-title h1 { font-size: 18pt; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; color: #0f2044; }
+  .doc-numero { font-size: 12pt; color: #555; margin-top: 4px; }
+  .doc-date { font-size: 10pt; color: #555; }
+  .client-box { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 4px; padding: 10px 14px; margin-bottom: 16px; font-size: 10.5pt; }
+  .client-box strong { color: #0f2044; }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 12px; font-size: 10.5pt; }
+  th { background: #0f2044; color: white; padding: 8px 10px; text-align: left; font-size: 9.5pt; }
+  th.r { text-align: right; }
+  td { padding: 7px 10px; border-bottom: 1px solid #e2e8f0; }
+  td.r { text-align: right; }
+  tr:nth-child(even) td { background: #f8fafc; }
+  .totals { margin-left: auto; width: 280px; font-size: 10.5pt; }
+  .totals .row { display: flex; justify-content: space-between; padding: 5px 10px; border-bottom: 1px solid #e2e8f0; }
+  .totals .ttc { background: #0f2044; color: white; font-weight: 800; font-size: 13pt; padding: 10px 14px; display: flex; justify-content: space-between; border-radius: 4px; margin-top: 6px; }
+  .notes { background: #fffde7; border-left: 3px solid #f59e0b; padding: 8px 12px; font-size: 9.5pt; margin-top: 10px; }
+  .signatures { display: flex; justify-content: space-between; margin-top: 40px; }
+  .sig-box { width: 44%; text-align: center; border-top: 1px solid #ccc; padding-top: 8px; font-size: 9.5pt; }
+  .print-btn { position: fixed; top: 12px; right: 12px; background: #0f2044; color: white; border: none; padding: 10px 20px; border-radius: 6px; font-size: 13px; cursor: pointer; z-index: 999; }
+  @media print { .print-btn { display: none; } }
+`
+
+function printCommercialDoc(doc, lignes) {
+  const cli = doc.compta_clients
+  const cliNom = cli ? (cli.type==='morale' ? cli.nom_societe : `${cli.nom||''} ${cli.prenom||''}`) : null
+  const comp = doc.compta_companies
+
+  const lignesHtml = lignes.map((l,i) => `
+    <tr>
+      <td>${i+1}</td>
+      <td>${l.designation}</td>
+      <td class="r">${l.unite}</td>
+      <td class="r">${(l.quantite||0).toFixed(3)}</td>
+      <td class="r">${Math.round(l.prix_unitaire||0).toLocaleString('fr-FR')}</td>
+      <td class="r"><strong>${Math.round(l.montant_ligne||0).toLocaleString('fr-FR')}</strong></td>
+    </tr>`).join('')
+
+  const html = `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">
+    <title>${doc.numero}</title>
+    <style>${CSS_PRINT}</style></head><body>
+    <button class="print-btn" onclick="window.print()">🖨️ Imprimer / PDF</button>
+    <div class="header">
+      <div>
+        <div class="company-name">${comp?.raison_sociale||''}</div>
+        <div class="company-info">
+          ${comp?.rccm ? `RCCM : ${comp.rccm}<br>` : ''}
+          ${comp?.adresse||''} ${comp?.tel ? `— Tél : ${comp.tel}` : ''}
+        </div>
+      </div>
+      <div class="doc-title">
+        <h1>${TYPE_DOC_LABELS[doc.type_doc]||doc.type_doc}</h1>
+        <div class="doc-numero">N° ${doc.numero}</div>
+        <div class="doc-date">Date : ${doc.date_doc}${doc.date_echeance?` — Échéance : ${doc.date_echeance}`:''}</div>
+      </div>
+    </div>
+    ${cliNom ? `<div class="client-box"><strong>Client :</strong> ${cliNom}${cli?.telephone?` — Tél : ${cli.telephone}`:''}${cli?.ifu?` — IFU : ${cli.ifu}`:''}</div>` : ''}
+    <table>
+      <thead><tr>
+        <th style="width:30px">#</th>
+        <th>Désignation</th>
+        <th class="r" style="width:50px">Unité</th>
+        <th class="r" style="width:80px">Quantité</th>
+        <th class="r" style="width:110px">Prix U. (FCFA)</th>
+        <th class="r" style="width:120px">Montant (FCFA)</th>
+      </tr></thead>
+      <tbody>${lignesHtml}</tbody>
+    </table>
+    <div class="totals">
+      <div class="row"><span>Montant HT</span><span>${Math.round(doc.montant_ht||0).toLocaleString('fr-FR')} FCFA</span></div>
+      ${(doc.tva_pct||0)>0 ? `<div class="row"><span>TVA (${doc.tva_pct}%)</span><span>${Math.round(doc.montant_tva||0).toLocaleString('fr-FR')} FCFA</span></div>` : ''}
+      <div class="ttc"><span>TOTAL TTC</span><span>${Math.round(doc.montant_ttc||0).toLocaleString('fr-FR')} FCFA</span></div>
+      ${(doc.montant_paye||0)>0 ? `<div class="row" style="margin-top:4px"><span>Payé</span><span style="color:#16a34a">${Math.round(doc.montant_paye||0).toLocaleString('fr-FR')} FCFA</span></div>` : ''}
+    </div>
+    ${doc.notes ? `<div class="notes"><strong>Notes :</strong> ${doc.notes}</div>` : ''}
+    <div class="signatures">
+      <div class="sig-box">Signature du vendeur</div>
+      <div class="sig-box">Signature du client${cliNom?`<br><small>${cliNom}</small>`:''}</div>
+    </div>
+  </body></html>`
+
+  const w = window.open('', '_blank')
+  w.document.write(html)
+  w.document.close()
+}
+
+function printPaiementEtuvage(row) {
+  const html = `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">
+    <title>${row.numero||'Paiement Étuvage'}</title>
+    <style>${CSS_PRINT}</style></head><body>
+    <button class="print-btn" onclick="window.print()">🖨️ Imprimer / PDF</button>
+    <div class="header">
+      <div>
+        <div class="company-name">REÇU DE PAIEMENT ÉTUVAGE</div>
+        <div class="doc-numero" style="margin-top:4px">N° ${row.numero||'—'}</div>
+      </div>
+      <div class="doc-title">
+        <div class="doc-date">Date : ${row.date_paiement}</div>
+      </div>
+    </div>
+    <table>
+      <thead><tr><th>Désignation</th><th class="r">Valeur</th></tr></thead>
+      <tbody>
+        <tr><td>N° Lot</td><td class="r">${row.numero_lot||'—'}</td></tr>
+        <tr><td>Étuveuse / Coopérative</td><td class="r">${row.etuveuse_cooperative||'—'}</td></tr>
+        <tr><td>Quantité étuvée</td><td class="r">${(row.qte_etuvee_kg||0).toFixed(2)} kg</td></tr>
+        <tr><td>Montant brut</td><td class="r">${Math.round(row.montant_brut||0).toLocaleString('fr-FR')} FCFA</td></tr>
+        <tr><td>Taux AIB</td><td class="r">${((row.taux_aib||0)*100).toFixed(0)}%</td></tr>
+        <tr><td style="color:#dc2626">Retenue AIB</td><td class="r" style="color:#dc2626">- ${Math.round(row.retenue_aib||0).toLocaleString('fr-FR')} FCFA</td></tr>
+      </tbody>
+    </table>
+    <div class="totals">
+      <div class="ttc"><span>NET À PAYER</span><span>${Math.round(row.net_a_payer||0).toLocaleString('fr-FR')} FCFA</span></div>
+    </div>
+    <div style="margin-top:16px;font-size:10pt;color:#555">
+      Mode de paiement : <strong>${row.mode_paiement||'—'}</strong>
+      ${row.reference_paiement ? ` — Réf : ${row.reference_paiement}` : ''}
+    </div>
+    <div class="signatures">
+      <div class="sig-box">Signature du payeur</div>
+      <div class="sig-box">Signature de l'étuveuse<br><small>${row.etuveuse_cooperative||''}</small></div>
+    </div>
+  </body></html>`
+
+  const w = window.open('', '_blank')
+  w.document.write(html)
+  w.document.close()
+}
+
+function printReglement(row) {
+  const html = `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">
+    <title>Règlement ${row.numero_facture||''}</title>
+    <style>${CSS_PRINT}</style></head><body>
+    <button class="print-btn" onclick="window.print()">🖨️ Imprimer / PDF</button>
+    <div class="header">
+      <div>
+        <div class="company-name">REÇU DE RÈGLEMENT</div>
+        ${row.numero_facture ? `<div class="doc-numero">Facture N° ${row.numero_facture}</div>` : ''}
+      </div>
+      <div class="doc-title"><div class="doc-date">Date : ${row.date_paiement}</div></div>
+    </div>
+    <table>
+      <thead><tr><th>Désignation</th><th class="r">Valeur</th></tr></thead>
+      <tbody>
+        <tr><td>Type</td><td class="r">${row.tiers_type==='client'?'Client':'Fournisseur'}</td></tr>
+        <tr><td>Tiers</td><td class="r">${row.tiers_nom||'—'}</td></tr>
+        ${row.entite ? `<tr><td>Entité</td><td class="r">${row.entite}</td></tr>` : ''}
+        ${row.provenance ? `<tr><td>Provenance</td><td class="r">${row.provenance}</td></tr>` : ''}
+        ${row.nature_produit ? `<tr><td>Nature produit</td><td class="r">${row.nature_produit}</td></tr>` : ''}
+        <tr><td>Mode de paiement</td><td class="r">${row.mode_paiement||'—'}</td></tr>
+        ${row.reference_paiement ? `<tr><td>Référence</td><td class="r">${row.reference_paiement}</td></tr>` : ''}
+      </tbody>
+    </table>
+    <div class="totals">
+      <div class="ttc"><span>MONTANT PAYÉ</span><span>${Math.round(row.montant_paye||0).toLocaleString('fr-FR')} FCFA</span></div>
+      ${(row.solde||0)>0 ? `<div class="row" style="margin-top:4px"><span style="color:#dc2626">Solde restant</span><span style="color:#dc2626">${Math.round(row.solde||0).toLocaleString('fr-FR')} FCFA</span></div>` : ''}
+    </div>
+    <div class="signatures">
+      <div class="sig-box">Signature du caissier</div>
+      <div class="sig-box">Signature du ${row.tiers_type==='client'?'client':'fournisseur'}<br><small>${row.tiers_nom||''}</small></div>
+    </div>
+  </body></html>`
+
+  const w = window.open('', '_blank')
+  w.document.write(html)
+  w.document.close()
+}
+
 function useToast() {
   const [toasts, setToasts] = useState([])
   const add = (msg, type = 'success') => {
@@ -1312,8 +1486,6 @@ function CommercialPage({ companies, companyId, setPage, setDocId, toast }) {
               <TH right>Montant TTC</TH><TH right>Payé</TH><TH right>Reste</TH>
               <TH>Statut</TH><TH>Actions</TH>
             </tr></thead>
-            <tbody>
-              {docs.map(d=>{
                 const reste = (d.montant_ttc||0)-(d.montant_paye||0)
                 return (
                   <TR key={d.id}>
@@ -1328,6 +1500,11 @@ function CommercialPage({ companies, companyId, setPage, setDocId, toast }) {
                     <TD>
                       <div style={{display:'flex',gap:6}}>
                         <Btn sm variant="secondary" onClick={()=>{ setDocId(d.id); setPage('commercial-view') }}>👁</Btn>
+                        <Btn sm variant="danger" onClick={async()=>{
+                          const {data:dFull}=await supabase.from('compta_documents').select('*,compta_clients(*),compta_companies(*)').eq('id',d.id).single()
+                          const {data:lFull}=await supabase.from('compta_lignes_document').select('*').eq('document_id',d.id)
+                          printCommercialDoc(dFull,lFull||[])
+                        }}>🖨️</Btn>
                         <Btn sm variant="danger" onClick={()=>del(d.id)}>🗑️</Btn>
                       </div>
                     </TD>
@@ -1521,7 +1698,10 @@ function CommercialViewPage({ docId, setPage, toast }) {
     <div>
       <PageHeader title={TYPE_DOC_LABELS[doc.type_doc]||doc.type_doc}
         subtitle={`N° ${doc.numero} — ${doc.date_doc}`}
-        actions={<Btn variant="secondary" onClick={()=>setPage('commercial')}>← Retour liste</Btn>}
+        actions={<>
+          <Btn variant="secondary" onClick={()=>setPage('commercial')}>← Retour liste</Btn>
+          <Btn variant="danger" onClick={()=>printCommercialDoc(doc, lignes)}>🖨️ PDF</Btn>
+        </>}
       />
       <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'2fr 1fr',gap:24}}>
         <Card>
@@ -1901,7 +2081,7 @@ function ReglementsPage({ companies, companyId, toast }) {
             <thead><tr>
               <TH>N° Fact.</TH><TH>Date</TH><TH>Entité</TH><TH>Type</TH>
               <TH>Tiers</TH><TH>Provenance</TH><TH>Produit</TH>
-              <TH right>Montant payé</TH><TH right>Solde</TH><TH>Mode</TH>
+              <TH right>Montant payé</TH><TH right>Solde</TH><TH>Mode</TH><TH>PDF</TH>
             </tr></thead>
             <tbody>
               {items.map(r=>(
@@ -1913,6 +2093,7 @@ function ReglementsPage({ companies, companyId, toast }) {
                   <TD right color="#16a34a" bold>{fcfa(r.montant_paye)}</TD>
                   <TD right color={(r.solde||0)>0?'#dc2626':'#16a34a'}>{fcfa(r.solde)}</TD>
                   <TD sm>{r.mode_paiement||'—'}</TD>
+                  <TD><Btn sm variant="danger" onClick={()=>printReglement(r)}>🖨️</Btn></TD>
                 </TR>
               ))}
             </tbody>
@@ -2011,7 +2192,7 @@ function PaiementsEtuvagePage({ companies, companyId, lots, toast }) {
               <TH>N°</TH><TH>Date</TH><TH>N° Lot</TH><TH>Étuveuse</TH>
               <TH right>Qté (kg)</TH><TH right>Montant brut</TH>
               <TH right>Taux AIB</TH><TH right>Retenue AIB</TH><TH right>Net à payer</TH>
-              <TH>Mode</TH><TH>Statut</TH>
+              <TH>Mode</TH><TH>Statut</TH><TH>PDF</TH>
             </tr></thead>
             <tbody>
               {items.map(r=>(
@@ -2025,6 +2206,7 @@ function PaiementsEtuvagePage({ companies, companyId, lots, toast }) {
                   <TD right color="#16a34a" bold>{fcfa(r.net_a_payer)}</TD>
                   <TD sm>{r.mode_paiement||'—'}</TD>
                   <TD><Badge type={{en_attente:'warning',paye:'success',annule:'danger'}[r.statut_paiement]||'secondary'}>{r.statut_paiement}</Badge></TD>
+                  <TD><Btn sm variant="danger" onClick={()=>printPaiementEtuvage(r)}>🖨️</Btn></TD>
                 </TR>
               ))}
             </tbody>
