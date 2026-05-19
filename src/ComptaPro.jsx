@@ -2630,6 +2630,19 @@ function ReglementsPage({ companies, companyId, toast }) {
   const set = e=>setForm(f=>({...f,[e.target.name]:e.target.value}))
   const companyNameR = companies.find(c=>c.id===companyId)?.raison_sociale||''
 
+  const openAdd = ()=>{ setForm({company_id:companyId||companies[0]?.id||'',numero_facture:'',date_paiement:today(),entite:'',tiers_type:'client',tiers_nom:'',provenance:'',acheteur_vendeur:'',nature_produit:'',montant_paye:0,solde:0,mode_paiement:'espèce',reference_paiement:'',notes:''}); setModal(true) }
+  const close = ()=>setModal(false)
+
+  const save = async e=>{
+    e.preventDefault(); setSaving(true)
+    const uid = (await supabase.auth.getUser()).data?.user?.id
+    const { company_id,numero_facture,date_paiement,entite,tiers_type,tiers_nom,provenance,acheteur_vendeur,nature_produit,montant_paye,solde,mode_paiement,reference_paiement,notes } = form
+    const { error } = await supabase.from('compta_reglements').insert({ company_id,user_id:uid,numero_facture,date_paiement,entite,tiers_type,tiers_nom,provenance,acheteur_vendeur,nature_produit,montant_paye:+montant_paye,solde:+solde,mode_paiement,reference_paiement,notes })
+    setSaving(false)
+    if (error) { toast.error(error.message); return }
+    toast.success('Règlement enregistré !'); close(); load()
+  }
+
   const printFilteredR = () => {
     const headers = [{label:'N° Fact.'},{label:'Date'},{label:'Entité'},{label:'Type'},{label:'Tiers'},{label:'Provenance'},{label:'Produit'},{label:'Mode'},{label:'Montant payé',r:true},{label:'Solde',r:true}]
     const rows = items.map(r=>[r.numero_facture||'—',r.date_paiement,r.entite||'—',r.tiers_type==='client'?'Client':'Fourn.',r.tiers_nom||'—',r.provenance||'—',r.nature_produit||'—',r.mode_paiement||'—',Math.round(r.montant_paye||0).toLocaleString('fr-FR')+' FCFA',Math.round(r.solde||0).toLocaleString('fr-FR')+' FCFA'])
