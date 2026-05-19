@@ -2,7 +2,7 @@ import { createClient } from '@supabase/supabase-js'
 import { useState, useEffect, useCallback } from 'react'
 
 // ── CONFIG ─────────────────────────────────────────────────────────────────
-const SUPABASE_URL       = 'https://proehigsikgqdrxjltmq.supabase.co'
+const SUPABASE_URL       ='https://proehigsikgqdrxjltmq.supabase.co'
 const SUPABASE_ANON_KEY  = 'sb_publishable_DqCGxDWGqJ5K0rnnzDv6Hg_gWG7wzfX'
 const SUPER_ADMIN_EMAIL  = 'martin13haya@gmail.com'
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
@@ -1919,6 +1919,14 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
 
   useEffect(()=>{ load() },[load])
 
+  useEffect(()=>{
+    if (tableName==='compta_conditionnement' && modal) {
+      const total = (+(form.nb_sac_5kg||0)*5) + (+(form.nb_sac_25kg||0)*25) + (+(form.nb_sac_50kg||0)*50) + (+(form.nb_sac_5x5kg||0)*25)
+      const ecart = (+(form.poids_recu||0)) - total
+      setForm(f=>({...f, poids_total_conditionne: Math.round(total*1000)/1000, ecart: Math.round(ecart*1000)/1000}))
+    }
+  },[form.nb_sac_5kg, form.nb_sac_25kg, form.nb_sac_50kg, form.nb_sac_5x5kg, form.poids_recu, tableName, modal])
+
   const calcConditionnement = (f) => {
     const total = (+(f.nb_sac_5kg||0)*5) + (+(f.nb_sac_25kg||0)*25) + (+(f.nb_sac_50kg||0)*50) + (+(f.nb_sac_5x5kg||0)*25)
     const ecart = (+(f.poids_recu||0)) - total
@@ -1956,6 +1964,12 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
     toast.success('Enregistrement réussi !'); close(); load()
   }
 
+  const del = async id => {
+    if (!confirm('Supprimer cet enregistrement ?')) return
+    await supabase.from(tableName).delete().eq('id', id)
+    toast.success('Supprimé !'); load()
+  }
+
   const summaryFields = fields.filter(f=>f.summary).slice(0,4)
 
   return (
@@ -1974,7 +1988,7 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
             <thead><tr>
               <TH>Date</TH><TH>N° Lot</TH>
               {summaryFields.map(f=><TH key={f.name} right={f.type==='number'}>{f.label}</TH>)}
-              <TH>Responsable</TH>
+              <TH>Responsable</TH><TH>Action</TH>
             </tr></thead>
             <tbody>
               {items.map(it=>(
@@ -1987,6 +2001,7 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
                     </TD>
                   ))}
                   <TD sm>{it.responsable_section||'—'}</TD>
+                  <TD><Btn sm variant="danger" onClick={()=>del(it.id)}>Sup</Btn></TD>
                 </TR>
               ))}
             </tbody>
