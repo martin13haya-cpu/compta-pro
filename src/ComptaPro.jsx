@@ -1727,10 +1727,11 @@ function CommercialViewPage({ docId, setPage, toast }) {
               {cli?.ifu       && ` — IFU : ${cli.ifu}`}
             </div>
           )}
+          <div style={{overflowX:'auto'}}>
           <table style={{width:'100%',borderCollapse:'collapse',marginBottom:12,fontSize:13}}>
             <thead style={{background:'#d6d6d6'}}>
               <tr>{['Désignation','Unité','Quantité','Prix U.','Montant'].map((h,i)=>(
-                <th key={i} style={{padding:'8px 10px',textAlign:i>=2?'right':'left',fontWeight:700,border:'1px solid #ccc'}}>{h}</th>
+                <th key={i} style={{padding:'8px 10px',textAlign:i>=2?'right':'left',fontWeight:700,border:'1px solid #ccc',whiteSpace:'nowrap'}}>{h}</th>
               ))}</tr>
             </thead>
             <tbody>
@@ -1753,6 +1754,7 @@ function CommercialViewPage({ docId, setPage, toast }) {
               </tr>
             </tfoot>
           </table>
+          </div>
           {doc.notes && <div style={{background:'#fffde7',borderLeft:'3px solid #f9a825',padding:'8px 12px',borderRadius:'0 6px 6px 0',fontSize:12}}><strong>Notes :</strong> {doc.notes}</div>}
         </Card>
         <div>
@@ -1873,11 +1875,28 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
 
   useEffect(()=>{ load() },[load])
 
-  const set = e=>setForm(f=>({...f,[e.target.name]:e.target.value}))
+  const calcConditionnement = (f) => {
+    const total = (+(f.nb_sac_5kg||0)*5) + (+(f.nb_sac_25kg||0)*25) + (+(f.nb_sac_50kg||0)*50) + (+(f.nb_sac_5x5kg||0)*25)
+    const ecart = (+(f.poids_recu||0)) - total
+    return { ...f, poids_total_conditionne: Math.round(total*1000)/1000, ecart: Math.round(ecart*1000)/1000 }
+  }
+
+  const set = e=>{
+    const { name, value } = e.target
+    setForm(f=>{
+      const nf = {...f, [name]:value}
+      if (tableName==='compta_conditionnement' &&
+        ['nb_sac_5kg','nb_sac_25kg','nb_sac_50kg','nb_sac_5x5kg','poids_recu'].includes(name)) {
+        return calcConditionnement(nf)
+      }
+      return nf
+    })
+  }
 
   const openAdd = ()=>{
     const df = { company_id:companyId||companies[0]?.id||'', lot_id:'', date_etape:today() }
     fields.forEach(f=>{ df[f.name]=f.type==='number'?0:'' })
+    if (tableName==='compta_conditionnement') Object.assign(df, calcConditionnement(df))
     setForm(df); setModal(true)
   }
   const close = ()=>setModal(false)
@@ -1935,7 +1954,14 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
             <Input label="Date" name="date_etape" type="date" value={form.date_etape} onChange={set} />
             {fields.map(f=> f.type==='select'
               ? <Sel key={f.name} label={f.label} name={f.name} value={form[f.name]} onChange={set} options={f.options||[]} />
-              : <Input key={f.name} label={f.label} name={f.name} type={f.type||'text'} value={form[f.name]} onChange={set} min={f.type==='number'?'0':undefined} step={f.type==='number'?'0.001':undefined} placeholder={f.placeholder} />
+              : f.calc
+                ? <div key={f.name}>
+                    <label style={{display:'block',fontSize:12.5,fontWeight:600,color:'#374151',marginBottom:5}}>{f.label} <span style={{color:ACCENT,fontSize:10,fontWeight:700}}>calculé</span></label>
+                    <div style={{padding:'9px 12px',background:'#eff6ff',borderRadius:8,border:'1px solid #bfdbfe',fontSize:13.5,fontWeight:700,color:ACCENT}}>
+                      {(+(form[f.name]||0)).toFixed(3)}{f.unit?` ${f.unit}`:''}
+                    </div>
+                  </div>
+                : <Input key={f.name} label={f.label} name={f.name} type={f.type||'text'} value={form[f.name]} onChange={set} min={f.type==='number'?'0':undefined} step={f.type==='number'?'0.001':undefined} placeholder={f.placeholder} />
             )}
           </Grid>
           <Row><Btn variant="secondary" onClick={close}>Annuler</Btn><Btn type="submit" disabled={saving}>{saving?'...':'Enregistrer'}</Btn></Row>
@@ -2381,9 +2407,9 @@ export default function ComptaPro() {
       {name:'nb_sac_25kg',              label:'Sacs 25 kg',             type:'number', summary:true},
       {name:'nb_sac_50kg',              label:'Sacs 50 kg',             type:'number', summary:true},
       {name:'nb_sac_5x5kg',             label:'Sacs 5×5 kg',           type:'number'},
-      {name:'poids_total_conditionne',  label:'Total conditionné (kg)', type:'number', unit:'kg'},
+      {name:'poids_total_conditionne',  label:'Total conditionné (kg)', type:'number', unit:'kg', calc:true},
       {name:'reste',                    label:'Reste (kg)',             type:'number'},
-      {name:'ecart',                    label:'Écart (kg)',             type:'number'},
+      {name:'ecart',                    label:'Écart (kg)',             type:'number', calc:true},
       {name:'observation',              label:'Observation'},
       {name:'recommandation',           label:'Recommandation'},
     ]},
