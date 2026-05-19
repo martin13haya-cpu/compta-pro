@@ -69,7 +69,7 @@ const CSS_PRINT = `
 
 const CSS_PRINT_LANDSCAPE = CSS_PRINT.replace('@page { size: A4;', '@page { size: A4 landscape;')
 
-function printCommercialDoc(doc, lignes) {
+function buildCommercialDocHtml(doc, lignes) {
   const cli  = doc.compta_clients
   const comp = doc.compta_companies
   const cliNom = cli ? (cli.type==='morale' ? cli.nom_societe : `${cli.nom||''} ${cli.prenom||''}`.trim()) : null
@@ -86,10 +86,10 @@ function printCommercialDoc(doc, lignes) {
     </tr>`).join('')
     : `<tr><td colspan="6" style="text-align:center;color:#888;padding:16px">Aucune ligne enregistrée</td></tr>`
 
-  const html = `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">
+  return `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">
     <title>${doc.numero}</title>
     <style>${CSS_PRINT}</style></head><body>
-    <button class="print-btn" onclick="window.print()">Imprimer / PDF</button>
+    <button class="print-btn" onclick="window.print()">🖨️ Imprimer / PDF</button>
     <div class="header">
       <div>
         <div class="company-name">${comp?.raison_sociale||''}</div>
@@ -128,10 +128,51 @@ function printCommercialDoc(doc, lignes) {
       <div class="sig-box">Signature du client${cliNom?`<br><small>${cliNom}</small>`:''}</div>
     </div>
   </body></html>`
+}
 
+function printCommercialDoc(doc, lignes) {
+  const html = buildCommercialDocHtml(doc, lignes)
   const w = window.open('', '_blank')
   w.document.write(html)
   w.document.close()
+}
+
+function DocPreviewModal({ open, onClose, doc, lignes }) {
+  if (!open || !doc) return null
+  const html = buildCommercialDocHtml(doc, lignes)
+  return (
+    <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,.7)', zIndex:3000,
+      display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', padding:16 }}>
+      <div style={{ background:'white', borderRadius:12, width:'100%', maxWidth:900,
+        maxHeight:'92vh', display:'flex', flexDirection:'column', boxShadow:'0 30px 80px rgba(0,0,0,.4)' }}>
+        {/* Header */}
+        <div style={{ padding:'12px 20px', borderBottom:'1px solid #e2e8f0', display:'flex',
+          alignItems:'center', justifyContent:'space-between', background:'#0f2044', borderRadius:'12px 12px 0 0' }}>
+          <span style={{ color:'white', fontWeight:700, fontSize:15 }}>
+            👁️ Aperçu — {doc.numero}
+          </span>
+          <div style={{ display:'flex', gap:8 }}>
+            <button onClick={()=>printCommercialDoc(doc, lignes)}
+              style={{ background:'#2563eb', color:'white', border:'none', padding:'7px 18px',
+                borderRadius:7, fontWeight:700, fontSize:13, cursor:'pointer' }}>
+              🖨️ Imprimer / PDF
+            </button>
+            <button onClick={onClose}
+              style={{ background:'rgba(255,255,255,.15)', color:'white', border:'none',
+                padding:'7px 14px', borderRadius:7, fontWeight:700, fontSize:14, cursor:'pointer' }}>
+              ✕ Fermer
+            </button>
+          </div>
+        </div>
+        {/* Preview iframe */}
+        <iframe
+          srcDoc={html}
+          style={{ flex:1, border:'none', borderRadius:'0 0 12px 12px', minHeight:0 }}
+          title="Aperçu document"
+        />
+      </div>
+    </div>
+  )
 }
 
 function printPaiementEtuvage(row) {
@@ -666,6 +707,7 @@ const NAV = [
   { section:'Commercial' },
   { id:'commercial',         icon:'📄', label:'Documents' },
   { id:'reglements',         icon:'💳', label:'Règlements' },
+  { id:'prestations',        icon:'🛠️',  label:'Prestations' },
   { section:'Production' },
   { id:'lots',               icon:'🏭', label:'Lots Production' },
   { id:'etuvage',            icon:'🔥', label:'Étuvage' },
@@ -1142,8 +1184,8 @@ function StockPage({ companies, companyId, setPage, toast }) {
                     <TD><Badge type={alerte?'warning':'success'}>{alerte?'⚠ Alerte':'✓ OK'}</Badge></TD>
                     <TD>
                       <div style={{display:'flex',gap:6}}>
-                        <Btn sm variant="secondary" onClick={()=>openEdit(a)}>Edit</Btn>
-                        <Btn sm variant="danger" onClick={()=>archive(a.id)}>🗑️</Btn>
+                        <Btn sm variant="secondary" onClick={()=>openEdit(a)}>✏️ Modifier</Btn>
+                        <Btn sm variant="danger" onClick={()=>archive(a.id)}>🗑️ Supprimer</Btn>
                       </div>
                     </TD>
                   </TR>
@@ -1334,15 +1376,42 @@ function StockSortiePage({ companies, companyId, setPage, toast }) {
 // ── MOUVEMENTS ────────────────────────────────────────────────────────────────
 function MouvementsPage({ companies, companyId, setPage }) {
   const [items, setItems] = useState([])
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo,   setDateTo]   = useState('')
 
   const load = useCallback(async()=>{
     const uid = (await supabase.auth.getUser()).data?.user?.id
-    let q = supabase.from('compta_mouvements_stock').select('*,compta_articles(designation,unite)').eq('user_id',uid).order('created_at',{ascending:false}).limit(300)
+    let q = supabase.from('compta_mouvements_stock').select('*,compta_articles(designation,unite)').eq('user_id',uid).order('date_mvt',{ascending:false}).limit(500)
     if (companyId) q=q.eq('company_id',companyId)
+    if (dateFrom)  q=q.gte('date_mvt',dateFrom)
+    if (dateTo)    q=q.lte('date_mvt',dateTo)
     const { data } = await q; setItems(data||[])
-  },[companyId])
+  },[companyId,dateFrom,dateTo])
 
   useEffect(()=>{ load() },[load])
+
+  const exportCSV = () => {
+    const header = ['Date','Article','Unité','Type','Motif','Quantité','Prix Unitaire','Montant','Référence']
+    const rows = items.map(m=>[
+      m.date_mvt||'',
+      m.compta_articles?.designation||'',
+      m.compta_articles?.unite||'',
+      m.type==='entree'?'Entrée':'Sortie',
+      m.motif||'',
+      (m.quantite||0).toFixed(3),
+      (m.prix_unitaire||0).toFixed(0),
+      (m.montant||0).toFixed(0),
+      m.reference||'',
+    ])
+    const csvContent = [header,...rows].map(r=>r.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(';')).join('\n')
+    const BOM = '\uFEFF'
+    const blob = new Blob([BOM+csvContent],{type:'text/csv;charset=utf-8;'})
+    const url  = URL.createObjectURL(blob)
+    const a    = document.createElement('a')
+    const period = dateFrom||dateTo ? `_${dateFrom||'debut'}_${dateTo||'fin'}` : ''
+    a.href=url; a.download=`mouvements_stock${period}.csv`; a.click()
+    URL.revokeObjectURL(url)
+  }
 
   return (
     <div>
@@ -1350,11 +1419,31 @@ function MouvementsPage({ companies, companyId, setPage }) {
         actions={<>
           <Btn sm variant="success" onClick={()=>setPage('stock-entree')}>↓ Entrée</Btn>
           <Btn sm variant="warning" onClick={()=>setPage('stock-sortie')}>↑ Sortie</Btn>
+          <Btn sm variant="info" onClick={exportCSV}>📊 Exporter Excel</Btn>
         </>}
       />
+      {/* Filtre période */}
+      <Card style={{marginBottom:16,padding:'12px 20px'}}>
+        <div style={{display:'flex',alignItems:'center',gap:12,flexWrap:'wrap'}}>
+          <span style={{fontSize:13,fontWeight:600,color:'#374151'}}>📅 Période :</span>
+          <div style={{display:'flex',alignItems:'center',gap:8}}>
+            <label style={{fontSize:12,color:'#64748b'}}>Du</label>
+            <input type="date" value={dateFrom} onChange={e=>setDateFrom(e.target.value)}
+              style={{padding:'6px 10px',borderRadius:7,border:'1px solid #d1d5db',fontSize:13}} />
+          </div>
+          <div style={{display:'flex',alignItems:'center',gap:8}}>
+            <label style={{fontSize:12,color:'#64748b'}}>Au</label>
+            <input type="date" value={dateTo} onChange={e=>setDateTo(e.target.value)}
+              style={{padding:'6px 10px',borderRadius:7,border:'1px solid #d1d5db',fontSize:13}} />
+          </div>
+          {(dateFrom||dateTo) && (
+            <Btn sm variant="secondary" onClick={()=>{setDateFrom('');setDateTo('')}}>✕ Réinitialiser</Btn>
+          )}
+        </div>
+      </Card>
       <div style={{background:'white',borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
         {items.length===0 ? (
-          <div style={{textAlign:'center',padding:'48px 24px',color:'#64748b'}}>↕️ Aucun mouvement</div>
+          <div style={{textAlign:'center',padding:'48px 24px',color:'#64748b'}}>↕️ Aucun mouvement sur cette période</div>
         ) : (
           <table style={{width:'100%',borderCollapse:'collapse'}}>
             <thead><tr>
@@ -1473,6 +1562,7 @@ function CommercialPage({ companies, companyId, setPage, setDocId, toast }) {
   const [docs, setDocs] = useState([])
   const [typeF, setTypeF]   = useState('')
   const [statF, setStatF]   = useState('')
+  const [preview, setPreview] = useState(null) // {doc, lignes}
 
   const load = useCallback(async()=>{
     const uid = (await supabase.auth.getUser()).data?.user?.id
@@ -1546,6 +1636,11 @@ function CommercialPage({ companies, companyId, setPage, setDocId, toast }) {
                     <TD>
                       <div style={{display:'flex',gap:6}}>
                         <Btn sm variant="secondary" onClick={()=>{ setDocId(d.id); setPage('commercial-view') }}>Voir</Btn>
+                        <Btn sm variant="info" onClick={async()=>{
+                          const r1=await supabase.from('compta_documents').select('*,compta_clients(*),compta_companies(*)').eq('id',d.id).single()
+                          const r2=await supabase.from('compta_lignes_document').select('*').eq('document_id',d.id)
+                          if(r1.data) setPreview({doc:r1.data,lignes:r2.data||[]})
+                        }}>👁️</Btn>
                         <Btn sm variant="danger" onClick={async()=>{
                           const r1=await supabase.from('compta_documents').select('*,compta_clients(*),compta_companies(*)').eq('id',d.id).single()
                           const r2=await supabase.from('compta_lignes_document').select('*').eq('document_id',d.id)
@@ -1561,6 +1656,7 @@ function CommercialPage({ companies, companyId, setPage, setDocId, toast }) {
           </table>
         )}
       </div>
+      <DocPreviewModal open={!!preview} onClose={()=>setPreview(null)} doc={preview?.doc} lignes={preview?.lignes||[]} />
     </div>
   )
 }
@@ -1663,9 +1759,22 @@ function CommercialNewPage({ companies, companyId, typeDoc, setPage, toast }) {
                     {lignes.map((l,i)=>(
                       <tr key={i} style={{borderBottom:'1px solid #f1f5f9'}}>
                         <td style={{padding:'6px 8px'}}>
-                          <select onChange={e=>{ const a=articles.find(x=>x.id===e.target.value); if(a){ updateLigne(i,'designation',a.designation); updateLigne(i,'prix_unitaire',a.prix_vente||0); updateLigne(i,'unite',a.unite) } }}
+                          <select
+                            value=""
+                            onChange={e=>{
+                              const a=articles.find(x=>x.id===e.target.value)
+                              if(a){
+                                setLignes(prev=>{
+                                  const nl=[...prev]
+                                  const q=parseFloat(nl[i].quantite)||0
+                                  const p=a.prix_vente||0
+                                  nl[i]={...nl[i], designation:a.designation, prix_unitaire:p, unite:a.unite, montant_ligne:Math.round(q*p)}
+                                  return nl
+                                })
+                              }
+                            }}
                             style={{width:'100%',marginBottom:4,padding:'4px 8px',borderRadius:6,border:'1px solid #d1d5db',fontSize:12}}>
-                            <option value="">Saisie libre</option>
+                            <option value="">Sélectionner un article...</option>
                             {articles.map(a=><option key={a.id} value={a.id}>{a.designation}</option>)}
                           </select>
                           <input value={l.designation} onChange={e=>updateLigne(i,'designation',e.target.value)} placeholder="Désignation..." required
@@ -1712,6 +1821,7 @@ function CommercialViewPage({ docId, setPage, toast }) {
   const [lignes, setLignes] = useState([])
   const [loading, setLoading] = useState(true)
   const [statutForm, setStatutForm] = useState({ statut:'brouillon', montant_paye:0 })
+  const [previewOpen, setPreviewOpen] = useState(false)
 
   useEffect(()=>{
     const load = async ()=>{
@@ -1746,9 +1856,11 @@ function CommercialViewPage({ docId, setPage, toast }) {
         subtitle={`N° ${doc.numero} — ${doc.date_doc}`}
         actions={<>
           <Btn variant="secondary" onClick={()=>setPage('commercial')}>← Retour liste</Btn>
-          <Btn variant="danger" onClick={()=>printCommercialDoc(doc, lignes)}>PDF</Btn>
+          <Btn variant="info" onClick={()=>setPreviewOpen(true)}>👁️ Aperçu</Btn>
+          <Btn variant="danger" onClick={()=>printCommercialDoc(doc, lignes)}>🖨️ PDF</Btn>
         </>}
       />
+      <DocPreviewModal open={previewOpen} onClose={()=>setPreviewOpen(false)} doc={doc} lignes={lignes} />
       <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'2fr 1fr',gap:24}}>
         <Card>
           <div style={{display:'flex',justifyContent:'space-between',marginBottom:24}}>
@@ -1922,14 +2034,14 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
   useEffect(()=>{
     if (tableName==='compta_conditionnement' && modal) {
       const total = (+(form.nb_sac_5kg||0)*5) + (+(form.nb_sac_25kg||0)*25) + (+(form.nb_sac_50kg||0)*50) + (+(form.nb_sac_5x5kg||0)*25)
-      const ecart = (+(form.poids_recu||0)) - total
+      const ecart = (+(form.poids_recu||0)) - total - (+(form.reste||0))
       setForm(f=>({...f, poids_total_conditionne: Math.round(total*1000)/1000, ecart: Math.round(ecart*1000)/1000}))
     }
-  },[form.nb_sac_5kg, form.nb_sac_25kg, form.nb_sac_50kg, form.nb_sac_5x5kg, form.poids_recu, tableName, modal])
+  },[form.nb_sac_5kg, form.nb_sac_25kg, form.nb_sac_50kg, form.nb_sac_5x5kg, form.poids_recu, form.reste, tableName, modal])
 
   const calcConditionnement = (f) => {
     const total = (+(f.nb_sac_5kg||0)*5) + (+(f.nb_sac_25kg||0)*25) + (+(f.nb_sac_50kg||0)*50) + (+(f.nb_sac_5x5kg||0)*25)
-    const ecart = (+(f.poids_recu||0)) - total
+    const ecart = (+(f.poids_recu||0)) - total - (+(f.reste||0))
     return { ...f, poids_total_conditionne: Math.round(total*1000)/1000, ecart: Math.round(ecart*1000)/1000 }
   }
 
@@ -1938,7 +2050,7 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
     setForm(f=>{
       const nf = {...f, [name]:value}
       if (tableName==='compta_conditionnement' &&
-        ['nb_sac_5kg','nb_sac_25kg','nb_sac_50kg','nb_sac_5x5kg','poids_recu'].includes(name)) {
+        ['nb_sac_5kg','nb_sac_25kg','nb_sac_50kg','nb_sac_5x5kg','poids_recu','reste'].includes(name)) {
         return calcConditionnement(nf)
       }
       return nf
@@ -2029,6 +2141,206 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
             )}
           </Grid>
           <Row><Btn variant="secondary" onClick={close}>Annuler</Btn><Btn type="submit" disabled={saving}>{saving?'...':'Enregistrer'}</Btn></Row>
+        </form>
+      </Modal>
+    </div>
+  )
+}
+
+// ── PRESTATIONS ──────────────────────────────────────────────────────────────
+function buildPrestationHtml(row, companyName) {
+  return `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">
+    <title>Facture Prestation ${row.numero_facture||''}</title>
+    <style>${CSS_PRINT}</style></head><body>
+    <button class="print-btn" onclick="window.print()">🖨️ Imprimer / PDF</button>
+    <div class="header">
+      <div>
+        <div class="company-name">${companyName||''}</div>
+        <div class="company-info">Prestation de service</div>
+      </div>
+      <div class="doc-title">
+        <h1>FACTURE PRESTATION</h1>
+        <div class="doc-numero">N° ${row.numero_facture||'—'}</div>
+        <div class="doc-date">Date : ${row.date_prestation||'—'}</div>
+      </div>
+    </div>
+    <div class="client-box"><strong>Client :</strong> ${row.nom_client||'—'}</div>
+    <table>
+      <thead><tr>
+        <th>Description du produit / service</th>
+        <th class="r" style="width:80px">Quantité</th>
+        <th class="r" style="width:130px">Prix unitaire (FCFA)</th>
+        <th class="r" style="width:140px">Montant (FCFA)</th>
+      </tr></thead>
+      <tbody>
+        <tr>
+          <td>${row.description||'—'}</td>
+          <td class="r">${(+(row.quantite)||0).toFixed(2)}</td>
+          <td class="r">${Math.round(+(row.prix)||0).toLocaleString('fr-FR')}</td>
+          <td class="r"><strong>${Math.round(+(row.montant)||0).toLocaleString('fr-FR')}</strong></td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="totals">
+      <div class="ttc"><span>MONTANT TOTAL</span><span>${Math.round(+(row.montant)||0).toLocaleString('fr-FR')} FCFA</span></div>
+    </div>
+    <div class="signatures">
+      <div class="sig-box">Signature du prestataire</div>
+      <div class="sig-box">Signature du client<br><small>${row.nom_client||''}</small></div>
+    </div>
+  </body></html>`
+}
+
+function PrestationPreviewModal({ open, onClose, row, companyName }) {
+  if (!open || !row) return null
+  const html = buildPrestationHtml(row, companyName)
+  return (
+    <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,.7)', zIndex:3000,
+      display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', padding:16 }}>
+      <div style={{ background:'white', borderRadius:12, width:'100%', maxWidth:900,
+        maxHeight:'92vh', display:'flex', flexDirection:'column', boxShadow:'0 30px 80px rgba(0,0,0,.4)' }}>
+        <div style={{ padding:'12px 20px', borderBottom:'1px solid #e2e8f0', display:'flex',
+          alignItems:'center', justifyContent:'space-between', background:'#0f2044', borderRadius:'12px 12px 0 0' }}>
+          <span style={{ color:'white', fontWeight:700, fontSize:15 }}>
+            👁️ Aperçu — {row.numero_facture||'Prestation'}
+          </span>
+          <div style={{ display:'flex', gap:8 }}>
+            <button onClick={()=>{ const w=window.open('','_blank'); w.document.write(html); w.document.close() }}
+              style={{ background:'#2563eb', color:'white', border:'none', padding:'7px 18px',
+                borderRadius:7, fontWeight:700, fontSize:13, cursor:'pointer' }}>
+              🖨️ Imprimer / PDF
+            </button>
+            <button onClick={onClose}
+              style={{ background:'rgba(255,255,255,.15)', color:'white', border:'none',
+                padding:'7px 14px', borderRadius:7, fontWeight:700, fontSize:14, cursor:'pointer' }}>
+              ✕ Fermer
+            </button>
+          </div>
+        </div>
+        <iframe srcDoc={html} style={{ flex:1, border:'none', borderRadius:'0 0 12px 12px', minHeight:0 }} title="Aperçu prestation" />
+      </div>
+    </div>
+  )
+}
+
+function PrestationPage({ companies, companyId, toast }) {
+  const [items,  setItems]  = useState([])
+  const [modal,  setModal]  = useState(false)
+  const [form,   setForm]   = useState({})
+  const [saving, setSaving] = useState(false)
+  const [preview, setPreview] = useState(null)
+
+  const load = useCallback(async()=>{
+    const uid = (await supabase.auth.getUser()).data?.user?.id
+    let q = supabase.from('compta_prestations').select('*,compta_companies(raison_sociale)').eq('user_id',uid).order('created_at',{ascending:false})
+    if (companyId) q=q.eq('company_id',companyId)
+    const { data } = await q; setItems(data||[])
+  },[companyId])
+
+  useEffect(()=>{ load() },[load])
+
+  const set = e => {
+    const { name, value } = e.target
+    setForm(f=>{
+      const nf = {...f,[name]:value}
+      if (name==='quantite'||name==='prix') nf.montant = Math.round((parseFloat(name==='quantite'?value:nf.quantite)||0)*(parseFloat(name==='prix'?value:nf.prix)||0))
+      return nf
+    })
+  }
+
+  const openAdd = async ()=>{
+    const uid = (await supabase.auth.getUser()).data?.user?.id
+    const { count } = await supabase.from('compta_prestations').select('id',{count:'exact',head:true}).eq('user_id',uid)
+    const numero = `PREST-${new Date().getFullYear()}-${String((count||0)+1).padStart(4,'0')}`
+    setForm({ company_id:companyId||companies[0]?.id||'', numero_facture:numero, date_prestation:today(), nom_client:'', description:'', quantite:1, prix:0, montant:0 })
+    setModal(true)
+  }
+  const close = ()=>setModal(false)
+
+  const save = async e=>{
+    e.preventDefault(); setSaving(true)
+    const uid = (await supabase.auth.getUser()).data?.user?.id
+    const { company_id,numero_facture,date_prestation,nom_client,description,quantite,prix } = form
+    const montant = Math.round((parseFloat(quantite)||0)*(parseFloat(prix)||0))
+    const { error } = await supabase.from('compta_prestations').insert({ company_id,user_id:uid,numero_facture,date_prestation,nom_client,description,quantite:+quantite,prix:+prix,montant })
+    setSaving(false)
+    if (error) { toast.error(error.message); return }
+    toast.success('Prestation enregistrée !'); close(); load()
+  }
+
+  const del = async id=>{
+    if (!confirm('Supprimer cette prestation ?')) return
+    await supabase.from('compta_prestations').delete().eq('id',id)
+    toast.success('Supprimée.'); load()
+  }
+
+  const total = items.reduce((s,r)=>s+(r.montant||0),0)
+  const companyName = companies.find(c=>c.id===companyId)?.raison_sociale||''
+
+  return (
+    <div>
+      <PageHeader title="Prestations" subtitle={`${items.length} prestation(s) — Total : ${fcfa(total)}`}
+        actions={<Btn onClick={openAdd}>+ Nouvelle Prestation</Btn>}
+      />
+      <div style={{background:'white',borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
+        {items.length===0 ? (
+          <div style={{textAlign:'center',padding:'48px 24px',color:'#64748b'}}>
+            <div style={{fontSize:40,marginBottom:8}}>🛠️</div>
+            <p>Aucune prestation enregistrée</p>
+            <Btn onClick={openAdd}>+ Créer une prestation</Btn>
+          </div>
+        ) : (
+          <table style={{width:'100%',borderCollapse:'collapse'}}>
+            <thead><tr>
+              <TH>N° Facture</TH><TH>Date</TH><TH>Client</TH>
+              <TH>Description</TH><TH right>Qté</TH><TH right>Prix U.</TH>
+              <TH right>Montant</TH><TH>Actions</TH>
+            </tr></thead>
+            <tbody>
+              {items.map(r=>(
+                <TR key={r.id}>
+                  <TD bold sm>{r.numero_facture||'—'}</TD>
+                  <TD sm>{r.date_prestation}</TD>
+                  <TD bold>{r.nom_client||'—'}</TD>
+                  <TD sm>{r.description||'—'}</TD>
+                  <TD right>{(r.quantite||0).toFixed(2)}</TD>
+                  <TD right sm>{fcfa(r.prix)}</TD>
+                  <TD right bold color={ACCENT}>{fcfa(r.montant)}</TD>
+                  <TD>
+                    <div style={{display:'flex',gap:6}}>
+                      <Btn sm variant="info" onClick={()=>setPreview(r)}>👁️ Aperçu</Btn>
+                      <Btn sm variant="danger" onClick={()=>{ const html=buildPrestationHtml(r,companyName); const w=window.open('','_blank'); w.document.write(html); w.document.close() }}>🖨️ PDF</Btn>
+                      <Btn sm variant="danger" onClick={()=>del(r.id)}>🗑️ Sup</Btn>
+                    </div>
+                  </TD>
+                </TR>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      <PrestationPreviewModal open={!!preview} onClose={()=>setPreview(null)} row={preview} companyName={companyName} />
+
+      <Modal open={modal} onClose={close} title="Nouvelle Prestation" size="lg">
+        <form onSubmit={save}>
+          <Grid cols={2} gap={14} style={{marginBottom:16}}>
+            <Sel label="Société *" name="company_id" value={form.company_id} onChange={set}
+              options={[{value:'',label:'— Choisir —'},...companies.map(c=>({value:c.id,label:c.raison_sociale}))]} required />
+            <Input label="N° Facture" name="numero_facture" value={form.numero_facture} onChange={set} />
+            <Input label="Date *" name="date_prestation" type="date" value={form.date_prestation} onChange={set} required />
+            <Input label="Nom du client *" name="nom_client" value={form.nom_client} onChange={set} required />
+            <Span2>
+              <Input label="Description du produit / service *" name="description" value={form.description} onChange={set} required placeholder="Ex: Réparation moteur, Consultation, Formation..." />
+            </Span2>
+            <Input label="Quantité *" name="quantite" type="number" value={form.quantite} onChange={set} required min="0" step="0.01" />
+            <Input label="Prix unitaire (FCFA) *" name="prix" type="number" value={form.prix} onChange={set} required min="0" />
+            <Span2>
+              <label style={{display:'block',fontSize:12.5,fontWeight:600,color:'#374151',marginBottom:5}}>Montant <span style={{color:ACCENT,fontSize:10,fontWeight:700}}>calculé</span></label>
+              <div style={{padding:'9px 12px',background:'#eff6ff',borderRadius:8,border:'1px solid #bfdbfe',fontSize:15,fontWeight:800,color:ACCENT}}>{fcfa(form.montant||0)}</div>
+            </Span2>
+          </Grid>
+          <Row><Btn variant="secondary" onClick={close}>Annuler</Btn><Btn type="submit" disabled={saving}>{saving?'...':'💾 Enregistrer'}</Btn></Row>
         </form>
       </Modal>
     </div>
@@ -2487,6 +2799,7 @@ export default function ComptaPro() {
     etuvage:'Étuvage', decorticage:'Décorticage', calibrage:'Calibrage',
     tri_optique:'Tri Optique', conditionnement:'Conditionnement',
     achats:'Achats Semi-finis', reglements:'Règlements', etuvage_paiements:'Paiements Étuvage',
+    prestations:'Prestations',
   }
 
   const renderPage = () => {
@@ -2518,6 +2831,7 @@ export default function ComptaPro() {
       case 'lots':          return <LotsProductionPage {...sp} />
       case 'achats':        return <AchatsSemisPage {...sp} />
       case 'reglements':    return <ReglementsPage {...sp} />
+      case 'prestations':   return <PrestationPage {...sp} />
       case 'etuvage_paiements': return <PaiementsEtuvagePage {...sp} lots={lots} />
       case 'users':          return isSuperAdmin ? <UsersManagementPage toast={toast} /> : <Dashboard {...sp} setPage={setPage} />
     }
