@@ -853,7 +853,7 @@ function CompaniesPage({ companies, refresh, toast }) {
               {c.tel     && <div style={{fontSize:12.5,color:'#64748b',marginBottom:4}}>📞 {c.tel}</div>}
               {c.email   && <div style={{fontSize:12.5,color:'#64748b',marginBottom:12}}>✉️ {c.email}</div>}
               <div style={{display:'flex',gap:8,marginTop:12}}>
-                <Btn sm variant="secondary" onClick={()=>open(c)}>✏️ Modifier</Btn>
+                <Btn sm variant="secondary" onClick={()=>open(c)}>Modifier</Btn>
                 <Btn sm variant="danger" onClick={()=>del(c.id)}>🗑️</Btn>
               </div>
             </Card>
@@ -968,7 +968,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
                   <TD sm>{it.cip||'—'}</TD>
                   <TD>
                     <div style={{display:'flex',gap:6}}>
-                      <Btn sm variant="secondary" onClick={()=>open(it)}>✏️</Btn>
+                      <Btn sm variant="secondary" onClick={()=>open(it)}>Edit</Btn>
                       <Btn sm variant="danger" onClick={()=>archive(it.id)}>🗑️</Btn>
                     </div>
                   </TD>
@@ -1098,7 +1098,7 @@ function StockPage({ companies, companyId, setPage, toast }) {
                     <TD><Badge type={alerte?'warning':'success'}>{alerte?'⚠ Alerte':'✓ OK'}</Badge></TD>
                     <TD>
                       <div style={{display:'flex',gap:6}}>
-                        <Btn sm variant="secondary" onClick={()=>openEdit(a)}>✏️</Btn>
+                        <Btn sm variant="secondary" onClick={()=>openEdit(a)}>Edit</Btn>
                         <Btn sm variant="danger" onClick={()=>archive(a.id)}>🗑️</Btn>
                       </div>
                     </TD>
@@ -1362,7 +1362,7 @@ function InventairePage({ companies, companyId, setCompanyId }) {
         actions={
           <div style={{display:'flex',gap:8}}>
             <CompanySelector companies={companies} companyId={companyId} setCompanyId={setCompanyId} />
-            <Btn sm variant="secondary" onClick={()=>window.print()}>🖨️ Imprimer</Btn>
+            <Btn sm variant="secondary" onClick={()=>window.print()}>Imprimer</Btn>
           </div>
         }
       />
@@ -1486,6 +1486,8 @@ function CommercialPage({ companies, companyId, setPage, setDocId, toast }) {
               <TH right>Montant TTC</TH><TH right>Payé</TH><TH right>Reste</TH>
               <TH>Statut</TH><TH>Actions</TH>
             </tr></thead>
+            <tbody>
+              {docs.map(d=>{
                 const reste = (d.montant_ttc||0)-(d.montant_paye||0)
                 return (
                   <TR key={d.id}>
@@ -1499,13 +1501,13 @@ function CommercialPage({ companies, companyId, setPage, setDocId, toast }) {
                     <TD><Badge type={STATUT_COLORS[d.statut]||'secondary'}>{d.statut}</Badge></TD>
                     <TD>
                       <div style={{display:'flex',gap:6}}>
-                        <Btn sm variant="secondary" onClick={()=>{ setDocId(d.id); setPage('commercial-view') }}>👁</Btn>
+                        <Btn sm variant="secondary" onClick={()=>{ setDocId(d.id); setPage('commercial-view') }}>Voir</Btn>
                         <Btn sm variant="danger" onClick={async()=>{
-                          const {data:dFull}=await supabase.from('compta_documents').select('*,compta_clients(*),compta_companies(*)').eq('id',d.id).single()
-                          const {data:lFull}=await supabase.from('compta_lignes_document').select('*').eq('document_id',d.id)
-                          printCommercialDoc(dFull,lFull||[])
-                        }}>🖨️</Btn>
-                        <Btn sm variant="danger" onClick={()=>del(d.id)}>🗑️</Btn>
+                          const r1=await supabase.from('compta_documents').select('*,compta_clients(*),compta_companies(*)').eq('id',d.id).single()
+                          const r2=await supabase.from('compta_lignes_document').select('*').eq('document_id',d.id)
+                          if(r1.data) printCommercialDoc(r1.data,r2.data||[])
+                        }}>PDF</Btn>
+                        <Btn sm variant="danger" onClick={()=>del(d.id)}>Sup</Btn>
                       </div>
                     </TD>
                   </TR>
@@ -1700,7 +1702,7 @@ function CommercialViewPage({ docId, setPage, toast }) {
         subtitle={`N° ${doc.numero} — ${doc.date_doc}`}
         actions={<>
           <Btn variant="secondary" onClick={()=>setPage('commercial')}>← Retour liste</Btn>
-          <Btn variant="danger" onClick={()=>printCommercialDoc(doc, lignes)}>🖨️ PDF</Btn>
+          <Btn variant="danger" onClick={()=>printCommercialDoc(doc, lignes)}>PDF</Btn>
         </>}
       />
       <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'2fr 1fr',gap:24}}>
@@ -1828,7 +1830,7 @@ function LotsProductionPage({ companies, companyId, toast }) {
                   <TD bold>{l.numero_lot}</TD><TD>{l.date_debut}</TD><TD>{l.date_fin||'—'}</TD>
                   <TD right>{(l.qte_paddy_entree||0).toFixed(2)}</TD>
                   <TD><Badge type={{en_cours:'warning',termine:'success',annule:'danger'}[l.statut]||'secondary'}>{l.statut}</Badge></TD>
-                  <TD><Btn sm variant="secondary" onClick={()=>open(l)}>✏️</Btn></TD>
+                  <TD><Btn sm variant="secondary" onClick={()=>open(l)}>Edit</Btn></TD>
                 </TR>
               ))}
             </tbody>
@@ -2093,7 +2095,7 @@ function ReglementsPage({ companies, companyId, toast }) {
                   <TD right color="#16a34a" bold>{fcfa(r.montant_paye)}</TD>
                   <TD right color={(r.solde||0)>0?'#dc2626':'#16a34a'}>{fcfa(r.solde)}</TD>
                   <TD sm>{r.mode_paiement||'—'}</TD>
-                  <TD><Btn sm variant="danger" onClick={()=>printReglement(r)}>🖨️</Btn></TD>
+                  <TD><Btn sm variant="danger" onClick={()=>printReglement(r)}>PDF</Btn></TD>
                 </TR>
               ))}
             </tbody>
@@ -2206,7 +2208,7 @@ function PaiementsEtuvagePage({ companies, companyId, lots, toast }) {
                   <TD right color="#16a34a" bold>{fcfa(r.net_a_payer)}</TD>
                   <TD sm>{r.mode_paiement||'—'}</TD>
                   <TD><Badge type={{en_attente:'warning',paye:'success',annule:'danger'}[r.statut_paiement]||'secondary'}>{r.statut_paiement}</Badge></TD>
-                  <TD><Btn sm variant="danger" onClick={()=>printPaiementEtuvage(r)}>🖨️</Btn></TD>
+                  <TD><Btn sm variant="danger" onClick={()=>printPaiementEtuvage(r)}>PDF</Btn></TD>
                 </TR>
               ))}
             </tbody>
