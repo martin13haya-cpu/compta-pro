@@ -2045,6 +2045,7 @@ function LotsProductionPage({ companies, companyId, toast }) {
   const [saving,setSaving]  = useState(false)
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo,   setDateTo]   = useState('')
+  const [rowPreview, setRowPreview] = useState(null)
 
   const load = useCallback(async()=>{
     const uid = (await supabase.auth.getUser()).data?.user?.id
@@ -2096,14 +2097,58 @@ function LotsProductionPage({ companies, companyId, toast }) {
           <table style={{width:'100%',borderCollapse:'collapse'}}>
             <thead><tr><TH>N° Lot</TH><TH>Date début</TH><TH>Date fin</TH><TH right>Qté paddy (kg)</TH><TH>Statut</TH><TH>Actions</TH></tr></thead>
             <tbody>
-              {lots.map(l=>(
+              {lots.map(l=>{
+                const lotHtml = `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><title>Lot ${l.numero_lot}</title><style>${CSS_PRINT}</style></head><body>
+                  <button class="print-btn" onclick="window.print()">🖨️ Imprimer</button>
+                  <div class="header"><div><div class="company-name">${companyName}</div><div class="company-info">Lot de Production</div></div>
+                  <div class="doc-title"><h1>LOT DE PRODUCTION</h1><div class="doc-numero">${l.numero_lot}</div><div class="doc-date">Début : ${l.date_debut||'—'}</div></div></div>
+                  <table><thead><tr><th>Désignation</th><th class="r">Valeur</th></tr></thead><tbody>
+                    <tr><td>N° Lot</td><td class="r">${l.numero_lot}</td></tr>
+                    <tr><td>Date début</td><td class="r">${l.date_debut||'—'}</td></tr>
+                    <tr><td>Date fin</td><td class="r">${l.date_fin||'—'}</td></tr>
+                    <tr><td>Qté paddy entrée (kg)</td><td class="r">${(l.qte_paddy_entree||0).toFixed(2)} kg</td></tr>
+                    <tr><td>Statut</td><td class="r">${l.statut||'—'}</td></tr>
+                    ${l.notes?`<tr><td>Notes</td><td class="r">${l.notes}</td></tr>`:''}
+                  </tbody></table>
+                  <div class="signatures"><div class="sig-box">Responsable production</div><div class="sig-box">Visa direction</div></div>
+                </body></html>`
+                return (
                 <TR key={l.id}>
                   <TD bold>{l.numero_lot}</TD><TD>{l.date_debut}</TD><TD>{l.date_fin||'—'}</TD>
                   <TD right>{(l.qte_paddy_entree||0).toFixed(2)}</TD>
                   <TD><Badge type={{en_cours:'warning',termine:'success',annule:'danger'}[l.statut]||'secondary'}>{l.statut}</Badge></TD>
-                  <TD><Btn sm variant="secondary" onClick={()=>open(l)}>Edit</Btn></TD>
+                  <TD>
+                    <div style={{display:'flex',gap:4}}>
+                      <Btn sm variant="info" onClick={()=>setRowPreview({html:lotHtml,label:l.numero_lot})}>👁️</Btn>
+                      <Btn sm variant="danger" onClick={()=>{ const w=window.open('','_blank'); w.document.write(lotHtml); w.document.close() }}>🖨️</Btn>
+                      <Btn sm variant="secondary" onClick={()=>open(l)}>✏️</Btn>
+                    </div>
+                  </TD>
                 </TR>
-              ))}
+              )})}
+            </tbody>
+          </table>
+        )}
+      </div>
+      {/* Aperçu lot */}
+      {rowPreview && (
+        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,.7)', zIndex:3000,
+          display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', padding:16 }}>
+          <div style={{ background:'white', borderRadius:12, width:'100%', maxWidth:860,
+            maxHeight:'92vh', display:'flex', flexDirection:'column', boxShadow:'0 30px 80px rgba(0,0,0,.4)' }}>
+            <div style={{ padding:'12px 20px', background:'#0f2044', borderRadius:'12px 12px 0 0', display:'flex', alignItems:'center', justifyContent:'space-between' }}>
+              <span style={{ color:'white', fontWeight:700 }}>👁️ Aperçu — {rowPreview.label}</span>
+              <div style={{ display:'flex', gap:8 }}>
+                <button onClick={()=>{ const w=window.open('','_blank'); w.document.write(rowPreview.html); w.document.close() }}
+                  style={{ background:'#2563eb', color:'white', border:'none', padding:'7px 18px', borderRadius:7, fontWeight:700, cursor:'pointer' }}>🖨️ Imprimer</button>
+                <button onClick={()=>setRowPreview(null)}
+                  style={{ background:'rgba(255,255,255,.15)', color:'white', border:'none', padding:'7px 14px', borderRadius:7, fontWeight:700, cursor:'pointer' }}>✕</button>
+              </div>
+            </div>
+            <iframe srcDoc={rowPreview.html} style={{ flex:1, border:'none', borderRadius:'0 0 12px 12px' }} title="Aperçu lot" />
+          </div>
+        </div>
+      )}
             </tbody>
           </table>
         )}
@@ -2128,6 +2173,73 @@ function LotsProductionPage({ companies, companyId, toast }) {
   )
 }
 
+// ── PRODUCTION ROW — PDF + APERÇU ────────────────────────────────────────────
+function buildProductionRowHtml(it, title, fields, companyName) {
+  const date = it.date_etape || it.date_reception || it.date_debut || '—'
+  const lot   = it.compta_lots_production?.numero_lot || it.numero_lot || '—'
+  const rowsHtml = fields
+    .filter(f => f.name !== 'responsable_section')
+    .map(f => {
+      let val = it[f.name]
+      if (val === null || val === undefined || val === '') val = '—'
+      else if (f.type === 'number') val = (+(val)||0).toFixed(f.dec||2) + (f.unit ? ` ${f.unit}` : '')
+      return `<tr><td style="font-weight:600;width:50%;padding:7px 10px;border-bottom:1px solid #e2e8f0">${f.label}</td><td style="text-align:right;padding:7px 10px;border-bottom:1px solid #e2e8f0">${val}</td></tr>`
+    }).join('')
+  return `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">
+    <title>${title}</title>
+    <style>${CSS_PRINT}</style></head><body>
+    <button class="print-btn" onclick="window.print()">🖨️ Imprimer / PDF</button>
+    <div class="header">
+      <div>
+        <div class="company-name">${companyName||''}</div>
+        <div class="company-info">${title}</div>
+      </div>
+      <div class="doc-title">
+        <h1>${title.toUpperCase()}</h1>
+        <div class="doc-numero">N° Lot : ${lot}</div>
+        <div class="doc-date">Date : ${date}</div>
+      </div>
+    </div>
+    ${it.responsable_section ? `<div class="client-box"><strong>Responsable :</strong> ${it.responsable_section}</div>` : ''}
+    <table>
+      <thead><tr><th>Désignation</th><th class="r">Valeur</th></tr></thead>
+      <tbody>${rowsHtml}</tbody>
+    </table>
+    <div class="signatures" style="margin-top:40px">
+      <div class="sig-box">Signature du responsable<br><small>${it.responsable_section||''}</small></div>
+      <div class="sig-box">Visa superviseur</div>
+    </div>
+  </body></html>`
+}
+
+function ProductionRowPreviewModal({ open, onClose, it, title, fields, companyName }) {
+  if (!open || !it) return null
+  const html = buildProductionRowHtml(it, title, fields, companyName)
+  return (
+    <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,.7)', zIndex:3000,
+      display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', padding:16 }}>
+      <div style={{ background:'white', borderRadius:12, width:'100%', maxWidth:860,
+        maxHeight:'92vh', display:'flex', flexDirection:'column', boxShadow:'0 30px 80px rgba(0,0,0,.4)' }}>
+        <div style={{ padding:'12px 20px', borderBottom:'1px solid #e2e8f0', display:'flex',
+          alignItems:'center', justifyContent:'space-between', background:'#0f2044', borderRadius:'12px 12px 0 0' }}>
+          <span style={{ color:'white', fontWeight:700, fontSize:15 }}>👁️ Aperçu — {title}</span>
+          <div style={{ display:'flex', gap:8 }}>
+            <button onClick={()=>{ const w=window.open('','_blank'); w.document.write(html); w.document.close() }}
+              style={{ background:'#2563eb', color:'white', border:'none', padding:'7px 18px', borderRadius:7, fontWeight:700, fontSize:13, cursor:'pointer' }}>
+              🖨️ Imprimer / PDF
+            </button>
+            <button onClick={onClose}
+              style={{ background:'rgba(255,255,255,.15)', color:'white', border:'none', padding:'7px 14px', borderRadius:7, fontWeight:700, fontSize:14, cursor:'pointer' }}>
+              ✕ Fermer
+            </button>
+          </div>
+        </div>
+        <iframe srcDoc={html} style={{ flex:1, border:'none', borderRadius:'0 0 12px 12px', minHeight:0 }} title="Aperçu" />
+      </div>
+    </div>
+  )
+}
+
 // ── PRODUCTION STAGE — GÉNÉRIQUE ──────────────────────────────────────────────
 function ProductionStagePage({ tableName, title, accentColor, companies, companyId, lots, toast, fields }) {
   const [items, setItems]   = useState([])
@@ -2136,6 +2248,7 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
   const [saving,setSaving]  = useState(false)
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo,   setDateTo]   = useState('')
+  const [rowPreview, setRowPreview] = useState(null)
 
   const load = useCallback(async()=>{
     const uid = (await supabase.auth.getUser()).data?.user?.id
@@ -2247,7 +2360,13 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
                     </TD>
                   ))}
                   <TD sm>{it.responsable_section||'—'}</TD>
-                  <TD><Btn sm variant="danger" onClick={()=>del(it.id)}>Sup</Btn></TD>
+                  <TD>
+                    <div style={{display:'flex',gap:4}}>
+                      <Btn sm variant="info" onClick={()=>setRowPreview(it)}>👁️</Btn>
+                      <Btn sm variant="danger" onClick={()=>{ const html=buildProductionRowHtml(it,title,fields,companyName); const w=window.open('','_blank'); w.document.write(html); w.document.close() }}>🖨️</Btn>
+                      <Btn sm variant="danger" onClick={()=>del(it.id)}>Sup</Btn>
+                    </div>
+                  </TD>
                 </TR>
               ))}
             </tbody>
@@ -2257,11 +2376,11 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
       <Modal open={modal} onClose={close} title={`Nouveau — ${title}`} size="lg">
         <form onSubmit={save}>
           <Grid cols={2} gap={14} style={{marginBottom:16}}>
-            <Sel label="Société *" name="company_id" value={form.company_id} onChange={set}
+            <Sel label="Société *" name="company_id" value={form.company_id||''} onChange={set}
               options={[{value:'',label:'— Choisir —'},...companies.map(c=>({value:c.id,label:c.raison_sociale}))]} required />
-            <Sel label="Lot de production" name="lot_id" value={form.lot_id} onChange={set}
+            <Sel label="Lot de production" name="lot_id" value={form.lot_id||''} onChange={set}
               options={[{value:'',label:'— Aucun —'},...lots.map(l=>({value:l.id,label:l.numero_lot}))]} />
-            <Input label="Date" name="date_etape" type="date" value={form.date_etape} onChange={set} />
+            <Input label="Date" name="date_etape" type="date" value={form.date_etape||''} onChange={set} />
             {fields.map(f=> f.type==='select'
               ? <Sel key={f.name} label={f.label} name={f.name} value={form[f.name]||''} onChange={set} options={f.options||[]} />
               : f.calc
@@ -2277,6 +2396,7 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
           <Row><Btn variant="secondary" onClick={close}>Annuler</Btn><Btn type="submit" disabled={saving}>{saving?'...':'Enregistrer'}</Btn></Row>
         </form>
       </Modal>
+      <ProductionRowPreviewModal open={!!rowPreview} onClose={()=>setRowPreview(null)} it={rowPreview} title={title} fields={fields} companyName={companyName} />
     </div>
   )
 }
