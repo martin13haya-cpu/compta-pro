@@ -2148,26 +2148,30 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
 
   useEffect(()=>{ load() },[load])
 
-  useEffect(()=>{
-    if (tableName==='compta_conditionnement' && modal) {
-      const total = (+(form.nb_sac_5kg||0)*5) + (+(form.nb_sac_25kg||0)*25) + (+(form.nb_sac_50kg||0)*50) + (+(form.nb_sac_5x5kg||0)*25)
-      const ecart = (+(form.poids_recu||0)) - total - (+(form.reste||0))
-      setForm(f=>({...f, poids_total_conditionne: Math.round(total*1000)/1000, ecart: Math.round(ecart*1000)/1000}))
-    }
-  },[form.nb_sac_5kg, form.nb_sac_25kg, form.nb_sac_50kg, form.nb_sac_5x5kg, form.poids_recu, form.reste, tableName, modal])
-
+  // ── Calcul conditionnement ─────────────────────────────────────────────────
   const calcConditionnement = (f) => {
-    const total = (+(f.nb_sac_5kg||0)*5) + (+(f.nb_sac_25kg||0)*25) + (+(f.nb_sac_50kg||0)*50) + (+(f.nb_sac_5x5kg||0)*25)
-    const ecart = (+(f.poids_recu||0)) - total - (+(f.reste||0))
-    return { ...f, poids_total_conditionne: Math.round(total*1000)/1000, ecart: Math.round(ecart*1000)/1000 }
+    const s5    = parseFloat(f.nb_sac_5kg)   || 0
+    const s25   = parseFloat(f.nb_sac_25kg)  || 0
+    const s50   = parseFloat(f.nb_sac_50kg)  || 0
+    const s5x5  = parseFloat(f.nb_sac_5x5kg) || 0
+    const recu  = parseFloat(f.poids_recu)   || 0
+    const reste = parseFloat(f.reste)        || 0
+    const total = (s5*5) + (s25*25) + (s50*50) + (s5x5*25)
+    const ecart = recu - total - reste
+    return {
+      ...f,
+      poids_total_conditionne: Math.round(total * 1000) / 1000,
+      ecart:                   Math.round(ecart * 1000) / 1000,
+    }
   }
 
-  const set = e=>{
+  const COND_FIELDS = ['nb_sac_5kg','nb_sac_25kg','nb_sac_50kg','nb_sac_5x5kg','poids_recu','reste']
+
+  const set = e => {
     const { name, value } = e.target
-    setForm(f=>{
-      const nf = {...f, [name]:value}
-      if (tableName==='compta_conditionnement' &&
-        ['nb_sac_5kg','nb_sac_25kg','nb_sac_50kg','nb_sac_5x5kg','poids_recu','reste'].includes(name)) {
+    setForm(f => {
+      const nf = { ...f, [name]: value }
+      if (tableName === 'compta_conditionnement' && COND_FIELDS.includes(name)) {
         return calcConditionnement(nf)
       }
       return nf
