@@ -7,6 +7,12 @@ const SUPABASE_ANON_KEY  = 'sb_publishable_DqCGxDWGqJ5K0rnnzDv6Hg_gWG7wzfX'
 const SUPER_ADMIN_EMAIL  = 'martin13haya@gmail.com'
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
 
+// Helper : retourne un filtre uid ou company selon le rôle
+async function buildQuery(q, uid, companyId, isAdmin) {
+  if (isAdmin && companyId) return q.eq('company_id', companyId)
+  return q.eq('user_id', uid)
+}
+
 // ── RESPONSIVE HOOK ─────────────────────────────────────────────────────────
 function useResponsive() {
   const [width, setWidth] = useState(window.innerWidth)
@@ -958,13 +964,20 @@ function Dashboard({ companyId, toast, setPage }) {
 }
 
 // ── COMPANIES ────────────────────────────────────────────────────────────────
-function CompaniesPage({ companies, refresh, toast }) {
+function CompaniesPage({ companies, refresh, toast, isSuperAdmin=false }) {
   const [modal, setModal] = useState(null)
   const [form,  setForm]  = useState({})
   const [saving,setSaving]= useState(false)
   const set = e => setForm(f=>({...f,[e.target.name]:e.target.value}))
 
-  const open = (c=null) => { setForm(c?{...c}:{raison_sociale:'',rccm:'',adresse:'',tel:'',email:''}); setModal(c?'edit':'add') }
+  const open = (c=null) => {
+    if (!c && !isSuperAdmin && companies.length >= 1) {
+      toast.error('Vous ne pouvez créer qu\'une seule société. Contactez l\'administrateur pour plus.')
+      return
+    }
+    setForm(c?{...c}:{raison_sociale:'',rccm:'',adresse:'',tel:'',email:''})
+    setModal(c?'edit':'add')
+  }
   const close = () => setModal(null)
 
   const save = async e => {
@@ -1032,7 +1045,7 @@ function CompaniesPage({ companies, refresh, toast }) {
 }
 
 // ── TIERS GENERIQUE (Clients + Fournisseurs partagent la même logique) ───────
-function TiersPage({ table, title, titleSingle, icon, companies, companyId, toast, extraFields }) {
+function TiersPage({ table, title, titleSingle, icon, companies, companyId, toast, extraFields, readOnly=false }) {
   const [items,  setItems]  = useState([])
   const [modal,  setModal]  = useState(null)
   const [form,   setForm]   = useState({})
@@ -1167,7 +1180,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
 }
 
 // ── STOCK — ARTICLES ─────────────────────────────────────────────────────────
-function StockPage({ companies, companyId, setPage, toast }) {
+function StockPage({ companies, companyId, setPage, toast, readOnly=false }) {
   const [articles, setArticles] = useState([])
   const [modal,   setModal]    = useState(null)
   const [form,    setForm]     = useState({})
@@ -1443,15 +1456,16 @@ function StockSortiePage({ companies, companyId, setPage, toast }) {
 }
 
 // ── MOUVEMENTS ────────────────────────────────────────────────────────────────
-function MouvementsPage({ companies, companyId, setPage }) {
+function MouvementsPage({ companies, companyId, setPage, readOnly=false }) {
   const [items, setItems] = useState([])
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo,   setDateTo]   = useState('')
 
   const load = useCallback(async()=>{
     const uid = (await supabase.auth.getUser()).data?.user?.id
-    let q = supabase.from('compta_mouvements_stock').select('*,compta_articles(designation,unite)').eq('user_id',uid).order('date_mvt',{ascending:false}).limit(500)
-    if (companyId) q=q.eq('company_id',companyId)
+    const { data:adock } = await supabase.auth.getUser(); const uidock=adock?.user?.id; const isAdmock=adock?.user?.email===SUPER_ADMIN_EMAIL
+    let q = supabase.from('compta_mouvements_stock').select('*,compta_articles(designation,unite)').order('date_mvt',{ascending:false}).limit(500)
+    q = isAdmock&&companyId ? q.eq('company_id',companyId) : q.eq('user_id',uidock); if(companyId&&!isAdmock) q=q.eq('company_id',companyId)
     if (dateFrom)  q=q.gte('date_mvt',dateFrom)
     if (dateTo)    q=q.lte('date_mvt',dateTo)
     const { data } = await q; setItems(data||[])
@@ -1486,8 +1500,8 @@ function MouvementsPage({ companies, companyId, setPage }) {
     <div>
       <PageHeader title="Mouvements de stock" subtitle={`${items.length} mouvement(s)`}
         actions={<>
-          <Btn sm variant="success" onClick={()=>setPage('stock-entree')}>↓ Entrée</Btn>
-          <Btn sm variant="warning" onClick={()=>setPage('stock-sortie')}>↑ Sortie</Btn>
+          {!readOnly && <Btn sm variant="success" onClick={()=>setPage('stock-entree')}>↓ Entrée</Btn>}
+          {!readOnly && <Btn sm variant="warning" onClick={()=>setPage('stock-sortie')}>↑ Sortie</Btn>}
           <Btn sm variant="info" onClick={exportCSV}>📊 Exporter Excel</Btn>
         </>}
       />
@@ -1627,7 +1641,7 @@ function InventairePage({ companies, companyId, setCompanyId }) {
 }
 
 // ── COMMERCIAL — LISTE ────────────────────────────────────────────────────────
-function CommercialPage({ companies, companyId, setPage, setDocId, toast }) {
+function CommercialPage({ companies, companyId, setPage, setDocId, toast, readOnly=false }) {
   const [docs, setDocs] = useState([])
   const [typeF, setTypeF]   = useState('')
   const [statF, setStatF]   = useState('')
@@ -1636,9 +1650,11 @@ function CommercialPage({ companies, companyId, setPage, setDocId, toast }) {
   const [dateTo,   setDateTo]   = useState('')
 
   const load = useCallback(async()=>{
-    const uid = (await supabase.auth.getUser()).data?.user?.id
-    let q = supabase.from('compta_documents').select('*,compta_clients(nom,prenom,nom_societe,type),compta_companies(raison_sociale)').eq('user_id',uid).order('date_doc',{ascending:false})
-    if (companyId) q=q.eq('company_id',companyId)
+    const { data:ad } = await supabase.auth.getUser()
+    const uid=ad?.user?.id; const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
+    let q = supabase.from('compta_documents').select('*,compta_clients(nom,prenom,nom_societe,type),compta_companies(raison_sociale)').order('date_doc',{ascending:false})
+    q = isAdmin&&companyId ? q.eq('company_id',companyId) : q.eq('user_id',uid)
+    if (companyId&&!isAdmin) q=q.eq('company_id',companyId)
     if (typeF)     q=q.eq('type_doc',typeF)
     if (statF)     q=q.eq('statut',statF)
     if (dateFrom)  q=q.gte('date_doc',dateFrom)
@@ -2038,7 +2054,7 @@ function CommercialViewPage({ docId, setPage, toast }) {
 }
 
 // ── LOTS PRODUCTION ───────────────────────────────────────────────────────────
-function LotsProductionPage({ companies, companyId, toast }) {
+function LotsProductionPage({ companies, companyId, toast, readOnly=false }) {
   const [lots, setLots]     = useState([])
   const [modal, setModal]   = useState(null)
   const [form,  setForm]    = useState({})
@@ -2049,8 +2065,9 @@ function LotsProductionPage({ companies, companyId, toast }) {
 
   const load = useCallback(async()=>{
     const uid = (await supabase.auth.getUser()).data?.user?.id
-    let q = supabase.from('compta_lots_production').select('*,compta_companies(raison_sociale)').eq('user_id',uid).order('date_debut',{ascending:false})
-    if (companyId) q=q.eq('company_id',companyId)
+    const { data:adion } = await supabase.auth.getUser(); const uidion=adion?.user?.id; const isAdmion=adion?.user?.email===SUPER_ADMIN_EMAIL
+    let q = supabase.from('compta_lots_production').select('*,compta_companies(raison_sociale)').order('date_debut',{ascending:false})
+    q = isAdmion&&companyId ? q.eq('company_id',companyId) : q.eq('user_id',uidion); if(companyId&&!isAdmion) q=q.eq('company_id',companyId)
     if (dateFrom)  q=q.gte('date_debut',dateFrom)
     if (dateTo)    q=q.lte('date_debut',dateTo)
     const { data } = await q; setLots(data||[])
@@ -2086,7 +2103,7 @@ function LotsProductionPage({ companies, companyId, toast }) {
       <PageHeader title="Lots de Production" subtitle={`${lots.length} lot(s)`}
         actions={<>
           <Btn sm variant="danger" onClick={printFiltered}>🖨️ PDF</Btn>
-          <Btn onClick={()=>open()}>+ Nouveau Lot</Btn>
+          {!readOnly && <Btn onClick={()=>open()}>+ Nouveau Lot</Btn>}
         </>}
       />
       <PeriodFilter dateFrom={dateFrom} dateTo={dateTo} onFrom={setDateFrom} onTo={setDateTo} onReset={()=>{setDateFrom('');setDateTo('')}} />
@@ -2121,7 +2138,7 @@ function LotsProductionPage({ companies, companyId, toast }) {
                     <div style={{display:'flex',gap:4}}>
                       <Btn sm variant="info" onClick={()=>setRowPreview({html:lotHtml,label:l.numero_lot})}>👁️</Btn>
                       <Btn sm variant="danger" onClick={()=>{ const w=window.open('','_blank'); w.document.write(lotHtml); w.document.close() }}>🖨️</Btn>
-                      <Btn sm variant="secondary" onClick={()=>open(l)}>✏️</Btn>
+                      {!readOnly && <Btn sm variant="secondary" onClick={()=>open(l)}>✏️</Btn>}
                     </div>
                   </TD>
                 </TR>
@@ -2241,7 +2258,7 @@ function ProductionRowPreviewModal({ open, onClose, it, title, fields, companyNa
 }
 
 // ── PRODUCTION STAGE — GÉNÉRIQUE ──────────────────────────────────────────────
-function ProductionStagePage({ tableName, title, accentColor, companies, companyId, lots, toast, fields }) {
+function ProductionStagePage({ tableName, title, accentColor, companies, companyId, lots, toast, fields, readOnly=false }) {
   const [items, setItems]   = useState([])
   const [modal, setModal]   = useState(false)
   const [form,  setForm]    = useState({})
@@ -2251,9 +2268,11 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
   const [rowPreview, setRowPreview] = useState(null)
 
   const load = useCallback(async()=>{
-    const uid = (await supabase.auth.getUser()).data?.user?.id
-    let q = supabase.from(tableName).select('*,compta_lots_production(numero_lot)').eq('user_id',uid).order('date_etape',{ascending:false})
-    if (companyId) q=q.eq('company_id',companyId)
+    const { data:authD } = await supabase.auth.getUser()
+    const uid = authD?.user?.id; const isAdm = authD?.user?.email === SUPER_ADMIN_EMAIL
+    let q = supabase.from(tableName).select('*,compta_lots_production(numero_lot)').order('date_etape',{ascending:false})
+    q = isAdm && companyId ? q.eq('company_id',companyId) : q.eq('user_id',uid)
+    if (companyId && !isAdm) q=q.eq('company_id',companyId)
     if (dateFrom)  q=q.gte('date_etape',dateFrom)
     if (dateTo)    q=q.lte('date_etape',dateTo)
     const { data } = await q; setItems(data||[])
@@ -2413,7 +2432,7 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
         actions={<>
           <Btn sm variant="success" onClick={exportExcel}>📊 Excel</Btn>
           <Btn sm variant="danger" onClick={printFiltered}>🖨️ PDF</Btn>
-          <Btn onClick={openAdd}>+ Nouveau</Btn>
+          {!readOnly && <Btn onClick={openAdd}>+ Nouveau</Btn>}
         </>}
       />
       <PeriodFilter dateFrom={dateFrom} dateTo={dateTo} onFrom={setDateFrom} onTo={setDateTo} onReset={()=>{setDateFrom('');setDateTo('')}} />
@@ -2442,7 +2461,7 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
                     <div style={{display:'flex',gap:4}}>
                       <Btn sm variant="info" onClick={()=>setRowPreview(it)}>👁️</Btn>
                       <Btn sm variant="danger" onClick={()=>{ const html=buildProductionRowHtml(it,title,fields,companyName); const w=window.open('','_blank'); w.document.write(html); w.document.close() }}>🖨️</Btn>
-                      <Btn sm variant="danger" onClick={()=>del(it.id)}>Sup</Btn>
+                      {!readOnly && <Btn sm variant="danger" onClick={()=>del(it.id)}>Sup</Btn>}
                     </div>
                   </TD>
                 </TR>
@@ -2566,7 +2585,7 @@ function PrestationPreviewModal({ open, onClose, row, companyName }) {
   )
 }
 
-function PrestationPage({ companies, companyId, toast }) {
+function PrestationPage({ companies, companyId, toast, readOnly=false }) {
   const [items,  setItems]  = useState([])
   const [modal,  setModal]  = useState(false)
   const [form,   setForm]   = useState({})
@@ -2577,8 +2596,9 @@ function PrestationPage({ companies, companyId, toast }) {
 
   const load = useCallback(async()=>{
     const uid = (await supabase.auth.getUser()).data?.user?.id
-    let q = supabase.from('compta_prestations').select('*,compta_companies(raison_sociale)').eq('user_id',uid).order('date_prestation',{ascending:false})
-    if (companyId) q=q.eq('company_id',companyId)
+    const { data:adons } = await supabase.auth.getUser(); const uidons=adons?.user?.id; const isAdmons=adons?.user?.email===SUPER_ADMIN_EMAIL
+    let q = supabase.from('compta_prestations').select('*,compta_companies(raison_sociale)').order('date_prestation',{ascending:false})
+    q = isAdmons&&companyId ? q.eq('company_id',companyId) : q.eq('user_id',uidons); if(companyId&&!isAdmons) q=q.eq('company_id',companyId)
     if (dateFrom)  q=q.gte('date_prestation',dateFrom)
     if (dateTo)    q=q.lte('date_prestation',dateTo)
     const { data } = await q; setItems(data||[])
@@ -2636,7 +2656,7 @@ function PrestationPage({ companies, companyId, toast }) {
       <PageHeader title="Prestations" subtitle={`${items.length} prestation(s) — Total : ${fcfa(total)}`}
         actions={<>
           <Btn sm variant="danger" onClick={printFilteredP}>🖨️ PDF liste</Btn>
-          <Btn onClick={openAdd}>+ Nouvelle Prestation</Btn>
+          {!readOnly && <Btn onClick={openAdd}>+ Nouvelle Prestation</Btn>}
         </>}
       />
       <PeriodFilter dateFrom={dateFrom} dateTo={dateTo} onFrom={setDateFrom} onTo={setDateTo} onReset={()=>{setDateFrom('');setDateTo('')}} />
@@ -2706,7 +2726,7 @@ function PrestationPage({ companies, companyId, toast }) {
 }
 
 // ── ACHATS SEMI-FINIS ─────────────────────────────────────────────────────────
-function AchatsSemisPage({ companies, companyId, toast }) {
+function AchatsSemisPage({ companies, companyId, toast, readOnly=false }) {
   const [items, setItems]   = useState([])
   const [modal, setModal]   = useState(false)
   const [form,  setForm]    = useState({})
@@ -2716,8 +2736,9 @@ function AchatsSemisPage({ companies, companyId, toast }) {
 
   const load = useCallback(async()=>{
     const uid = (await supabase.auth.getUser()).data?.user?.id
-    let q = supabase.from('compta_achats_semi_finis').select('*,compta_companies(raison_sociale)').eq('user_id',uid).order('date_achat',{ascending:false})
-    if (companyId) q=q.eq('company_id',companyId)
+    const { data:adnis } = await supabase.auth.getUser(); const uidnis=adnis?.user?.id; const isAdmnis=adnis?.user?.email===SUPER_ADMIN_EMAIL
+    let q = supabase.from('compta_achats_semi_finis').select('*,compta_companies(raison_sociale)').order('date_achat',{ascending:false})
+    q = isAdmnis&&companyId ? q.eq('company_id',companyId) : q.eq('user_id',uidnis); if(companyId&&!isAdmnis) q=q.eq('company_id',companyId)
     if (dateFrom)  q=q.gte('date_achat',dateFrom)
     if (dateTo)    q=q.lte('date_achat',dateTo)
     const { data } = await q; setItems(data||[])
@@ -2760,7 +2781,7 @@ function AchatsSemisPage({ companies, companyId, toast }) {
       <PageHeader title="Achats Semi-finis" subtitle={`${items.length} achat(s) — Total : ${fcfa(total)}`}
         actions={<>
           <Btn sm variant="danger" onClick={printFilteredA}>🖨️ PDF liste</Btn>
-          <Btn onClick={openAdd}>+ Nouvel Achat</Btn>
+          {!readOnly && <Btn onClick={openAdd}>+ Nouvel Achat</Btn>}
         </>} />
       <PeriodFilter dateFrom={dateFrom} dateTo={dateTo} onFrom={setDateFrom} onTo={setDateTo} onReset={()=>{setDateFrom('');setDateTo('')}} />
       <div style={{background:'white',borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
@@ -2816,7 +2837,7 @@ function AchatsSemisPage({ companies, companyId, toast }) {
 }
 
 // ── RÈGLEMENTS ────────────────────────────────────────────────────────────────
-function ReglementsPage({ companies, companyId, toast }) {
+function ReglementsPage({ companies, companyId, toast, readOnly=false }) {
   const [items, setItems]   = useState([])
   const [modal, setModal]   = useState(false)
   const [form,  setForm]    = useState({})
@@ -2826,8 +2847,9 @@ function ReglementsPage({ companies, companyId, toast }) {
 
   const load = useCallback(async()=>{
     const uid = (await supabase.auth.getUser()).data?.user?.id
-    let q = supabase.from('compta_reglements').select('*,compta_companies(raison_sociale)').eq('user_id',uid).order('date_paiement',{ascending:false})
-    if (companyId) q=q.eq('company_id',companyId)
+    const { data:adnts } = await supabase.auth.getUser(); const uidnts=adnts?.user?.id; const isAdmnts=adnts?.user?.email===SUPER_ADMIN_EMAIL
+    let q = supabase.from('compta_reglements').select('*,compta_companies(raison_sociale)').order('date_paiement',{ascending:false})
+    q = isAdmnts&&companyId ? q.eq('company_id',companyId) : q.eq('user_id',uidnts); if(companyId&&!isAdmnts) q=q.eq('company_id',companyId)
     if (dateFrom)  q=q.gte('date_paiement',dateFrom)
     if (dateTo)    q=q.lte('date_paiement',dateTo)
     const { data } = await q; setItems(data||[])
@@ -2865,7 +2887,7 @@ function ReglementsPage({ companies, companyId, toast }) {
         subtitle={`${items.length} règlement(s) — Total payé : ${fcfa(total)}`}
         actions={<>
           <Btn sm variant="danger" onClick={printFilteredR}>🖨️ PDF liste</Btn>
-          <Btn onClick={openAdd}>+ Nouveau Règlement</Btn>
+          {!readOnly && <Btn onClick={openAdd}>+ Nouveau Règlement</Btn>}
         </>} />
       <PeriodFilter dateFrom={dateFrom} dateTo={dateTo} onFrom={setDateFrom} onTo={setDateTo} onReset={()=>{setDateFrom('');setDateTo('')}} />
       <div style={{background:'white',borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
@@ -2932,8 +2954,9 @@ function PaiementsEtuvagePage({ companies, companyId, lots, toast }) {
 
   const load = useCallback(async()=>{
     const uid = (await supabase.auth.getUser()).data?.user?.id
-    let q = supabase.from('compta_paiements_etuvage').select('*,compta_companies(raison_sociale)').eq('user_id',uid).order('created_at',{ascending:false})
-    if (companyId) q=q.eq('company_id',companyId)
+    const { data:adage } = await supabase.auth.getUser(); const uidage=adage?.user?.id; const isAdmage=adage?.user?.email===SUPER_ADMIN_EMAIL
+    let q = supabase.from('compta_paiements_etuvage').select('*,compta_companies(raison_sociale)').order('created_at',{ascending:false})
+    q = isAdmage&&companyId ? q.eq('company_id',companyId) : q.eq('user_id',uidage); if(companyId&&!isAdmage) q=q.eq('company_id',companyId)
     const { data } = await q; setItems(data||[])
   },[companyId])
 
@@ -2972,7 +2995,7 @@ function PaiementsEtuvagePage({ companies, companyId, lots, toast }) {
 
   return (
     <div>
-      <PageHeader title="Paiements Étuvage" subtitle={`${items.length} paiement(s)`} actions={<Btn onClick={openAdd}>+ Nouveau Paiement</Btn>} />
+      <PageHeader title="Paiements Étuvage" subtitle={`${items.length} paiement(s)`} actions={!readOnly ? <Btn onClick={openAdd}>+ Nouveau Paiement</Btn> : null} />
       <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:12,marginBottom:16}}>
         {[{l:'Total Brut',v:fcfa(tb),c:'#ea580c'},{l:'Total Retenue AIB',v:fcfa(ta),c:'#dc2626'},{l:'Total Net à Payer',v:fcfa(tn),c:'#16a34a'}].map(s=>(
           <Card key={s.l}><div style={{fontSize:12,color:'#64748b',marginBottom:4}}>{s.l}</div><div style={{fontSize:20,fontWeight:800,color:s.c}}>{s.v}</div></Card>
@@ -3039,6 +3062,91 @@ function PaiementsEtuvagePage({ companies, companyId, lots, toast }) {
   )
 }
 
+// ── SUPER ADMIN DASHBOARD ─────────────────────────────────────────────────────
+function SuperAdminDashboard({ companies, onSelect, toast }) {
+  const [stats, setStats] = useState({})
+
+  useEffect(()=>{
+    const loadStats = async () => {
+      const s = {}
+      for (const c of companies) {
+        const [docs, lots, prest] = await Promise.all([
+          supabase.from('compta_documents').select('montant_ttc').eq('company_id',c.id),
+          supabase.from('compta_lots_production').select('id').eq('company_id',c.id),
+          supabase.from('compta_prestations').select('montant').eq('company_id',c.id),
+        ])
+        s[c.id] = {
+          ca: (docs.data||[]).reduce((a,d)=>a+(d.montant_ttc||0),0),
+          lots: lots.data?.length||0,
+          prest: (prest.data||[]).reduce((a,p)=>a+(p.montant||0),0),
+        }
+      }
+      setStats(s)
+    }
+    if (companies.length) loadStats()
+  },[companies])
+
+  const totalCA   = Object.values(stats).reduce((a,s)=>a+(s.ca||0),0)
+  const totalLots = Object.values(stats).reduce((a,s)=>a+(s.lots||0),0)
+
+  return (
+    <div>
+      <PageHeader title="Vue Globale — Toutes les Sociétés"
+        subtitle={`${companies.length} société(s) enregistrée(s) sur la plateforme`} />
+
+      {/* KPIs globaux */}
+      <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:16,marginBottom:24}}>
+        {[
+          {icon:'🏢',label:'Sociétés actives',val:companies.length,color:'#2563eb'},
+          {icon:'💰',label:'CA total (toutes sociétés)',val:fcfa(totalCA),color:'#16a34a'},
+          {icon:'📦',label:'Lots de production',val:totalLots,color:'#ea580c'},
+        ].map(k=>(
+          <Card key={k.label} style={{padding:'18px 20px'}}>
+            <div style={{fontSize:28,marginBottom:6}}>{k.icon}</div>
+            <div style={{fontSize:12,color:'#64748b',marginBottom:4}}>{k.label}</div>
+            <div style={{fontSize:22,fontWeight:800,color:k.color}}>{k.val}</div>
+          </Card>
+        ))}
+      </div>
+
+      {/* Liste des sociétés */}
+      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(300px,1fr))',gap:16}}>
+        {companies.map(c=>{
+          const s = stats[c.id]||{}
+          return (
+            <div key={c.id} style={{background:'white',borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden',
+              boxShadow:'0 1px 3px rgba(0,0,0,.06)',cursor:'pointer',transition:'all .2s'}}
+              onClick={()=>onSelect(c)}
+              onMouseEnter={e=>{e.currentTarget.style.boxShadow='0 8px 24px rgba(37,99,235,.15)';e.currentTarget.style.borderColor='#2563eb'}}
+              onMouseLeave={e=>{e.currentTarget.style.boxShadow='0 1px 3px rgba(0,0,0,.06)';e.currentTarget.style.borderColor='#e2e8f0'}}>
+              <div style={{padding:'16px 20px',background:'linear-gradient(135deg,#0f2044,#1e3a6e)',color:'white'}}>
+                <div style={{fontWeight:700,fontSize:15,marginBottom:4}}>{c.raison_sociale}</div>
+                <div style={{fontSize:11,opacity:.7}}>{c.rccm||'RCCM non renseigné'}</div>
+              </div>
+              <div style={{padding:'14px 20px'}}>
+                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:14}}>
+                  <div style={{textAlign:'center',background:'#f8fafc',borderRadius:8,padding:'8px 4px'}}>
+                    <div style={{fontSize:11,color:'#64748b'}}>CA Documents</div>
+                    <div style={{fontSize:14,fontWeight:700,color:'#16a34a'}}>{fcfa(s.ca||0)}</div>
+                  </div>
+                  <div style={{textAlign:'center',background:'#f8fafc',borderRadius:8,padding:'8px 4px'}}>
+                    <div style={{fontSize:11,color:'#64748b'}}>Lots production</div>
+                    <div style={{fontSize:14,fontWeight:700,color:'#ea580c'}}>{s.lots||0}</div>
+                  </div>
+                </div>
+                <button style={{width:'100%',padding:'9px',background:'#2563eb',color:'white',border:'none',
+                  borderRadius:8,fontWeight:700,fontSize:13,cursor:'pointer'}}>
+                  👁️ Consulter les données →
+                </button>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 // ── APP PRINCIPAL ─────────────────────────────────────────────────────────────
 export default function ComptaPro() {
   const [user,      setUser]      = useState(null)
@@ -3050,10 +3158,12 @@ export default function ComptaPro() {
   const [lots,      setLots]      = useState([])
   const [docId,     setDocId]     = useState(null)
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [adminViewCompany, setAdminViewCompany] = useState(null)
   const toast = useToast()
   const { isMobile, isTablet } = useResponsive()
   const collapsed = isMobile || isTablet
-  const isSuperAdmin = profile?.role === 'super_admin'
+
+  const isSuperAdmin = user?.email === SUPER_ADMIN_EMAIL
 
   // Auth + Profile
   useEffect(()=>{
@@ -3074,21 +3184,28 @@ export default function ComptaPro() {
     return ()=>subscription.unsubscribe()
   },[])
 
-  // Load companies
+  // Load companies — super admin voit toutes les sociétés
   const loadCompanies = useCallback(async()=>{
-    const uid = (await supabase.auth.getUser()).data?.user?.id
+    const { data:authData } = await supabase.auth.getUser()
+    const uid = authData?.user?.id
     if (!uid) return
-    const { data } = await supabase.from('compta_companies').select('*').eq('user_id',uid).order('raison_sociale')
+    const isAdmin = authData?.user?.email === SUPER_ADMIN_EMAIL
+    let q = supabase.from('compta_companies').select('*').order('raison_sociale')
+    if (!isAdmin) q = q.eq('user_id', uid)
+    const { data } = await q
     setCompanies(data||[])
     if (!companyId && data?.length>0) setCompanyId(data[0].id)
   },[companyId])
 
-  // Load lots (used by production stages and paiements etuvage)
+  // Load lots
   const loadLots = useCallback(async()=>{
-    const uid = (await supabase.auth.getUser()).data?.user?.id
+    const { data:authData } = await supabase.auth.getUser()
+    const uid = authData?.user?.id
     if (!uid) return
-    let q = supabase.from('compta_lots_production').select('*').eq('user_id',uid).order('created_at',{ascending:false})
-    if (companyId) q=q.eq('company_id',companyId)
+    const isAdmin = authData?.user?.email === SUPER_ADMIN_EMAIL
+    let q = supabase.from('compta_lots_production').select('*').order('created_at',{ascending:false})
+    if (!isAdmin) q = q.eq('user_id', uid)
+    if (companyId) q = q.eq('company_id', companyId)
     const { data } = await q; setLots(data||[])
   },[companyId])
 
@@ -3118,7 +3235,11 @@ export default function ComptaPro() {
     </div>
   )
 
-  const sp = { companies, companyId, toast }
+  // companyId effectif : si super admin consulte une société, utiliser son id
+  const effectiveCompanyId = isSuperAdmin && adminViewCompany ? adminViewCompany.id : companyId
+  const readOnly = isSuperAdmin && !!adminViewCompany
+
+  const sp = { companies, companyId: effectiveCompanyId, toast, readOnly }
 
   // Production stages config
   const STAGES = {
@@ -3195,6 +3316,14 @@ export default function ComptaPro() {
   }
 
   const renderPage = () => {
+    // Super admin — dashboard global ou vue société
+    if (isSuperAdmin) {
+      if (!adminViewCompany) {
+        return <SuperAdminDashboard companies={companies} toast={toast}
+          onSelect={c=>{ setAdminViewCompany(c); setPage('dashboard') }} />
+      }
+    }
+
     // Commercial new: page = 'commercial-new-{type}'
     if (page.startsWith('commercial-new-')) {
       const typeDoc = page.replace('commercial-new-','')
@@ -3208,7 +3337,7 @@ export default function ComptaPro() {
     }
     switch (page) {
       case 'dashboard':     return <Dashboard {...sp} setPage={setPage} />
-      case 'companies':     return <CompaniesPage companies={companies} refresh={loadCompanies} toast={toast} />
+      case 'companies':     return <CompaniesPage companies={companies} refresh={loadCompanies} toast={toast} isSuperAdmin={isSuperAdmin} />
       case 'clients':       return <TiersPage table="compta_clients" title="Clients" titleSingle="Client" icon="👥" {...sp}
                               extraFields={{ names:[], headers:[], fields:[], defaults:{type:'physique',nom_societe:''} }} />
       case 'fournisseurs':  return <TiersPage table="compta_fournisseurs" title="Fournisseurs" titleSingle="Fournisseur" icon="🚚" {...sp}
@@ -3217,7 +3346,7 @@ export default function ComptaPro() {
       case 'stock-entree':  return <StockEntreePage {...sp} setPage={setPage} />
       case 'stock-sortie':  return <StockSortiePage {...sp} setPage={setPage} />
       case 'mouvements':    return <MouvementsPage {...sp} setPage={setPage} />
-      case 'inventaire':    return <InventairePage companies={companies} companyId={companyId} setCompanyId={setCompanyId} />
+      case 'inventaire':    return <InventairePage companies={companies} companyId={effectiveCompanyId} setCompanyId={setCompanyId} />
       case 'commercial':    return <CommercialPage {...sp} setPage={setPage} setDocId={setDocId} />
       case 'commercial-view': return <CommercialViewPage docId={docId} setPage={setPage} toast={toast} />
       case 'lots':          return <LotsProductionPage {...sp} />
@@ -3258,6 +3387,17 @@ export default function ComptaPro() {
             {!isMobile && <span style={{ fontSize:12, color:'#94a3b8' }}>{new Date().toLocaleDateString('fr-FR',{day:'2-digit',month:'short',year:'numeric'})}</span>}
           </div>
         </div>
+        {/* Bandeau super admin — société consultée */}
+        {isSuperAdmin && adminViewCompany && (
+          <div style={{background:'#fef3c7',borderBottom:'2px solid #f59e0b',padding:'8px 16px',display:'flex',alignItems:'center',gap:12,flexWrap:'wrap'}}>
+            <span style={{fontSize:12,fontWeight:700,color:'#92400e'}}>👁️ MODE CONSULTATION — Lecture seule</span>
+            <span style={{fontSize:13,fontWeight:600,color:'#0f2044',flex:1}}>{adminViewCompany.raison_sociale}</span>
+            <button onClick={()=>{ setAdminViewCompany(null); setPage('dashboard') }}
+              style={{background:'#0f2044',color:'white',border:'none',padding:'5px 14px',borderRadius:7,fontWeight:700,fontSize:12,cursor:'pointer'}}>
+              ← Retour aux sociétés
+            </button>
+          </div>
+        )}
         {/* Company selector mobile sous topbar */}
         {isMobile && (
           <div style={{ background:'white', borderBottom:'1px solid #e2e8f0', padding:'8px 16px' }}>
