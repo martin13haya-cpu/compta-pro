@@ -803,7 +803,7 @@ const NAV_ADMIN = [
 function Sidebar({ page, setPage, user, profile, onLogout, open, onClose }) {
   const { isMobile, isTablet } = useResponsive()
   const collapsed = isMobile || isTablet
-  const isSuperAdmin = profile?.role === 'super_admin'
+  const isSuperAdmin = profile?.role === 'super_admin' || user?.email === SUPER_ADMIN_EMAIL
   const navItems = isSuperAdmin ? [...NAV, ...NAV_ADMIN] : NAV
 
   const handleNav = (id) => { setPage(id); if (onClose) onClose() }
@@ -3163,7 +3163,7 @@ export default function ComptaPro() {
   const { isMobile, isTablet } = useResponsive()
   const collapsed = isMobile || isTablet
 
-  const isSuperAdmin = user?.email === SUPER_ADMIN_EMAIL
+  const isSuperAdmin = user?.email === SUPER_ADMIN_EMAIL || profile?.role === 'super_admin'
 
   // Auth + Profile
   useEffect(()=>{
