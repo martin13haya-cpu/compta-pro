@@ -2168,10 +2168,6 @@ function LotsProductionPage({ companies, companyId, toast, readOnly=false }) {
           </div>
         </div>
       )}
-            </tbody>
-          </table>
-        )}
-      </div>
       <Modal open={!!modal} onClose={close} title={modal==='add'?'Nouveau Lot':'Modifier Lot'}>
         <form onSubmit={save}>
           <Grid cols={2} gap={14} style={{marginBottom:16}}>
