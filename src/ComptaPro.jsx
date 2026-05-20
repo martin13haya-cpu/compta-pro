@@ -2277,8 +2277,43 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
   }
 
   const getCalcValue = (fname) => {
+    // Conditionnement
     if (fname === 'poids_total_conditionne') return Math.round(condTotal * 1000) / 1000
-    if (fname === 'ecart')                   return Math.round(condEcart * 1000) / 1000
+    if (tableName === 'compta_conditionnement' && fname === 'ecart') return Math.round(condEcart * 1000) / 1000
+
+    // Étuvage
+    if (tableName === 'compta_etuvage') {
+      const paddy = parseFloat(form.paddy_envoye_kg)    || 0
+      const recu  = parseFloat(form.riz_etuve_recu_kg)  || 0
+      if (fname === 'ecart_kg')       return Math.round((paddy - recu) * 1000) / 1000
+      if (fname === 'taux_rendement') return paddy > 0 ? Math.round((recu / paddy * 100) * 100) / 100 : 0
+    }
+
+    // Décorticage
+    if (tableName === 'compta_decorticage' && fname === 'ecart') {
+      const avant = parseFloat(form.poids_avant) || 0
+      const apres = parseFloat(form.poids_apres) || 0
+      return Math.round((avant - apres) * 1000) / 1000
+    }
+
+    // Calibrage
+    if (tableName === 'compta_calibrage' && fname === 'ecart') {
+      const avant  = parseFloat(form.poids_avant)      || 0
+      const long   = parseFloat(form.poids_long_grain) || 0
+      const casse  = parseFloat(form.poids_casses)     || 0
+      const dechet = parseFloat(form.dechets)          || 0
+      return Math.round((avant - long - casse - dechet) * 1000) / 1000
+    }
+
+    // Tri optique
+    if (tableName === 'compta_tri_optique' && fname === 'ecart') {
+      const avant  = parseFloat(form.poids_avant)     || 0
+      const apres  = parseFloat(form.poids_apres_tri) || 0
+      const hors   = parseFloat(form.hors_normes)     || 0
+      const rouge  = parseFloat(form.rouge_a_polir)   || 0
+      return Math.round((avant - apres - hors - rouge) * 1000) / 1000
+    }
+
     return 0
   }
 
@@ -2311,6 +2346,43 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
     toast.success('Enregistrement réussi !'); close(); load()
   }
 
+  const exportExcel = () => {
+    const period = dateFrom||dateTo ? `_${dateFrom||'debut'}_${dateTo||'fin'}` : ''
+    const allFields = [{label:'Date'},{label:'N° Lot'},...fields.map(f=>({label:f.label,name:f.name,type:f.type,dec:f.dec,unit:f.unit}))]
+    const thead = allFields.map(f=>`<th style="background:#0f2044;color:white;padding:6px 10px;white-space:nowrap">${f.label}</th>`).join('')
+    const tbody = items.map((it,i)=>{
+      const dateVal = it.date_etape||it.date_reception||''
+      const lotVal  = it.compta_lots_production?.numero_lot||it.numero_lot||'—'
+      const cells = [
+        `<td>${dateVal}</td>`,
+        `<td>${lotVal}</td>`,
+        ...fields.map(f=>{
+          const v = it[f.name]
+          if (f.type==='number') return `<td style="text-align:right">${(+(v||0)).toFixed(f.dec||2)}${f.unit?' '+f.unit:''}</td>`
+          return `<td>${v||'—'}</td>`
+        })
+      ].join('')
+      return `<tr style="background:${i%2===0?'#f8fafc':'white'}">${cells}</tr>`
+    }).join('')
+
+    const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+      <head><meta charset="UTF-8"><style>
+        table{border-collapse:collapse;width:100%}
+        th,td{border:1px solid #d1d5db;padding:5px 8px;font-size:10pt}
+        h2{font-family:Arial;color:#0f2044}p{font-family:Arial;font-size:9pt;color:#555}
+      </style></head><body>
+      <h2>${title}</h2>
+      <p>${companyName}${dateFrom||dateTo?` — Période : ${dateFrom||'—'} → ${dateTo||'—'}`:''} — ${items.length} enregistrement(s) — Exporté le ${new Date().toLocaleDateString('fr-FR')}</p>
+      <table><thead><tr>${thead}</tr></thead><tbody>${tbody}</tbody></table>
+      </body></html>`
+
+    const blob = new Blob(['\uFEFF'+html], {type:'application/vnd.ms-excel;charset=utf-8'})
+    const url  = URL.createObjectURL(blob)
+    const a    = document.createElement('a')
+    a.href=url; a.download=`${title.toLowerCase().replace(/\s/g,'_')}${period}.xls`; a.click()
+    URL.revokeObjectURL(url)
+  }
+
   const del = async id => {
     if (!confirm('Supprimer cet enregistrement ?')) return
     await supabase.from(tableName).delete().eq('id', id)
@@ -2339,6 +2411,7 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
     <div>
       <PageHeader title={title} subtitle={`${items.length} enregistrement(s)`}
         actions={<>
+          <Btn sm variant="success" onClick={exportExcel}>📊 Excel</Btn>
           <Btn sm variant="danger" onClick={printFiltered}>🖨️ PDF</Btn>
           <Btn onClick={openAdd}>+ Nouveau</Btn>
         </>}
@@ -2380,17 +2453,22 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
       </div>
       <Modal open={modal} onClose={close} title={`Nouveau — ${title}`} size="lg">
         <form onSubmit={save}>
-          {/* Bandeau résultats conditionnement — toujours visible */}
-          {tableName === 'compta_conditionnement' && (
-            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:16,padding:'12px 16px',background:'#0f2044',borderRadius:10}}>
-              <div style={{textAlign:'center'}}>
-                <div style={{fontSize:10,fontWeight:700,color:'rgba(255,255,255,.6)',textTransform:'uppercase',letterSpacing:.5,marginBottom:4}}>Total conditionné</div>
-                <div style={{fontSize:22,fontWeight:800,color:'#60a5fa'}}>{condTotal.toFixed(2)} <span style={{fontSize:13}}>kg</span></div>
-              </div>
-              <div style={{textAlign:'center'}}>
-                <div style={{fontSize:10,fontWeight:700,color:'rgba(255,255,255,.6)',textTransform:'uppercase',letterSpacing:.5,marginBottom:4}}>Écart</div>
-                <div style={{fontSize:22,fontWeight:800,color:condEcart===0?'#4ade80':condEcart<0?'#f87171':'#fbbf24'}}>{condEcart.toFixed(2)} <span style={{fontSize:13}}>kg</span></div>
-              </div>
+          {/* Bandeau résultats calculés — toujours visible en haut du formulaire */}
+          {fields.some(f=>f.calc) && (
+            <div style={{display:'grid',gridTemplateColumns:`repeat(${fields.filter(f=>f.calc).length},1fr)`,gap:10,marginBottom:16,padding:'12px 16px',background:'#0f2044',borderRadius:10}}>
+              {fields.filter(f=>f.calc).map(f=>{
+                const val = getCalcValue(f.name)
+                const isNeg = val < 0
+                const isZero = val === 0
+                return (
+                  <div key={f.name} style={{textAlign:'center'}}>
+                    <div style={{fontSize:10,fontWeight:700,color:'rgba(255,255,255,.6)',textTransform:'uppercase',letterSpacing:.5,marginBottom:4}}>{f.label}</div>
+                    <div style={{fontSize:20,fontWeight:800,color:isZero?'#4ade80':isNeg?'#f87171':'#60a5fa'}}>
+                      {val.toFixed(f.dec||2)}<span style={{fontSize:12,marginLeft:3}}>{f.unit||''}</span>
+                    </div>
+                  </div>
+                )
+              })}
             </div>
           )}
           <Grid cols={2} gap={14} style={{marginBottom:16}}>
@@ -3049,10 +3127,10 @@ export default function ComptaPro() {
       {name:'etuveuse_cooperative', label:'Étuveuse / Coopérative', summary:true},
       {name:'paddy_envoye_kg',  label:'Paddy envoyé (kg)',   type:'number', summary:true, unit:'kg'},
       {name:'riz_etuve_recu_kg',label:'Riz étuvé reçu (kg)', type:'number', summary:true, unit:'kg'},
-      {name:'ecart_kg',     label:'Écart (kg)',  type:'number'},
-      {name:'taux_rendement',label:'Rendement (%)',type:'number', summary:true, dec:1},
-      {name:'controle_qualite',label:'Contrôle qualité', type:'select', options:[{value:'conforme',label:'Conforme'},{value:'non_conforme',label:'Non conforme'},{value:'a_verifier',label:'À vérifier'}]},
-      {name:'observations', label:'Observations'},
+      {name:'ecart_kg',         label:'Écart (kg)',           type:'number', unit:'kg', calc:true},
+      {name:'taux_rendement',   label:'Rendement (%)',        type:'number', summary:true, dec:1, calc:true},
+      {name:'controle_qualite', label:'Contrôle qualité', type:'select', options:[{value:'conforme',label:'Conforme'},{value:'non_conforme',label:'Non conforme'},{value:'a_verifier',label:'À vérifier'}]},
+      {name:'observations',     label:'Observations'},
       {name:'responsable_section',label:'Responsable'},
     ]},
     decorticage: { title:'Décorticage', accent:'#7c3aed', fields:[
@@ -3060,7 +3138,7 @@ export default function ComptaPro() {
       {name:'nom_produit',  label:'Nom produit'},
       {name:'poids_avant',  label:'Poids avant (kg)',  type:'number', summary:true, unit:'kg'},
       {name:'poids_apres',  label:'Poids après (kg)',  type:'number', summary:true, unit:'kg'},
-      {name:'ecart',        label:'Écart (kg)',         type:'number', summary:true, unit:'kg'},
+      {name:'ecart',        label:'Écart (kg)',         type:'number', summary:true, unit:'kg', calc:true},
       {name:'taux_humidite',label:'Taux humidité (%)', type:'number', summary:true, dec:1},
       {name:'observation',  label:'Observation'},
       {name:'recommandation',label:'Recommandation'},
@@ -3072,6 +3150,7 @@ export default function ComptaPro() {
       {name:'poids_long_grain',   label:'Long grain (kg)',    type:'number', summary:true, unit:'kg'},
       {name:'poids_casses',       label:'Cassés (kg)',        type:'number', summary:true, unit:'kg'},
       {name:'dechets',            label:'Déchets (kg)',       type:'number', summary:true, unit:'kg'},
+      {name:'ecart',              label:'Écart (kg)',         type:'number', summary:true, unit:'kg', calc:true},
       {name:'observation',        label:'Observation'},
       {name:'recommandation',     label:'Recommandation'},
     ]},
@@ -3082,7 +3161,7 @@ export default function ComptaPro() {
       {name:'poids_apres_tri',     label:'Poids après tri (kg)',  type:'number', summary:true, unit:'kg'},
       {name:'hors_normes',         label:'Hors normes (kg)',      type:'number'},
       {name:'rouge_a_polir',       label:'Rouge à polir (kg)',    type:'number'},
-      {name:'ecart',               label:'Écart (kg)',            type:'number', summary:true},
+      {name:'ecart',               label:'Écart (kg)',            type:'number', summary:true, calc:true},
       {name:'taux_rouge',          label:'Taux rouge (%)',        type:'number'},
       {name:'taux_impurete',       label:'Taux impureté (%)',     type:'number'},
       {name:'observation',         label:'Observation'},
