@@ -1152,8 +1152,6 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
       <Modal open={!!modal} onClose={close} title={modal==='add'?`Nouveau(elle) ${titleSingle}`:`Modifier ${titleSingle}`} size="lg">
         <form onSubmit={save}>
           <Grid cols={2} gap={14} style={{marginBottom:16}}>
-            <Sel label="Société *" name="company_id" value={form.company_id} onChange={set}
-              options={[{value:'',label:'— Choisir —'},...companies.map(c=>({value:c.id,label:c.raison_sociale}))]} required />
             {table==='compta_clients' && (
               <Sel label="Type" name="type" value={form.type} onChange={set}
                 options={[{value:'physique',label:'Personne physique'},{value:'morale',label:'Personne morale'}]} />
@@ -1203,7 +1201,7 @@ function StockPage({ companies, companyId, setPage, toast, readOnly=false }) {
   const set = e=>setForm(f=>({...f,[e.target.name]:e.target.value}))
 
   const openAdd = ()=>{ setForm({company_id:companyId||companies[0]?.id||'',code:'',designation:'',categorie:'riz_paddy',unite:'kg',prix_achat:0,prix_vente:0,stock_min:0,stock_actuel:0}); setModal('add') }
-  const openEdit = a=>{ setForm({...a}); setModal('edit') }
+  const openEdit = a=>{ setForm({...a, company_id: a.company_id||companyId||companies[0]?.id||''}); setModal('edit') }
   const close = ()=>setModal(null)
 
   const save = async e=>{
@@ -1219,7 +1217,7 @@ function StockPage({ companies, companyId, setPage, toast, readOnly=false }) {
     toast.success('Article enregistré !'); close(); load()
   }
 
-  const archive = async id=>{ if(!confirm('Archiver ?')) return; await supabase.from('compta_articles').update({actif:false}).eq('id',id); toast.success('Archivé.'); load() }
+  const archive = async id=>{ if(!confirm('Supprimer cet article ?')) return; await supabase.from('compta_articles').update({actif:false}).eq('id',id); toast.success('Article supprimé.'); load() }
 
   return (
     <div>
@@ -1229,7 +1227,7 @@ function StockPage({ companies, companyId, setPage, toast, readOnly=false }) {
           <Btn sm variant="warning" onClick={()=>setPage('stock-sortie')}>↑ Sortie</Btn>
           <Btn sm variant="secondary" onClick={()=>setPage('mouvements')}>↕ Mouvements</Btn>
           <Btn sm variant="info" onClick={()=>setPage('inventaire')}>📋 Inventaire</Btn>
-          <Btn onClick={openAdd}>+ Nouvel Article</Btn>
+          {!readOnly && <Btn onClick={openAdd}>+ Nouvel Article</Btn>}
         </>}
       />
       <Card style={{marginBottom:16,padding:'12px 20px'}}>
@@ -1242,7 +1240,7 @@ function StockPage({ companies, companyId, setPage, toast, readOnly=false }) {
         {articles.length===0 ? (
           <div style={{textAlign:'center',padding:'48px 24px',color:'#64748b'}}>
             <div style={{fontSize:40,marginBottom:8}}>📦</div><p>Aucun article</p>
-            <Btn onClick={openAdd}>+ Créer un article</Btn>
+            {!readOnly && <Btn onClick={openAdd}>+ Créer un article</Btn>}
           </div>
         ) : (
           <table style={{width:'100%',borderCollapse:'collapse'}}>
@@ -1268,8 +1266,8 @@ function StockPage({ companies, companyId, setPage, toast, readOnly=false }) {
                     <TD><Badge type={alerte?'warning':'success'}>{alerte?'⚠ Alerte':'✓ OK'}</Badge></TD>
                     <TD>
                       <div style={{display:'flex',gap:6}}>
-                        <Btn sm variant="secondary" onClick={()=>openEdit(a)}>✏️ Modifier</Btn>
-                        <Btn sm variant="danger" onClick={()=>archive(a.id)}>🗑️ Supprimer</Btn>
+                        {!readOnly && <Btn sm variant="secondary" onClick={()=>openEdit(a)}>✏️ Modifier</Btn>}
+                        {!readOnly && <Btn sm variant="danger" onClick={()=>archive(a.id)}>🗑️ Supprimer</Btn>}
                       </div>
                     </TD>
                   </TR>
@@ -1282,18 +1280,16 @@ function StockPage({ companies, companyId, setPage, toast, readOnly=false }) {
       <Modal open={!!modal} onClose={close} title={modal==='add'?'Nouvel Article':'Modifier Article'} size="lg">
         <form onSubmit={save}>
           <Grid cols={2} gap={14} style={{marginBottom:16}}>
-            <Sel label="Société *" name="company_id" value={form.company_id} onChange={set}
-              options={[{value:'',label:'— Choisir —'},...companies.map(c=>({value:c.id,label:c.raison_sociale}))]} required />
-            <Input label="Code article" name="code" value={form.code} onChange={set} placeholder="RIZ-PAD-001" />
-            <Span2><Input label="Désignation *" name="designation" value={form.designation} onChange={set} required /></Span2>
-            <Sel label="Catégorie" name="categorie" value={form.categorie} onChange={set}
+            <Input label="Code article" name="code" value={form.code||''} onChange={set} placeholder="RIZ-PAD-001" />
+            <Sel label="Catégorie" name="categorie" value={form.categorie||''} onChange={set}
               options={Object.entries(CAT_LABELS).map(([v,l])=>({value:v,label:l}))} />
-            <Sel label="Unité" name="unite" value={form.unite} onChange={set}
+            <Span2><Input label="Désignation *" name="designation" value={form.designation||''} onChange={set} required /></Span2>
+            <Sel label="Unité" name="unite" value={form.unite||''} onChange={set}
               options={['kg','tonne','sac','carton','litre','unité','m²'].map(u=>({value:u,label:u}))} />
-            <Input label="Prix achat (FCFA)" name="prix_achat" type="number" value={form.prix_achat} onChange={set} min="0" />
-            <Input label="Prix vente (FCFA)" name="prix_vente" type="number" value={form.prix_vente} onChange={set} min="0" />
-            <Input label="Stock minimum (alerte)" name="stock_min" type="number" value={form.stock_min} onChange={set} min="0" step="0.01" />
-            {modal==='add' && <Input label="Stock initial" name="stock_actuel" type="number" value={form.stock_actuel} onChange={set} min="0" step="0.01" />}
+            <Input label="Prix achat (FCFA)" name="prix_achat" type="number" value={form.prix_achat||0} onChange={set} min="0" />
+            <Input label="Prix vente (FCFA)" name="prix_vente" type="number" value={form.prix_vente||0} onChange={set} min="0" />
+            <Input label="Stock minimum (alerte)" name="stock_min" type="number" value={form.stock_min||0} onChange={set} min="0" step="0.01" />
+            {modal==='add' && <Input label="Stock initial" name="stock_actuel" type="number" value={form.stock_actuel||0} onChange={set} min="0" step="0.01" />}
           </Grid>
           <Row><Btn variant="secondary" onClick={close}>Annuler</Btn><Btn type="submit" disabled={saving}>{saving?'...':'Enregistrer'}</Btn></Row>
         </form>
@@ -1354,10 +1350,6 @@ function StockEntreePage({ companies, companyId, setPage, toast }) {
           <SectionTitle color="#16a34a">Enregistrer une entrée</SectionTitle>
           <form onSubmit={save}>
             <Grid cols={2} gap={14} style={{marginBottom:16}}>
-              <Span2>
-                <Sel label="Société *" name="company_id" value={form.company_id} onChange={set}
-                  options={[{value:'',label:'— Choisir —'},...companies.map(c=>({value:c.id,label:c.raison_sociale}))]} required />
-              </Span2>
               <Span2>
                 <Sel label="Article *" name="article_id" value={form.article_id} onChange={set}
                   options={[{value:'',label:'— Choisir un article —'},...articles.map(a=>({value:a.id,label:`${a.designation} (stock: ${(a.stock_actuel||0).toFixed(2)} ${a.unite})`}))]} required />
@@ -1432,10 +1424,6 @@ function StockSortiePage({ companies, companyId, setPage, toast }) {
           <SectionTitle color="#f59e0b">Enregistrer une sortie</SectionTitle>
           <form onSubmit={save}>
             <Grid cols={2} gap={14} style={{marginBottom:16}}>
-              <Span2>
-                <Sel label="Société *" name="company_id" value={form.company_id} onChange={set}
-                  options={[{value:'',label:'— Choisir —'},...companies.map(c=>({value:c.id,label:c.raison_sociale}))]} required />
-              </Span2>
               <Span2>
                 <Sel label="Article *" name="article_id" value={form.article_id} onChange={set}
                   options={[{value:'',label:'— Choisir un article —'},...articles.map(a=>({value:a.id,label:`${a.designation} (stock: ${(a.stock_actuel||0).toFixed(2)} ${a.unite})`}))]} required />
@@ -1843,8 +1831,6 @@ function CommercialNewPage({ companies, companyId, typeDoc, setPage, toast }) {
             <Card style={{marginBottom:16}}>
               <SectionTitle>Informations du document</SectionTitle>
               <Grid cols={3} gap={14}>
-                <Sel label="Société *" name="company_id" value={form.company_id} onChange={setF}
-                  options={[{value:'',label:'— Choisir —'},...companies.map(c=>({value:c.id,label:c.raison_sociale}))]} required />
                 <Sel label="Type *" name="type_doc" value={form.type_doc} onChange={setF}
                   options={Object.entries(TYPE_DOC_LABELS).map(([v,l])=>({value:v,label:l}))} />
                 <Input label="Date *" name="date_doc" type="date" value={form.date_doc} onChange={setF} required />
@@ -2171,8 +2157,6 @@ function LotsProductionPage({ companies, companyId, toast, readOnly=false }) {
       <Modal open={!!modal} onClose={close} title={modal==='add'?'Nouveau Lot':'Modifier Lot'}>
         <form onSubmit={save}>
           <Grid cols={2} gap={14} style={{marginBottom:16}}>
-            <Sel label="Société *" name="company_id" value={form.company_id} onChange={set}
-              options={[{value:'',label:'— Choisir —'},...companies.map(c=>({value:c.id,label:c.raison_sociale}))]} required />
             <Input label="N° Lot *" name="numero_lot" value={form.numero_lot} onChange={set} required />
             <Input label="Date début" name="date_debut" type="date" value={form.date_debut} onChange={set} />
             <Input label="Date fin" name="date_fin" type="date" value={form.date_fin} onChange={set} />
@@ -2489,8 +2473,6 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
             </div>
           )}
           <Grid cols={2} gap={14} style={{marginBottom:16}}>
-            <Sel label="Société *" name="company_id" value={form.company_id||''} onChange={set}
-              options={[{value:'',label:'— Choisir —'},...companies.map(c=>({value:c.id,label:c.raison_sociale}))]} required />
             <Sel label="Lot de production" name="lot_id" value={form.lot_id||''} onChange={set}
               options={[{value:'',label:'— Aucun —'},...lots.map(l=>({value:l.id,label:l.numero_lot}))]} />
             <Input label="Date" name="date_etape" type="date" value={form.date_etape||''} onChange={set} />
@@ -2701,8 +2683,6 @@ function PrestationPage({ companies, companyId, toast, readOnly=false }) {
       <Modal open={modal} onClose={close} title="Nouvelle Prestation" size="lg">
         <form onSubmit={save}>
           <Grid cols={2} gap={14} style={{marginBottom:16}}>
-            <Sel label="Société *" name="company_id" value={form.company_id} onChange={set}
-              options={[{value:'',label:'— Choisir —'},...companies.map(c=>({value:c.id,label:c.raison_sociale}))]} required />
             <Input label="N° Facture" name="numero_facture" value={form.numero_facture} onChange={set} />
             <Input label="Date *" name="date_prestation" type="date" value={form.date_prestation} onChange={set} required />
             <Input label="Nom du client *" name="nom_client" value={form.nom_client} onChange={set} required />
@@ -2810,8 +2790,6 @@ function AchatsSemisPage({ companies, companyId, toast, readOnly=false }) {
       <Modal open={modal} onClose={close} title="Nouvel Achat Semi-fini" size="xl">
         <form onSubmit={save}>
           <Grid cols={3} gap={14} style={{marginBottom:16}}>
-            <Sel label="Société *" name="company_id" value={form.company_id} onChange={set}
-              options={[{value:'',label:'— Choisir —'},...companies.map(c=>({value:c.id,label:c.raison_sociale}))]} required />
             <Input label="N° Facture" name="numero_fact" value={form.numero_fact} onChange={set} />
             <Input label="Date *" name="date_achat" type="date" value={form.date_achat} onChange={set} required />
             <Input label="Entité" name="entite" value={form.entite} onChange={set} />
@@ -2918,8 +2896,6 @@ function ReglementsPage({ companies, companyId, toast, readOnly=false }) {
       <Modal open={modal} onClose={close} title="Nouveau Règlement" size="xl">
         <form onSubmit={save}>
           <Grid cols={3} gap={14} style={{marginBottom:16}}>
-            <Sel label="Société *" name="company_id" value={form.company_id} onChange={set}
-              options={[{value:'',label:'— Choisir —'},...companies.map(c=>({value:c.id,label:c.raison_sociale}))]} required />
             <Input label="N° Facture" name="numero_facture" value={form.numero_facture} onChange={set} />
             <Input label="Date *" name="date_paiement" type="date" value={form.date_paiement} onChange={set} required />
             <Input label="Entité" name="entite" value={form.entite} onChange={set} />
@@ -3032,8 +3008,6 @@ function PaiementsEtuvagePage({ companies, companyId, lots, toast }) {
       <Modal open={modal} onClose={close} title="Nouveau Paiement Étuvage" size="lg">
         <form onSubmit={save}>
           <Grid cols={2} gap={14} style={{marginBottom:16}}>
-            <Sel label="Société *" name="company_id" value={form.company_id} onChange={set}
-              options={[{value:'',label:'— Choisir —'},...companies.map(c=>({value:c.id,label:c.raison_sociale}))]} required />
             <Input label="Date" name="date_paiement" type="date" value={form.date_paiement} onChange={set} />
             <Sel label="Fiche étuvage liée" name="lot_id" value={form.lot_id} onChange={set}
               options={[{value:'',label:'— Aucun —'},...lots.map(l=>({value:l.id,label:l.numero_lot}))]} />
