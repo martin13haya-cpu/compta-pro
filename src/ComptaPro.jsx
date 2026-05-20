@@ -5,6 +5,7 @@ import { useState, useEffect, useCallback } from 'react'
 const SUPABASE_URL       ='https://proehigsikgqdrxjltmq.supabase.co'
 const SUPABASE_ANON_KEY  = 'sb_publishable_DqCGxDWGqJ5K0rnnzDv6Hg_gWG7wzfX'
 const SUPER_ADMIN_EMAIL  = 'martin13haya@gmail.com'
+const APP_VERSION        = 'v2.1.0' // force rebuild
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
 
 // Helper : retourne un filtre uid ou company selon le rôle
@@ -857,7 +858,8 @@ function Sidebar({ page, setPage, user, profile, onLogout, open, onClose }) {
             </div>
             <div style={{ flex:1, overflow:'hidden' }}>
               <div style={{ color:'white', fontSize:11, fontWeight:600, textOverflow:'ellipsis', overflow:'hidden', whiteSpace:'nowrap' }}>{user?.email}</div>
-              <div style={{ color:'rgba(255,255,255,.4)', fontSize:10 }}>{isSuperAdmin?'Super Admin':'Admin'}</div>
+              <div style={{ color:'rgba(255,255,255,.4)', fontSize:10 }}>{isSuperAdmin?'Super Admin ⭐':'Administrateur'}</div>
+              <div style={{ color:'rgba(255,255,255,.3)', fontSize:9 }}>{APP_VERSION}</div>
             </div>
             <span onClick={onLogout} style={{ color:'rgba(255,255,255,.4)', cursor:'pointer', fontSize:14 }} title="Déconnexion">🚪</span>
           </div>
