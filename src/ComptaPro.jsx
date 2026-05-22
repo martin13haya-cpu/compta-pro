@@ -1071,7 +1071,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
 
   const set = e => setForm(f=>({...f,[e.target.name]:e.target.value}))
 
-  const baseDefaults = { company_id:companyId||companies[0]?.id||'', nom:'', prenom:'', telephone:'', provenance:'', cip:'', ifu:'', email:'', adresse:'' }
+  const baseDefaults = { company_id:companyId||companies[0]?.id||'', nom:'', prenom:'', nom_societe:'', telephone:'', provenance:'', cip:'', ifu:'', email:'', adresse:'' }
   const open = (it=null) => {
     const defaults = extraFields ? extraFields.defaults : {}
     setForm(it?{...it}:{...baseDefaults,...defaults}); setModal(it?'edit':'add')
@@ -1083,7 +1083,17 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     const uid = (await supabase.auth.getUser()).data?.user?.id
     const fields = ['company_id','nom','prenom','telephone','provenance','cip','ifu','email','adresse', ...(extraFields?.names||[])]
     const pay = {}; fields.forEach(k=>{ if(form[k]!==undefined) pay[k]=form[k] })
-    if (table==='compta_clients') pay.type = form.type||'physique'
+    // Fix: ensure company_id is a valid non-empty value
+    if (!pay.company_id) {
+      const cid = companyId || companies[0]?.id
+      if (!cid) { toast.error('Veuillez sélectionner une société avant d\'enregistrer.'); setSaving(false); return }
+      pay.company_id = cid
+    }
+    if (table==='compta_clients') {
+      pay.type = form.type||'physique'
+      // Fix: include nom_societe for "personne morale" clients
+      if (form.type==='morale') pay.nom_societe = form.nom_societe||''
+    }
     const { error } = modal==='add'
       ? await supabase.from(table).insert({...pay,user_id:uid})
       : await supabase.from(table).update(pay).eq('id',form.id)
@@ -1157,7 +1167,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
                 options={[{value:'physique',label:'Personne physique'},{value:'morale',label:'Personne morale'}]} />
             )}
             {table==='compta_clients' && form.type==='morale' ? (
-              <Span2><Input label="Nom société" name="nom_societe" value={form.nom_societe} onChange={set} /></Span2>
+              <Span2><Input label="Nom société *" name="nom_societe" value={form.nom_societe} onChange={set} required /></Span2>
             ) : (
               <><Input label="Nom *" name="nom" value={form.nom} onChange={set} required />
               <Input label="Prénom" name="prenom" value={form.prenom} onChange={set} /></>
