@@ -3005,7 +3005,7 @@ function ReglementsPage({ companies, companyId, toast, readOnly=false }) {
 }
 
 // ── PAIEMENTS ÉTUVAGE ─────────────────────────────────────────────────────────
-function PaiementsEtuvagePage({ companies, companyId, lots, toast }) {
+function PaiementsEtuvagePage({ companies, companyId, lots, toast, readOnly=false }) {
   const [items, setItems]   = useState([])
   const [modal, setModal]   = useState(false)
   const [form,  setForm]    = useState({})
