@@ -966,15 +966,23 @@ function Dashboard({ companyId, toast, setPage }) {
 }
 
 // ── COMPANIES ────────────────────────────────────────────────────────────────
-function CompaniesPage({ companies, refresh, toast, isSuperAdmin=false }) {
+function CompaniesPage({ companies, refresh, toast, isSuperAdmin=false, currentUserId=null }) {
   const [modal, setModal] = useState(null)
   const [form,  setForm]  = useState({})
   const [saving,setSaving]= useState(false)
   const set = e => setForm(f=>({...f,[e.target.name]:e.target.value}))
 
+  // Vérifie si la société appartient à l'utilisateur courant
+  const isOwn = c => !c || c.user_id === currentUserId
+
   const open = (c=null) => {
     if (!c && !isSuperAdmin && companies.length >= 1) {
       toast.error('Vous ne pouvez créer qu\'une seule société. Contactez l\'administrateur pour plus.')
+      return
+    }
+    // Super admin ne peut modifier que ses propres sociétés
+    if (c && isSuperAdmin && !isOwn(c)) {
+      toast.error('Vous ne pouvez pas modifier la société d\'un autre utilisateur.')
       return
     }
     setForm(c?{...c}:{raison_sociale:'',rccm:'',adresse:'',tel:'',email:''})
@@ -994,9 +1002,10 @@ function CompaniesPage({ companies, refresh, toast, isSuperAdmin=false }) {
     toast.success(modal==='add'?'Société ajoutée !':'Société mise à jour !'); close(); refresh()
   }
 
-  const del = async id => {
+  const del = async c => {
+    if (!isOwn(c)) { toast.error('Vous ne pouvez pas supprimer la société d\'un autre utilisateur.'); return }
     if (!confirm('Supprimer cette société ?')) return
-    const { error } = await supabase.from('compta_companies').delete().eq('id',id)
+    const { error } = await supabase.from('compta_companies').delete().eq('id',c.id)
     if (error) { toast.error(error.message); return }
     toast.success('Société supprimée.'); refresh()
   }
@@ -1016,15 +1025,20 @@ function CompaniesPage({ companies, refresh, toast, isSuperAdmin=false }) {
           {companies.map(c=>(
             <Card key={c.id}>
               <div style={{ display:'flex', alignItems:'center', gap:12, marginBottom:16 }}>
-                <div style={{ width:48, height:48, background:'#dbeafe', borderRadius:12, display:'flex', alignItems:'center', justifyContent:'center', color:ACCENT, fontWeight:800, fontSize:20 }}>{c.raison_sociale[0]}</div>
-                <div><div style={{fontWeight:700,fontSize:15}}>{c.raison_sociale}</div>{c.rccm&&<div style={{fontSize:12,color:'#64748b'}}>{c.rccm}</div>}</div>
+                <div style={{ width:48, height:48, background: isOwn(c)?'#dbeafe':'#f1f5f9', borderRadius:12, display:'flex', alignItems:'center', justifyContent:'center', color: isOwn(c)?ACCENT:'#94a3b8', fontWeight:800, fontSize:20 }}>{c.raison_sociale[0]}</div>
+                <div>
+                  <div style={{fontWeight:700,fontSize:15}}>{c.raison_sociale}</div>
+                  {c.rccm&&<div style={{fontSize:12,color:'#64748b'}}>{c.rccm}</div>}
+                  {isSuperAdmin && <span style={{fontSize:10,fontWeight:700,padding:'2px 7px',borderRadius:10,background: isOwn(c)?'#dbeafe':'#f1f5f9', color: isOwn(c)?'#2563eb':'#64748b'}}>{isOwn(c)?'✅ Votre société':'👁️ Autre utilisateur'}</span>}
+                </div>
               </div>
               {c.adresse && <div style={{fontSize:12.5,color:'#64748b',marginBottom:4}}>📍 {c.adresse}</div>}
               {c.tel     && <div style={{fontSize:12.5,color:'#64748b',marginBottom:4}}>📞 {c.tel}</div>}
               {c.email   && <div style={{fontSize:12.5,color:'#64748b',marginBottom:12}}>✉️ {c.email}</div>}
               <div style={{display:'flex',gap:8,marginTop:12}}>
-                <Btn sm variant="secondary" onClick={()=>open(c)}>Modifier</Btn>
-                <Btn sm variant="danger" onClick={()=>del(c.id)}>🗑️</Btn>
+                {isOwn(c) && <Btn sm variant="secondary" onClick={()=>open(c)}>Modifier</Btn>}
+                {isOwn(c) && <Btn sm variant="danger" onClick={()=>del(c)}>🗑️</Btn>}
+                {!isOwn(c) && <span style={{fontSize:11,color:'#94a3b8',fontStyle:'italic'}}>Lecture seule</span>}
               </div>
             </Card>
           ))}
@@ -1056,8 +1070,11 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
 
   const load = useCallback(async()=>{
     const uid = (await supabase.auth.getUser()).data?.user?.id
-    let q = supabase.from(table).select('*,compta_companies(raison_sociale)').eq('user_id',uid).eq('actif',true).order('created_at',{ascending:false})
-    if (companyId) q = q.eq('company_id',companyId)
+    let q = supabase.from(table).select('*,compta_companies(raison_sociale)').eq('actif',true).order('created_at',{ascending:false})
+    // Fix: quand une société est sélectionnée (super admin ou user), filtrer par company_id
+    // sinon fallback sur user_id
+    if (companyId) q = q.eq('company_id', companyId)
+    else q = q.eq('user_id', uid)
     const { data } = await q; setItems(data||[])
   },[table,companyId])
 
@@ -1115,7 +1132,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
   return (
     <div>
       <PageHeader title={title} subtitle={`${filtered.length} enregistrement(s)`}
-        actions={<Btn onClick={()=>open()}>+ Nouveau(elle)</Btn>} />
+        actions={!readOnly && <Btn onClick={()=>open()}>+ Nouveau(elle)</Btn>} />
       <Card style={{marginBottom:16,padding:'12px 20px'}}>
         <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Rechercher..."
           style={{padding:'8px 14px',borderRadius:8,border:'1px solid #d1d5db',fontSize:13,width:300}} />
@@ -1125,7 +1142,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
           <div style={{textAlign:'center',padding:'48px 24px',color:'#64748b'}}>
             <div style={{fontSize:40,marginBottom:8}}>{icon}</div>
             <p>Aucun(e) {titleSingle}</p>
-            <Btn onClick={()=>open()}>+ Ajouter</Btn>
+            {!readOnly && <Btn onClick={()=>open()}>+ Ajouter</Btn>}
           </div>
         ) : (
           <TableWrap>
@@ -1134,7 +1151,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
               {table==='compta_clients' && <TH>Type</TH>}
               <TH>Nom</TH><TH>Téléphone</TH><TH>Provenance</TH>
               {extraFields?.headers?.map((h,i)=><TH key={i}>{h}</TH>)}
-              <TH>IFU</TH><TH>CIP</TH><TH>Actions</TH>
+              <TH>IFU</TH><TH>CIP</TH>{!readOnly && <TH>Actions</TH>}
             </tr></thead>
             <tbody>
               {filtered.map(it=>(
@@ -1146,12 +1163,14 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
                   {extraFields?.names?.map(k=><TD key={k}>{it[k]||'—'}</TD>)}
                   <TD sm>{it.ifu||'—'}</TD>
                   <TD sm>{it.cip||'—'}</TD>
+                  {!readOnly && (
                   <TD>
                     <div style={{display:'flex',gap:6}}>
                       <Btn sm variant="secondary" onClick={()=>open(it)}>Edit</Btn>
                       <Btn sm variant="danger" onClick={()=>archive(it.id)}>🗑️</Btn>
                     </div>
                   </TD>
+                  )}
                 </TR>
               ))}
             </tbody>
@@ -3219,7 +3238,9 @@ export default function ComptaPro() {
 
   // companyId effectif : si super admin consulte une société, utiliser son id
   const effectiveCompanyId = isSuperAdmin && adminViewCompany ? adminViewCompany.id : companyId
-  const readOnly = isSuperAdmin && !!adminViewCompany
+  // readOnly uniquement si super admin consulte la société d'un AUTRE utilisateur
+  const isOwnCompany = adminViewCompany ? adminViewCompany.user_id === user?.id : true
+  const readOnly = isSuperAdmin && !!adminViewCompany && !isOwnCompany
 
   const sp = { companies, companyId: effectiveCompanyId, toast, readOnly }
 
@@ -3319,7 +3340,7 @@ export default function ComptaPro() {
     }
     switch (page) {
       case 'dashboard':     return <Dashboard {...sp} setPage={setPage} />
-      case 'companies':     return <CompaniesPage companies={companies} refresh={loadCompanies} toast={toast} isSuperAdmin={isSuperAdmin} />
+      case 'companies':     return <CompaniesPage companies={companies} refresh={loadCompanies} toast={toast} isSuperAdmin={isSuperAdmin} currentUserId={user?.id} />
       case 'clients':       return <TiersPage table="compta_clients" title="Clients" titleSingle="Client" icon="👥" {...sp}
                               extraFields={{ names:[], headers:[], fields:[], defaults:{type:'physique',nom_societe:''} }} />
       case 'fournisseurs':  return <TiersPage table="compta_fournisseurs" title="Fournisseurs" titleSingle="Fournisseur" icon="🚚" {...sp}
@@ -3371,8 +3392,10 @@ export default function ComptaPro() {
         </div>
         {/* Bandeau super admin — société consultée */}
         {isSuperAdmin && adminViewCompany && (
-          <div style={{background:'#fef3c7',borderBottom:'2px solid #f59e0b',padding:'8px 16px',display:'flex',alignItems:'center',gap:12,flexWrap:'wrap'}}>
-            <span style={{fontSize:12,fontWeight:700,color:'#92400e'}}>👁️ MODE CONSULTATION — Lecture seule</span>
+          <div style={{background: isOwnCompany?'#dcfce7':'#fef3c7', borderBottom:`2px solid ${isOwnCompany?'#16a34a':'#f59e0b'}`, padding:'8px 16px',display:'flex',alignItems:'center',gap:12,flexWrap:'wrap'}}>
+            <span style={{fontSize:12,fontWeight:700,color: isOwnCompany?'#15803d':'#92400e'}}>
+              {isOwnCompany ? '✏️ MODE ÉDITION — Votre société' : '👁️ MODE CONSULTATION — Lecture seule'}
+            </span>
             <span style={{fontSize:13,fontWeight:600,color:'#0f2044',flex:1}}>{adminViewCompany.raison_sociale}</span>
             <button onClick={()=>{ setAdminViewCompany(null); setPage('dashboard') }}
               style={{background:'#0f2044',color:'white',border:'none',padding:'5px 14px',borderRadius:7,fontWeight:700,fontSize:12,cursor:'pointer'}}>
