@@ -1080,11 +1080,13 @@ function CompaniesPage({ companies, refresh, toast, isSuperAdmin=false, currentU
 
 // ── TIERS GENERIQUE (Clients + Fournisseurs partagent la même logique) ───────
 function TiersPage({ table, title, titleSingle, icon, companies, companyId, toast, extraFields, readOnly=false }) {
-  const [items,  setItems]  = useState([])
-  const [modal,  setModal]  = useState(null)
-  const [form,   setForm]   = useState({})
-  const [saving, setSaving] = useState(false)
-  const [search, setSearch] = useState('')
+  const [items,      setItems]     = useState([])
+  const [modal,      setModal]     = useState(null)
+  const [form,       setForm]      = useState({})
+  const [saving,     setSaving]    = useState(false)
+  const [search,     setSearch]    = useState('')
+  const [filterType, setFilterType]= useState('')   // clients: physique|morale
+  const [filterProv, setFilterProv]= useState('')   // provenance
 
   const load = useCallback(async()=>{
     const uid = (await supabase.auth.getUser()).data?.user?.id
@@ -1098,10 +1100,16 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
 
   useEffect(()=>{ load() },[load])
 
+  const provenances = [...new Set(items.map(i=>i.provenance).filter(Boolean))]
+
   const filtered = items.filter(it => {
-    if (!search) return true
-    const s = (it.nom||'')+' '+(it.prenom||'')+' '+(it.nom_societe||'')
-    return s.toLowerCase().includes(search.toLowerCase())
+    if (search) {
+      const s = (it.nom||'')+' '+(it.prenom||'')+' '+(it.nom_societe||'')
+      if (!s.toLowerCase().includes(search.toLowerCase())) return false
+    }
+    if (filterType && it.type !== filterType) return false
+    if (filterProv && it.provenance !== filterProv) return false
+    return true
   })
 
   const set = e => setForm(f=>({...f,[e.target.name]:e.target.value}))
@@ -1152,8 +1160,32 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
       <PageHeader title={title} subtitle={`${filtered.length} enregistrement(s)`}
         actions={!readOnly && <Btn onClick={()=>open()}>+ Nouveau(elle)</Btn>} />
       <Card style={{marginBottom:16,padding:'12px 20px'}}>
-        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Rechercher..."
-          style={{padding:'8px 14px',borderRadius:8,border:'1px solid #d1d5db',fontSize:13,width:300}} />
+        <div style={{display:'flex',gap:10,flexWrap:'wrap',alignItems:'center'}}>
+          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="🔍 Rechercher par nom..."
+            style={{padding:'8px 14px',borderRadius:8,border:'1px solid #d1d5db',fontSize:13,flex:1,minWidth:180}} />
+          {table==='compta_clients' && (
+            <select value={filterType} onChange={e=>setFilterType(e.target.value)}
+              style={{padding:'8px 12px',borderRadius:8,border:'1px solid #d1d5db',fontSize:13,background:'white'}}>
+              <option value=''>Tous types</option>
+              <option value='physique'>Personne physique</option>
+              <option value='morale'>Personne morale</option>
+            </select>
+          )}
+          {provenances.length > 0 && (
+            <select value={filterProv} onChange={e=>setFilterProv(e.target.value)}
+              style={{padding:'8px 12px',borderRadius:8,border:'1px solid #d1d5db',fontSize:13,background:'white'}}>
+              <option value=''>Toutes provenances</option>
+              {provenances.map(p=><option key={p} value={p}>{p}</option>)}
+            </select>
+          )}
+          {(search||filterType||filterProv) && (
+            <button onClick={()=>{setSearch('');setFilterType('');setFilterProv('')}}
+              style={{padding:'8px 12px',borderRadius:8,border:'1px solid #e2e8f0',fontSize:12,cursor:'pointer',background:'#f8fafc',color:'#64748b'}}>
+              ✕ Réinitialiser
+            </button>
+          )}
+          <span style={{fontSize:12,color:'#94a3b8',marginLeft:'auto'}}>{filtered.length} / {items.length}</span>
+        </div>
       </Card>
       <div style={{background:'white',borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
         {filtered.length===0 ? (
@@ -3410,7 +3442,17 @@ export default function ComptaPro() {
             <div style={{ fontSize:isMobile?14:18, fontWeight:700, color:'#0f172a', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', maxWidth:isMobile?140:300 }}>{getTitle()}</div>
           </div>
           <div style={{ display:'flex', alignItems:'center', gap:8 }}>
-            {!isMobile && <CompanySelector companies={companies} companyId={companyId} setCompanyId={setCompanyId} />}
+            {!isMobile && <CompanySelector companies={companies}
+              companyId={isSuperAdmin && adminViewCompany ? effectiveCompanyId : companyId}
+              setCompanyId={id => {
+                if (isSuperAdmin && adminViewCompany) {
+                  // Super admin en mode consultation : changer de société directement
+                  const newC = companies.find(c => c.id === id)
+                  if (newC) { setAdminViewCompany(newC); setPage('dashboard') }
+                } else {
+                  setCompanyId(id)
+                }
+              }} />}
             {!isMobile && <span style={{ fontSize:12, color:'#94a3b8' }}>{new Date().toLocaleDateString('fr-FR',{day:'2-digit',month:'short',year:'numeric'})}</span>}
           </div>
         </div>
@@ -3430,7 +3472,14 @@ export default function ComptaPro() {
         {/* Company selector mobile sous topbar */}
         {isMobile && (
           <div style={{ background:'white', borderBottom:'1px solid #e2e8f0', padding:'8px 16px' }}>
-            <CompanySelector companies={companies} companyId={companyId} setCompanyId={setCompanyId} />
+            <CompanySelector companies={companies}
+              companyId={isSuperAdmin && adminViewCompany ? effectiveCompanyId : companyId}
+              setCompanyId={id => {
+                if (isSuperAdmin && adminViewCompany) {
+                  const newC = companies.find(c => c.id === id)
+                  if (newC) { setAdminViewCompany(newC); setPage('dashboard') }
+                } else { setCompanyId(id) }
+              }} />
           </div>
         )}
         {/* Content */}
