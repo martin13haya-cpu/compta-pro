@@ -3209,7 +3209,8 @@ function JournalPage({ table, title, icon, journalType='caisse', companies, comp
       company_id: cid, date_operation:form.date_operation,
       numero_piece:form.numero_piece, libelle:form.libelle, tiers:form.tiers,
       type_operation:form.type_operation, montant:+form.montant,
-      mode_operation:form.mode_operation, reference:form.reference, notes:form.notes,
+      ...(!isMobile ? {mode_operation:form.mode_operation} : {}),
+      reference:form.reference, notes:form.notes,
       ...(isMobile ? {operateur:form.operateur, numero_mobile:form.numero_mobile} : {}),
     }
     const { error } = editItem
@@ -4217,6 +4218,30 @@ export default function ComptaPro() {
           {renderPage()}
         </div>
       </div>
+
+      {/* ── Bouton WhatsApp flottant ─────────────────────────────────────── */}
+      <a
+        href={`https://wa.me/${SUPER_ADMIN_WHATSAPP}`}
+        target="_blank"
+        rel="noopener noreferrer"
+        title="Contacter l'administrateur sur WhatsApp"
+        style={{
+          position:'fixed', bottom:24, right:24, zIndex:9999,
+          width:56, height:56, borderRadius:'50%',
+          background:'#25d366',
+          boxShadow:'0 4px 24px rgba(37,211,102,0.55)',
+          display:'flex', alignItems:'center', justifyContent:'center',
+          textDecoration:'none', cursor:'pointer',
+          transition:'transform 0.18s, box-shadow 0.18s',
+        }}
+        onMouseEnter={e=>{ e.currentTarget.style.transform='scale(1.12)'; e.currentTarget.style.boxShadow='0 6px 32px rgba(37,211,102,0.7)' }}
+        onMouseLeave={e=>{ e.currentTarget.style.transform='scale(1)'; e.currentTarget.style.boxShadow='0 4px 24px rgba(37,211,102,0.55)' }}
+      >
+        <svg width="30" height="30" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M16 3C8.832 3 3 8.832 3 16c0 2.29.614 4.437 1.682 6.29L3 29l6.9-1.655A12.93 12.93 0 0 0 16 29c7.168 0 13-5.832 13-13S23.168 3 16 3Z" fill="white"/>
+          <path d="M21.75 19.25c-.32-.16-1.89-.93-2.18-1.04-.29-.1-.5-.16-.71.16-.21.32-.82 1.04-.99 1.25-.17.21-.35.24-.65.08-.32-.16-1.33-.49-2.53-1.56-.94-.83-1.57-1.86-1.75-2.18-.18-.32-.02-.49.13-.65.14-.14.32-.37.48-.55.16-.18.21-.32.32-.53.1-.21.05-.39-.03-.55-.08-.16-.71-1.71-.97-2.34-.26-.62-.52-.53-.71-.54h-.61c-.21 0-.55.08-.84.39-.29.32-1.1 1.07-1.1 2.62s1.13 3.04 1.29 3.25c.16.21 2.22 3.38 5.38 4.74.75.32 1.34.52 1.8.66.76.24 1.45.21 2 .13.61-.09 1.89-.77 2.16-1.52.26-.75.26-1.39.18-1.52-.08-.13-.29-.21-.61-.37Z" fill="#25d366"/>
+        </svg>
+      </a>
     </div>
   )
 }
