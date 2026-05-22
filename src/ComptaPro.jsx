@@ -3058,8 +3058,10 @@ function JournalPage({ table, title, icon, isBanque=false, companies, companyId,
   const save = async e => {
     e.preventDefault(); setSaving(true)
     const { data:ad } = await supabase.auth.getUser(); const uid=ad?.user?.id
+    const cid = form.company_id || companyId || companies[0]?.id
+    if (!cid) { toast.error('Veuillez sélectionner une société.'); setSaving(false); return }
     const pay = {
-      company_id:form.company_id, date_operation:form.date_operation,
+      company_id: cid, date_operation:form.date_operation,
       numero_piece:form.numero_piece, libelle:form.libelle, tiers:form.tiers,
       type_operation:form.type_operation, montant:+form.montant,
       mode_operation:form.mode_operation, reference:form.reference, notes:form.notes,
