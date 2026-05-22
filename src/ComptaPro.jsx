@@ -2140,8 +2140,8 @@ function LotsProductionPage({ companies, companyId, toast, readOnly=false }) {
   const [rowPreview, setRowPreview] = useState(null)
 
   const load = useCallback(async()=>{
-    const uid = (await supabase.auth.getUser()).data?.user?.id
     const { data:adion } = await supabase.auth.getUser(); const uidion=adion?.user?.id; const isAdmion=adion?.user?.email===SUPER_ADMIN_EMAIL
+    if (!uidion) return
     let q = supabase.from('compta_lots_production').select('*,compta_companies(raison_sociale)').order('date_debut',{ascending:false})
     q = isAdmion&&companyId ? q.eq('company_id',companyId) : q.eq('user_id',uidion); if(companyId&&!isAdmion) q=q.eq('company_id',companyId)
     if (dateFrom)  q=q.gte('date_debut',dateFrom)
@@ -2158,7 +2158,9 @@ function LotsProductionPage({ companies, companyId, toast, readOnly=false }) {
   const save = async e=>{
     e.preventDefault(); setSaving(true)
     const uid = (await supabase.auth.getUser()).data?.user?.id
-    const { company_id,numero_lot,date_debut,date_fin,statut,qte_paddy_entree,notes } = form
+    const { numero_lot,date_debut,date_fin,statut,qte_paddy_entree,notes } = form
+    const company_id = form.company_id || companyId || companies[0]?.id
+    if (!company_id) { toast.error('Veuillez sélectionner une société.'); setSaving(false); return }
     const pay = { company_id,numero_lot,date_debut,date_fin:date_fin||null,statut,qte_paddy_entree:+qte_paddy_entree,notes }
     const { error } = modal==='add' ? await supabase.from('compta_lots_production').insert({...pay,user_id:uid}) : await supabase.from('compta_lots_production').update(pay).eq('id',form.id)
     setSaving(false)
@@ -2329,17 +2331,35 @@ function ProductionRowPreviewModal({ open, onClose, it, title, fields, companyNa
 
 // ── PRODUCTION STAGE — GÉNÉRIQUE ──────────────────────────────────────────────
 function ProductionStagePage({ tableName, title, accentColor, companies, companyId, lots, toast, fields, readOnly=false }) {
-  const [items, setItems]   = useState([])
-  const [modal, setModal]   = useState(false)
-  const [form,  setForm]    = useState({})
-  const [saving,setSaving]  = useState(false)
-  const [dateFrom, setDateFrom] = useState('')
-  const [dateTo,   setDateTo]   = useState('')
+  const [items,      setItems]    = useState([])
+  const [modal,      setModal]    = useState(false)
+  const [form,       setForm]     = useState({})
+  const [editItem,   setEditItem] = useState(null)   // null = ajout, objet = modification
+  const [saving,     setSaving]   = useState(false)
+  const [dateFrom,   setDateFrom] = useState('')
+  const [dateTo,     setDateTo]   = useState('')
   const [rowPreview, setRowPreview] = useState(null)
+  const [localLots,  setLocalLots]  = useState([])  // lots chargés selon companyId effectif
+
+  // Chargement local des lots — synchronisé avec le companyId reçu (evite le décalage effectiveCompanyId)
+  useEffect(()=>{
+    const fetchLots = async () => {
+      const { data:ad } = await supabase.auth.getUser()
+      const uid=ad?.user?.id; if (!uid) return
+      const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
+      let q = supabase.from('compta_lots_production').select('id,numero_lot,statut').order('created_at',{ascending:false})
+      if (isAdmin && companyId) q=q.eq('company_id',companyId)
+      else if (companyId) q=q.eq('user_id',uid).eq('company_id',companyId)
+      else q=q.eq('user_id',uid)
+      const { data }=await q; setLocalLots(data||[])
+    }
+    fetchLots()
+  },[companyId])
 
   const load = useCallback(async()=>{
     const { data:authD } = await supabase.auth.getUser()
     const uid = authD?.user?.id; const isAdm = authD?.user?.email === SUPER_ADMIN_EMAIL
+    if (!uid) return
     let q = supabase.from(tableName).select('*,compta_lots_production(numero_lot)').order('date_etape',{ascending:false})
     q = isAdm && companyId ? q.eq('company_id',companyId) : q.eq('user_id',uid)
     if (companyId && !isAdm) q=q.eq('company_id',companyId)
@@ -2412,16 +2432,25 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
   }
 
   const openAdd = () => {
-    const df = { company_id:companyId||companies[0]?.id||'', lot_id:'', date_etape:today() }
+    const cid = companyId||companies[0]?.id||''
+    if (!cid) { toast.error('Veuillez sélectionner une société.'); return }
+    const df = { company_id:cid, lot_id:'', date_etape:today() }
     fields.forEach(f => { df[f.name] = '' })
+    setEditItem(null); setForm(df); setModal(true)
+  }
+  const openEdit = it => {
+    setEditItem(it)
+    const df = { ...it, company_id: it.company_id||companyId||companies[0]?.id||'', lot_id: it.lot_id||'' }
     setForm(df); setModal(true)
   }
-  const close = () => setModal(false)
+  const close = () => { setModal(false); setEditItem(null) }
 
   const save = async e => {
     e.preventDefault(); setSaving(true)
     const uid = (await supabase.auth.getUser()).data?.user?.id
-    const pay = { company_id:form.company_id, lot_id:form.lot_id||null, date_etape:form.date_etape, user_id:uid }
+    const cid = form.company_id || companyId || companies[0]?.id
+    if (!cid) { toast.error('Société introuvable. Veuillez en sélectionner une.'); setSaving(false); return }
+    const pay = { company_id:cid, lot_id:form.lot_id||null, date_etape:form.date_etape }
     fields.forEach(f => {
       if (f.calc) {
         pay[f.name] = getCalcValue(f.name)
@@ -2429,10 +2458,12 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
         pay[f.name] = f.type==='number' ? (parseFloat(form[f.name])||0) : (form[f.name]||'')
       }
     })
-    const { error } = await supabase.from(tableName).insert(pay)
+    const { error } = editItem
+      ? await supabase.from(tableName).update(pay).eq('id', editItem.id)
+      : await supabase.from(tableName).insert({...pay, user_id:uid})
     setSaving(false)
     if (error) { toast.error(error.message); return }
-    toast.success('Enregistrement réussi !'); close(); load()
+    toast.success(editItem ? 'Modification enregistrée !' : 'Enregistrement réussi !'); close(); load()
   }
 
   const exportExcel = () => {
@@ -2531,7 +2562,8 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
                     <div style={{display:'flex',gap:4}}>
                       <Btn sm variant="info" onClick={()=>setRowPreview(it)}>👁️</Btn>
                       <Btn sm variant="danger" onClick={()=>{ const html=buildProductionRowHtml(it,title,fields,companyName); const w=window.open('','_blank'); w.document.write(html); w.document.close() }}>🖨️</Btn>
-                      {!readOnly && <Btn sm variant="danger" onClick={()=>del(it.id)}>Sup</Btn>}
+                      {!readOnly && <Btn sm variant="secondary" onClick={()=>openEdit(it)}>✏️</Btn>}
+                      {!readOnly && <Btn sm variant="danger" onClick={()=>del(it.id)}>🗑️</Btn>}
                     </div>
                   </TD>
                 </TR>
@@ -2540,7 +2572,7 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
           </table>
         )}
       </div>
-      <Modal open={modal} onClose={close} title={`Nouveau — ${title}`} size="lg">
+      <Modal open={modal} onClose={close} title={editItem ? `Modifier — ${title}` : `Nouveau — ${title}`} size="lg">
         <form onSubmit={save}>
           {/* Bandeau résultats calculés — toujours visible en haut du formulaire */}
           {fields.some(f=>f.calc) && (
@@ -2562,14 +2594,14 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
           )}
           <Grid cols={2} gap={14} style={{marginBottom:16}}>
             <Sel label="Lot de production" name="lot_id" value={form.lot_id||''} onChange={set}
-              options={[{value:'',label:'— Aucun —'},...lots.map(l=>({value:l.id,label:l.numero_lot}))]} />
+              options={[{value:'',label:localLots.length===0?'— Aucun lot disponible —':'— Choisir un lot —'},...localLots.map(l=>({value:l.id,label:`${l.numero_lot}${l.statut?' ('+l.statut+')':''}`}))]} />
             <Input label="Date" name="date_etape" type="date" value={form.date_etape||''} onChange={set} />
             {fields.filter(f => !f.calc).map(f=> f.type==='select'
               ? <Sel key={f.name} label={f.label} name={f.name} value={form[f.name]||''} onChange={set} options={f.options||[]} />
               : <Input key={f.name} label={f.label} name={f.name} type={f.type||'text'} value={form[f.name]??''} onChange={set} min={f.type==='number'?'0':undefined} step={f.type==='number'?'0.001':undefined} placeholder={f.placeholder} />
             )}
           </Grid>
-          <Row><Btn variant="secondary" onClick={close}>Annuler</Btn><Btn type="submit" disabled={saving}>{saving?'...':'Enregistrer'}</Btn></Row>
+          <Row><Btn variant="secondary" onClick={close}>Annuler</Btn><Btn type="submit" disabled={saving}>{saving?'...':(editItem?'Modifier':'Enregistrer')}</Btn></Row>
         </form>
       </Modal>
       <ProductionRowPreviewModal open={!!rowPreview} onClose={()=>setRowPreview(null)} it={rowPreview} title={title} fields={fields} companyName={companyName} />
@@ -3280,12 +3312,15 @@ function PaiementsEtuvagePage({ companies, companyId, lots, toast, readOnly=fals
   const save = async e=>{
     e.preventDefault(); setSaving(true)
     const uid = (await supabase.auth.getUser()).data?.user?.id
+    if (!uid) { toast.error('Session expirée. Veuillez vous reconnecter.'); setSaving(false); return }
+    const company_id = form.company_id || companyId || companies[0]?.id
+    if (!company_id) { toast.error('Veuillez sélectionner une société.'); setSaving(false); return }
     const { ret, net } = calcAib(form.montant_brut,form.taux_aib)
     const year = new Date().getFullYear()
     const { count } = await supabase.from('compta_paiements_etuvage').select('id',{count:'exact',head:true}).eq('user_id',uid)
     const numero = `PE-${year}-${String((count||0)+1).padStart(4,'0')}`
     const { error } = await supabase.from('compta_paiements_etuvage').insert({
-      company_id:form.company_id, user_id:uid, numero, date_paiement:form.date_paiement,
+      company_id, user_id:uid, numero, date_paiement:form.date_paiement,
       lot_id:form.lot_id||null, numero_lot:form.numero_lot, etuveuse_cooperative:form.etuveuse_cooperative,
       qte_etuvee_kg:+form.qte_etuvee_kg, montant_brut:+form.montant_brut, taux_aib:+form.taux_aib,
       retenue_aib:ret, net_a_payer:net,
@@ -3506,11 +3541,13 @@ export default function ComptaPro() {
     const uid = authData?.user?.id
     if (!uid) return
     const isAdmin = authData?.user?.email === SUPER_ADMIN_EMAIL
+    // Utiliser la société effectivement consultée (adminViewCompany si super admin)
+    const effectiveCid = (isAdmin && adminViewCompany) ? adminViewCompany.id : companyId
     let q = supabase.from('compta_lots_production').select('*').order('created_at',{ascending:false})
-    if (!isAdmin) q = q.eq('user_id', uid)
-    if (companyId) q = q.eq('company_id', companyId)
+    if (effectiveCid) q = q.eq('company_id', effectiveCid)
+    else q = q.eq('user_id', uid)
     const { data } = await q; setLots(data||[])
-  },[companyId])
+  },[companyId, adminViewCompany])
 
   useEffect(()=>{ if(user){ loadCompanies(); loadLots() } },[user,loadCompanies,loadLots])
 
