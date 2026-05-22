@@ -794,6 +794,9 @@ const NAV = [
   { section:'Achats' },
   { id:'achats',             icon:'🛒', label:'Achats semi-finis' },
   { id:'etuvage_paiements',  icon:'💰', label:'Paiements étuvage' },
+  { section:'Comptabilité' },
+  { id:'journal_caisse',     icon:'🏦', label:'Journal Caisse' },
+  { id:'journal_banque',     icon:'🏛️',  label:'Journal Banque' },
 ]
 
 const NAV_ADMIN = [
@@ -3004,6 +3007,247 @@ function ReglementsPage({ companies, companyId, toast, readOnly=false }) {
   )
 }
 
+// ── JOURNAL CAISSE / BANQUE ───────────────────────────────────────────────────
+function JournalPage({ table, title, icon, isBanque=false, companies, companyId, toast, readOnly=false }) {
+  const [items,    setItems]   = useState([])
+  const [modal,    setModal]   = useState(false)
+  const [editItem, setEditItem]= useState(null)
+  const [form,     setForm]    = useState({})
+  const [saving,   setSaving]  = useState(false)
+  const [dateFrom, setDateFrom]= useState('')
+  const [dateTo,   setDateTo]  = useState('')
+  const [filterType, setFilter]= useState('') // entree | sortie
+
+  const load = useCallback(async()=>{
+    const { data:ad } = await supabase.auth.getUser()
+    const uid=ad?.user?.id; const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
+    let q = supabase.from(table).select('*,compta_companies(raison_sociale)').order('date_operation',{ascending:true})
+    if (isAdmin && companyId) q = q.eq('company_id', companyId)
+    else if (companyId) q = q.eq('user_id', uid).eq('company_id', companyId)
+    else q = q.eq('user_id', uid)
+    if (dateFrom) q = q.gte('date_operation', dateFrom)
+    if (dateTo)   q = q.lte('date_operation', dateTo)
+    if (filterType) q = q.eq('type_operation', filterType)
+    const { data } = await q; setItems(data||[])
+  }, [table, companyId, dateFrom, dateTo, filterType])
+
+  useEffect(()=>{ load() },[load])
+
+  const totalEntrees = items.filter(i=>i.type_operation==='entree').reduce((s,i)=>s+(i.montant||0),0)
+  const totalSorties = items.filter(i=>i.type_operation==='sortie').reduce((s,i)=>s+(i.montant||0),0)
+  const solde        = totalEntrees - totalSorties
+
+  // Solde cumulatif ligne par ligne
+  const itemsAvecSolde = items.reduce((acc, it) => {
+    const prev = acc.length > 0 ? acc[acc.length-1].soldeCum : 0
+    const delta = it.type_operation==='entree' ? (it.montant||0) : -(it.montant||0)
+    return [...acc, { ...it, soldeCum: prev + delta }]
+  }, [])
+
+  const set = e => setForm(f=>({...f,[e.target.name]:e.target.value}))
+  const companyName = companies.find(c=>c.id===companyId)?.raison_sociale||''
+
+  const openAdd = () => {
+    setEditItem(null)
+    setForm({ company_id:companyId||companies[0]?.id||'', date_operation:today(), numero_piece:'', libelle:'', tiers:'', type_operation:'entree', montant:0, mode_operation:'', reference:'', notes:'' })
+    setModal(true)
+  }
+  const openEdit = it => { setEditItem(it); setForm({...it}); setModal(true) }
+  const close = () => { setModal(false); setEditItem(null) }
+
+  const save = async e => {
+    e.preventDefault(); setSaving(true)
+    const { data:ad } = await supabase.auth.getUser(); const uid=ad?.user?.id
+    const pay = {
+      company_id:form.company_id, date_operation:form.date_operation,
+      numero_piece:form.numero_piece, libelle:form.libelle, tiers:form.tiers,
+      type_operation:form.type_operation, montant:+form.montant,
+      mode_operation:form.mode_operation, reference:form.reference, notes:form.notes,
+    }
+    const { error } = editItem
+      ? await supabase.from(table).update(pay).eq('id', editItem.id)
+      : await supabase.from(table).insert({...pay, user_id:uid})
+    setSaving(false)
+    if (error) { toast.error(error.message); return }
+    toast.success(editItem ? 'Ligne mise à jour !' : 'Opération enregistrée !'); close(); load()
+  }
+
+  const del = async id => {
+    if (!confirm('Supprimer cette ligne ?')) return
+    await supabase.from(table).delete().eq('id', id)
+    toast.success('Supprimé.'); load()
+  }
+
+  const printPDF = () => {
+    const headers = [
+      {label:'Date'}, {label:'N° Pièce'}, {label:'Libellé'}, {label:'Tiers'},
+      ...(isBanque ? [{label:'Mode'}] : []),
+      {label:'Réf.'}, {label:'Entrée (FCFA)', r:true}, {label:'Sortie (FCFA)', r:true}, {label:'Solde cum.', r:true},
+    ]
+    const rows = itemsAvecSolde.map(it => [
+      it.date_operation||'—', it.numero_piece||'—', it.libelle||'—', it.tiers||'—',
+      ...(isBanque ? [it.mode_operation||'—'] : []),
+      it.reference||'—',
+      it.type_operation==='entree' ? Math.round(it.montant||0).toLocaleString('fr-FR') : '—',
+      it.type_operation==='sortie' ? Math.round(it.montant||0).toLocaleString('fr-FR') : '—',
+      Math.round(it.soldeCum||0).toLocaleString('fr-FR'),
+    ])
+    printFilteredList({
+      title, companyName, headers, rows, dateFrom, dateTo,
+      totals:[
+        {label:'Total Entrées',   value: Math.round(totalEntrees).toLocaleString('fr-FR')+' FCFA'},
+        {label:'Total Sorties',   value: Math.round(totalSorties).toLocaleString('fr-FR')+' FCFA'},
+        {label:'Solde final',     value: Math.round(solde).toLocaleString('fr-FR')+' FCFA'},
+      ]
+    })
+  }
+
+  const modeOptions = isBanque
+    ? ['virement_entrant','virement_sortant','chèque_reçu','chèque_émis','prélèvement','carte','autre']
+    : ['espèces','autre']
+
+  return (
+    <div>
+      <PageHeader title={title} subtitle={`${items.length} opération(s)`}
+        actions={<>
+          <Btn sm variant="danger" onClick={printPDF}>🖨️ PDF</Btn>
+          {!readOnly && <Btn onClick={openAdd}>+ Nouvelle Opération</Btn>}
+        </>} />
+
+      {/* KPI */}
+      <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:12,marginBottom:16}}>
+        {[
+          {label:'Total Entrées',  val:fcfa(totalEntrees), c:'#16a34a', bg:'#dcfce7', icon:'⬇️'},
+          {label:'Total Sorties',  val:fcfa(totalSorties), c:'#dc2626', bg:'#fee2e2', icon:'⬆️'},
+          {label:'Solde',          val:fcfa(solde),        c: solde>=0?'#2563eb':'#dc2626', bg: solde>=0?'#dbeafe':'#fee2e2', icon:'⚖️'},
+        ].map(k=>(
+          <Card key={k.label} style={{padding:'14px 18px'}}>
+            <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:6}}>
+              <span style={{fontSize:20}}>{k.icon}</span>
+              <span style={{fontSize:11,color:'#64748b',fontWeight:600}}>{k.label}</span>
+            </div>
+            <div style={{fontSize:20,fontWeight:800,color:k.c}}>{k.val}</div>
+          </Card>
+        ))}
+      </div>
+
+      {/* Filtres */}
+      <PeriodFilter dateFrom={dateFrom} dateTo={dateTo} onFrom={setDateFrom} onTo={setDateTo} onReset={()=>{setDateFrom('');setDateTo('')}} />
+      <Card style={{marginBottom:16,padding:'10px 16px'}}>
+        <div style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
+          <span style={{fontSize:12.5,fontWeight:700,color:'#374151'}}>🔍 Filtrer :</span>
+          <select value={filterType} onChange={e=>setFilter(e.target.value)}
+            style={{padding:'6px 12px',borderRadius:7,border:'1px solid #d1d5db',fontSize:12.5,background:'white'}}>
+            <option value=''>Toutes opérations</option>
+            <option value='entree'>Entrées uniquement</option>
+            <option value='sortie'>Sorties uniquement</option>
+          </select>
+          <span style={{fontSize:11,color:'#94a3b8',marginLeft:'auto'}}>{items.length} ligne(s)</span>
+        </div>
+      </Card>
+
+      {/* Tableau */}
+      <div style={{background:'white',borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
+        {items.length===0 ? (
+          <div style={{textAlign:'center',padding:'48px 24px',color:'#64748b'}}>
+            <div style={{fontSize:40,marginBottom:8}}>{icon}</div>
+            <p>Aucune opération enregistrée</p>
+            {!readOnly && <Btn onClick={openAdd}>+ Enregistrer une opération</Btn>}
+          </div>
+        ) : (
+          <div style={{overflowX:'auto'}}>
+          <table style={{width:'100%',borderCollapse:'collapse',fontSize:12.5}}>
+            <thead><tr>
+              <TH>Date</TH><TH>N° Pièce</TH><TH>Libellé</TH><TH>Tiers</TH>
+              {isBanque && <TH>Mode</TH>}
+              <TH>Réf.</TH>
+              <TH right><span style={{color:'#16a34a'}}>Entrée (FCFA)</span></TH>
+              <TH right><span style={{color:'#dc2626'}}>Sortie (FCFA)</span></TH>
+              <TH right>Solde cum.</TH>
+              {!readOnly && <TH>Actions</TH>}
+            </tr></thead>
+            <tbody>
+              {itemsAvecSolde.map(it=>(
+                <TR key={it.id}>
+                  <TD sm>{it.date_operation}</TD>
+                  <TD sm>{it.numero_piece||'—'}</TD>
+                  <TD bold>{it.libelle}</TD>
+                  <TD sm>{it.tiers||'—'}</TD>
+                  {isBanque && <TD sm>{it.mode_operation||'—'}</TD>}
+                  <TD sm>{it.reference||'—'}</TD>
+                  <TD right color="#16a34a" bold>
+                    {it.type_operation==='entree' ? Math.round(it.montant||0).toLocaleString('fr-FR') : ''}
+                  </TD>
+                  <TD right color="#dc2626" bold>
+                    {it.type_operation==='sortie' ? Math.round(it.montant||0).toLocaleString('fr-FR') : ''}
+                  </TD>
+                  <TD right bold color={it.soldeCum>=0?'#2563eb':'#dc2626'}>
+                    {Math.round(it.soldeCum||0).toLocaleString('fr-FR')}
+                  </TD>
+                  {!readOnly && (
+                    <TD>
+                      <div style={{display:'flex',gap:4}}>
+                        <Btn sm variant="secondary" onClick={()=>openEdit(it)}>✏️</Btn>
+                        <Btn sm variant="danger" onClick={()=>del(it.id)}>🗑️</Btn>
+                      </div>
+                    </TD>
+                  )}
+                </TR>
+              ))}
+              {/* Ligne totaux */}
+              <tr style={{background:'#f8fafc',fontWeight:700,fontSize:12}}>
+                <td colSpan={isBanque?6:5} style={{padding:'8px 10px',color:'#64748b',fontStyle:'italic'}}>
+                  Totaux ({items.length} ligne{items.length>1?'s':''})
+                </td>
+                <td style={{padding:'8px 10px',textAlign:'right',color:'#16a34a'}}>
+                  {Math.round(totalEntrees).toLocaleString('fr-FR')}
+                </td>
+                <td style={{padding:'8px 10px',textAlign:'right',color:'#dc2626'}}>
+                  {Math.round(totalSorties).toLocaleString('fr-FR')}
+                </td>
+                <td style={{padding:'8px 10px',textAlign:'right',color:solde>=0?'#2563eb':'#dc2626'}}>
+                  {Math.round(solde).toLocaleString('fr-FR')}
+                </td>
+                {!readOnly && <td/>}
+              </tr>
+            </tbody>
+          </table>
+          </div>
+        )}
+      </div>
+
+      {/* Modal saisie */}
+      <Modal open={modal} onClose={close} title={editItem?'Modifier l\'opération':'Nouvelle Opération'} size="lg">
+        <form onSubmit={save}>
+          <Grid cols={2} gap={14} style={{marginBottom:16}}>
+            <Input label="Date *" name="date_operation" type="date" value={form.date_operation||''} onChange={set} required />
+            <Input label="N° Pièce" name="numero_piece" value={form.numero_piece||''} onChange={set} placeholder="ex: PC-001" />
+            <Span2>
+              <Input label="Libellé *" name="libelle" value={form.libelle||''} onChange={set} required placeholder="Description de l'opération" />
+            </Span2>
+            <Input label="Tiers (client / fournisseur)" name="tiers" value={form.tiers||''} onChange={set} />
+            <Sel label="Type d'opération *" name="type_operation" value={form.type_operation||'entree'} onChange={set}
+              options={[{value:'entree',label:'⬇️ Entrée (Recette)'},{value:'sortie',label:'⬆️ Sortie (Dépense)'}]} required />
+            <Input label="Montant (FCFA) *" name="montant" type="number" value={form.montant||0} onChange={set} required min="0" />
+            {isBanque && (
+              <Sel label="Mode d'opération" name="mode_operation" value={form.mode_operation||''} onChange={set}
+                options={[{value:'',label:'— Choisir —'}, ...modeOptions.map(m=>({value:m,label:m.replace('_',' ').replace(/\b\w/g,l=>l.toUpperCase())}))]} />
+            )}
+            <Input label="Référence" name="reference" value={form.reference||''} onChange={set} placeholder={isBanque?'N° chèque / virement':'N° reçu'} />
+            <Span2>
+              <Input label="Notes / Observations" name="notes" value={form.notes||''} onChange={set} />
+            </Span2>
+          </Grid>
+          <Row>
+            <Btn variant="secondary" onClick={close}>Annuler</Btn>
+            <Btn type="submit" disabled={saving}>{saving?'...':'Enregistrer'}</Btn>
+          </Row>
+        </form>
+      </Modal>
+    </div>
+  )
+}
+
 // ── PAIEMENTS ÉTUVAGE ─────────────────────────────────────────────────────────
 function PaiementsEtuvagePage({ companies, companyId, lots, toast, readOnly=false }) {
   const [items, setItems]   = useState([])
@@ -3371,7 +3615,7 @@ export default function ComptaPro() {
     etuvage:'Étuvage', decorticage:'Décorticage', calibrage:'Calibrage',
     tri_optique:'Tri Optique', conditionnement:'Conditionnement',
     achats:'Achats Semi-finis', reglements:'Règlements', etuvage_paiements:'Paiements Étuvage',
-    prestations:'Prestations',
+    prestations:'Prestations', journal_caisse:'Journal Caisse', journal_banque:'Journal Banque',
   }
 
   const renderPage = () => {
@@ -3413,6 +3657,8 @@ export default function ComptaPro() {
       case 'reglements':    return <ReglementsPage {...sp} />
       case 'prestations':   return <PrestationPage {...sp} />
       case 'etuvage_paiements': return <PaiementsEtuvagePage {...sp} lots={lots} />
+      case 'journal_caisse':    return <JournalPage table="compta_journal_caisse" title="Journal Caisse" icon="🏦" isBanque={false} {...sp} />
+      case 'journal_banque':    return <JournalPage table="compta_journal_banque" title="Journal Banque" icon="🏛️" isBanque={true} {...sp} />
       case 'users':          return isSuperAdmin ? <UsersManagementPage toast={toast} /> : <Dashboard {...sp} setPage={setPage} />
     }
   }
