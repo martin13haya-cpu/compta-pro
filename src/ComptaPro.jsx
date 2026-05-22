@@ -4,7 +4,9 @@ import { useState, useEffect, useCallback } from 'react'
 // ── CONFIG ─────────────────────────────────────────────────────────────────
 const SUPABASE_URL       ='https://proehigsikgqdrxjltmq.supabase.co'
 const SUPABASE_ANON_KEY  = 'sb_publishable_DqCGxDWGqJ5K0rnnzDv6Hg_gWG7wzfX'
-const SUPER_ADMIN_EMAIL  = 'martin13haya@gmail.com'
+const SUPER_ADMIN_EMAIL    = 'martin13haya@gmail.com'
+const SUPER_ADMIN_WHATSAPP = '2290196078696' // ← Mettre ici votre vrai numéro WhatsApp (sans +, ex: 22997000000)
+const APP_VERSION        = 'v2.1.0' // force rebuild
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
 
 // Helper : retourne un filtre uid ou company selon le rôle
@@ -375,7 +377,7 @@ function Btn({ onClick, variant='primary', sm, children, type='button', disabled
     <button type={type} onClick={onClick} disabled={disabled} style={{
       ...S[variant]||S.primary, padding:sm?'6px 14px':'9px 18px',
       borderRadius:8, fontSize:sm?12:13, fontWeight:600, cursor:disabled?'not-allowed':'pointer',
-      opacity:disabled?.6:1, display:'inline-flex', alignItems:'center', gap:6, ...sx,
+      opacity:(disabled?0.6:1), display:'inline-flex', alignItems:'center', gap:6, ...sx,
     }}>
       {children}
     </button>
@@ -562,10 +564,10 @@ function printFilteredList({ title, subtitle='', headers, rows, companyName='', 
 
 // ── AUTH PAGES ──────────────────────────────────────────────────────────────
 function LoginPage({ onLogin }) {
-  const [mode, setMode]     = useState('login') // login | register
-  const [form, setForm]     = useState({ email:'', password:'', nom:'' })
+  const [mode, setMode]       = useState('login')
+  const [form, setForm]       = useState({ email:'', password:'', nom:'', whatsapp:'' })
   const [loading, setLoading] = useState(false)
-  const [error, setError]   = useState('')
+  const [error, setError]     = useState('')
   const [success, setSuccess] = useState('')
   const set = e => setForm(f=>({...f,[e.target.name]:e.target.value}))
 
@@ -579,72 +581,97 @@ function LoginPage({ onLogin }) {
 
   const submitRegister = async e => {
     e.preventDefault(); setLoading(true); setError('')
-    const { error:err } = await supabase.auth.signUp({ email:form.email, password:form.password })
+    // Validation numéro WhatsApp
+    const wa = form.whatsapp.replace(/\D/g,'')
+    if (wa.length < 8) { setError('Numéro WhatsApp invalide (minimum 8 chiffres)'); setLoading(false); return }
+    const { data, error:err } = await supabase.auth.signUp({ email:form.email, password:form.password })
+    if (err) { setError(err.message); setLoading(false); return }
+    // Mettre à jour le profil avec nom + whatsapp
+    if (data?.user?.id) {
+      await new Promise(r=>setTimeout(r,1200)) // attendre le trigger DB
+      await supabase.from('compta_profiles').update({ nom:form.nom, whatsapp:wa }).eq('id', data.user.id)
+    }
     setLoading(false)
-    if (err) { setError(err.message); return }
-    // Update nom in profile
     setSuccess('Compte créé ! En attente de validation par l\'administrateur.')
     setMode('login')
-    setForm({ email:'', password:'', nom:'' })
+    setForm({ email:'', password:'', nom:'', whatsapp:'' })
   }
 
+  const inp = (label, name, type='text', placeholder='', required=false, extra={}) => (
+    <div style={{marginBottom:16}}>
+      <label style={{display:'block',fontSize:12.5,fontWeight:700,color:'#374151',marginBottom:6}}>
+        {label}{required&&<span style={{color:'#dc2626'}}>*</span>}
+      </label>
+      <input type={type} name={name} value={form[name]} onChange={set} required={required} placeholder={placeholder} {...extra}
+        style={{width:'100%',padding:'11px 16px',borderRadius:10,border:'1.5px solid #e2e8f0',fontSize:14,boxSizing:'border-box'}} />
+    </div>
+  )
+
   const panel = (
-    <div style={{ width:'40%', background:'linear-gradient(160deg,#1d4ed8,#2563eb)', padding:'48px 40px', color:'white', display:'flex', flexDirection:'column', justifyContent:'space-between' }}>
+    <div style={{width:'40%',background:'linear-gradient(160deg,#1d4ed8,#2563eb)',padding:'48px 40px',color:'white',display:'flex',flexDirection:'column',justifyContent:'space-between'}}>
       <div>
-        <div style={{ display:'flex', alignItems:'center', gap:14, marginBottom:32 }}>
-          <div style={{ width:52, height:52, background:'rgba(255,255,255,.15)', borderRadius:14, display:'flex', alignItems:'center', justifyContent:'center', fontSize:24 }}>📊</div>
-          <div><div style={{ fontSize:22, fontWeight:800 }}>Compta Pro</div><div style={{ fontSize:12, opacity:.75 }}>Gestion Commerciale & Stock</div></div>
+        <div style={{display:'flex',alignItems:'center',gap:14,marginBottom:32}}>
+          <div style={{width:52,height:52,background:'rgba(255,255,255,.15)',borderRadius:14,display:'flex',alignItems:'center',justifyContent:'center',fontSize:24}}>📊</div>
+          <div><div style={{fontSize:22,fontWeight:800}}>Compta Pro</div><div style={{fontSize:12,opacity:.75}}>Gestion Commerciale & Stock</div></div>
         </div>
         {['Gestion multi-sociétés','Documents commerciaux','Stocks & Production riz','Clients & Fournisseurs','Paiements & Règlements'].map(f=>(
-          <div key={f} style={{ display:'flex', alignItems:'center', gap:10, marginBottom:12, fontSize:13.5, opacity:.85 }}>
-            <span style={{ color:'#93c5fd' }}>✓</span>{f}
+          <div key={f} style={{display:'flex',alignItems:'center',gap:10,marginBottom:12,fontSize:13.5,opacity:.85}}>
+            <span style={{color:'#93c5fd'}}>✓</span>{f}
           </div>
         ))}
       </div>
-      <div style={{ fontSize:11, opacity:.4 }}>© Compta Pro — Bénin</div>
+      <div>
+        <div style={{fontSize:12,opacity:.7,marginBottom:8}}>Besoin d'aide ? Contactez l'admin :</div>
+        <a href={`https://wa.me/${SUPER_ADMIN_WHATSAPP}?text=Bonjour, j'ai besoin d'aide pour Compta Pro`}
+          target="_blank" rel="noopener noreferrer"
+          style={{display:'inline-flex',alignItems:'center',gap:8,background:'#25d366',color:'white',padding:'8px 16px',borderRadius:20,fontSize:12,fontWeight:700,textDecoration:'none'}}>
+          <span style={{fontSize:16}}>📱</span> WhatsApp Admin
+        </a>
+        <div style={{fontSize:11,opacity:.4,marginTop:12}}>© Compta Pro — Bénin</div>
+      </div>
     </div>
   )
 
   return (
-    <div style={{ minHeight:'100vh', background:'linear-gradient(135deg,#0f2044,#1a3a6e)', display:'flex', alignItems:'center', justifyContent:'center', padding:16 }}>
-      <div style={{ display:'flex', width:'100%', maxWidth:860, borderRadius:20, overflow:'hidden', boxShadow:'0 30px 80px rgba(0,0,0,.4)' }}>
+    <div style={{minHeight:'100vh',background:'linear-gradient(135deg,#0f2044,#1a3a6e)',display:'flex',alignItems:'center',justifyContent:'center',padding:16}}>
+      <div style={{display:'flex',width:'100%',maxWidth:860,borderRadius:20,overflow:'hidden',boxShadow:'0 30px 80px rgba(0,0,0,.4)'}}>
         {window.innerWidth >= 640 && panel}
-        <div style={{ flex:1, background:'white', padding:'40px 32px', display:'flex', flexDirection:'column', justifyContent:'center' }}>
-          <h3 style={{ margin:'0 0 6px', fontSize:24, fontWeight:800, color:'#0f172a' }}>
-            {mode==='login' ? 'Connexion' : 'Créer un compte'}
+        <div style={{flex:1,background:'white',padding:'40px 32px',display:'flex',flexDirection:'column',justifyContent:'center'}}>
+          <h3 style={{margin:'0 0 6px',fontSize:24,fontWeight:800,color:'#0f172a'}}>
+            {mode==='login'?'Connexion':'Créer un compte'}
           </h3>
-          <p style={{ margin:'0 0 20px', color:'#64748b', fontSize:13.5 }}>
-            {mode==='login' ? 'Accédez à votre espace de gestion' : 'Votre compte sera activé par l\'administrateur'}
+          <p style={{margin:'0 0 20px',color:'#64748b',fontSize:13.5}}>
+            {mode==='login'?'Accédez à votre espace de gestion':'Votre compte sera activé par l\'administrateur'}
           </p>
-          {error   && <div style={{ background:'#fee2e2', color:'#dc2626', padding:'10px 14px', borderRadius:10, marginBottom:16, fontSize:13 }}>{error}</div>}
-          {success && <div style={{ background:'#dcfce7', color:'#16a34a', padding:'10px 14px', borderRadius:10, marginBottom:16, fontSize:13 }}>{success}</div>}
+          {error   && <div style={{background:'#fee2e2',color:'#dc2626',padding:'10px 14px',borderRadius:10,marginBottom:16,fontSize:13}}>{error}</div>}
+          {success && <div style={{background:'#dcfce7',color:'#16a34a',padding:'10px 14px',borderRadius:10,marginBottom:16,fontSize:13}}>{success}</div>}
           <form onSubmit={mode==='login'?submitLogin:submitRegister}>
+            {mode==='register' && inp('Nom complet','nom','text','Votre nom complet',true)}
+            {inp('Email','email','email','votre@email.bj',true)}
             {mode==='register' && (
-              <div style={{ marginBottom:16 }}>
-                <label style={{ display:'block', fontSize:12.5, fontWeight:700, color:'#374151', marginBottom:6 }}>Nom complet</label>
-                <input type="text" name="nom" value={form.nom} onChange={set} required placeholder="Votre nom"
-                  style={{ width:'100%', padding:'11px 16px', borderRadius:10, border:'1.5px solid #e2e8f0', fontSize:14, boxSizing:'border-box' }} />
+              <div style={{marginBottom:16}}>
+                <label style={{display:'block',fontSize:12.5,fontWeight:700,color:'#374151',marginBottom:6}}>
+                  Numéro WhatsApp <span style={{color:'#dc2626'}}>*</span>
+                  <span style={{fontWeight:400,color:'#64748b',marginLeft:6}}>(ex: 0197777777)</span>
+                </label>
+                <div style={{display:'flex',alignItems:'center',border:'1.5px solid #e2e8f0',borderRadius:10,overflow:'hidden'}}>
+                  <span style={{padding:'11px 12px',background:'#f8fafc',borderRight:'1px solid #e2e8f0',fontSize:14,color:'#374151',whiteSpace:'nowrap'}}>📱 +229</span>
+                  <input type="tel" name="whatsapp" value={form.whatsapp} onChange={set} required placeholder="97000000"
+                    style={{flex:1,padding:'11px 14px',border:'none',fontSize:14,outline:'none'}} />
+                </div>
               </div>
             )}
-            <div style={{ marginBottom:16 }}>
-              <label style={{ display:'block', fontSize:12.5, fontWeight:700, color:'#374151', marginBottom:6 }}>Email</label>
-              <input type="email" name="email" value={form.email} onChange={set} required placeholder="votre@email.bj"
-                style={{ width:'100%', padding:'11px 16px', borderRadius:10, border:'1.5px solid #e2e8f0', fontSize:14, boxSizing:'border-box' }} />
-            </div>
-            <div style={{ marginBottom:24 }}>
-              <label style={{ display:'block', fontSize:12.5, fontWeight:700, color:'#374151', marginBottom:6 }}>Mot de passe</label>
-              <input type="password" name="password" value={form.password} onChange={set} required placeholder="••••••••" minLength={6}
-                style={{ width:'100%', padding:'11px 16px', borderRadius:10, border:'1.5px solid #e2e8f0', fontSize:14, boxSizing:'border-box' }} />
-            </div>
-            <button type="submit" disabled={loading} style={{ width:'100%', background:ACCENT, color:'white', border:'none', borderRadius:10, padding:12, fontSize:15, fontWeight:700, cursor:'pointer', opacity:loading?.7:1 }}>
-              {loading ? 'Chargement...' : mode==='login' ? '→ Se connecter' : '→ Créer mon compte'}
+            {inp('Mot de passe','password','password','••••••••',true,{minLength:6})}
+            <button type="submit" disabled={loading}
+              style={{width:'100%',background:ACCENT,color:'white',border:'none',borderRadius:10,padding:12,fontSize:15,fontWeight:700,cursor:'pointer',opacity:(loading?0.7:1)}}>
+              {loading?'Chargement...':mode==='login'?'→ Se connecter':'→ Créer mon compte'}
             </button>
           </form>
-          <div style={{ marginTop:20, textAlign:'center', fontSize:13, color:'#64748b' }}>
+          <div style={{marginTop:20,textAlign:'center',fontSize:13,color:'#64748b'}}>
             {mode==='login' ? (
-              <span>Pas encore de compte ? <span onClick={()=>{setMode('register');setError('');setSuccess('')}} style={{ color:ACCENT, cursor:'pointer', fontWeight:600 }}>S'inscrire</span></span>
+              <span>Pas encore de compte ? <span onClick={()=>{setMode('register');setError('');setSuccess('')}} style={{color:ACCENT,cursor:'pointer',fontWeight:600}}>S'inscrire</span></span>
             ) : (
-              <span>Déjà un compte ? <span onClick={()=>{setMode('login');setError('');setSuccess('')}} style={{ color:ACCENT, cursor:'pointer', fontWeight:600 }}>Se connecter</span></span>
+              <span>Déjà un compte ? <span onClick={()=>{setMode('login');setError('');setSuccess('')}} style={{color:ACCENT,cursor:'pointer',fontWeight:600}}>Se connecter</span></span>
             )}
           </div>
         </div>
@@ -675,8 +702,9 @@ function PendingPage({ onLogout }) {
 
 // ── GESTION UTILISATEURS (Super Admin) ───────────────────────────────────────
 function UsersManagementPage({ toast }) {
-  const [users, setUsers] = useState([])
+  const [users,   setUsers]   = useState([])
   const [loading, setLoading] = useState(true)
+  const [search,  setSearch]  = useState('')
 
   const load = useCallback(async()=>{
     setLoading(true)
@@ -689,8 +717,8 @@ function UsersManagementPage({ toast }) {
   const updateStatut = async (id, statut) => {
     const { error } = await supabase.from('compta_profiles').update({ statut }).eq('id', id)
     if (error) { toast.error(error.message); return }
-    toast.success(statut==='active' ? 'Compte activé !' : 'Compte suspendu.')
-    load()
+    const msgs = { active:'✅ Compte activé !', suspended:'🚫 Compte suspendu.', pending:'⏳ Compte remis en attente.' }
+    toast.success(msgs[statut]||'Mis à jour.'); load()
   }
 
   const updateRole = async (id, role) => {
@@ -698,69 +726,145 @@ function UsersManagementPage({ toast }) {
     toast.success('Rôle mis à jour !'); load()
   }
 
-  const STATUT_STYLE = {
-    pending:   { bg:'#fef9c3', c:'#ca8a04', label:'En attente' },
-    active:    { bg:'#dcfce7', c:'#16a34a', label:'Actif' },
-    suspended: { bg:'#fee2e2', c:'#dc2626', label:'Suspendu' },
+  const formatDate = dt => {
+    if (!dt) return null
+    const d = new Date(dt)
+    const now = new Date()
+    const diffMin = Math.floor((now - d) / 60000)
+    const diffH   = Math.floor(diffMin / 60)
+    const diffD   = Math.floor(diffH / 24)
+    if (diffMin < 2)  return { label: '🟢 En ligne',           color:'#16a34a', recent:true }
+    if (diffMin < 60) return { label: `🟡 Il y a ${diffMin} min`, color:'#ca8a04', recent:true }
+    if (diffH < 24)   return { label: `🔵 Aujourd'hui ${d.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'})}`, color:'#2563eb', recent:false }
+    if (diffD < 2)    return { label: `⚪ Hier ${d.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'})}`,        color:'#64748b', recent:false }
+    return { label: d.toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit',year:'numeric'})+' '+d.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'}), color:'#94a3b8', recent:false }
   }
+
+  const renderLastLogin = (dt) => {
+    const info = formatDate(dt)
+    if (!info) return <span style={{fontSize:11,color:'#94a3b8',fontStyle:'italic'}}>Jamais connecté</span>
+    return <span style={{fontSize:11,color:info.color,fontWeight:info.recent?700:400}}>{info.label}</span>
+  }
+    if (!whatsapp) { toast.error('Numéro WhatsApp non renseigné pour cet utilisateur.'); return }
+    const num = whatsapp.replace(/\D/g,'')
+    const intl = num.startsWith('229') ? num : '229'+num
+    const msg = encodeURIComponent(`Bonjour ${nom||''},\n\nMessage de l'administrateur Compta Pro.`)
+    window.open(`https://wa.me/${intl}?text=${msg}`, '_blank')
+  }
+
+  const STATUT_STYLE = {
+    pending:   { bg:'#fef9c3', c:'#ca8a04', label:'En attente', icon:'⏳' },
+    active:    { bg:'#dcfce7', c:'#16a34a', label:'Actif',      icon:'✅' },
+    suspended: { bg:'#fee2e2', c:'#dc2626', label:'Suspendu',   icon:'🚫' },
+  }
+
+  const filtered = users.filter(u =>
+    !search || (u.email+' '+(u.nom||'')).toLowerCase().includes(search.toLowerCase())
+  )
+
+  const pending = users.filter(u=>u.statut==='pending').length
 
   return (
     <div>
-      <PageHeader title="Gestion des utilisateurs" subtitle={`${users.length} compte(s)`} />
+      <PageHeader title="Gestion des utilisateurs" subtitle={`${users.length} compte(s) — ${pending} en attente`}
+        actions={
+          <div style={{display:'flex',alignItems:'center',gap:10}}>
+            <div style={{background:'#f8fafc',border:'1px solid #e2e8f0',borderRadius:8,padding:'6px 12px',fontSize:11,color:'#374151'}}>
+              📱 Mon WA Admin : <strong>+{SUPER_ADMIN_WHATSAPP}</strong>
+            </div>
+            <a href={`https://wa.me/${SUPER_ADMIN_WHATSAPP}`} target="_blank" rel="noopener noreferrer"
+              style={{display:'inline-flex',alignItems:'center',gap:6,background:'#25d366',color:'white',padding:'8px 14px',borderRadius:8,fontSize:12,fontWeight:700,textDecoration:'none'}}>
+              📱 Tester mon WA
+            </a>
+          </div>
+        } />
+
+      {/* Alerte comptes en attente */}
+      {pending > 0 && (
+        <div style={{background:'#fffbeb',border:'1px solid #fde68a',borderRadius:10,padding:'12px 16px',marginBottom:16,display:'flex',alignItems:'center',gap:10,fontSize:13,color:'#92400e'}}>
+          <span style={{fontSize:18}}>⚠️</span>
+          <span><strong>{pending} compte(s)</strong> en attente de validation</span>
+        </div>
+      )}
+
+      {/* Barre de recherche */}
+      <Card style={{marginBottom:16,padding:'10px 16px'}}>
+        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="🔍 Rechercher par email ou nom..."
+          style={{padding:'8px 14px',borderRadius:8,border:'1px solid #d1d5db',fontSize:13,width:320}} />
+      </Card>
+
       {loading ? <div style={{padding:24}}>Chargement...</div> : (
-        <div style={{ background:'white', borderRadius:12, border:'1px solid #e2e8f0', overflow:'hidden' }}>
-          <table style={{ width:'100%', borderCollapse:'collapse' }}>
+        <div style={{background:'white',borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
+          <div style={{overflowX:'auto'}}>
+          <table style={{width:'100%',borderCollapse:'collapse',minWidth:900}}>
             <thead><tr>
-              <TH>Email</TH><TH>Nom</TH><TH>Rôle</TH><TH>Statut</TH><TH>Inscrit le</TH><TH>Actions</TH>
+              <TH>Email</TH><TH>Nom</TH><TH>WhatsApp</TH><TH>Rôle</TH>
+              <TH>Statut</TH><TH>Inscrit le</TH><TH>Dernière connexion</TH><TH>Actions</TH>
             </tr></thead>
             <tbody>
-              {users.map(u => {
+              {filtered.map(u => {
                 const s = STATUT_STYLE[u.statut] || STATUT_STYLE.pending
                 const isSelf = u.email === SUPER_ADMIN_EMAIL
+                const isActive = u.statut === 'active'
                 return (
                   <TR key={u.id}>
-                    <TD bold>{u.email}</TD>
-                    <TD>{u.nom || '—'}</TD>
+                    <TD bold sm>{u.email}</TD>
+                    <TD>{u.nom||'—'}</TD>
+                    <TD>
+                      {u.whatsapp ? (
+                        <span style={{fontFamily:'monospace',fontSize:12,color:'#374151'}}>
+                          +229 {u.whatsapp.replace(/^229/,'')}
+                        </span>
+                      ) : (
+                        <span style={{color:'#dc2626',fontSize:11,fontStyle:'italic'}}>Non renseigné</span>
+                      )}
+                    </TD>
                     <TD>
                       {isSelf ? (
-                        <span style={{ background:'#fef3c7', color:'#d97706', padding:'3px 10px', borderRadius:20, fontSize:11, fontWeight:700 }}>👑 Super Admin</span>
+                        <span style={{background:'#fef3c7',color:'#d97706',padding:'3px 10px',borderRadius:20,fontSize:11,fontWeight:700}}>👑 Super Admin</span>
                       ) : (
                         <select value={u.role} onChange={e=>updateRole(u.id,e.target.value)}
-                          style={{ padding:'4px 8px', borderRadius:6, border:'1px solid #d1d5db', fontSize:12 }}>
+                          style={{padding:'4px 8px',borderRadius:6,border:'1px solid #d1d5db',fontSize:12}}>
                           <option value="admin">Admin</option>
                           <option value="super_admin">Super Admin</option>
                         </select>
                       )}
                     </TD>
                     <TD>
-                      <span style={{ background:s.bg, color:s.c, padding:'3px 10px', borderRadius:20, fontSize:11, fontWeight:600 }}>{s.label}</span>
+                      <span style={{background:s.bg,color:s.c,padding:'3px 10px',borderRadius:20,fontSize:11,fontWeight:600}}>
+                        {s.icon} {s.label}
+                      </span>
                     </TD>
-                    <TD sm>{u.created_at?.slice(0,10)}</TD>
+                    <TD sm>{u.created_at?.slice(0,10)||'—'}</TD>
+                    <TD sm>{renderLastLogin(u.last_login_at)}</TD>
                     <TD>
                       {!isSelf && (
-                        <div style={{ display:'flex', gap:6 }}>
-                          {u.statut !== 'active' && (
-                            <Btn sm variant="success" onClick={()=>updateStatut(u.id,'active')}>✓ Activer</Btn>
+                        <div style={{display:'flex',gap:5,flexWrap:'wrap'}}>
+                          {/* Toggle Activer/Désactiver */}
+                          {isActive ? (
+                            <Btn sm variant="danger" onClick={()=>updateStatut(u.id,'suspended')}>
+                              🚫 Désactiver
+                            </Btn>
+                          ) : (
+                            <Btn sm variant="success" onClick={()=>updateStatut(u.id,'active')}>
+                              ✅ Activer
+                            </Btn>
                           )}
-                          {u.statut === 'active' && (
-                            <Btn sm variant="danger" onClick={()=>updateStatut(u.id,'suspended')}>⊘ Suspendre</Btn>
-                          )}
-                          {u.statut === 'pending' && (
-                            <Btn sm variant="danger" onClick={()=>updateStatut(u.id,'suspended')}>✕ Rejeter</Btn>
-                          )}
+                          {/* WhatsApp */}
+                          <button onClick={()=>openWhatsApp(u.whatsapp, u.nom)}
+                            style={{background:u.whatsapp?'#25d366':'#e2e8f0',color:u.whatsapp?'white':'#94a3b8',border:'none',padding:'4px 10px',borderRadius:6,fontSize:12,fontWeight:600,cursor:u.whatsapp?'pointer':'not-allowed',display:'flex',alignItems:'center',gap:4}}>
+                            📱 WA
+                          </button>
                         </div>
                       )}
+                      {isSelf && <span style={{fontSize:11,color:'#94a3b8',fontStyle:'italic'}}>Votre compte</span>}
                     </TD>
                   </TR>
                 )
               })}
             </tbody>
           </table>
-          {users.filter(u=>u.statut==='pending').length > 0 && (
-            <div style={{ padding:'12px 20px', background:'#fffbeb', borderTop:'1px solid #fde68a', fontSize:13, color:'#92400e' }}>
-              ⚠️ {users.filter(u=>u.statut==='pending').length} compte(s) en attente de validation
-            </div>
-          )}
+          </div>
         </div>
       )}
     </div>
@@ -784,6 +888,7 @@ const NAV = [
   { id:'reglements',         icon:'💳', label:'Règlements' },
   { id:'prestations',        icon:'🛠️',  label:'Prestations' },
   { section:'Production' },
+  { id:'suivi_lot',          icon:'🔎', label:'Suivi de lot' },
   { id:'lots',               icon:'🏭', label:'Lots Production' },
   { id:'etuvage',            icon:'🔥', label:'Étuvage' },
   { id:'decorticage',        icon:'⚙️',  label:'Décorticage' },
@@ -793,6 +898,10 @@ const NAV = [
   { section:'Achats' },
   { id:'achats',             icon:'🛒', label:'Achats semi-finis' },
   { id:'etuvage_paiements',  icon:'💰', label:'Paiements étuvage' },
+  { section:'Comptabilité' },
+  { id:'journal_caisse',     icon:'🏦', label:'Journal Caisse' },
+  { id:'journal_banque',     icon:'🏛️',  label:'Journal Banque' },
+  { id:'journal_mobile',     icon:'📱', label:'Journal Mobile Money' },
 ]
 
 const NAV_ADMIN = [
@@ -857,7 +966,8 @@ function Sidebar({ page, setPage, user, profile, onLogout, open, onClose }) {
             </div>
             <div style={{ flex:1, overflow:'hidden' }}>
               <div style={{ color:'white', fontSize:11, fontWeight:600, textOverflow:'ellipsis', overflow:'hidden', whiteSpace:'nowrap' }}>{user?.email}</div>
-              <div style={{ color:'rgba(255,255,255,.4)', fontSize:10 }}>{isSuperAdmin?'Super Admin':'Admin'}</div>
+              <div style={{ color:'rgba(255,255,255,.4)', fontSize:10 }}>{isSuperAdmin?'Super Admin ⭐':'Administrateur'}</div>
+              <div style={{ color:'rgba(255,255,255,.3)', fontSize:9 }}>{APP_VERSION}</div>
             </div>
             <span onClick={onLogout} style={{ color:'rgba(255,255,255,.4)', cursor:'pointer', fontSize:14 }} title="Déconnexion">🚪</span>
           </div>
@@ -885,20 +995,38 @@ function Dashboard({ companyId, toast, setPage }) {
   useEffect(()=>{
     const load = async ()=>{
       setLoading(true)
-      const uid = (await supabase.auth.getUser()).data?.user?.id
+      const { data:ad } = await supabase.auth.getUser()
+      const uid = ad?.user?.id
+      const isAdmin = ad?.user?.email === SUPER_ADMIN_EMAIL
       if (!uid) { setLoading(false); return }
-      const base = (tbl,cid) => {
-        let q = supabase.from(tbl).select('id',{count:'exact',head:true}).eq('user_id',uid)
-        if (cid) q = q.eq('company_id',cid)
+      // Quand companyId est fourni (admin consultant une société ou user normal),
+      // filtrer par company_id uniquement pour voir les données de cette société
+      const base = (tbl) => {
+        let q = supabase.from(tbl).select('id',{count:'exact',head:true})
+        if (companyId) q = q.eq('company_id', companyId)
+        else q = q.eq('user_id', uid)
+        return q
+      }
+      const docsQ = () => {
+        let q = supabase.from('compta_documents').select('id,numero,type_doc,date_doc,montant_ttc,montant_paye,statut').order('created_at',{ascending:false}).limit(6)
+        if (isAdmin && companyId) q = q.eq('company_id', companyId)
+        else if (companyId) q = q.eq('user_id', uid).eq('company_id', companyId)
+        else q = q.eq('user_id', uid)
+        return q
+      }
+      const alertesQ = () => {
+        let q = supabase.from('compta_articles').select('stock_actuel,stock_min').eq('actif',true)
+        if (companyId) q = q.eq('company_id', companyId)
+        else q = q.eq('user_id', uid)
         return q
       }
       const [cli,fou,art,docs,lots,alerteRes] = await Promise.all([
-        base('compta_clients',companyId).eq('actif',true),
-        base('compta_fournisseurs',companyId).eq('actif',true),
-        base('compta_articles',companyId).eq('actif',true),
-        supabase.from('compta_documents').select('id,numero,type_doc,date_doc,montant_ttc,montant_paye,statut').eq('user_id',uid).order('created_at',{ascending:false}).limit(6),
-        base('compta_lots_production',companyId).eq('statut','en_cours'),
-        supabase.from('compta_articles').select('stock_actuel,stock_min').eq('user_id',uid).eq('actif',true),
+        base('compta_clients').eq('actif',true),
+        base('compta_fournisseurs').eq('actif',true),
+        base('compta_articles').eq('actif',true),
+        docsQ(),
+        base('compta_lots_production').eq('statut','en_cours'),
+        alertesQ(),
       ])
       const alertes = (alerteRes.data||[]).filter(a=>(a.stock_actuel||0)<=(a.stock_min||0)).length
       setStats({ nb_clients:cli.count||0, nb_fournisseurs:fou.count||0, nb_articles:art.count||0, lots_en_cours:lots.count||0, alertes, recent_docs:docs.data||[] })
@@ -964,15 +1092,23 @@ function Dashboard({ companyId, toast, setPage }) {
 }
 
 // ── COMPANIES ────────────────────────────────────────────────────────────────
-function CompaniesPage({ companies, refresh, toast, isSuperAdmin=false }) {
+function CompaniesPage({ companies, refresh, toast, isSuperAdmin=false, currentUserId=null }) {
   const [modal, setModal] = useState(null)
   const [form,  setForm]  = useState({})
   const [saving,setSaving]= useState(false)
   const set = e => setForm(f=>({...f,[e.target.name]:e.target.value}))
 
+  // Vérifie si la société appartient à l'utilisateur courant
+  const isOwn = c => !c || c.user_id === currentUserId
+
   const open = (c=null) => {
     if (!c && !isSuperAdmin && companies.length >= 1) {
       toast.error('Vous ne pouvez créer qu\'une seule société. Contactez l\'administrateur pour plus.')
+      return
+    }
+    // Super admin ne peut modifier que ses propres sociétés
+    if (c && isSuperAdmin && !isOwn(c)) {
+      toast.error('Vous ne pouvez pas modifier la société d\'un autre utilisateur.')
       return
     }
     setForm(c?{...c}:{raison_sociale:'',rccm:'',adresse:'',tel:'',email:''})
@@ -992,9 +1128,10 @@ function CompaniesPage({ companies, refresh, toast, isSuperAdmin=false }) {
     toast.success(modal==='add'?'Société ajoutée !':'Société mise à jour !'); close(); refresh()
   }
 
-  const del = async id => {
+  const del = async c => {
+    if (!isOwn(c)) { toast.error('Vous ne pouvez pas supprimer la société d\'un autre utilisateur.'); return }
     if (!confirm('Supprimer cette société ?')) return
-    const { error } = await supabase.from('compta_companies').delete().eq('id',id)
+    const { error } = await supabase.from('compta_companies').delete().eq('id',c.id)
     if (error) { toast.error(error.message); return }
     toast.success('Société supprimée.'); refresh()
   }
@@ -1014,15 +1151,20 @@ function CompaniesPage({ companies, refresh, toast, isSuperAdmin=false }) {
           {companies.map(c=>(
             <Card key={c.id}>
               <div style={{ display:'flex', alignItems:'center', gap:12, marginBottom:16 }}>
-                <div style={{ width:48, height:48, background:'#dbeafe', borderRadius:12, display:'flex', alignItems:'center', justifyContent:'center', color:ACCENT, fontWeight:800, fontSize:20 }}>{c.raison_sociale[0]}</div>
-                <div><div style={{fontWeight:700,fontSize:15}}>{c.raison_sociale}</div>{c.rccm&&<div style={{fontSize:12,color:'#64748b'}}>{c.rccm}</div>}</div>
+                <div style={{ width:48, height:48, background: isOwn(c)?'#dbeafe':'#f1f5f9', borderRadius:12, display:'flex', alignItems:'center', justifyContent:'center', color: isOwn(c)?ACCENT:'#94a3b8', fontWeight:800, fontSize:20 }}>{c.raison_sociale[0]}</div>
+                <div>
+                  <div style={{fontWeight:700,fontSize:15}}>{c.raison_sociale}</div>
+                  {c.rccm&&<div style={{fontSize:12,color:'#64748b'}}>{c.rccm}</div>}
+                  {isSuperAdmin && <span style={{fontSize:10,fontWeight:700,padding:'2px 7px',borderRadius:10,background: isOwn(c)?'#dbeafe':'#f1f5f9', color: isOwn(c)?'#2563eb':'#64748b'}}>{isOwn(c)?'✅ Votre société':'👁️ Autre utilisateur'}</span>}
+                </div>
               </div>
               {c.adresse && <div style={{fontSize:12.5,color:'#64748b',marginBottom:4}}>📍 {c.adresse}</div>}
               {c.tel     && <div style={{fontSize:12.5,color:'#64748b',marginBottom:4}}>📞 {c.tel}</div>}
               {c.email   && <div style={{fontSize:12.5,color:'#64748b',marginBottom:12}}>✉️ {c.email}</div>}
               <div style={{display:'flex',gap:8,marginTop:12}}>
-                <Btn sm variant="secondary" onClick={()=>open(c)}>Modifier</Btn>
-                <Btn sm variant="danger" onClick={()=>del(c.id)}>🗑️</Btn>
+                {isOwn(c) && <Btn sm variant="secondary" onClick={()=>open(c)}>Modifier</Btn>}
+                {isOwn(c) && <Btn sm variant="danger" onClick={()=>del(c)}>🗑️</Btn>}
+                {!isOwn(c) && <span style={{fontSize:11,color:'#94a3b8',fontStyle:'italic'}}>Lecture seule</span>}
               </div>
             </Card>
           ))}
@@ -1046,30 +1188,41 @@ function CompaniesPage({ companies, refresh, toast, isSuperAdmin=false }) {
 
 // ── TIERS GENERIQUE (Clients + Fournisseurs partagent la même logique) ───────
 function TiersPage({ table, title, titleSingle, icon, companies, companyId, toast, extraFields, readOnly=false }) {
-  const [items,  setItems]  = useState([])
-  const [modal,  setModal]  = useState(null)
-  const [form,   setForm]   = useState({})
-  const [saving, setSaving] = useState(false)
-  const [search, setSearch] = useState('')
+  const [items,      setItems]     = useState([])
+  const [modal,      setModal]     = useState(null)
+  const [form,       setForm]      = useState({})
+  const [saving,     setSaving]    = useState(false)
+  const [search,     setSearch]    = useState('')
+  const [filterType, setFilterType]= useState('')   // clients: physique|morale
+  const [filterProv, setFilterProv]= useState('')   // provenance
 
   const load = useCallback(async()=>{
     const uid = (await supabase.auth.getUser()).data?.user?.id
-    let q = supabase.from(table).select('*,compta_companies(raison_sociale)').eq('user_id',uid).eq('actif',true).order('created_at',{ascending:false})
-    if (companyId) q = q.eq('company_id',companyId)
+    let q = supabase.from(table).select('*,compta_companies(raison_sociale)').eq('actif',true).order('created_at',{ascending:false})
+    // Fix: quand une société est sélectionnée (super admin ou user), filtrer par company_id
+    // sinon fallback sur user_id
+    if (companyId) q = q.eq('company_id', companyId)
+    else q = q.eq('user_id', uid)
     const { data } = await q; setItems(data||[])
   },[table,companyId])
 
   useEffect(()=>{ load() },[load])
 
+  const provenances = [...new Set(items.map(i=>i.provenance).filter(Boolean))]
+
   const filtered = items.filter(it => {
-    if (!search) return true
-    const s = (it.nom||'')+' '+(it.prenom||'')+' '+(it.nom_societe||'')
-    return s.toLowerCase().includes(search.toLowerCase())
+    if (search) {
+      const s = (it.nom||'')+' '+(it.prenom||'')+' '+(it.nom_societe||'')
+      if (!s.toLowerCase().includes(search.toLowerCase())) return false
+    }
+    if (filterType && it.type !== filterType) return false
+    if (filterProv && it.provenance !== filterProv) return false
+    return true
   })
 
   const set = e => setForm(f=>({...f,[e.target.name]:e.target.value}))
 
-  const baseDefaults = { company_id:companyId||companies[0]?.id||'', nom:'', prenom:'', telephone:'', provenance:'', cip:'', ifu:'', email:'', adresse:'' }
+  const baseDefaults = { company_id:companyId||companies[0]?.id||'', nom:'', prenom:'', nom_societe:'', telephone:'', provenance:'', cip:'', ifu:'', email:'', adresse:'' }
   const open = (it=null) => {
     const defaults = extraFields ? extraFields.defaults : {}
     setForm(it?{...it}:{...baseDefaults,...defaults}); setModal(it?'edit':'add')
@@ -1081,7 +1234,17 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     const uid = (await supabase.auth.getUser()).data?.user?.id
     const fields = ['company_id','nom','prenom','telephone','provenance','cip','ifu','email','adresse', ...(extraFields?.names||[])]
     const pay = {}; fields.forEach(k=>{ if(form[k]!==undefined) pay[k]=form[k] })
-    if (table==='compta_clients') pay.type = form.type||'physique'
+    // Fix: ensure company_id is a valid non-empty value
+    if (!pay.company_id) {
+      const cid = companyId || companies[0]?.id
+      if (!cid) { toast.error('Veuillez sélectionner une société avant d\'enregistrer.'); setSaving(false); return }
+      pay.company_id = cid
+    }
+    if (table==='compta_clients') {
+      pay.type = form.type||'physique'
+      // Fix: include nom_societe for "personne morale" clients
+      if (form.type==='morale') pay.nom_societe = form.nom_societe||''
+    }
     const { error } = modal==='add'
       ? await supabase.from(table).insert({...pay,user_id:uid})
       : await supabase.from(table).update(pay).eq('id',form.id)
@@ -1103,17 +1266,41 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
   return (
     <div>
       <PageHeader title={title} subtitle={`${filtered.length} enregistrement(s)`}
-        actions={<Btn onClick={()=>open()}>+ Nouveau(elle)</Btn>} />
+        actions={!readOnly && <Btn onClick={()=>open()}>+ Nouveau(elle)</Btn>} />
       <Card style={{marginBottom:16,padding:'12px 20px'}}>
-        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Rechercher..."
-          style={{padding:'8px 14px',borderRadius:8,border:'1px solid #d1d5db',fontSize:13,width:300}} />
+        <div style={{display:'flex',gap:10,flexWrap:'wrap',alignItems:'center'}}>
+          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="🔍 Rechercher par nom..."
+            style={{padding:'8px 14px',borderRadius:8,border:'1px solid #d1d5db',fontSize:13,flex:1,minWidth:180}} />
+          {table==='compta_clients' && (
+            <select value={filterType} onChange={e=>setFilterType(e.target.value)}
+              style={{padding:'8px 12px',borderRadius:8,border:'1px solid #d1d5db',fontSize:13,background:'white'}}>
+              <option value=''>Tous types</option>
+              <option value='physique'>Personne physique</option>
+              <option value='morale'>Personne morale</option>
+            </select>
+          )}
+          {provenances.length > 0 && (
+            <select value={filterProv} onChange={e=>setFilterProv(e.target.value)}
+              style={{padding:'8px 12px',borderRadius:8,border:'1px solid #d1d5db',fontSize:13,background:'white'}}>
+              <option value=''>Toutes provenances</option>
+              {provenances.map(p=><option key={p} value={p}>{p}</option>)}
+            </select>
+          )}
+          {(search||filterType||filterProv) && (
+            <button onClick={()=>{setSearch('');setFilterType('');setFilterProv('')}}
+              style={{padding:'8px 12px',borderRadius:8,border:'1px solid #e2e8f0',fontSize:12,cursor:'pointer',background:'#f8fafc',color:'#64748b'}}>
+              ✕ Réinitialiser
+            </button>
+          )}
+          <span style={{fontSize:12,color:'#94a3b8',marginLeft:'auto'}}>{filtered.length} / {items.length}</span>
+        </div>
       </Card>
       <div style={{background:'white',borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
         {filtered.length===0 ? (
           <div style={{textAlign:'center',padding:'48px 24px',color:'#64748b'}}>
             <div style={{fontSize:40,marginBottom:8}}>{icon}</div>
             <p>Aucun(e) {titleSingle}</p>
-            <Btn onClick={()=>open()}>+ Ajouter</Btn>
+            {!readOnly && <Btn onClick={()=>open()}>+ Ajouter</Btn>}
           </div>
         ) : (
           <TableWrap>
@@ -1122,7 +1309,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
               {table==='compta_clients' && <TH>Type</TH>}
               <TH>Nom</TH><TH>Téléphone</TH><TH>Provenance</TH>
               {extraFields?.headers?.map((h,i)=><TH key={i}>{h}</TH>)}
-              <TH>IFU</TH><TH>CIP</TH><TH>Actions</TH>
+              <TH>IFU</TH><TH>CIP</TH>{!readOnly && <TH>Actions</TH>}
             </tr></thead>
             <tbody>
               {filtered.map(it=>(
@@ -1134,12 +1321,14 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
                   {extraFields?.names?.map(k=><TD key={k}>{it[k]||'—'}</TD>)}
                   <TD sm>{it.ifu||'—'}</TD>
                   <TD sm>{it.cip||'—'}</TD>
+                  {!readOnly && (
                   <TD>
                     <div style={{display:'flex',gap:6}}>
                       <Btn sm variant="secondary" onClick={()=>open(it)}>Edit</Btn>
                       <Btn sm variant="danger" onClick={()=>archive(it.id)}>🗑️</Btn>
                     </div>
                   </TD>
+                  )}
                 </TR>
               ))}
             </tbody>
@@ -1150,14 +1339,12 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
       <Modal open={!!modal} onClose={close} title={modal==='add'?`Nouveau(elle) ${titleSingle}`:`Modifier ${titleSingle}`} size="lg">
         <form onSubmit={save}>
           <Grid cols={2} gap={14} style={{marginBottom:16}}>
-            <Sel label="Société *" name="company_id" value={form.company_id} onChange={set}
-              options={[{value:'',label:'— Choisir —'},...companies.map(c=>({value:c.id,label:c.raison_sociale}))]} required />
             {table==='compta_clients' && (
               <Sel label="Type" name="type" value={form.type} onChange={set}
                 options={[{value:'physique',label:'Personne physique'},{value:'morale',label:'Personne morale'}]} />
             )}
             {table==='compta_clients' && form.type==='morale' ? (
-              <Span2><Input label="Nom société" name="nom_societe" value={form.nom_societe} onChange={set} /></Span2>
+              <Span2><Input label="Nom société *" name="nom_societe" value={form.nom_societe} onChange={set} required /></Span2>
             ) : (
               <><Input label="Nom *" name="nom" value={form.nom} onChange={set} required />
               <Input label="Prénom" name="prenom" value={form.prenom} onChange={set} /></>
@@ -1188,9 +1375,12 @@ function StockPage({ companies, companyId, setPage, toast, readOnly=false }) {
   const [catFilter,setCat]     = useState('')
 
   const load = useCallback(async()=>{
-    const uid = (await supabase.auth.getUser()).data?.user?.id
-    let q = supabase.from('compta_articles').select('*,compta_companies(raison_sociale)').eq('user_id',uid).eq('actif',true).order('designation')
-    if (companyId) q=q.eq('company_id',companyId)
+    const { data:ad } = await supabase.auth.getUser()
+    const uid = ad?.user?.id; const isAdmin = ad?.user?.email === SUPER_ADMIN_EMAIL
+    let q = supabase.from('compta_articles').select('*,compta_companies(raison_sociale)').eq('actif',true).order('designation')
+    if (isAdmin && companyId) q = q.eq('company_id', companyId)
+    else if (companyId) q = q.eq('user_id', uid).eq('company_id', companyId)
+    else q = q.eq('user_id', uid)
     if (catFilter) q=q.eq('categorie',catFilter)
     const { data } = await q; setArticles(data||[])
   },[companyId,catFilter])
@@ -1201,7 +1391,7 @@ function StockPage({ companies, companyId, setPage, toast, readOnly=false }) {
   const set = e=>setForm(f=>({...f,[e.target.name]:e.target.value}))
 
   const openAdd = ()=>{ setForm({company_id:companyId||companies[0]?.id||'',code:'',designation:'',categorie:'riz_paddy',unite:'kg',prix_achat:0,prix_vente:0,stock_min:0,stock_actuel:0}); setModal('add') }
-  const openEdit = a=>{ setForm({...a}); setModal('edit') }
+  const openEdit = a=>{ setForm({...a, company_id: a.company_id||companyId||companies[0]?.id||''}); setModal('edit') }
   const close = ()=>setModal(null)
 
   const save = async e=>{
@@ -1217,7 +1407,7 @@ function StockPage({ companies, companyId, setPage, toast, readOnly=false }) {
     toast.success('Article enregistré !'); close(); load()
   }
 
-  const archive = async id=>{ if(!confirm('Archiver ?')) return; await supabase.from('compta_articles').update({actif:false}).eq('id',id); toast.success('Archivé.'); load() }
+  const archive = async id=>{ if(!confirm('Supprimer cet article ?')) return; await supabase.from('compta_articles').update({actif:false}).eq('id',id); toast.success('Article supprimé.'); load() }
 
   return (
     <div>
@@ -1227,7 +1417,7 @@ function StockPage({ companies, companyId, setPage, toast, readOnly=false }) {
           <Btn sm variant="warning" onClick={()=>setPage('stock-sortie')}>↑ Sortie</Btn>
           <Btn sm variant="secondary" onClick={()=>setPage('mouvements')}>↕ Mouvements</Btn>
           <Btn sm variant="info" onClick={()=>setPage('inventaire')}>📋 Inventaire</Btn>
-          <Btn onClick={openAdd}>+ Nouvel Article</Btn>
+          {!readOnly && <Btn onClick={openAdd}>+ Nouvel Article</Btn>}
         </>}
       />
       <Card style={{marginBottom:16,padding:'12px 20px'}}>
@@ -1240,7 +1430,7 @@ function StockPage({ companies, companyId, setPage, toast, readOnly=false }) {
         {articles.length===0 ? (
           <div style={{textAlign:'center',padding:'48px 24px',color:'#64748b'}}>
             <div style={{fontSize:40,marginBottom:8}}>📦</div><p>Aucun article</p>
-            <Btn onClick={openAdd}>+ Créer un article</Btn>
+            {!readOnly && <Btn onClick={openAdd}>+ Créer un article</Btn>}
           </div>
         ) : (
           <table style={{width:'100%',borderCollapse:'collapse'}}>
@@ -1266,8 +1456,8 @@ function StockPage({ companies, companyId, setPage, toast, readOnly=false }) {
                     <TD><Badge type={alerte?'warning':'success'}>{alerte?'⚠ Alerte':'✓ OK'}</Badge></TD>
                     <TD>
                       <div style={{display:'flex',gap:6}}>
-                        <Btn sm variant="secondary" onClick={()=>openEdit(a)}>✏️ Modifier</Btn>
-                        <Btn sm variant="danger" onClick={()=>archive(a.id)}>🗑️ Supprimer</Btn>
+                        {!readOnly && <Btn sm variant="secondary" onClick={()=>openEdit(a)}>✏️ Modifier</Btn>}
+                        {!readOnly && <Btn sm variant="danger" onClick={()=>archive(a.id)}>🗑️ Supprimer</Btn>}
                       </div>
                     </TD>
                   </TR>
@@ -1280,18 +1470,16 @@ function StockPage({ companies, companyId, setPage, toast, readOnly=false }) {
       <Modal open={!!modal} onClose={close} title={modal==='add'?'Nouvel Article':'Modifier Article'} size="lg">
         <form onSubmit={save}>
           <Grid cols={2} gap={14} style={{marginBottom:16}}>
-            <Sel label="Société *" name="company_id" value={form.company_id} onChange={set}
-              options={[{value:'',label:'— Choisir —'},...companies.map(c=>({value:c.id,label:c.raison_sociale}))]} required />
-            <Input label="Code article" name="code" value={form.code} onChange={set} placeholder="RIZ-PAD-001" />
-            <Span2><Input label="Désignation *" name="designation" value={form.designation} onChange={set} required /></Span2>
-            <Sel label="Catégorie" name="categorie" value={form.categorie} onChange={set}
+            <Input label="Code article" name="code" value={form.code||''} onChange={set} placeholder="RIZ-PAD-001" />
+            <Sel label="Catégorie" name="categorie" value={form.categorie||''} onChange={set}
               options={Object.entries(CAT_LABELS).map(([v,l])=>({value:v,label:l}))} />
-            <Sel label="Unité" name="unite" value={form.unite} onChange={set}
+            <Span2><Input label="Désignation *" name="designation" value={form.designation||''} onChange={set} required /></Span2>
+            <Sel label="Unité" name="unite" value={form.unite||''} onChange={set}
               options={['kg','tonne','sac','carton','litre','unité','m²'].map(u=>({value:u,label:u}))} />
-            <Input label="Prix achat (FCFA)" name="prix_achat" type="number" value={form.prix_achat} onChange={set} min="0" />
-            <Input label="Prix vente (FCFA)" name="prix_vente" type="number" value={form.prix_vente} onChange={set} min="0" />
-            <Input label="Stock minimum (alerte)" name="stock_min" type="number" value={form.stock_min} onChange={set} min="0" step="0.01" />
-            {modal==='add' && <Input label="Stock initial" name="stock_actuel" type="number" value={form.stock_actuel} onChange={set} min="0" step="0.01" />}
+            <Input label="Prix achat (FCFA)" name="prix_achat" type="number" value={form.prix_achat||0} onChange={set} min="0" />
+            <Input label="Prix vente (FCFA)" name="prix_vente" type="number" value={form.prix_vente||0} onChange={set} min="0" />
+            <Input label="Stock minimum (alerte)" name="stock_min" type="number" value={form.stock_min||0} onChange={set} min="0" step="0.01" />
+            {modal==='add' && <Input label="Stock initial" name="stock_actuel" type="number" value={form.stock_actuel||0} onChange={set} min="0" step="0.01" />}
           </Grid>
           <Row><Btn variant="secondary" onClick={close}>Annuler</Btn><Btn type="submit" disabled={saving}>{saving?'...':'Enregistrer'}</Btn></Row>
         </form>
@@ -1352,10 +1540,6 @@ function StockEntreePage({ companies, companyId, setPage, toast }) {
           <SectionTitle color="#16a34a">Enregistrer une entrée</SectionTitle>
           <form onSubmit={save}>
             <Grid cols={2} gap={14} style={{marginBottom:16}}>
-              <Span2>
-                <Sel label="Société *" name="company_id" value={form.company_id} onChange={set}
-                  options={[{value:'',label:'— Choisir —'},...companies.map(c=>({value:c.id,label:c.raison_sociale}))]} required />
-              </Span2>
               <Span2>
                 <Sel label="Article *" name="article_id" value={form.article_id} onChange={set}
                   options={[{value:'',label:'— Choisir un article —'},...articles.map(a=>({value:a.id,label:`${a.designation} (stock: ${(a.stock_actuel||0).toFixed(2)} ${a.unite})`}))]} required />
@@ -1430,10 +1614,6 @@ function StockSortiePage({ companies, companyId, setPage, toast }) {
           <SectionTitle color="#f59e0b">Enregistrer une sortie</SectionTitle>
           <form onSubmit={save}>
             <Grid cols={2} gap={14} style={{marginBottom:16}}>
-              <Span2>
-                <Sel label="Société *" name="company_id" value={form.company_id} onChange={set}
-                  options={[{value:'',label:'— Choisir —'},...companies.map(c=>({value:c.id,label:c.raison_sociale}))]} required />
-              </Span2>
               <Span2>
                 <Sel label="Article *" name="article_id" value={form.article_id} onChange={set}
                   options={[{value:'',label:'— Choisir un article —'},...articles.map(a=>({value:a.id,label:`${a.designation} (stock: ${(a.stock_actuel||0).toFixed(2)} ${a.unite})`}))]} required />
@@ -1560,8 +1740,11 @@ function InventairePage({ companies, companyId, setCompanyId }) {
 
   const load = useCallback(async()=>{
     if (!companyId) { setArticles([]); return }
-    const uid = (await supabase.auth.getUser()).data?.user?.id
-    const { data } = await supabase.from('compta_articles').select('*').eq('user_id',uid).eq('company_id',companyId).eq('actif',true).order('categorie,designation')
+    const { data:ad } = await supabase.auth.getUser()
+    const uid = ad?.user?.id; const isAdmin = ad?.user?.email === SUPER_ADMIN_EMAIL
+    let q = supabase.from('compta_articles').select('*').eq('company_id',companyId).eq('actif',true).order('categorie,designation')
+    if (!isAdmin) q = q.eq('user_id', uid)
+    const { data } = await q
     setArticles(data||[])
   },[companyId])
 
@@ -1841,8 +2024,6 @@ function CommercialNewPage({ companies, companyId, typeDoc, setPage, toast }) {
             <Card style={{marginBottom:16}}>
               <SectionTitle>Informations du document</SectionTitle>
               <Grid cols={3} gap={14}>
-                <Sel label="Société *" name="company_id" value={form.company_id} onChange={setF}
-                  options={[{value:'',label:'— Choisir —'},...companies.map(c=>({value:c.id,label:c.raison_sociale}))]} required />
                 <Sel label="Type *" name="type_doc" value={form.type_doc} onChange={setF}
                   options={Object.entries(TYPE_DOC_LABELS).map(([v,l])=>({value:v,label:l}))} />
                 <Input label="Date *" name="date_doc" type="date" value={form.date_doc} onChange={setF} required />
@@ -2064,8 +2245,8 @@ function LotsProductionPage({ companies, companyId, toast, readOnly=false }) {
   const [rowPreview, setRowPreview] = useState(null)
 
   const load = useCallback(async()=>{
-    const uid = (await supabase.auth.getUser()).data?.user?.id
     const { data:adion } = await supabase.auth.getUser(); const uidion=adion?.user?.id; const isAdmion=adion?.user?.email===SUPER_ADMIN_EMAIL
+    if (!uidion) return
     let q = supabase.from('compta_lots_production').select('*,compta_companies(raison_sociale)').order('date_debut',{ascending:false})
     q = isAdmion&&companyId ? q.eq('company_id',companyId) : q.eq('user_id',uidion); if(companyId&&!isAdmion) q=q.eq('company_id',companyId)
     if (dateFrom)  q=q.gte('date_debut',dateFrom)
@@ -2082,7 +2263,9 @@ function LotsProductionPage({ companies, companyId, toast, readOnly=false }) {
   const save = async e=>{
     e.preventDefault(); setSaving(true)
     const uid = (await supabase.auth.getUser()).data?.user?.id
-    const { company_id,numero_lot,date_debut,date_fin,statut,qte_paddy_entree,notes } = form
+    const { numero_lot,date_debut,date_fin,statut,qte_paddy_entree,notes } = form
+    const company_id = form.company_id || companyId || companies[0]?.id
+    if (!company_id) { toast.error('Veuillez sélectionner une société.'); setSaving(false); return }
     const pay = { company_id,numero_lot,date_debut,date_fin:date_fin||null,statut,qte_paddy_entree:+qte_paddy_entree,notes }
     const { error } = modal==='add' ? await supabase.from('compta_lots_production').insert({...pay,user_id:uid}) : await supabase.from('compta_lots_production').update(pay).eq('id',form.id)
     setSaving(false)
@@ -2166,15 +2349,9 @@ function LotsProductionPage({ companies, companyId, toast, readOnly=false }) {
           </div>
         </div>
       )}
-            </tbody>
-          </table>
-        )}
-      </div>
       <Modal open={!!modal} onClose={close} title={modal==='add'?'Nouveau Lot':'Modifier Lot'}>
         <form onSubmit={save}>
           <Grid cols={2} gap={14} style={{marginBottom:16}}>
-            <Sel label="Société *" name="company_id" value={form.company_id} onChange={set}
-              options={[{value:'',label:'— Choisir —'},...companies.map(c=>({value:c.id,label:c.raison_sociale}))]} required />
             <Input label="N° Lot *" name="numero_lot" value={form.numero_lot} onChange={set} required />
             <Input label="Date début" name="date_debut" type="date" value={form.date_debut} onChange={set} />
             <Input label="Date fin" name="date_fin" type="date" value={form.date_fin} onChange={set} />
@@ -2259,17 +2436,35 @@ function ProductionRowPreviewModal({ open, onClose, it, title, fields, companyNa
 
 // ── PRODUCTION STAGE — GÉNÉRIQUE ──────────────────────────────────────────────
 function ProductionStagePage({ tableName, title, accentColor, companies, companyId, lots, toast, fields, readOnly=false }) {
-  const [items, setItems]   = useState([])
-  const [modal, setModal]   = useState(false)
-  const [form,  setForm]    = useState({})
-  const [saving,setSaving]  = useState(false)
-  const [dateFrom, setDateFrom] = useState('')
-  const [dateTo,   setDateTo]   = useState('')
+  const [items,      setItems]    = useState([])
+  const [modal,      setModal]    = useState(false)
+  const [form,       setForm]     = useState({})
+  const [editItem,   setEditItem] = useState(null)   // null = ajout, objet = modification
+  const [saving,     setSaving]   = useState(false)
+  const [dateFrom,   setDateFrom] = useState('')
+  const [dateTo,     setDateTo]   = useState('')
   const [rowPreview, setRowPreview] = useState(null)
+  const [localLots,  setLocalLots]  = useState([])  // lots chargés selon companyId effectif
+
+  // Chargement local des lots — synchronisé avec le companyId reçu (evite le décalage effectiveCompanyId)
+  useEffect(()=>{
+    const fetchLots = async () => {
+      const { data:ad } = await supabase.auth.getUser()
+      const uid=ad?.user?.id; if (!uid) return
+      const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
+      let q = supabase.from('compta_lots_production').select('id,numero_lot,statut').order('created_at',{ascending:false})
+      if (isAdmin && companyId) q=q.eq('company_id',companyId)
+      else if (companyId) q=q.eq('user_id',uid).eq('company_id',companyId)
+      else q=q.eq('user_id',uid)
+      const { data }=await q; setLocalLots(data||[])
+    }
+    fetchLots()
+  },[companyId])
 
   const load = useCallback(async()=>{
     const { data:authD } = await supabase.auth.getUser()
     const uid = authD?.user?.id; const isAdm = authD?.user?.email === SUPER_ADMIN_EMAIL
+    if (!uid) return
     let q = supabase.from(tableName).select('*,compta_lots_production(numero_lot)').order('date_etape',{ascending:false})
     q = isAdm && companyId ? q.eq('company_id',companyId) : q.eq('user_id',uid)
     if (companyId && !isAdm) q=q.eq('company_id',companyId)
@@ -2338,20 +2533,34 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
 
   const set = e => {
     const { name, value } = e.target
+    // Auto-remplir numero_lot quand un lot est sélectionné
+    if (name === 'lot_id' && value) {
+      const lot = localLots.find(l => l.id === value)
+      if (lot) { setForm(f=>({...f, lot_id:value, numero_lot: lot.numero_lot||''})); return }
+    }
     setForm(f => ({ ...f, [name]: value }))
   }
 
   const openAdd = () => {
-    const df = { company_id:companyId||companies[0]?.id||'', lot_id:'', date_etape:today() }
+    const cid = companyId||companies[0]?.id||''
+    if (!cid) { toast.error('Veuillez sélectionner une société.'); return }
+    const df = { company_id:cid, lot_id:'', date_etape:today() }
     fields.forEach(f => { df[f.name] = '' })
+    setEditItem(null); setForm(df); setModal(true)
+  }
+  const openEdit = it => {
+    setEditItem(it)
+    const df = { ...it, company_id: it.company_id||companyId||companies[0]?.id||'', lot_id: it.lot_id||'' }
     setForm(df); setModal(true)
   }
-  const close = () => setModal(false)
+  const close = () => { setModal(false); setEditItem(null) }
 
   const save = async e => {
     e.preventDefault(); setSaving(true)
     const uid = (await supabase.auth.getUser()).data?.user?.id
-    const pay = { company_id:form.company_id, lot_id:form.lot_id||null, date_etape:form.date_etape, user_id:uid }
+    const cid = form.company_id || companyId || companies[0]?.id
+    if (!cid) { toast.error('Société introuvable. Veuillez en sélectionner une.'); setSaving(false); return }
+    const pay = { company_id:cid, lot_id:form.lot_id||null, date_etape:form.date_etape }
     fields.forEach(f => {
       if (f.calc) {
         pay[f.name] = getCalcValue(f.name)
@@ -2359,10 +2568,12 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
         pay[f.name] = f.type==='number' ? (parseFloat(form[f.name])||0) : (form[f.name]||'')
       }
     })
-    const { error } = await supabase.from(tableName).insert(pay)
+    const { error } = editItem
+      ? await supabase.from(tableName).update(pay).eq('id', editItem.id)
+      : await supabase.from(tableName).insert({...pay, user_id:uid})
     setSaving(false)
     if (error) { toast.error(error.message); return }
-    toast.success('Enregistrement réussi !'); close(); load()
+    toast.success(editItem ? 'Modification enregistrée !' : 'Enregistrement réussi !'); close(); load()
   }
 
   const exportExcel = () => {
@@ -2461,7 +2672,8 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
                     <div style={{display:'flex',gap:4}}>
                       <Btn sm variant="info" onClick={()=>setRowPreview(it)}>👁️</Btn>
                       <Btn sm variant="danger" onClick={()=>{ const html=buildProductionRowHtml(it,title,fields,companyName); const w=window.open('','_blank'); w.document.write(html); w.document.close() }}>🖨️</Btn>
-                      {!readOnly && <Btn sm variant="danger" onClick={()=>del(it.id)}>Sup</Btn>}
+                      {!readOnly && <Btn sm variant="secondary" onClick={()=>openEdit(it)}>✏️</Btn>}
+                      {!readOnly && <Btn sm variant="danger" onClick={()=>del(it.id)}>🗑️</Btn>}
                     </div>
                   </TD>
                 </TR>
@@ -2470,7 +2682,7 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
           </table>
         )}
       </div>
-      <Modal open={modal} onClose={close} title={`Nouveau — ${title}`} size="lg">
+      <Modal open={modal} onClose={close} title={editItem ? `Modifier — ${title}` : `Nouveau — ${title}`} size="lg">
         <form onSubmit={save}>
           {/* Bandeau résultats calculés — toujours visible en haut du formulaire */}
           {fields.some(f=>f.calc) && (
@@ -2491,17 +2703,15 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
             </div>
           )}
           <Grid cols={2} gap={14} style={{marginBottom:16}}>
-            <Sel label="Société *" name="company_id" value={form.company_id||''} onChange={set}
-              options={[{value:'',label:'— Choisir —'},...companies.map(c=>({value:c.id,label:c.raison_sociale}))]} required />
             <Sel label="Lot de production" name="lot_id" value={form.lot_id||''} onChange={set}
-              options={[{value:'',label:'— Aucun —'},...lots.map(l=>({value:l.id,label:l.numero_lot}))]} />
+              options={[{value:'',label:localLots.length===0?'— Aucun lot disponible —':'— Choisir un lot —'},...localLots.map(l=>({value:l.id,label:`${l.numero_lot}${l.statut?' ('+l.statut+')':''}`}))]} />
             <Input label="Date" name="date_etape" type="date" value={form.date_etape||''} onChange={set} />
             {fields.filter(f => !f.calc).map(f=> f.type==='select'
               ? <Sel key={f.name} label={f.label} name={f.name} value={form[f.name]||''} onChange={set} options={f.options||[]} />
               : <Input key={f.name} label={f.label} name={f.name} type={f.type||'text'} value={form[f.name]??''} onChange={set} min={f.type==='number'?'0':undefined} step={f.type==='number'?'0.001':undefined} placeholder={f.placeholder} />
             )}
           </Grid>
-          <Row><Btn variant="secondary" onClick={close}>Annuler</Btn><Btn type="submit" disabled={saving}>{saving?'...':'Enregistrer'}</Btn></Row>
+          <Row><Btn variant="secondary" onClick={close}>Annuler</Btn><Btn type="submit" disabled={saving}>{saving?'...':(editItem?'Modifier':'Enregistrer')}</Btn></Row>
         </form>
       </Modal>
       <ProductionRowPreviewModal open={!!rowPreview} onClose={()=>setRowPreview(null)} it={rowPreview} title={title} fields={fields} companyName={companyName} />
@@ -2703,8 +2913,6 @@ function PrestationPage({ companies, companyId, toast, readOnly=false }) {
       <Modal open={modal} onClose={close} title="Nouvelle Prestation" size="lg">
         <form onSubmit={save}>
           <Grid cols={2} gap={14} style={{marginBottom:16}}>
-            <Sel label="Société *" name="company_id" value={form.company_id} onChange={set}
-              options={[{value:'',label:'— Choisir —'},...companies.map(c=>({value:c.id,label:c.raison_sociale}))]} required />
             <Input label="N° Facture" name="numero_facture" value={form.numero_facture} onChange={set} />
             <Input label="Date *" name="date_prestation" type="date" value={form.date_prestation} onChange={set} required />
             <Input label="Nom du client *" name="nom_client" value={form.nom_client} onChange={set} required />
@@ -2812,8 +3020,6 @@ function AchatsSemisPage({ companies, companyId, toast, readOnly=false }) {
       <Modal open={modal} onClose={close} title="Nouvel Achat Semi-fini" size="xl">
         <form onSubmit={save}>
           <Grid cols={3} gap={14} style={{marginBottom:16}}>
-            <Sel label="Société *" name="company_id" value={form.company_id} onChange={set}
-              options={[{value:'',label:'— Choisir —'},...companies.map(c=>({value:c.id,label:c.raison_sociale}))]} required />
             <Input label="N° Facture" name="numero_fact" value={form.numero_fact} onChange={set} />
             <Input label="Date *" name="date_achat" type="date" value={form.date_achat} onChange={set} required />
             <Input label="Entité" name="entite" value={form.entite} onChange={set} />
@@ -2920,8 +3126,6 @@ function ReglementsPage({ companies, companyId, toast, readOnly=false }) {
       <Modal open={modal} onClose={close} title="Nouveau Règlement" size="xl">
         <form onSubmit={save}>
           <Grid cols={3} gap={14} style={{marginBottom:16}}>
-            <Sel label="Société *" name="company_id" value={form.company_id} onChange={set}
-              options={[{value:'',label:'— Choisir —'},...companies.map(c=>({value:c.id,label:c.raison_sociale}))]} required />
             <Input label="N° Facture" name="numero_facture" value={form.numero_facture} onChange={set} />
             <Input label="Date *" name="date_paiement" type="date" value={form.date_paiement} onChange={set} required />
             <Input label="Entité" name="entite" value={form.entite} onChange={set} />
@@ -2945,15 +3149,307 @@ function ReglementsPage({ companies, companyId, toast, readOnly=false }) {
   )
 }
 
-// ── PAIEMENTS ÉTUVAGE ─────────────────────────────────────────────────────────
-function PaiementsEtuvagePage({ companies, companyId, lots, toast }) {
-  const [items, setItems]   = useState([])
-  const [modal, setModal]   = useState(false)
-  const [form,  setForm]    = useState({})
-  const [saving,setSaving]  = useState(false)
+// ── JOURNAL CAISSE / BANQUE ───────────────────────────────────────────────────
+function JournalPage({ table, title, icon, journalType='caisse', companies, companyId, toast, readOnly=false }) {
+  const isBanque = journalType==='banque'
+  const isMobile = journalType==='mobile'
+
+  const [items,    setItems]   = useState([])
+  const [modal,    setModal]   = useState(false)
+  const [editItem, setEditItem]= useState(null)
+  const [form,     setForm]    = useState({})
+  const [saving,   setSaving]  = useState(false)
+  const [dateFrom, setDateFrom]= useState('')
+  const [dateTo,   setDateTo]  = useState('')
+  const [filterType, setFilter]= useState('')
 
   const load = useCallback(async()=>{
-    const uid = (await supabase.auth.getUser()).data?.user?.id
+    const { data:ad } = await supabase.auth.getUser()
+    const uid=ad?.user?.id; const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
+    let q = supabase.from(table).select('*,compta_companies(raison_sociale)').order('date_operation',{ascending:true})
+    // Super admin : filtre uniquement par company_id (RLS désactivé sur ces tables)
+    if (isAdmin && companyId) q = q.eq('company_id', companyId)
+    else if (companyId) q = q.eq('user_id', uid).eq('company_id', companyId)
+    else q = q.eq('user_id', uid)
+    if (dateFrom) q = q.gte('date_operation', dateFrom)
+    if (dateTo)   q = q.lte('date_operation', dateTo)
+    if (filterType) q = q.eq('type_operation', filterType)
+    const { data } = await q; setItems(data||[])
+  }, [table, companyId, dateFrom, dateTo, filterType])
+
+  useEffect(()=>{ load() },[load])
+
+  const totalEntrees = items.filter(i=>i.type_operation==='entree').reduce((s,i)=>s+(i.montant||0),0)
+  const totalSorties = items.filter(i=>i.type_operation==='sortie').reduce((s,i)=>s+(i.montant||0),0)
+  const solde        = totalEntrees - totalSorties
+
+  const itemsAvecSolde = items.reduce((acc, it) => {
+    const prev = acc.length > 0 ? acc[acc.length-1].soldeCum : 0
+    const delta = it.type_operation==='entree' ? (it.montant||0) : -(it.montant||0)
+    return [...acc, { ...it, soldeCum: prev + delta }]
+  }, [])
+
+  const set = e => setForm(f=>({...f,[e.target.name]:e.target.value}))
+  const companyName = companies.find(c=>c.id===companyId)?.raison_sociale||''
+
+  const openAdd = () => {
+    setEditItem(null)
+    setForm({ company_id:companyId||companies[0]?.id||'', date_operation:today(), numero_piece:'', libelle:'', tiers:'', type_operation:'entree', montant:0, mode_operation:'', operateur:'', numero_mobile:'', reference:'', notes:'' })
+    setModal(true)
+  }
+  const openEdit = it => { setEditItem(it); setForm({...it}); setModal(true) }
+  const close = () => { setModal(false); setEditItem(null) }
+
+  const save = async e => {
+    e.preventDefault(); setSaving(true)
+    const { data:ad } = await supabase.auth.getUser(); const uid=ad?.user?.id
+    const cid = form.company_id || companyId || companies[0]?.id
+    if (!cid) { toast.error('Veuillez sélectionner une société.'); setSaving(false); return }
+    const pay = {
+      company_id: cid, date_operation:form.date_operation,
+      numero_piece:form.numero_piece, libelle:form.libelle, tiers:form.tiers,
+      type_operation:form.type_operation, montant:+form.montant,
+      mode_operation:form.mode_operation, reference:form.reference, notes:form.notes,
+      ...(isMobile ? {operateur:form.operateur, numero_mobile:form.numero_mobile} : {}),
+    }
+    const { error } = editItem
+      ? await supabase.from(table).update(pay).eq('id', editItem.id)
+      : await supabase.from(table).insert({...pay, user_id:uid})
+    setSaving(false)
+    if (error) { toast.error(error.message); return }
+    toast.success(editItem ? 'Ligne mise à jour !' : 'Opération enregistrée !'); close(); load()
+  }
+
+  const del = async id => {
+    if (!confirm('Supprimer cette ligne ?')) return
+    await supabase.from(table).delete().eq('id', id)
+    toast.success('Supprimé.'); load()
+  }
+
+  const printPDF = () => {
+    const headers = [
+      {label:'Date'}, {label:'N° Pièce'}, {label:'Libellé'}, {label:'Tiers'},
+      ...(isBanque ? [{label:'Mode'}] : []),
+      ...(isMobile ? [{label:'Opérateur'}, {label:'N° Mobile'}] : []),
+      {label:'Réf.'}, {label:'Entrée (FCFA)', r:true}, {label:'Sortie (FCFA)', r:true}, {label:'Solde cum.', r:true},
+    ]
+    const rows = itemsAvecSolde.map(it => [
+      it.date_operation||'—', it.numero_piece||'—', it.libelle||'—', it.tiers||'—',
+      ...(isBanque ? [it.mode_operation||'—'] : []),
+      ...(isMobile ? [it.operateur||'—', it.numero_mobile||'—'] : []),
+      it.reference||'—',
+      it.type_operation==='entree' ? Math.round(it.montant||0).toLocaleString('fr-FR') : '—',
+      it.type_operation==='sortie' ? Math.round(it.montant||0).toLocaleString('fr-FR') : '—',
+      Math.round(it.soldeCum||0).toLocaleString('fr-FR'),
+    ])
+    printFilteredList({
+      title, companyName, headers, rows, dateFrom, dateTo,
+      totals:[
+        {label:'Total Entrées', value: Math.round(totalEntrees).toLocaleString('fr-FR')+' FCFA'},
+        {label:'Total Sorties', value: Math.round(totalSorties).toLocaleString('fr-FR')+' FCFA'},
+        {label:'Solde final',   value: Math.round(solde).toLocaleString('fr-FR')+' FCFA'},
+      ]
+    })
+  }
+
+  const exportExcel = () => {
+    const period = dateFrom||dateTo ? `_${dateFrom||'debut'}_${dateTo||'fin'}` : ''
+    const extraCols = isBanque ? ['Mode'] : isMobile ? ['Opérateur','N° Mobile'] : []
+    const allHeaders = ['Date','N° Pièce','Libellé','Tiers',...extraCols,'Référence','Entrée (FCFA)','Sortie (FCFA)','Solde cumulatif (FCFA)','Notes']
+    const thead = allHeaders.map(h=>`<th style="background:#0f2044;color:white;padding:6px 10px;white-space:nowrap;text-align:${h.includes('FCFA')?'right':'left'}">${h}</th>`).join('')
+    const tbody = itemsAvecSolde.map((it,i)=>{
+      const extras = isBanque ? [`<td>${it.mode_operation||'—'}</td>`]
+        : isMobile ? [`<td>${it.operateur||'—'}</td>`,`<td>${it.numero_mobile||'—'}</td>`] : []
+      return `<tr style="background:${i%2===0?'#f8fafc':'white'}">
+        <td>${it.date_operation||'—'}</td>
+        <td>${it.numero_piece||'—'}</td>
+        <td>${it.libelle||'—'}</td>
+        <td>${it.tiers||'—'}</td>
+        ${extras.join('')}
+        <td>${it.reference||'—'}</td>
+        <td style="text-align:right">${it.type_operation==='entree'?Math.round(it.montant||0).toLocaleString('fr-FR'):''}</td>
+        <td style="text-align:right">${it.type_operation==='sortie'?Math.round(it.montant||0).toLocaleString('fr-FR'):''}</td>
+        <td style="text-align:right;font-weight:bold;color:${it.soldeCum>=0?'#16a34a':'#dc2626'}">${Math.round(it.soldeCum||0).toLocaleString('fr-FR')}</td>
+        <td>${it.notes||'—'}</td>
+      </tr>`
+    }).join('')
+    const totalsRow = `<tr style="background:#0f2044;color:white;font-weight:bold">
+      <td colspan="${4+extraCols.length+1}" style="padding:6px 10px">TOTAUX (${items.length} ligne${items.length>1?'s':''})</td>
+      <td style="text-align:right;padding:6px 10px;color:#4ade80">${Math.round(totalEntrees).toLocaleString('fr-FR')}</td>
+      <td style="text-align:right;padding:6px 10px;color:#f87171">${Math.round(totalSorties).toLocaleString('fr-FR')}</td>
+      <td style="text-align:right;padding:6px 10px">${Math.round(solde).toLocaleString('fr-FR')}</td>
+      <td></td>
+    </tr>`
+    const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+      <head><meta charset="UTF-8"><style>
+        table{border-collapse:collapse;width:100%} th,td{border:1px solid #d1d5db;padding:5px 8px;font-size:10pt}
+        h2{font-family:Arial;color:#0f2044} p{font-family:Arial;font-size:9pt;color:#555}
+      </style></head><body>
+      <h2>${title}</h2>
+      <p>${companyName}${dateFrom||dateTo?` — Période : ${dateFrom||'—'} → ${dateTo||'—'}`:' — Toutes dates'} — ${items.length} opération(s) — Exporté le ${new Date().toLocaleDateString('fr-FR')}</p>
+      <table><thead><tr>${thead}</tr></thead><tbody>${tbody}${totalsRow}</tbody></table>
+      </body></html>`
+    const blob = new Blob(['\uFEFF'+html], {type:'application/vnd.ms-excel;charset=utf-8'})
+    const url=URL.createObjectURL(blob); const a=document.createElement('a')
+    a.href=url; a.download=`${title.toLowerCase().replace(/\s/g,'_')}${period}.xls`; a.click(); URL.revokeObjectURL(url)
+  }
+
+  const modeOptions = isBanque
+    ? ['virement_entrant','virement_sortant','chèque_reçu','chèque_émis','prélèvement','carte','autre']
+    : isMobile ? ['MTN_Money','Moov_Money','Celtis_Cash','Wave','autre']
+    : ['espèces','autre']
+
+  const operateurs = ['MTN Money','Moov Money','Celtis Cash','Wave','Orange Money','autre']
+
+  return (
+    <div>
+      <PageHeader title={title} subtitle={`${items.length} opération(s)`}
+        actions={<>
+          <Btn sm variant="success" onClick={exportExcel}>📊 Excel</Btn>
+          <Btn sm variant="danger" onClick={printPDF}>🖨️ PDF</Btn>
+          {!readOnly && <Btn onClick={openAdd}>+ Nouvelle Opération</Btn>}
+        </>} />
+
+      {/* KPI */}
+      <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:12,marginBottom:16}}>
+        {[
+          {label:'Total Entrées', val:fcfa(totalEntrees), c:'#16a34a', bg:'#dcfce7', icon:'⬇️'},
+          {label:'Total Sorties', val:fcfa(totalSorties), c:'#dc2626', bg:'#fee2e2', icon:'⬆️'},
+          {label:'Solde',         val:fcfa(solde), c:solde>=0?'#2563eb':'#dc2626', bg:solde>=0?'#dbeafe':'#fee2e2', icon:'⚖️'},
+        ].map(k=>(
+          <Card key={k.label} style={{padding:'14px 18px'}}>
+            <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:6}}>
+              <span style={{fontSize:20}}>{k.icon}</span>
+              <span style={{fontSize:11,color:'#64748b',fontWeight:600}}>{k.label}</span>
+            </div>
+            <div style={{fontSize:20,fontWeight:800,color:k.c}}>{k.val}</div>
+          </Card>
+        ))}
+      </div>
+
+      <PeriodFilter dateFrom={dateFrom} dateTo={dateTo} onFrom={setDateFrom} onTo={setDateTo} onReset={()=>{setDateFrom('');setDateTo('')}} />
+      <Card style={{marginBottom:16,padding:'10px 16px'}}>
+        <div style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
+          <span style={{fontSize:12.5,fontWeight:700,color:'#374151'}}>🔍 Filtrer :</span>
+          <select value={filterType} onChange={e=>setFilter(e.target.value)}
+            style={{padding:'6px 12px',borderRadius:7,border:'1px solid #d1d5db',fontSize:12.5,background:'white'}}>
+            <option value=''>Toutes opérations</option>
+            <option value='entree'>Entrées uniquement</option>
+            <option value='sortie'>Sorties uniquement</option>
+          </select>
+          <span style={{fontSize:11,color:'#94a3b8',marginLeft:'auto'}}>{items.length} ligne(s)</span>
+        </div>
+      </Card>
+
+      <div style={{background:'white',borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
+        {items.length===0 ? (
+          <div style={{textAlign:'center',padding:'48px 24px',color:'#64748b'}}>
+            <div style={{fontSize:40,marginBottom:8}}>{icon}</div>
+            <p>Aucune opération enregistrée</p>
+            {!readOnly && <Btn onClick={openAdd}>+ Enregistrer une opération</Btn>}
+          </div>
+        ) : (
+          <div style={{overflowX:'auto'}}>
+          <table style={{width:'100%',borderCollapse:'collapse',fontSize:12.5}}>
+            <thead><tr>
+              <TH>Date</TH><TH>N° Pièce</TH><TH>Libellé</TH><TH>Tiers</TH>
+              {isBanque && <TH>Mode</TH>}
+              {isMobile && <><TH>Opérateur</TH><TH>N° Mobile</TH></>}
+              <TH>Réf.</TH>
+              <TH right><span style={{color:'#16a34a'}}>Entrée (FCFA)</span></TH>
+              <TH right><span style={{color:'#dc2626'}}>Sortie (FCFA)</span></TH>
+              <TH right>Solde cum.</TH>
+              {!readOnly && <TH>Actions</TH>}
+            </tr></thead>
+            <tbody>
+              {itemsAvecSolde.map(it=>(
+                <TR key={it.id}>
+                  <TD sm>{it.date_operation}</TD>
+                  <TD sm>{it.numero_piece||'—'}</TD>
+                  <TD bold>{it.libelle}</TD>
+                  <TD sm>{it.tiers||'—'}</TD>
+                  {isBanque && <TD sm>{it.mode_operation||'—'}</TD>}
+                  {isMobile && <><TD sm>{it.operateur||'—'}</TD><TD sm>{it.numero_mobile||'—'}</TD></>}
+                  <TD sm>{it.reference||'—'}</TD>
+                  <TD right color="#16a34a" bold>{it.type_operation==='entree'?Math.round(it.montant||0).toLocaleString('fr-FR'):''}</TD>
+                  <TD right color="#dc2626" bold>{it.type_operation==='sortie'?Math.round(it.montant||0).toLocaleString('fr-FR'):''}</TD>
+                  <TD right bold color={it.soldeCum>=0?'#2563eb':'#dc2626'}>{Math.round(it.soldeCum||0).toLocaleString('fr-FR')}</TD>
+                  {!readOnly && (
+                    <TD><div style={{display:'flex',gap:4}}>
+                      <Btn sm variant="secondary" onClick={()=>openEdit(it)}>✏️</Btn>
+                      <Btn sm variant="danger" onClick={()=>del(it.id)}>🗑️</Btn>
+                    </div></TD>
+                  )}
+                </TR>
+              ))}
+              <tr style={{background:'#f8fafc',fontWeight:700,fontSize:12}}>
+                <td colSpan={4+(isBanque?1:0)+(isMobile?2:0)+1} style={{padding:'8px 10px',color:'#64748b',fontStyle:'italic'}}>
+                  Totaux ({items.length} ligne{items.length>1?'s':''})
+                </td>
+                <td style={{padding:'8px 10px',textAlign:'right',color:'#16a34a'}}>{Math.round(totalEntrees).toLocaleString('fr-FR')}</td>
+                <td style={{padding:'8px 10px',textAlign:'right',color:'#dc2626'}}>{Math.round(totalSorties).toLocaleString('fr-FR')}</td>
+                <td style={{padding:'8px 10px',textAlign:'right',color:solde>=0?'#2563eb':'#dc2626'}}>{Math.round(solde).toLocaleString('fr-FR')}</td>
+                {!readOnly && <td/>}
+              </tr>
+            </tbody>
+          </table>
+          </div>
+        )}
+      </div>
+
+      <Modal open={modal} onClose={close} title={editItem?'Modifier l\'opération':'Nouvelle Opération'} size="lg">
+        <form onSubmit={save}>
+          <Grid cols={2} gap={14} style={{marginBottom:16}}>
+            <Input label="Date *" name="date_operation" type="date" value={form.date_operation||''} onChange={set} required />
+            <Input label="N° Pièce" name="numero_piece" value={form.numero_piece||''} onChange={set} placeholder="ex: PC-001" />
+            <Span2><Input label="Libellé *" name="libelle" value={form.libelle||''} onChange={set} required placeholder="Description de l'opération" /></Span2>
+            <Input label="Tiers" name="tiers" value={form.tiers||''} onChange={set} />
+            <Sel label="Type d'opération *" name="type_operation" value={form.type_operation||'entree'} onChange={set}
+              options={[{value:'entree',label:'⬇️ Entrée (Recette)'},{value:'sortie',label:'⬆️ Sortie (Dépense)'}]} required />
+            <Input label="Montant (FCFA) *" name="montant" type="number" value={form.montant||0} onChange={set} required min="0" />
+            {(isBanque||isMobile) && (
+              <Sel label={isMobile?'Opérateur Mobile Money':'Mode d\'opération'} name={isMobile?'operateur':'mode_operation'} value={isMobile?(form.operateur||''):(form.mode_operation||'')} onChange={set}
+                options={[{value:'',label:'— Choisir —'},...(isMobile?operateurs:modeOptions).map(m=>({value:m,label:m.replace(/_/g,' ')}))]} />
+            )}
+            {isMobile && <Input label="N° Mobile" name="numero_mobile" value={form.numero_mobile||''} onChange={set} placeholder="ex: 97000000" />}
+            {!isMobile && <Input label={isBanque?'Réf. virement/chèque':'N° Reçu'} name="reference" value={form.reference||''} onChange={set} />}
+            {isMobile && <Input label="Référence / ID transaction" name="reference" value={form.reference||''} onChange={set} placeholder="ID transaction" />}
+            <Span2><Input label="Notes" name="notes" value={form.notes||''} onChange={set} /></Span2>
+          </Grid>
+          <Row>
+            <Btn variant="secondary" onClick={close}>Annuler</Btn>
+            <Btn type="submit" disabled={saving}>{saving?'...':(editItem?'Modifier':'Enregistrer')}</Btn>
+          </Row>
+        </form>
+      </Modal>
+    </div>
+  )
+}
+
+
+// ── PAIEMENTS ÉTUVAGE ─────────────────────────────────────────────────────────
+function PaiementsEtuvagePage({ companies, companyId, lots, toast, readOnly=false }) {
+  const [items,     setItems]   = useState([])
+  const [modal,     setModal]   = useState(false)
+  const [form,      setForm]    = useState({})
+  const [saving,    setSaving]  = useState(false)
+  const [localLots, setLocalLots] = useState([])
+
+  useEffect(()=>{
+    const fetchLots = async () => {
+      const { data:ad } = await supabase.auth.getUser()
+      const uid=ad?.user?.id; if (!uid) return
+      const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
+      let q = supabase.from('compta_etuvage').select('id,numero_lot,etuveuse_cooperative').order('created_at',{ascending:false})
+      if (isAdmin && companyId) q=q.eq('company_id',companyId)
+      else if (companyId) q=q.eq('user_id',uid).eq('company_id',companyId)
+      else q=q.eq('user_id',uid)
+      const { data }=await q; setLocalLots(data||[])
+    }
+    fetchLots()
+  },[companyId])
+
+  const load = useCallback(async()=>{
     const { data:adage } = await supabase.auth.getUser(); const uidage=adage?.user?.id; const isAdmage=adage?.user?.email===SUPER_ADMIN_EMAIL
     let q = supabase.from('compta_paiements_etuvage').select('*,compta_companies(raison_sociale)').order('created_at',{ascending:false})
     q = isAdmage&&companyId ? q.eq('company_id',companyId) : q.eq('user_id',uidage); if(companyId&&!isAdmage) q=q.eq('company_id',companyId)
@@ -2968,30 +3464,47 @@ function PaiementsEtuvagePage({ companies, companyId, lots, toast }) {
 
   const calcAib = (brut,taux)=>{ const b=parseFloat(brut)||0,t=parseFloat(taux)||0.03; const ret=Math.round(b*t); return { ret, net:Math.round(b-ret) } }
 
-  const set = e=>setForm(f=>({...f,[e.target.name]:e.target.value}))
-  const openAdd = ()=>{ setForm({company_id:companyId||companies[0]?.id||'',lot_id:'',date_paiement:today(),numero_lot:'',etuveuse_cooperative:'',qte_etuvee_kg:0,montant_brut:0,taux_aib:'0.03',statut_paiement:'en_attente',mode_paiement:'espèce',reference_paiement:''}); setModal(true) }
+  const set = e => {
+    const { name, value } = e.target
+    setForm(f => {
+      const nf = {...f, [name]: value}
+      if (name==='lot_id' && value) {
+        const fiche = localLots.find(l=>l.id===value)
+        if (fiche) { nf.numero_lot = fiche.numero_lot||''; nf.etuveuse_cooperative = fiche.etuveuse_cooperative||'' }
+      }
+      const qte = parseFloat(name==='qte_etuvee_kg'?value:nf.qte_etuvee_kg)||0
+      const prix = parseFloat(name==='prix_unitaire'?value:nf.prix_unitaire)||0
+      if (name==='qte_etuvee_kg'||name==='prix_unitaire') nf.montant_brut = Math.round(qte*prix)
+      return nf
+    })
+  }
+
+  const openAdd = ()=>{ setForm({company_id:companyId||companies[0]?.id||'',lot_id:'',date_paiement:today(),numero_lot:'',etuveuse_cooperative:'',qte_etuvee_kg:0,prix_unitaire:0,montant_brut:0,taux_aib:'0.03',statut_paiement:'en_attente',mode_paiement:'espèce',reference_paiement:''}); setModal(true) }
   const close = ()=>setModal(false)
 
   const save = async e=>{
     e.preventDefault(); setSaving(true)
     const uid = (await supabase.auth.getUser()).data?.user?.id
-    const { ret, net } = calcAib(form.montant_brut,form.taux_aib)
+    const { ret, net } = calcAib(form.montant_brut, form.taux_aib)
     const year = new Date().getFullYear()
     const { count } = await supabase.from('compta_paiements_etuvage').select('id',{count:'exact',head:true}).eq('user_id',uid)
     const numero = `PE-${year}-${String((count||0)+1).padStart(4,'0')}`
     const { error } = await supabase.from('compta_paiements_etuvage').insert({
-      company_id:form.company_id, user_id:uid, numero, date_paiement:form.date_paiement,
-      lot_id:form.lot_id||null, numero_lot:form.numero_lot, etuveuse_cooperative:form.etuveuse_cooperative,
-      qte_etuvee_kg:+form.qte_etuvee_kg, montant_brut:+form.montant_brut, taux_aib:+form.taux_aib,
+      company_id:form.company_id||companyId, user_id:uid, numero,
+      date_paiement:form.date_paiement, lot_id:form.lot_id||null,
+      numero_lot:form.numero_lot, etuveuse_cooperative:form.etuveuse_cooperative,
+      qte_etuvee_kg:+form.qte_etuvee_kg, prix_unitaire:+form.prix_unitaire,
+      montant_brut:+form.montant_brut, taux_aib:+form.taux_aib,
       retenue_aib:ret, net_a_payer:net,
-      statut_paiement:form.statut_paiement, mode_paiement:form.mode_paiement, reference_paiement:form.reference_paiement,
+      statut_paiement:form.statut_paiement, mode_paiement:form.mode_paiement,
+      reference_paiement:form.reference_paiement,
     })
     setSaving(false)
     if (error) { toast.error(error.message); return }
     toast.success(`Paiement ${numero} enregistré. Net : ${fcfa(net)}`); close(); load()
   }
 
-  const { ret:prvRet, net:prvNet } = calcAib(form.montant_brut,form.taux_aib)
+  const { ret:prvRet, net:prvNet } = calcAib(form.montant_brut, form.taux_aib)
 
   return (
     <div>
@@ -3005,11 +3518,12 @@ function PaiementsEtuvagePage({ companies, companyId, lots, toast }) {
         {items.length===0 ? (
           <div style={{textAlign:'center',padding:'48px 24px',color:'#64748b'}}>🔥 Aucun paiement étuvage</div>
         ) : (
+          <div style={{overflowX:'auto'}}>
           <table style={{width:'100%',borderCollapse:'collapse'}}>
             <thead><tr>
               <TH>N°</TH><TH>Date</TH><TH>N° Lot</TH><TH>Étuveuse</TH>
-              <TH right>Qté (kg)</TH><TH right>Montant brut</TH>
-              <TH right>Taux AIB</TH><TH right>Retenue AIB</TH><TH right>Net à payer</TH>
+              <TH right>Qté (kg)</TH><TH right>Prix U.</TH><TH right>Montant brut</TH>
+              <TH right>AIB</TH><TH right>Retenue AIB</TH><TH right>Net à payer</TH>
               <TH>Mode</TH><TH>Statut</TH><TH>PDF</TH>
             </tr></thead>
             <tbody>
@@ -3018,6 +3532,7 @@ function PaiementsEtuvagePage({ companies, companyId, lots, toast }) {
                   <TD bold sm>{r.numero}</TD><TD sm>{r.date_paiement}</TD>
                   <TD sm>{r.numero_lot||'—'}</TD><TD sm>{r.etuveuse_cooperative||'—'}</TD>
                   <TD right>{(r.qte_etuvee_kg||0).toFixed(2)}</TD>
+                  <TD right sm>{fcfa(r.prix_unitaire||0)}</TD>
                   <TD right>{fcfa(r.montant_brut)}</TD>
                   <TD right sm>{((r.taux_aib||0)*100).toFixed(0)}%</TD>
                   <TD right color="#dc2626">{fcfa(r.retenue_aib)}</TD>
@@ -3029,35 +3544,296 @@ function PaiementsEtuvagePage({ companies, companyId, lots, toast }) {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </div>
       <Modal open={modal} onClose={close} title="Nouveau Paiement Étuvage" size="lg">
         <form onSubmit={save}>
           <Grid cols={2} gap={14} style={{marginBottom:16}}>
-            <Sel label="Société *" name="company_id" value={form.company_id} onChange={set}
-              options={[{value:'',label:'— Choisir —'},...companies.map(c=>({value:c.id,label:c.raison_sociale}))]} required />
-            <Input label="Date" name="date_paiement" type="date" value={form.date_paiement} onChange={set} />
-            <Sel label="Fiche étuvage liée" name="lot_id" value={form.lot_id} onChange={set}
-              options={[{value:'',label:'— Aucun —'},...lots.map(l=>({value:l.id,label:l.numero_lot}))]} />
-            <Input label="N° Lot" name="numero_lot" value={form.numero_lot} onChange={set} />
-            <Input label="Étuveuse / Coopérative" name="etuveuse_cooperative" value={form.etuveuse_cooperative} onChange={set} />
-            <Input label="Quantité étuvée (kg)" name="qte_etuvee_kg" type="number" value={form.qte_etuvee_kg} onChange={set} min="0" step="0.001" />
-            <Input label="Montant brut (FCFA) *" name="montant_brut" type="number" value={form.montant_brut} onChange={set} required min="0" />
-            <Sel label="Taux AIB" name="taux_aib" value={form.taux_aib} onChange={set}
-              options={[{value:'0.03',label:'3% (Prestataire inscrit)'},{value:'0.05',label:'5% (Prestataire non inscrit)'}]} />
-            <div style={{background:'#fef2f2',border:'1px solid #fca5a5',borderRadius:8,padding:12,fontSize:12.5}}>
-              <div>Retenue AIB : <strong style={{color:'#dc2626'}}>{fcfa(prvRet)}</strong></div>
-              <div>Net à payer : <strong style={{color:'#16a34a',fontSize:14}}>{fcfa(prvNet)}</strong></div>
+            <Input label="Date" name="date_paiement" type="date" value={form.date_paiement||''} onChange={set} />
+            <Sel label="Fiche étuvage liée" name="lot_id" value={form.lot_id||''} onChange={set}
+              options={[{value:'',label:'— Sélectionner une fiche —'},...localLots.map(l=>({value:l.id,label:l.numero_lot||'Sans numéro'}))]} />
+            <Input label="N° Lot" name="numero_lot" value={form.numero_lot||''} onChange={set} />
+            <Input label="Étuveuse / Coopérative" name="etuveuse_cooperative" value={form.etuveuse_cooperative||''} onChange={set} />
+            <Input label="Quantité étuvée (kg)" name="qte_etuvee_kg" type="number" value={form.qte_etuvee_kg||0} onChange={set} min="0" step="0.001" />
+            <Input label="Prix unitaire (FCFA/kg) *" name="prix_unitaire" type="number" value={form.prix_unitaire||0} onChange={set} required min="0" />
+            <div style={{background:'#f0fdf4',border:'1px solid #86efac',borderRadius:8,padding:'10px 14px',fontSize:12.5}}>
+              <div style={{color:'#64748b',marginBottom:2}}>Montant brut calculé :</div>
+              <div style={{fontSize:18,fontWeight:800,color:'#16a34a'}}>{fcfa(form.montant_brut||0)}</div>
+              <div style={{fontSize:11,color:'#94a3b8'}}>{form.qte_etuvee_kg||0} kg × {fcfa(form.prix_unitaire||0)}/kg</div>
             </div>
-            <Sel label="Statut paiement" name="statut_paiement" value={form.statut_paiement} onChange={set}
+            <Sel label="Taux AIB" name="taux_aib" value={form.taux_aib||'0.03'} onChange={set}
+              options={[{value:'0.03',label:'3% (Prestataire inscrit)'},{value:'0.05',label:'5% (Prestataire non inscrit)'}]} />
+            <div style={{background:'#fef2f2',border:'1px solid #fca5a5',borderRadius:8,padding:'10px 14px',fontSize:12.5,gridColumn:'span 2'}}>
+              <div style={{display:'flex',gap:32}}>
+                <div>Retenue AIB : <strong style={{color:'#dc2626',fontSize:15}}>{fcfa(prvRet)}</strong></div>
+                <div>Net à payer : <strong style={{color:'#16a34a',fontSize:15}}>{fcfa(prvNet)}</strong></div>
+              </div>
+            </div>
+            <Sel label="Statut paiement" name="statut_paiement" value={form.statut_paiement||'en_attente'} onChange={set}
               options={['en_attente','paye','annule'].map(s=>({value:s,label:s.replace('_',' ')}))} />
-            <Sel label="Mode de paiement" name="mode_paiement" value={form.mode_paiement} onChange={set}
+            <Sel label="Mode de paiement" name="mode_paiement" value={form.mode_paiement||'espèce'} onChange={set}
               options={['espèce','mobile_money','virement','chèque'].map(m=>({value:m,label:m}))} />
-            <Input label="Référence paiement" name="reference_paiement" value={form.reference_paiement} onChange={set} />
+            <Input label="Référence paiement" name="reference_paiement" value={form.reference_paiement||''} onChange={set} />
           </Grid>
           <Row><Btn variant="secondary" onClick={close}>Annuler</Btn><Btn type="submit" disabled={saving}>{saving?'...':'Enregistrer'}</Btn></Row>
         </form>
       </Modal>
+    </div>
+  )
+}
+
+// ── SUIVI LOT — traçabilité complète d'un lot ────────────────────────────────
+const SUIVI_STAGES = [
+  { key:'etuvage',        table:'compta_etuvage',         title:'Étuvage',         icon:'🔥', accent:'#ea580c',
+    kpis:[ {f:'paddy_envoye_kg',l:'Paddy envoyé',u:'kg'}, {f:'riz_etuve_recu_kg',l:'Riz étuvé reçu',u:'kg'}, {f:'taux_rendement',l:'Rendement',u:'%',dec:1}, {f:'controle_qualite',l:'Qualité'} ] },
+  { key:'decorticage',    table:'compta_decorticage',     title:'Décorticage',     icon:'⚙️',  accent:'#7c3aed',
+    kpis:[ {f:'poids_avant',l:'Poids avant',u:'kg'}, {f:'poids_apres',l:'Poids après',u:'kg'}, {f:'ecart',l:'Écart',u:'kg'}, {f:'taux_humidite',l:'Humidité',u:'%',dec:1} ] },
+  { key:'calibrage',      table:'compta_calibrage',       title:'Calibrage',       icon:'📐', accent:'#0891b2',
+    kpis:[ {f:'poids_avant',l:'Poids avant',u:'kg'}, {f:'poids_long_grain',l:'Long grain',u:'kg'}, {f:'poids_casses',l:'Cassés',u:'kg'}, {f:'ecart',l:'Écart',u:'kg'} ] },
+  { key:'tri_optique',    table:'compta_tri_optique',     title:'Tri Optique',     icon:'🔍', accent:'#16a34a',
+    kpis:[ {f:'poids_avant',l:'Poids avant',u:'kg'}, {f:'poids_apres_tri',l:'Après tri',u:'kg'}, {f:'taux_rouge',l:'Taux rouge',u:'%',dec:1}, {f:'taux_impurete',l:'Impureté',u:'%',dec:1} ] },
+  { key:'conditionnement',table:'compta_conditionnement', title:'Conditionnement', icon:'🎁', accent:'#ca8a04',
+    kpis:[ {f:'poids_recu',l:'Poids reçu',u:'kg'}, {f:'nb_sac_25kg',l:'Sacs 25 kg',u:''}, {f:'nb_sac_50kg',l:'Sacs 50 kg',u:''}, {f:'poids_total_conditionne',l:'Total conditionné',u:'kg'} ] },
+]
+
+function SuiviLotPage({ companies, companyId, toast }) {
+  const [allLots,     setAllLots]    = useState([])
+  const [selectedLot, setSelectedLot]= useState(null)
+  const [stageData,   setStageData]  = useState({})
+  const [loading,     setLoading]    = useState(false)
+
+  // Charger tous les lots
+  useEffect(()=>{
+    const fetchLots = async () => {
+      const { data:ad } = await supabase.auth.getUser()
+      const uid=ad?.user?.id; if (!uid) return
+      const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
+      let q = supabase.from('compta_lots_production').select('*').order('created_at',{ascending:false})
+      if (isAdmin && companyId) q=q.eq('company_id',companyId)
+      else if (companyId) q=q.eq('user_id',uid).eq('company_id',companyId)
+      else q=q.eq('user_id',uid)
+      const { data }=await q; setAllLots(data||[])
+    }
+    fetchLots()
+  },[companyId])
+
+  // Charger toutes les étapes pour le lot sélectionné
+  const loadSuivi = async (lot) => {
+    setSelectedLot(lot); setLoading(true)
+    const { data:ad } = await supabase.auth.getUser()
+    const uid=ad?.user?.id; const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
+    const results = {}
+    await Promise.all(SUIVI_STAGES.map(async s => {
+      let q = supabase.from(s.table).select('*').eq('lot_id', lot.id).order('created_at',{ascending:false})
+      if (!isAdmin) q=q.eq('user_id',uid)
+      const { data } = await q; results[s.key] = data||[]
+    }))
+    setStageData(results); setLoading(false)
+  }
+
+  const companyName = companies.find(c=>c.id===companyId)?.raison_sociale||''
+  const stagesComplete = SUIVI_STAGES.filter(s=>(stageData[s.key]||[]).length>0).length
+
+  const printSuivi = () => {
+    if (!selectedLot) return
+    const stagesHtml = SUIVI_STAGES.map(s => {
+      const rows = stageData[s.key]||[]
+      if (rows.length===0) return `
+        <div style="border:1px solid #e2e8f0;border-radius:8px;padding:14px 18px;margin-bottom:14px;opacity:.5">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+            <span style="font-size:20px">${s.icon}</span>
+            <span style="font-weight:700;color:${s.accent};font-size:12pt">${s.title}</span>
+            <span style="background:#f1f5f9;color:#94a3b8;padding:2px 10px;border-radius:12px;font-size:9pt;margin-left:auto">Non traité</span>
+          </div>
+        </div>`
+      return `
+        <div style="border:2px solid ${s.accent};border-radius:8px;padding:14px 18px;margin-bottom:14px">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+            <span style="font-size:20px">${s.icon}</span>
+            <span style="font-weight:700;color:${s.accent};font-size:12pt">${s.title}</span>
+            <span style="background:${s.accent};color:white;padding:2px 10px;border-radius:12px;font-size:9pt;margin-left:auto">${rows.length} enregistrement(s)</span>
+          </div>
+          ${rows.map(r => `
+            <div style="background:#f8fafc;border-radius:6px;padding:10px 14px;margin-bottom:8px;font-size:9.5pt">
+              <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px">
+                <div><span style="color:#64748b">Date : </span><strong>${r.date_etape||r.date_reception||'—'}</strong></div>
+                ${s.kpis.map(k=>`<div><span style="color:#64748b">${k.l} : </span><strong>${r[k.f]!==undefined&&r[k.f]!==''?((k.dec?(+(r[k.f]||0)).toFixed(k.dec):(+(r[k.f]||0)).toFixed(2)))+(k.u?' '+k.u:''):r[k.f]||'—'}</strong></div>`).join('')}
+                <div><span style="color:#64748b">Responsable : </span><strong>${r.responsable_section||'—'}</strong></div>
+              </div>
+              ${r.observation||r.observations?`<div style="margin-top:6px;color:#555;font-style:italic;font-size:9pt">📝 ${r.observation||r.observations}</div>`:''}
+            </div>`).join('')}
+        </div>`
+    }).join('')
+
+    const html = `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">
+      <title>Suivi Lot — ${selectedLot.numero_lot}</title>
+      <style>${CSS_PRINT}
+        body{font-size:10pt} h1{font-size:15pt;color:#0f2044;margin-bottom:4px}
+        .lot-info{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:12px 0 16px;padding:12px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0}
+        .lot-info div{font-size:9.5pt} .lot-info strong{display:block;font-size:11pt;color:#0f2044}
+        .progress{display:flex;align-items:center;gap:6px;margin-bottom:14px;padding:8px 12px;background:#dbeafe;border-radius:8px;font-size:10pt}
+      </style></head><body>
+      <button class="print-btn" onclick="window.print()">🖨️ Imprimer / PDF</button>
+      <div class="header">
+        <div>
+          <div class="company-name">${companyName}</div>
+          <div class="company-info">Fiche de suivi de lot de production</div>
+        </div>
+        <div class="doc-title">
+          <h1>SUIVI DE LOT</h1>
+          <div class="doc-numero">Lot : ${selectedLot.numero_lot}</div>
+          <div class="doc-date">Édité le ${new Date().toLocaleDateString('fr-FR')}</div>
+        </div>
+      </div>
+      <div class="lot-info">
+        <div><span style="color:#64748b">N° Lot</span><strong>${selectedLot.numero_lot}</strong></div>
+        <div><span style="color:#64748b">Date début</span><strong>${selectedLot.date_debut||'—'}</strong></div>
+        <div><span style="color:#64748b">Statut</span><strong>${selectedLot.statut||'—'}</strong></div>
+        <div><span style="color:#64748b">Paddy entré (kg)</span><strong>${(selectedLot.qte_paddy_entree||0).toLocaleString('fr-FR')} kg</strong></div>
+      </div>
+      <div class="progress">
+        <strong>Avancement :</strong> ${stagesComplete} / ${SUIVI_STAGES.length} étapes complétées
+        &nbsp;—&nbsp; ${SUIVI_STAGES.filter(s=>(stageData[s.key]||[]).length>0).map(s=>s.title).join(' → ')||'Aucune étape'}
+      </div>
+      ${stagesHtml}
+    </body></html>`
+    const w=window.open('','_blank'); w.document.write(html); w.document.close()
+  }
+
+  return (
+    <div>
+      <PageHeader title="Suivi de Lot" subtitle="Traçabilité complète du processus de production"
+        actions={selectedLot && <Btn variant="danger" onClick={printSuivi}>🖨️ Imprimer PDF</Btn>} />
+
+      {/* Sélecteur de lot */}
+      <Card style={{marginBottom:20,padding:'16px 20px'}}>
+        <div style={{display:'flex',alignItems:'center',gap:16,flexWrap:'wrap'}}>
+          <span style={{fontWeight:700,fontSize:13,color:'#374151',whiteSpace:'nowrap'}}>🔎 Sélectionner un lot :</span>
+          <select value={selectedLot?.id||''} onChange={e=>{
+            const lot=allLots.find(l=>l.id===e.target.value)
+            if (lot) loadSuivi(lot); else { setSelectedLot(null); setStageData({}) }
+          }} style={{padding:'9px 14px',borderRadius:9,border:'1.5px solid #d1d5db',fontSize:13,flex:1,minWidth:240,background:'white'}}>
+            <option value=''>— Choisir un lot de production —</option>
+            {allLots.map(l=><option key={l.id} value={l.id}>{l.numero_lot} — {l.statut} {l.date_debut?`(${l.date_debut})`:''}</option>)}
+          </select>
+          {selectedLot && (
+            <span style={{background:'#dbeafe',color:'#1d4ed8',padding:'4px 14px',borderRadius:20,fontSize:12,fontWeight:600}}>
+              {stagesComplete}/{SUIVI_STAGES.length} étapes
+            </span>
+          )}
+        </div>
+      </Card>
+
+      {!selectedLot && (
+        <div style={{textAlign:'center',padding:'60px 24px',color:'#94a3b8'}}>
+          <div style={{fontSize:56,marginBottom:12}}>🔎</div>
+          <div style={{fontSize:15,fontWeight:600,marginBottom:4}}>Sélectionnez un lot pour voir son suivi</div>
+          <div style={{fontSize:13}}>Toutes les étapes de traitement seront affichées ici</div>
+        </div>
+      )}
+
+      {selectedLot && !loading && (
+        <div>
+          {/* Infos lot */}
+          <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))',gap:12,marginBottom:20}}>
+            {[
+              {l:'N° Lot',       v:selectedLot.numero_lot,                           c:'#0f2044'},
+              {l:'Date début',   v:selectedLot.date_debut||'—',                      c:'#374151'},
+              {l:'Date fin',     v:selectedLot.date_fin||'En cours',                 c:selectedLot.date_fin?'#374151':'#ca8a04'},
+              {l:'Paddy entré',  v:`${(selectedLot.qte_paddy_entree||0).toLocaleString('fr-FR')} kg`, c:'#ea580c'},
+              {l:'Statut',       v:selectedLot.statut||'—',                          c:selectedLot.statut==='termine'?'#16a34a':selectedLot.statut==='en_cours'?'#2563eb':'#64748b'},
+            ].map(k=>(
+              <Card key={k.l} style={{padding:'12px 16px',borderLeft:`3px solid ${k.c}`}}>
+                <div style={{fontSize:11,color:'#64748b',marginBottom:3}}>{k.l}</div>
+                <div style={{fontWeight:700,fontSize:14,color:k.c}}>{k.v}</div>
+              </Card>
+            ))}
+          </div>
+
+          {/* Barre de progression */}
+          <Card style={{marginBottom:20,padding:'14px 20px'}}>
+            <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:12}}>
+              <span style={{fontWeight:700,fontSize:13}}>Progression du traitement</span>
+              <span style={{marginLeft:'auto',fontWeight:700,color:stagesComplete===5?'#16a34a':'#2563eb'}}>{stagesComplete}/{SUIVI_STAGES.length}</span>
+            </div>
+            <div style={{display:'flex',gap:0}}>
+              {SUIVI_STAGES.map((s,i)=>{
+                const done = (stageData[s.key]||[]).length>0
+                return (
+                  <div key={s.key} style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',gap:4}}>
+                    <div style={{width:'100%',height:6,background:done?s.accent:'#e2e8f0',borderRadius:i===0?'6px 0 0 6px':i===4?'0 6px 6px 0':'0',transition:'background .3s'}} />
+                    <div style={{fontSize:10,color:done?s.accent:'#94a3b8',fontWeight:done?700:400,textAlign:'center',marginTop:4}}>
+                      <div style={{fontSize:16,marginBottom:2}}>{s.icon}</div>
+                      {s.title}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </Card>
+
+          {/* Étapes détaillées */}
+          <div style={{display:'flex',flexDirection:'column',gap:14}}>
+            {SUIVI_STAGES.map((s,idx)=>{
+              const rows = stageData[s.key]||[]
+              const done = rows.length>0
+              return (
+                <div key={s.key} style={{display:'flex',gap:0}}>
+                  {/* Ligne timeline */}
+                  <div style={{display:'flex',flexDirection:'column',alignItems:'center',marginRight:16,paddingTop:4}}>
+                    <div style={{width:36,height:36,borderRadius:'50%',background:done?s.accent:'#e2e8f0',display:'flex',alignItems:'center',justifyContent:'center',fontSize:18,flexShrink:0,transition:'background .3s'}}>
+                      {done?s.icon:'○'}
+                    </div>
+                    {idx<SUIVI_STAGES.length-1 && <div style={{width:2,flex:1,background:done?s.accent:'#e2e8f0',marginTop:4,minHeight:20,transition:'background .3s'}} />}
+                  </div>
+                  {/* Contenu */}
+                  <div style={{flex:1,marginBottom:4}}>
+                    <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:done?10:0}}>
+                      <span style={{fontWeight:700,fontSize:14,color:done?s.accent:'#94a3b8'}}>{s.title}</span>
+                      <span style={{background:done?s.accent:'#f1f5f9',color:done?'white':'#94a3b8',padding:'2px 10px',borderRadius:20,fontSize:11,fontWeight:600}}>
+                        {done?`${rows.length} enregistrement${rows.length>1?'s':''}`:'Non traité'}
+                      </span>
+                    </div>
+                    {done && rows.map((r,ri)=>(
+                      <div key={ri} style={{background:'white',border:`1px solid ${s.accent}30`,borderLeft:`3px solid ${s.accent}`,borderRadius:8,padding:'12px 16px',marginBottom:8,boxShadow:'0 1px 3px rgba(0,0,0,.04)'}}>
+                        <div style={{fontSize:11,color:'#64748b',marginBottom:8,fontWeight:600}}>
+                          📅 {r.date_etape||r.date_reception||'Date non renseignée'}
+                          {r.responsable_section && <span style={{marginLeft:12}}>👤 {r.responsable_section}</span>}
+                        </div>
+                        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(150px,1fr))',gap:8}}>
+                          {s.kpis.map(k=>{
+                            const val = r[k.f]
+                            const display = val!==undefined&&val!=='' ? (k.dec?(+(val||0)).toFixed(k.dec):(typeof val==='number'?(+(val||0)).toFixed(2):val))+(k.u?' '+k.u:'') : '—'
+                            return (
+                              <div key={k.f} style={{background:`${s.accent}08`,borderRadius:6,padding:'6px 10px'}}>
+                                <div style={{fontSize:10,color:'#64748b',marginBottom:1}}>{k.l}</div>
+                                <div style={{fontWeight:700,fontSize:13,color:s.accent}}>{display}</div>
+                              </div>
+                            )
+                          })}
+                        </div>
+                        {(r.observation||r.observations||r.recommandation) && (
+                          <div style={{marginTop:8,padding:'6px 10px',background:'#fffde7',borderRadius:6,fontSize:12,color:'#78716c'}}>
+                            {(r.observation||r.observations) && <span>📝 {r.observation||r.observations}</span>}
+                            {r.recommandation && <span style={{marginLeft:12}}>💡 {r.recommandation}</span>}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      {loading && (
+        <div style={{textAlign:'center',padding:'48px',color:'#64748b'}}>
+          <div style={{fontSize:32,marginBottom:8}}>⏳</div>Chargement du suivi...
+        </div>
+      )}
     </div>
   )
 }
@@ -3180,6 +3956,10 @@ export default function ComptaPro() {
     const { data:{subscription} } = supabase.auth.onAuthStateChange((_,session)=>{
       setUser(session?.user??null)
       loadProfile(session?.user??null)
+      // Enregistrer l'heure de connexion
+      if (session?.user?.id) {
+        supabase.from('compta_profiles').update({ last_login_at: new Date().toISOString() }).eq('id', session.user.id).then(()=>{})
+      }
     })
     return ()=>subscription.unsubscribe()
   },[])
@@ -3203,11 +3983,13 @@ export default function ComptaPro() {
     const uid = authData?.user?.id
     if (!uid) return
     const isAdmin = authData?.user?.email === SUPER_ADMIN_EMAIL
+    // Utiliser la société effectivement consultée (adminViewCompany si super admin)
+    const effectiveCid = (isAdmin && adminViewCompany) ? adminViewCompany.id : companyId
     let q = supabase.from('compta_lots_production').select('*').order('created_at',{ascending:false})
-    if (!isAdmin) q = q.eq('user_id', uid)
-    if (companyId) q = q.eq('company_id', companyId)
+    if (effectiveCid) q = q.eq('company_id', effectiveCid)
+    else q = q.eq('user_id', uid)
     const { data } = await q; setLots(data||[])
-  },[companyId])
+  },[companyId, adminViewCompany])
 
   useEffect(()=>{ if(user){ loadCompanies(); loadLots() } },[user,loadCompanies,loadLots])
 
@@ -3237,7 +4019,9 @@ export default function ComptaPro() {
 
   // companyId effectif : si super admin consulte une société, utiliser son id
   const effectiveCompanyId = isSuperAdmin && adminViewCompany ? adminViewCompany.id : companyId
-  const readOnly = isSuperAdmin && !!adminViewCompany
+  // readOnly uniquement si super admin consulte la société d'un AUTRE utilisateur
+  const isOwnCompany = adminViewCompany ? adminViewCompany.user_id === user?.id : true
+  const readOnly = isSuperAdmin && !!adminViewCompany && !isOwnCompany
 
   const sp = { companies, companyId: effectiveCompanyId, toast, readOnly }
 
@@ -3312,7 +4096,8 @@ export default function ComptaPro() {
     etuvage:'Étuvage', decorticage:'Décorticage', calibrage:'Calibrage',
     tri_optique:'Tri Optique', conditionnement:'Conditionnement',
     achats:'Achats Semi-finis', reglements:'Règlements', etuvage_paiements:'Paiements Étuvage',
-    prestations:'Prestations',
+    prestations:'Prestations', journal_caisse:'Journal Caisse', journal_banque:'Journal Banque',
+    suivi_lot:'Suivi de Lot', journal_mobile:'Journal Mobile Money',
   }
 
   const renderPage = () => {
@@ -3337,7 +4122,7 @@ export default function ComptaPro() {
     }
     switch (page) {
       case 'dashboard':     return <Dashboard {...sp} setPage={setPage} />
-      case 'companies':     return <CompaniesPage companies={companies} refresh={loadCompanies} toast={toast} isSuperAdmin={isSuperAdmin} />
+      case 'companies':     return <CompaniesPage companies={companies} refresh={loadCompanies} toast={toast} isSuperAdmin={isSuperAdmin} currentUserId={user?.id} />
       case 'clients':       return <TiersPage table="compta_clients" title="Clients" titleSingle="Client" icon="👥" {...sp}
                               extraFields={{ names:[], headers:[], fields:[], defaults:{type:'physique',nom_societe:''} }} />
       case 'fournisseurs':  return <TiersPage table="compta_fournisseurs" title="Fournisseurs" titleSingle="Fournisseur" icon="🚚" {...sp}
@@ -3350,10 +4135,14 @@ export default function ComptaPro() {
       case 'commercial':    return <CommercialPage {...sp} setPage={setPage} setDocId={setDocId} />
       case 'commercial-view': return <CommercialViewPage docId={docId} setPage={setPage} toast={toast} />
       case 'lots':          return <LotsProductionPage {...sp} />
+      case 'suivi_lot':     return <SuiviLotPage {...sp} />
       case 'achats':        return <AchatsSemisPage {...sp} />
       case 'reglements':    return <ReglementsPage {...sp} />
       case 'prestations':   return <PrestationPage {...sp} />
       case 'etuvage_paiements': return <PaiementsEtuvagePage {...sp} lots={lots} />
+      case 'journal_caisse':    return <JournalPage table="compta_journal_caisse" title="Journal Caisse" icon="🏦" journalType="caisse" {...sp} />
+      case 'journal_banque':    return <JournalPage table="compta_journal_banque" title="Journal Banque" icon="🏛️" journalType="banque" {...sp} />
+      case 'journal_mobile':    return <JournalPage table="compta_journal_mobile" title="Journal Mobile Money" icon="📱" journalType="mobile" {...sp} />
       case 'users':          return isSuperAdmin ? <UsersManagementPage toast={toast} /> : <Dashboard {...sp} setPage={setPage} />
     }
   }
@@ -3383,14 +4172,26 @@ export default function ComptaPro() {
             <div style={{ fontSize:isMobile?14:18, fontWeight:700, color:'#0f172a', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', maxWidth:isMobile?140:300 }}>{getTitle()}</div>
           </div>
           <div style={{ display:'flex', alignItems:'center', gap:8 }}>
-            {!isMobile && <CompanySelector companies={companies} companyId={companyId} setCompanyId={setCompanyId} />}
+            {!isMobile && <CompanySelector companies={companies}
+              companyId={isSuperAdmin && adminViewCompany ? effectiveCompanyId : companyId}
+              setCompanyId={id => {
+                if (isSuperAdmin && adminViewCompany) {
+                  // Super admin en mode consultation : changer de société directement
+                  const newC = companies.find(c => c.id === id)
+                  if (newC) { setAdminViewCompany(newC); setPage('dashboard') }
+                } else {
+                  setCompanyId(id)
+                }
+              }} />}
             {!isMobile && <span style={{ fontSize:12, color:'#94a3b8' }}>{new Date().toLocaleDateString('fr-FR',{day:'2-digit',month:'short',year:'numeric'})}</span>}
           </div>
         </div>
         {/* Bandeau super admin — société consultée */}
         {isSuperAdmin && adminViewCompany && (
-          <div style={{background:'#fef3c7',borderBottom:'2px solid #f59e0b',padding:'8px 16px',display:'flex',alignItems:'center',gap:12,flexWrap:'wrap'}}>
-            <span style={{fontSize:12,fontWeight:700,color:'#92400e'}}>👁️ MODE CONSULTATION — Lecture seule</span>
+          <div style={{background: isOwnCompany?'#dcfce7':'#fef3c7', borderBottom:`2px solid ${isOwnCompany?'#16a34a':'#f59e0b'}`, padding:'8px 16px',display:'flex',alignItems:'center',gap:12,flexWrap:'wrap'}}>
+            <span style={{fontSize:12,fontWeight:700,color: isOwnCompany?'#15803d':'#92400e'}}>
+              {isOwnCompany ? '✏️ MODE ÉDITION — Votre société' : '👁️ MODE CONSULTATION — Lecture seule'}
+            </span>
             <span style={{fontSize:13,fontWeight:600,color:'#0f2044',flex:1}}>{adminViewCompany.raison_sociale}</span>
             <button onClick={()=>{ setAdminViewCompany(null); setPage('dashboard') }}
               style={{background:'#0f2044',color:'white',border:'none',padding:'5px 14px',borderRadius:7,fontWeight:700,fontSize:12,cursor:'pointer'}}>
@@ -3401,7 +4202,14 @@ export default function ComptaPro() {
         {/* Company selector mobile sous topbar */}
         {isMobile && (
           <div style={{ background:'white', borderBottom:'1px solid #e2e8f0', padding:'8px 16px' }}>
-            <CompanySelector companies={companies} companyId={companyId} setCompanyId={setCompanyId} />
+            <CompanySelector companies={companies}
+              companyId={isSuperAdmin && adminViewCompany ? effectiveCompanyId : companyId}
+              setCompanyId={id => {
+                if (isSuperAdmin && adminViewCompany) {
+                  const newC = companies.find(c => c.id === id)
+                  if (newC) { setAdminViewCompany(newC); setPage('dashboard') }
+                } else { setCompanyId(id) }
+              }} />
           </div>
         )}
         {/* Content */}
