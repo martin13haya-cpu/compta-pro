@@ -785,6 +785,7 @@ const NAV = [
   { id:'reglements',         icon:'💳', label:'Règlements' },
   { id:'prestations',        icon:'🛠️',  label:'Prestations' },
   { section:'Production' },
+  { id:'suivi_lot',          icon:'🔎', label:'Suivi de lot' },
   { id:'lots',               icon:'🏭', label:'Lots Production' },
   { id:'etuvage',            icon:'🔥', label:'Étuvage' },
   { id:'decorticage',        icon:'⚙️',  label:'Décorticage' },
@@ -2428,6 +2429,11 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
 
   const set = e => {
     const { name, value } = e.target
+    // Auto-remplir numero_lot quand un lot est sélectionné
+    if (name === 'lot_id' && value) {
+      const lot = localLots.find(l => l.id === value)
+      if (lot) { setForm(f=>({...f, lot_id:value, numero_lot: lot.numero_lot||''})); return }
+    }
     setForm(f => ({ ...f, [name]: value }))
   }
 
@@ -3284,13 +3290,27 @@ function JournalPage({ table, title, icon, isBanque=false, companies, companyId,
 
 // ── PAIEMENTS ÉTUVAGE ─────────────────────────────────────────────────────────
 function PaiementsEtuvagePage({ companies, companyId, lots, toast, readOnly=false }) {
-  const [items, setItems]   = useState([])
-  const [modal, setModal]   = useState(false)
-  const [form,  setForm]    = useState({})
-  const [saving,setSaving]  = useState(false)
+  const [items,     setItems]   = useState([])
+  const [modal,     setModal]   = useState(false)
+  const [form,      setForm]    = useState({})
+  const [saving,    setSaving]  = useState(false)
+  const [localLots, setLocalLots] = useState([])
+
+  useEffect(()=>{
+    const fetchLots = async () => {
+      const { data:ad } = await supabase.auth.getUser()
+      const uid=ad?.user?.id; if (!uid) return
+      const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
+      let q = supabase.from('compta_etuvage').select('id,numero_lot,etuveuse_cooperative').order('created_at',{ascending:false})
+      if (isAdmin && companyId) q=q.eq('company_id',companyId)
+      else if (companyId) q=q.eq('user_id',uid).eq('company_id',companyId)
+      else q=q.eq('user_id',uid)
+      const { data }=await q; setLocalLots(data||[])
+    }
+    fetchLots()
+  },[companyId])
 
   const load = useCallback(async()=>{
-    const uid = (await supabase.auth.getUser()).data?.user?.id
     const { data:adage } = await supabase.auth.getUser(); const uidage=adage?.user?.id; const isAdmage=adage?.user?.email===SUPER_ADMIN_EMAIL
     let q = supabase.from('compta_paiements_etuvage').select('*,compta_companies(raison_sociale)').order('created_at',{ascending:false})
     q = isAdmage&&companyId ? q.eq('company_id',companyId) : q.eq('user_id',uidage); if(companyId&&!isAdmage) q=q.eq('company_id',companyId)
@@ -3305,33 +3325,47 @@ function PaiementsEtuvagePage({ companies, companyId, lots, toast, readOnly=fals
 
   const calcAib = (brut,taux)=>{ const b=parseFloat(brut)||0,t=parseFloat(taux)||0.03; const ret=Math.round(b*t); return { ret, net:Math.round(b-ret) } }
 
-  const set = e=>setForm(f=>({...f,[e.target.name]:e.target.value}))
-  const openAdd = ()=>{ setForm({company_id:companyId||companies[0]?.id||'',lot_id:'',date_paiement:today(),numero_lot:'',etuveuse_cooperative:'',qte_etuvee_kg:0,montant_brut:0,taux_aib:'0.03',statut_paiement:'en_attente',mode_paiement:'espèce',reference_paiement:''}); setModal(true) }
+  const set = e => {
+    const { name, value } = e.target
+    setForm(f => {
+      const nf = {...f, [name]: value}
+      if (name==='lot_id' && value) {
+        const fiche = localLots.find(l=>l.id===value)
+        if (fiche) { nf.numero_lot = fiche.numero_lot||''; nf.etuveuse_cooperative = fiche.etuveuse_cooperative||'' }
+      }
+      const qte = parseFloat(name==='qte_etuvee_kg'?value:nf.qte_etuvee_kg)||0
+      const prix = parseFloat(name==='prix_unitaire'?value:nf.prix_unitaire)||0
+      if (name==='qte_etuvee_kg'||name==='prix_unitaire') nf.montant_brut = Math.round(qte*prix)
+      return nf
+    })
+  }
+
+  const openAdd = ()=>{ setForm({company_id:companyId||companies[0]?.id||'',lot_id:'',date_paiement:today(),numero_lot:'',etuveuse_cooperative:'',qte_etuvee_kg:0,prix_unitaire:0,montant_brut:0,taux_aib:'0.03',statut_paiement:'en_attente',mode_paiement:'espèce',reference_paiement:''}); setModal(true) }
   const close = ()=>setModal(false)
 
   const save = async e=>{
     e.preventDefault(); setSaving(true)
     const uid = (await supabase.auth.getUser()).data?.user?.id
-    if (!uid) { toast.error('Session expirée. Veuillez vous reconnecter.'); setSaving(false); return }
-    const company_id = form.company_id || companyId || companies[0]?.id
-    if (!company_id) { toast.error('Veuillez sélectionner une société.'); setSaving(false); return }
-    const { ret, net } = calcAib(form.montant_brut,form.taux_aib)
+    const { ret, net } = calcAib(form.montant_brut, form.taux_aib)
     const year = new Date().getFullYear()
     const { count } = await supabase.from('compta_paiements_etuvage').select('id',{count:'exact',head:true}).eq('user_id',uid)
     const numero = `PE-${year}-${String((count||0)+1).padStart(4,'0')}`
     const { error } = await supabase.from('compta_paiements_etuvage').insert({
-      company_id, user_id:uid, numero, date_paiement:form.date_paiement,
-      lot_id:form.lot_id||null, numero_lot:form.numero_lot, etuveuse_cooperative:form.etuveuse_cooperative,
-      qte_etuvee_kg:+form.qte_etuvee_kg, montant_brut:+form.montant_brut, taux_aib:+form.taux_aib,
+      company_id:form.company_id||companyId, user_id:uid, numero,
+      date_paiement:form.date_paiement, lot_id:form.lot_id||null,
+      numero_lot:form.numero_lot, etuveuse_cooperative:form.etuveuse_cooperative,
+      qte_etuvee_kg:+form.qte_etuvee_kg, prix_unitaire:+form.prix_unitaire,
+      montant_brut:+form.montant_brut, taux_aib:+form.taux_aib,
       retenue_aib:ret, net_a_payer:net,
-      statut_paiement:form.statut_paiement, mode_paiement:form.mode_paiement, reference_paiement:form.reference_paiement,
+      statut_paiement:form.statut_paiement, mode_paiement:form.mode_paiement,
+      reference_paiement:form.reference_paiement,
     })
     setSaving(false)
     if (error) { toast.error(error.message); return }
     toast.success(`Paiement ${numero} enregistré. Net : ${fcfa(net)}`); close(); load()
   }
 
-  const { ret:prvRet, net:prvNet } = calcAib(form.montant_brut,form.taux_aib)
+  const { ret:prvRet, net:prvNet } = calcAib(form.montant_brut, form.taux_aib)
 
   return (
     <div>
@@ -3345,11 +3379,12 @@ function PaiementsEtuvagePage({ companies, companyId, lots, toast, readOnly=fals
         {items.length===0 ? (
           <div style={{textAlign:'center',padding:'48px 24px',color:'#64748b'}}>🔥 Aucun paiement étuvage</div>
         ) : (
+          <div style={{overflowX:'auto'}}>
           <table style={{width:'100%',borderCollapse:'collapse'}}>
             <thead><tr>
               <TH>N°</TH><TH>Date</TH><TH>N° Lot</TH><TH>Étuveuse</TH>
-              <TH right>Qté (kg)</TH><TH right>Montant brut</TH>
-              <TH right>Taux AIB</TH><TH right>Retenue AIB</TH><TH right>Net à payer</TH>
+              <TH right>Qté (kg)</TH><TH right>Prix U.</TH><TH right>Montant brut</TH>
+              <TH right>AIB</TH><TH right>Retenue AIB</TH><TH right>Net à payer</TH>
               <TH>Mode</TH><TH>Statut</TH><TH>PDF</TH>
             </tr></thead>
             <tbody>
@@ -3358,6 +3393,7 @@ function PaiementsEtuvagePage({ companies, companyId, lots, toast, readOnly=fals
                   <TD bold sm>{r.numero}</TD><TD sm>{r.date_paiement}</TD>
                   <TD sm>{r.numero_lot||'—'}</TD><TD sm>{r.etuveuse_cooperative||'—'}</TD>
                   <TD right>{(r.qte_etuvee_kg||0).toFixed(2)}</TD>
+                  <TD right sm>{fcfa(r.prix_unitaire||0)}</TD>
                   <TD right>{fcfa(r.montant_brut)}</TD>
                   <TD right sm>{((r.taux_aib||0)*100).toFixed(0)}%</TD>
                   <TD right color="#dc2626">{fcfa(r.retenue_aib)}</TD>
@@ -3369,33 +3405,296 @@ function PaiementsEtuvagePage({ companies, companyId, lots, toast, readOnly=fals
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </div>
       <Modal open={modal} onClose={close} title="Nouveau Paiement Étuvage" size="lg">
         <form onSubmit={save}>
           <Grid cols={2} gap={14} style={{marginBottom:16}}>
-            <Input label="Date" name="date_paiement" type="date" value={form.date_paiement} onChange={set} />
-            <Sel label="Fiche étuvage liée" name="lot_id" value={form.lot_id} onChange={set}
-              options={[{value:'',label:'— Aucun —'},...lots.map(l=>({value:l.id,label:l.numero_lot}))]} />
-            <Input label="N° Lot" name="numero_lot" value={form.numero_lot} onChange={set} />
-            <Input label="Étuveuse / Coopérative" name="etuveuse_cooperative" value={form.etuveuse_cooperative} onChange={set} />
-            <Input label="Quantité étuvée (kg)" name="qte_etuvee_kg" type="number" value={form.qte_etuvee_kg} onChange={set} min="0" step="0.001" />
-            <Input label="Montant brut (FCFA) *" name="montant_brut" type="number" value={form.montant_brut} onChange={set} required min="0" />
-            <Sel label="Taux AIB" name="taux_aib" value={form.taux_aib} onChange={set}
-              options={[{value:'0.03',label:'3% (Prestataire inscrit)'},{value:'0.05',label:'5% (Prestataire non inscrit)'}]} />
-            <div style={{background:'#fef2f2',border:'1px solid #fca5a5',borderRadius:8,padding:12,fontSize:12.5}}>
-              <div>Retenue AIB : <strong style={{color:'#dc2626'}}>{fcfa(prvRet)}</strong></div>
-              <div>Net à payer : <strong style={{color:'#16a34a',fontSize:14}}>{fcfa(prvNet)}</strong></div>
+            <Input label="Date" name="date_paiement" type="date" value={form.date_paiement||''} onChange={set} />
+            <Sel label="Fiche étuvage liée" name="lot_id" value={form.lot_id||''} onChange={set}
+              options={[{value:'',label:'— Sélectionner une fiche —'},...localLots.map(l=>({value:l.id,label:l.numero_lot||'Sans numéro'}))]} />
+            <Input label="N° Lot" name="numero_lot" value={form.numero_lot||''} onChange={set} />
+            <Input label="Étuveuse / Coopérative" name="etuveuse_cooperative" value={form.etuveuse_cooperative||''} onChange={set} />
+            <Input label="Quantité étuvée (kg)" name="qte_etuvee_kg" type="number" value={form.qte_etuvee_kg||0} onChange={set} min="0" step="0.001" />
+            <Input label="Prix unitaire (FCFA/kg) *" name="prix_unitaire" type="number" value={form.prix_unitaire||0} onChange={set} required min="0" />
+            <div style={{background:'#f0fdf4',border:'1px solid #86efac',borderRadius:8,padding:'10px 14px',fontSize:12.5}}>
+              <div style={{color:'#64748b',marginBottom:2}}>Montant brut calculé :</div>
+              <div style={{fontSize:18,fontWeight:800,color:'#16a34a'}}>{fcfa(form.montant_brut||0)}</div>
+              <div style={{fontSize:11,color:'#94a3b8'}}>{form.qte_etuvee_kg||0} kg × {fcfa(form.prix_unitaire||0)}/kg</div>
             </div>
-            <Sel label="Statut paiement" name="statut_paiement" value={form.statut_paiement} onChange={set}
+            <Sel label="Taux AIB" name="taux_aib" value={form.taux_aib||'0.03'} onChange={set}
+              options={[{value:'0.03',label:'3% (Prestataire inscrit)'},{value:'0.05',label:'5% (Prestataire non inscrit)'}]} />
+            <div style={{background:'#fef2f2',border:'1px solid #fca5a5',borderRadius:8,padding:'10px 14px',fontSize:12.5,gridColumn:'span 2'}}>
+              <div style={{display:'flex',gap:32}}>
+                <div>Retenue AIB : <strong style={{color:'#dc2626',fontSize:15}}>{fcfa(prvRet)}</strong></div>
+                <div>Net à payer : <strong style={{color:'#16a34a',fontSize:15}}>{fcfa(prvNet)}</strong></div>
+              </div>
+            </div>
+            <Sel label="Statut paiement" name="statut_paiement" value={form.statut_paiement||'en_attente'} onChange={set}
               options={['en_attente','paye','annule'].map(s=>({value:s,label:s.replace('_',' ')}))} />
-            <Sel label="Mode de paiement" name="mode_paiement" value={form.mode_paiement} onChange={set}
+            <Sel label="Mode de paiement" name="mode_paiement" value={form.mode_paiement||'espèce'} onChange={set}
               options={['espèce','mobile_money','virement','chèque'].map(m=>({value:m,label:m}))} />
-            <Input label="Référence paiement" name="reference_paiement" value={form.reference_paiement} onChange={set} />
+            <Input label="Référence paiement" name="reference_paiement" value={form.reference_paiement||''} onChange={set} />
           </Grid>
           <Row><Btn variant="secondary" onClick={close}>Annuler</Btn><Btn type="submit" disabled={saving}>{saving?'...':'Enregistrer'}</Btn></Row>
         </form>
       </Modal>
+    </div>
+  )
+}
+
+// ── SUIVI LOT — traçabilité complète d'un lot ────────────────────────────────
+const SUIVI_STAGES = [
+  { key:'etuvage',        table:'compta_etuvage',         title:'Étuvage',         icon:'🔥', accent:'#ea580c',
+    kpis:[ {f:'paddy_envoye_kg',l:'Paddy envoyé',u:'kg'}, {f:'riz_etuve_recu_kg',l:'Riz étuvé reçu',u:'kg'}, {f:'taux_rendement',l:'Rendement',u:'%',dec:1}, {f:'controle_qualite',l:'Qualité'} ] },
+  { key:'decorticage',    table:'compta_decorticage',     title:'Décorticage',     icon:'⚙️',  accent:'#7c3aed',
+    kpis:[ {f:'poids_avant',l:'Poids avant',u:'kg'}, {f:'poids_apres',l:'Poids après',u:'kg'}, {f:'ecart',l:'Écart',u:'kg'}, {f:'taux_humidite',l:'Humidité',u:'%',dec:1} ] },
+  { key:'calibrage',      table:'compta_calibrage',       title:'Calibrage',       icon:'📐', accent:'#0891b2',
+    kpis:[ {f:'poids_avant',l:'Poids avant',u:'kg'}, {f:'poids_long_grain',l:'Long grain',u:'kg'}, {f:'poids_casses',l:'Cassés',u:'kg'}, {f:'ecart',l:'Écart',u:'kg'} ] },
+  { key:'tri_optique',    table:'compta_tri_optique',     title:'Tri Optique',     icon:'🔍', accent:'#16a34a',
+    kpis:[ {f:'poids_avant',l:'Poids avant',u:'kg'}, {f:'poids_apres_tri',l:'Après tri',u:'kg'}, {f:'taux_rouge',l:'Taux rouge',u:'%',dec:1}, {f:'taux_impurete',l:'Impureté',u:'%',dec:1} ] },
+  { key:'conditionnement',table:'compta_conditionnement', title:'Conditionnement', icon:'🎁', accent:'#ca8a04',
+    kpis:[ {f:'poids_recu',l:'Poids reçu',u:'kg'}, {f:'nb_sac_25kg',l:'Sacs 25 kg',u:''}, {f:'nb_sac_50kg',l:'Sacs 50 kg',u:''}, {f:'poids_total_conditionne',l:'Total conditionné',u:'kg'} ] },
+]
+
+function SuiviLotPage({ companies, companyId, toast }) {
+  const [allLots,     setAllLots]    = useState([])
+  const [selectedLot, setSelectedLot]= useState(null)
+  const [stageData,   setStageData]  = useState({})
+  const [loading,     setLoading]    = useState(false)
+
+  // Charger tous les lots
+  useEffect(()=>{
+    const fetchLots = async () => {
+      const { data:ad } = await supabase.auth.getUser()
+      const uid=ad?.user?.id; if (!uid) return
+      const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
+      let q = supabase.from('compta_lots_production').select('*').order('created_at',{ascending:false})
+      if (isAdmin && companyId) q=q.eq('company_id',companyId)
+      else if (companyId) q=q.eq('user_id',uid).eq('company_id',companyId)
+      else q=q.eq('user_id',uid)
+      const { data }=await q; setAllLots(data||[])
+    }
+    fetchLots()
+  },[companyId])
+
+  // Charger toutes les étapes pour le lot sélectionné
+  const loadSuivi = async (lot) => {
+    setSelectedLot(lot); setLoading(true)
+    const { data:ad } = await supabase.auth.getUser()
+    const uid=ad?.user?.id; const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
+    const results = {}
+    await Promise.all(SUIVI_STAGES.map(async s => {
+      let q = supabase.from(s.table).select('*').eq('lot_id', lot.id).order('created_at',{ascending:false})
+      if (!isAdmin) q=q.eq('user_id',uid)
+      const { data } = await q; results[s.key] = data||[]
+    }))
+    setStageData(results); setLoading(false)
+  }
+
+  const companyName = companies.find(c=>c.id===companyId)?.raison_sociale||''
+  const stagesComplete = SUIVI_STAGES.filter(s=>(stageData[s.key]||[]).length>0).length
+
+  const printSuivi = () => {
+    if (!selectedLot) return
+    const stagesHtml = SUIVI_STAGES.map(s => {
+      const rows = stageData[s.key]||[]
+      if (rows.length===0) return `
+        <div style="border:1px solid #e2e8f0;border-radius:8px;padding:14px 18px;margin-bottom:14px;opacity:.5">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+            <span style="font-size:20px">${s.icon}</span>
+            <span style="font-weight:700;color:${s.accent};font-size:12pt">${s.title}</span>
+            <span style="background:#f1f5f9;color:#94a3b8;padding:2px 10px;border-radius:12px;font-size:9pt;margin-left:auto">Non traité</span>
+          </div>
+        </div>`
+      return `
+        <div style="border:2px solid ${s.accent};border-radius:8px;padding:14px 18px;margin-bottom:14px">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+            <span style="font-size:20px">${s.icon}</span>
+            <span style="font-weight:700;color:${s.accent};font-size:12pt">${s.title}</span>
+            <span style="background:${s.accent};color:white;padding:2px 10px;border-radius:12px;font-size:9pt;margin-left:auto">${rows.length} enregistrement(s)</span>
+          </div>
+          ${rows.map(r => `
+            <div style="background:#f8fafc;border-radius:6px;padding:10px 14px;margin-bottom:8px;font-size:9.5pt">
+              <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px">
+                <div><span style="color:#64748b">Date : </span><strong>${r.date_etape||r.date_reception||'—'}</strong></div>
+                ${s.kpis.map(k=>`<div><span style="color:#64748b">${k.l} : </span><strong>${r[k.f]!==undefined&&r[k.f]!==''?((k.dec?(+(r[k.f]||0)).toFixed(k.dec):(+(r[k.f]||0)).toFixed(2)))+(k.u?' '+k.u:''):r[k.f]||'—'}</strong></div>`).join('')}
+                <div><span style="color:#64748b">Responsable : </span><strong>${r.responsable_section||'—'}</strong></div>
+              </div>
+              ${r.observation||r.observations?`<div style="margin-top:6px;color:#555;font-style:italic;font-size:9pt">📝 ${r.observation||r.observations}</div>`:''}
+            </div>`).join('')}
+        </div>`
+    }).join('')
+
+    const html = `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">
+      <title>Suivi Lot — ${selectedLot.numero_lot}</title>
+      <style>${CSS_PRINT}
+        body{font-size:10pt} h1{font-size:15pt;color:#0f2044;margin-bottom:4px}
+        .lot-info{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:12px 0 16px;padding:12px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0}
+        .lot-info div{font-size:9.5pt} .lot-info strong{display:block;font-size:11pt;color:#0f2044}
+        .progress{display:flex;align-items:center;gap:6px;margin-bottom:14px;padding:8px 12px;background:#dbeafe;border-radius:8px;font-size:10pt}
+      </style></head><body>
+      <button class="print-btn" onclick="window.print()">🖨️ Imprimer / PDF</button>
+      <div class="header">
+        <div>
+          <div class="company-name">${companyName}</div>
+          <div class="company-info">Fiche de suivi de lot de production</div>
+        </div>
+        <div class="doc-title">
+          <h1>SUIVI DE LOT</h1>
+          <div class="doc-numero">Lot : ${selectedLot.numero_lot}</div>
+          <div class="doc-date">Édité le ${new Date().toLocaleDateString('fr-FR')}</div>
+        </div>
+      </div>
+      <div class="lot-info">
+        <div><span style="color:#64748b">N° Lot</span><strong>${selectedLot.numero_lot}</strong></div>
+        <div><span style="color:#64748b">Date début</span><strong>${selectedLot.date_debut||'—'}</strong></div>
+        <div><span style="color:#64748b">Statut</span><strong>${selectedLot.statut||'—'}</strong></div>
+        <div><span style="color:#64748b">Paddy entré (kg)</span><strong>${(selectedLot.qte_paddy_entree||0).toLocaleString('fr-FR')} kg</strong></div>
+      </div>
+      <div class="progress">
+        <strong>Avancement :</strong> ${stagesComplete} / ${SUIVI_STAGES.length} étapes complétées
+        &nbsp;—&nbsp; ${SUIVI_STAGES.filter(s=>(stageData[s.key]||[]).length>0).map(s=>s.title).join(' → ')||'Aucune étape'}
+      </div>
+      ${stagesHtml}
+    </body></html>`
+    const w=window.open('','_blank'); w.document.write(html); w.document.close()
+  }
+
+  return (
+    <div>
+      <PageHeader title="Suivi de Lot" subtitle="Traçabilité complète du processus de production"
+        actions={selectedLot && <Btn variant="danger" onClick={printSuivi}>🖨️ Imprimer PDF</Btn>} />
+
+      {/* Sélecteur de lot */}
+      <Card style={{marginBottom:20,padding:'16px 20px'}}>
+        <div style={{display:'flex',alignItems:'center',gap:16,flexWrap:'wrap'}}>
+          <span style={{fontWeight:700,fontSize:13,color:'#374151',whiteSpace:'nowrap'}}>🔎 Sélectionner un lot :</span>
+          <select value={selectedLot?.id||''} onChange={e=>{
+            const lot=allLots.find(l=>l.id===e.target.value)
+            if (lot) loadSuivi(lot); else { setSelectedLot(null); setStageData({}) }
+          }} style={{padding:'9px 14px',borderRadius:9,border:'1.5px solid #d1d5db',fontSize:13,flex:1,minWidth:240,background:'white'}}>
+            <option value=''>— Choisir un lot de production —</option>
+            {allLots.map(l=><option key={l.id} value={l.id}>{l.numero_lot} — {l.statut} {l.date_debut?`(${l.date_debut})`:''}</option>)}
+          </select>
+          {selectedLot && (
+            <span style={{background:'#dbeafe',color:'#1d4ed8',padding:'4px 14px',borderRadius:20,fontSize:12,fontWeight:600}}>
+              {stagesComplete}/{SUIVI_STAGES.length} étapes
+            </span>
+          )}
+        </div>
+      </Card>
+
+      {!selectedLot && (
+        <div style={{textAlign:'center',padding:'60px 24px',color:'#94a3b8'}}>
+          <div style={{fontSize:56,marginBottom:12}}>🔎</div>
+          <div style={{fontSize:15,fontWeight:600,marginBottom:4}}>Sélectionnez un lot pour voir son suivi</div>
+          <div style={{fontSize:13}}>Toutes les étapes de traitement seront affichées ici</div>
+        </div>
+      )}
+
+      {selectedLot && !loading && (
+        <div>
+          {/* Infos lot */}
+          <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))',gap:12,marginBottom:20}}>
+            {[
+              {l:'N° Lot',       v:selectedLot.numero_lot,                           c:'#0f2044'},
+              {l:'Date début',   v:selectedLot.date_debut||'—',                      c:'#374151'},
+              {l:'Date fin',     v:selectedLot.date_fin||'En cours',                 c:selectedLot.date_fin?'#374151':'#ca8a04'},
+              {l:'Paddy entré',  v:`${(selectedLot.qte_paddy_entree||0).toLocaleString('fr-FR')} kg`, c:'#ea580c'},
+              {l:'Statut',       v:selectedLot.statut||'—',                          c:selectedLot.statut==='termine'?'#16a34a':selectedLot.statut==='en_cours'?'#2563eb':'#64748b'},
+            ].map(k=>(
+              <Card key={k.l} style={{padding:'12px 16px',borderLeft:`3px solid ${k.c}`}}>
+                <div style={{fontSize:11,color:'#64748b',marginBottom:3}}>{k.l}</div>
+                <div style={{fontWeight:700,fontSize:14,color:k.c}}>{k.v}</div>
+              </Card>
+            ))}
+          </div>
+
+          {/* Barre de progression */}
+          <Card style={{marginBottom:20,padding:'14px 20px'}}>
+            <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:12}}>
+              <span style={{fontWeight:700,fontSize:13}}>Progression du traitement</span>
+              <span style={{marginLeft:'auto',fontWeight:700,color:stagesComplete===5?'#16a34a':'#2563eb'}}>{stagesComplete}/{SUIVI_STAGES.length}</span>
+            </div>
+            <div style={{display:'flex',gap:0}}>
+              {SUIVI_STAGES.map((s,i)=>{
+                const done = (stageData[s.key]||[]).length>0
+                return (
+                  <div key={s.key} style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',gap:4}}>
+                    <div style={{width:'100%',height:6,background:done?s.accent:'#e2e8f0',borderRadius:i===0?'6px 0 0 6px':i===4?'0 6px 6px 0':'0',transition:'background .3s'}} />
+                    <div style={{fontSize:10,color:done?s.accent:'#94a3b8',fontWeight:done?700:400,textAlign:'center',marginTop:4}}>
+                      <div style={{fontSize:16,marginBottom:2}}>{s.icon}</div>
+                      {s.title}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </Card>
+
+          {/* Étapes détaillées */}
+          <div style={{display:'flex',flexDirection:'column',gap:14}}>
+            {SUIVI_STAGES.map((s,idx)=>{
+              const rows = stageData[s.key]||[]
+              const done = rows.length>0
+              return (
+                <div key={s.key} style={{display:'flex',gap:0}}>
+                  {/* Ligne timeline */}
+                  <div style={{display:'flex',flexDirection:'column',alignItems:'center',marginRight:16,paddingTop:4}}>
+                    <div style={{width:36,height:36,borderRadius:'50%',background:done?s.accent:'#e2e8f0',display:'flex',alignItems:'center',justifyContent:'center',fontSize:18,flexShrink:0,transition:'background .3s'}}>
+                      {done?s.icon:'○'}
+                    </div>
+                    {idx<SUIVI_STAGES.length-1 && <div style={{width:2,flex:1,background:done?s.accent:'#e2e8f0',marginTop:4,minHeight:20,transition:'background .3s'}} />}
+                  </div>
+                  {/* Contenu */}
+                  <div style={{flex:1,marginBottom:4}}>
+                    <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:done?10:0}}>
+                      <span style={{fontWeight:700,fontSize:14,color:done?s.accent:'#94a3b8'}}>{s.title}</span>
+                      <span style={{background:done?s.accent:'#f1f5f9',color:done?'white':'#94a3b8',padding:'2px 10px',borderRadius:20,fontSize:11,fontWeight:600}}>
+                        {done?`${rows.length} enregistrement${rows.length>1?'s':''}`:'Non traité'}
+                      </span>
+                    </div>
+                    {done && rows.map((r,ri)=>(
+                      <div key={ri} style={{background:'white',border:`1px solid ${s.accent}30`,borderLeft:`3px solid ${s.accent}`,borderRadius:8,padding:'12px 16px',marginBottom:8,boxShadow:'0 1px 3px rgba(0,0,0,.04)'}}>
+                        <div style={{fontSize:11,color:'#64748b',marginBottom:8,fontWeight:600}}>
+                          📅 {r.date_etape||r.date_reception||'Date non renseignée'}
+                          {r.responsable_section && <span style={{marginLeft:12}}>👤 {r.responsable_section}</span>}
+                        </div>
+                        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(150px,1fr))',gap:8}}>
+                          {s.kpis.map(k=>{
+                            const val = r[k.f]
+                            const display = val!==undefined&&val!=='' ? (k.dec?(+(val||0)).toFixed(k.dec):(typeof val==='number'?(+(val||0)).toFixed(2):val))+(k.u?' '+k.u:'') : '—'
+                            return (
+                              <div key={k.f} style={{background:`${s.accent}08`,borderRadius:6,padding:'6px 10px'}}>
+                                <div style={{fontSize:10,color:'#64748b',marginBottom:1}}>{k.l}</div>
+                                <div style={{fontWeight:700,fontSize:13,color:s.accent}}>{display}</div>
+                              </div>
+                            )
+                          })}
+                        </div>
+                        {(r.observation||r.observations||r.recommandation) && (
+                          <div style={{marginTop:8,padding:'6px 10px',background:'#fffde7',borderRadius:6,fontSize:12,color:'#78716c'}}>
+                            {(r.observation||r.observations) && <span>📝 {r.observation||r.observations}</span>}
+                            {r.recommandation && <span style={{marginLeft:12}}>💡 {r.recommandation}</span>}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      {loading && (
+        <div style={{textAlign:'center',padding:'48px',color:'#64748b'}}>
+          <div style={{fontSize:32,marginBottom:8}}>⏳</div>Chargement du suivi...
+        </div>
+      )}
     </div>
   )
 }
@@ -3655,6 +3954,7 @@ export default function ComptaPro() {
     tri_optique:'Tri Optique', conditionnement:'Conditionnement',
     achats:'Achats Semi-finis', reglements:'Règlements', etuvage_paiements:'Paiements Étuvage',
     prestations:'Prestations', journal_caisse:'Journal Caisse', journal_banque:'Journal Banque',
+    suivi_lot:'Suivi de Lot',
   }
 
   const renderPage = () => {
@@ -3692,6 +3992,7 @@ export default function ComptaPro() {
       case 'commercial':    return <CommercialPage {...sp} setPage={setPage} setDocId={setDocId} />
       case 'commercial-view': return <CommercialViewPage docId={docId} setPage={setPage} toast={toast} />
       case 'lots':          return <LotsProductionPage {...sp} />
+      case 'suivi_lot':     return <SuiviLotPage {...sp} />
       case 'achats':        return <AchatsSemisPage {...sp} />
       case 'reglements':    return <ReglementsPage {...sp} />
       case 'prestations':   return <PrestationPage {...sp} />
