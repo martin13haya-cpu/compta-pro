@@ -745,6 +745,8 @@ function UsersManagementPage({ toast }) {
     if (!info) return <span style={{fontSize:11,color:'#94a3b8',fontStyle:'italic'}}>Jamais connecté</span>
     return <span style={{fontSize:11,color:info.color,fontWeight:info.recent?700:400}}>{info.label}</span>
   }
+
+  const openWhatsApp = (whatsapp, nom) => {
     if (!whatsapp) { toast.error('Numéro WhatsApp non renseigné pour cet utilisateur.'); return }
     const num = whatsapp.replace(/\D/g,'')
     const intl = num.startsWith('229') ? num : '229'+num
