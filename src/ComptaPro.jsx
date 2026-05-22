@@ -887,20 +887,38 @@ function Dashboard({ companyId, toast, setPage }) {
   useEffect(()=>{
     const load = async ()=>{
       setLoading(true)
-      const uid = (await supabase.auth.getUser()).data?.user?.id
+      const { data:ad } = await supabase.auth.getUser()
+      const uid = ad?.user?.id
+      const isAdmin = ad?.user?.email === SUPER_ADMIN_EMAIL
       if (!uid) { setLoading(false); return }
-      const base = (tbl,cid) => {
-        let q = supabase.from(tbl).select('id',{count:'exact',head:true}).eq('user_id',uid)
-        if (cid) q = q.eq('company_id',cid)
+      // Quand companyId est fourni (admin consultant une société ou user normal),
+      // filtrer par company_id uniquement pour voir les données de cette société
+      const base = (tbl) => {
+        let q = supabase.from(tbl).select('id',{count:'exact',head:true})
+        if (companyId) q = q.eq('company_id', companyId)
+        else q = q.eq('user_id', uid)
+        return q
+      }
+      const docsQ = () => {
+        let q = supabase.from('compta_documents').select('id,numero,type_doc,date_doc,montant_ttc,montant_paye,statut').order('created_at',{ascending:false}).limit(6)
+        if (isAdmin && companyId) q = q.eq('company_id', companyId)
+        else if (companyId) q = q.eq('user_id', uid).eq('company_id', companyId)
+        else q = q.eq('user_id', uid)
+        return q
+      }
+      const alertesQ = () => {
+        let q = supabase.from('compta_articles').select('stock_actuel,stock_min').eq('actif',true)
+        if (companyId) q = q.eq('company_id', companyId)
+        else q = q.eq('user_id', uid)
         return q
       }
       const [cli,fou,art,docs,lots,alerteRes] = await Promise.all([
-        base('compta_clients',companyId).eq('actif',true),
-        base('compta_fournisseurs',companyId).eq('actif',true),
-        base('compta_articles',companyId).eq('actif',true),
-        supabase.from('compta_documents').select('id,numero,type_doc,date_doc,montant_ttc,montant_paye,statut').eq('user_id',uid).order('created_at',{ascending:false}).limit(6),
-        base('compta_lots_production',companyId).eq('statut','en_cours'),
-        supabase.from('compta_articles').select('stock_actuel,stock_min').eq('user_id',uid).eq('actif',true),
+        base('compta_clients').eq('actif',true),
+        base('compta_fournisseurs').eq('actif',true),
+        base('compta_articles').eq('actif',true),
+        docsQ(),
+        base('compta_lots_production').eq('statut','en_cours'),
+        alertesQ(),
       ])
       const alertes = (alerteRes.data||[]).filter(a=>(a.stock_actuel||0)<=(a.stock_min||0)).length
       setStats({ nb_clients:cli.count||0, nb_fournisseurs:fou.count||0, nb_articles:art.count||0, lots_en_cours:lots.count||0, alertes, recent_docs:docs.data||[] })
@@ -1217,9 +1235,12 @@ function StockPage({ companies, companyId, setPage, toast, readOnly=false }) {
   const [catFilter,setCat]     = useState('')
 
   const load = useCallback(async()=>{
-    const uid = (await supabase.auth.getUser()).data?.user?.id
-    let q = supabase.from('compta_articles').select('*,compta_companies(raison_sociale)').eq('user_id',uid).eq('actif',true).order('designation')
-    if (companyId) q=q.eq('company_id',companyId)
+    const { data:ad } = await supabase.auth.getUser()
+    const uid = ad?.user?.id; const isAdmin = ad?.user?.email === SUPER_ADMIN_EMAIL
+    let q = supabase.from('compta_articles').select('*,compta_companies(raison_sociale)').eq('actif',true).order('designation')
+    if (isAdmin && companyId) q = q.eq('company_id', companyId)
+    else if (companyId) q = q.eq('user_id', uid).eq('company_id', companyId)
+    else q = q.eq('user_id', uid)
     if (catFilter) q=q.eq('categorie',catFilter)
     const { data } = await q; setArticles(data||[])
   },[companyId,catFilter])
@@ -1579,8 +1600,11 @@ function InventairePage({ companies, companyId, setCompanyId }) {
 
   const load = useCallback(async()=>{
     if (!companyId) { setArticles([]); return }
-    const uid = (await supabase.auth.getUser()).data?.user?.id
-    const { data } = await supabase.from('compta_articles').select('*').eq('user_id',uid).eq('company_id',companyId).eq('actif',true).order('categorie,designation')
+    const { data:ad } = await supabase.auth.getUser()
+    const uid = ad?.user?.id; const isAdmin = ad?.user?.email === SUPER_ADMIN_EMAIL
+    let q = supabase.from('compta_articles').select('*').eq('company_id',companyId).eq('actif',true).order('categorie,designation')
+    if (!isAdmin) q = q.eq('user_id', uid)
+    const { data } = await q
     setArticles(data||[])
   },[companyId])
 
