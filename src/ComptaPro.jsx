@@ -1050,6 +1050,7 @@ const NAV = [
   { id:'conditionnement',    icon:'🎁', label:'Conditionnement' },
   { section:'Achats' },
   { id:'achats',             icon:'🛒', label:'Achats semi-finis' },
+  { id:'lots_semi_finis',    icon:'📦', label:'Lots Semi-finis' },
   { id:'epierrage',          icon:'🪨', label:'Épierrage' },
   { id:'etuvage_paiements',  icon:'💰', label:'Paiements étuvage' },
   { section:'Documents' },
@@ -3248,6 +3249,195 @@ function AchatsSemisPage({ companies, companyId, toast, readOnly=false }) {
 
 // ── RÈGLEMENTS ────────────────────────────────────────────────────────────────
 
+
+// ── LOTS SEMI-FINIS ───────────────────────────────────────────────────────────
+function LotsSemiFinisPage({ companies, companyId, toast, readOnly=false }) {
+  const [lots,       setLots]      = useState([])
+  const [modal,      setModal]     = useState(null) // null | 'add' | 'edit'
+  const [form,       setForm]      = useState({})
+  const [saving,     setSaving]    = useState(false)
+  const [dateFrom,   setDateFrom]  = useState('')
+  const [dateTo,     setDateTo]    = useState('')
+  const [rowPreview, setRowPreview]= useState(null)
+
+  const load = useCallback(async()=>{
+    const { data:ad }=await supabase.auth.getUser()
+    const uid=ad?.user?.id; const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
+    if (!uid) return
+    let q=supabase.from('compta_lots_semi_finis').select('*,compta_companies(raison_sociale)').order('date_reception',{ascending:false})
+    if(isAdmin&&companyId) q=q.eq('company_id',companyId)
+    else q=q.eq('user_id',uid)
+    if(companyId&&!isAdmin) q=q.eq('company_id',companyId)
+    if(dateFrom) q=q.gte('date_reception',dateFrom)
+    if(dateTo)   q=q.lte('date_reception',dateTo)
+    const { data }=await q; setLots(data||[])
+  },[companyId,dateFrom,dateTo])
+
+  useEffect(()=>{ load() },[load])
+
+  const set=e=>setForm(f=>({...f,[e.target.name]:e.target.value}))
+
+  const open=(l=null)=>{
+    setForm(l?{...l}:{
+      company_id:companyId||companies[0]?.id||'',
+      numero_lot:`LSF-${Date.now().toString().slice(-6)}`,
+      date_reception:today(), fournisseur:'', provenance:'',
+      nature_produit:'', quantite_recue:0, unite:'kg',
+      statut:'en_stock', notes:''
+    })
+    setModal(l?'edit':'add')
+  }
+  const close=()=>setModal(null)
+
+  const deleteLot=async(id)=>{
+    if(!window.confirm('Supprimer ce lot ?')) return
+    const { error }=await supabase.from('compta_lots_semi_finis').delete().eq('id',id)
+    if(error){ toast.error(error.message); return }
+    toast.success('Lot supprimé !'); load()
+  }
+
+  const save=async e=>{
+    e.preventDefault(); setSaving(true)
+    const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
+    const company_id=form.company_id||companyId||companies[0]?.id
+    if(!company_id){ toast.error('Veuillez sélectionner une société.'); setSaving(false); return }
+    const pay={
+      company_id, numero_lot:form.numero_lot, date_reception:form.date_reception,
+      fournisseur:form.fournisseur, provenance:form.provenance,
+      nature_produit:form.nature_produit,
+      quantite_recue:parseFloat(form.quantite_recue)||0, unite:form.unite,
+      statut:form.statut, notes:form.notes
+    }
+    const { error }=modal==='add'
+      ? await supabase.from('compta_lots_semi_finis').insert({...pay,user_id:uid})
+      : await supabase.from('compta_lots_semi_finis').update(pay).eq('id',form.id)
+    setSaving(false)
+    if(error){ toast.error(error.message); return }
+    toast.success('Lot enregistré !'); close(); load()
+  }
+
+  const companyName=companies.find(c=>c.id===companyId)?.raison_sociale||''
+
+  const buildHtml=(l)=>`<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">
+    <title>Lot Semi-fini ${l.numero_lot}</title>
+    <style>${CSS_PRINT}</style></head><body>
+    <button class="print-btn" onclick="window.print()">🖨️ Imprimer</button>
+    <div class="header">
+      <div><div class="company-name">${companyName}</div><div class="company-info">Lot de Produit Semi-fini</div></div>
+      <div class="doc-title"><h1>LOT SEMI-FINI</h1>
+        <div class="doc-numero">${l.numero_lot}</div>
+        <div class="doc-date">Date réception : ${l.date_reception||'—'}</div>
+      </div>
+    </div>
+    <table><thead><tr><th>Désignation</th><th class="r">Valeur</th></tr></thead><tbody>
+      <tr><td>N° Lot</td><td class="r">${l.numero_lot}</td></tr>
+      <tr><td>Date de réception</td><td class="r">${l.date_reception||'—'}</td></tr>
+      <tr><td>Fournisseur</td><td class="r">${l.fournisseur||'—'}</td></tr>
+      <tr><td>Provenance</td><td class="r">${l.provenance||'—'}</td></tr>
+      <tr><td>Nature du produit</td><td class="r">${l.nature_produit||'—'}</td></tr>
+      <tr><td>Quantité reçue</td><td class="r">${(l.quantite_recue||0).toFixed(2)} ${l.unite||'kg'}</td></tr>
+      <tr><td>Statut</td><td class="r">${l.statut||'—'}</td></tr>
+      ${l.notes?`<tr><td>Notes</td><td class="r">${l.notes}</td></tr>`:''}
+    </tbody></table>
+    <div class="signatures">
+      <div class="sig-box">Responsable réception</div>
+      <div class="sig-box">Visa direction</div>
+    </div>
+  </body></html>`
+
+  const printFiltered=()=>{
+    const headers=[{label:'N° Lot'},{label:'Date réception'},{label:'Fournisseur'},{label:'Provenance'},{label:'Produit'},{label:'Qté reçue',r:true},{label:'Unité'},{label:'Statut'}]
+    const rows=lots.map(l=>[l.numero_lot,l.date_reception,l.fournisseur||'—',l.provenance||'—',l.nature_produit||'—',(l.quantite_recue||0).toFixed(2),l.unite||'kg',l.statut||'—'])
+    printFilteredList({ title:'Lots Semi-finis', companyName, headers, rows, dateFrom, dateTo })
+  }
+
+  const totalQte=lots.reduce((s,l)=>s+(l.quantite_recue||0),0)
+
+  return (
+    <div>
+      <PageHeader title="Lots de Produits Semi-finis" subtitle={`${lots.length} lot(s) — Total : ${totalQte.toFixed(2)} kg`}
+        actions={<>
+          <Btn sm variant="danger" onClick={printFiltered}>🖨️ PDF liste</Btn>
+          {!readOnly&&<Btn onClick={()=>open()}>+ Nouveau Lot</Btn>}
+        </>}
+      />
+      <PeriodFilter dateFrom={dateFrom} dateTo={dateTo} onFrom={setDateFrom} onTo={setDateTo} onReset={()=>{setDateFrom('');setDateTo('')}} />
+      <div style={{background:'white',borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
+        {lots.length===0?(
+          <div style={{textAlign:'center',padding:'48px 24px',color:'#64748b'}}>📦 Aucun lot semi-fini</div>
+        ):(
+          <table style={{width:'100%',borderCollapse:'collapse'}}>
+            <thead><tr>
+              <TH>N° Lot</TH><TH>Date récep.</TH><TH>Fournisseur</TH><TH>Provenance</TH>
+              <TH>Produit</TH><TH right>Qté reçue</TH><TH>Statut</TH><TH>Actions</TH>
+            </tr></thead>
+            <tbody>
+              {lots.map(l=>(
+                <TR key={l.id}>
+                  <TD bold>{l.numero_lot}</TD>
+                  <TD>{l.date_reception}</TD>
+                  <TD sm>{l.fournisseur||'—'}</TD>
+                  <TD sm>{l.provenance||'—'}</TD>
+                  <TD sm>{l.nature_produit||'—'}</TD>
+                  <TD right>{(l.quantite_recue||0).toFixed(2)} {l.unite||'kg'}</TD>
+                  <TD><Badge type={{en_stock:'success',epuise:'danger',en_cours:'warning'}[l.statut]||'secondary'}>{l.statut}</Badge></TD>
+                  <TD>
+                    <div style={{display:'flex',gap:4}}>
+                      <Btn sm variant="info"    onClick={()=>setRowPreview({html:buildHtml(l),label:l.numero_lot})}>👁️</Btn>
+                      <Btn sm variant="danger"  onClick={()=>{ const w=window.open('','_blank'); w.document.write(buildHtml(l)); w.document.close() }}>🖨️</Btn>
+                      {!readOnly&&<Btn sm variant="secondary" onClick={()=>open(l)}>✏️</Btn>}
+                      {!readOnly&&<Btn sm variant="danger"    onClick={()=>deleteLot(l.id)}>🗑️</Btn>}
+                    </div>
+                  </TD>
+                </TR>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {/* Aperçu lot */}
+      {rowPreview&&(
+        <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.7)',zIndex:3000,
+          display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:16}}>
+          <div style={{background:'white',borderRadius:12,width:'100%',maxWidth:860,
+            maxHeight:'92vh',display:'flex',flexDirection:'column',boxShadow:'0 30px 80px rgba(0,0,0,.4)'}}>
+            <div style={{padding:'12px 20px',background:'#0f2044',borderRadius:'12px 12px 0 0',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+              <span style={{color:'white',fontWeight:700}}>👁️ Aperçu — {rowPreview.label}</span>
+              <div style={{display:'flex',gap:8}}>
+                <button onClick={()=>{ const w=window.open('','_blank'); w.document.write(rowPreview.html); w.document.close() }}
+                  style={{background:'#2563eb',color:'white',border:'none',padding:'7px 18px',borderRadius:7,fontWeight:700,cursor:'pointer'}}>🖨️ Imprimer</button>
+                <button onClick={()=>setRowPreview(null)}
+                  style={{background:'rgba(255,255,255,.15)',color:'white',border:'none',padding:'7px 14px',borderRadius:7,fontWeight:700,cursor:'pointer'}}>✕</button>
+              </div>
+            </div>
+            <iframe srcDoc={rowPreview.html} style={{flex:1,border:'none',borderRadius:'0 0 12px 12px'}} title="Aperçu lot" />
+          </div>
+        </div>
+      )}
+
+      <Modal open={!!modal} onClose={close} title={modal==='add'?'Nouveau Lot Semi-fini':'Modifier Lot Semi-fini'} size="lg">
+        <form onSubmit={save}>
+          <Grid cols={2} gap={14} style={{marginBottom:16}}>
+            <Input label="N° Lot *" name="numero_lot" value={form.numero_lot||''} onChange={set} required />
+            <Input label="Date de réception *" name="date_reception" type="date" value={form.date_reception||''} onChange={set} required />
+            <Input label="Fournisseur" name="fournisseur" value={form.fournisseur||''} onChange={set} />
+            <Input label="Provenance" name="provenance" value={form.provenance||''} onChange={set} />
+            <Input label="Nature du produit *" name="nature_produit" value={form.nature_produit||''} onChange={set} required />
+            <Input label="Quantité reçue *" name="quantite_recue" type="number" value={form.quantite_recue||0} onChange={set} required min="0" step="0.001" />
+            <Sel label="Unité" name="unite" value={form.unite||'kg'} onChange={set}
+              options={['kg','tonne','sac','carton','unité'].map(u=>({value:u,label:u}))} />
+            <Sel label="Statut" name="statut" value={form.statut||'en_stock'} onChange={set}
+              options={[{value:'en_stock',label:'En stock'},{value:'en_cours',label:'En cours'},{value:'epuise',label:'Épuisé'}]} />
+            <Span2><Input label="Notes" name="notes" value={form.notes||''} onChange={set} /></Span2>
+          </Grid>
+          <Row><Btn variant="secondary" onClick={close}>Annuler</Btn><Btn type="submit" disabled={saving}>{saving?'...':'Enregistrer'}</Btn></Row>
+        </form>
+      </Modal>
+    </div>
+  )
+}
+
 // ── ÉPIERRAGE ─────────────────────────────────────────────────────────────────
 function EpierragePage({ companies, companyId, toast, readOnly=false, lots=[] }) {
   const [items,    setItems]   = useState([])
@@ -3264,7 +3454,7 @@ function EpierragePage({ companies, companyId, toast, readOnly=false, lots=[] })
       const { data:ad }=await supabase.auth.getUser()
       const uid=ad?.user?.id; if(!uid) return
       const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
-      let q=supabase.from('compta_lots').select('id,numero_lot').order('created_at',{ascending:false})
+      let q=supabase.from('compta_lots_semi_finis').select('id,numero_lot').order('date_reception',{ascending:false})
       if(isAdmin&&companyId) q=q.eq('company_id',companyId)
       else if(companyId) q=q.eq('user_id',uid).eq('company_id',companyId)
       else q=q.eq('user_id',uid)
@@ -4909,7 +5099,7 @@ export default function ComptaPro() {
     commercial:'Documents commerciaux', 'commercial-view':'Détail document', lots:'Lots Production',
     etuvage:'Étuvage', decorticage:'Décorticage', calibrage:'Calibrage',
     tri_optique:'Tri Optique', conditionnement:'Conditionnement',
-    achats:'Achats Semi-finis', epierrage:'Épierrage', reglements:'Règlements', etuvage_paiements:'Paiements Étuvage',
+    achats:'Achats Semi-finis', lots_semi_finis:'Lots Semi-finis', epierrage:'Épierrage', reglements:'Règlements', etuvage_paiements:'Paiements Étuvage',
     docs_admin:'Documents administratifs',
     prestations:'Prestations', journal_caisse:'Journal Caisse', journal_banque:'Journal Banque',
     suivi_lot:'Suivi de Lot', journal_mobile:'Journal Mobile Money',
@@ -4952,6 +5142,7 @@ export default function ComptaPro() {
       case 'lots':          return <LotsProductionPage {...sp} />
       case 'suivi_lot':     return <SuiviLotPage {...sp} />
       case 'achats':        return <AchatsSemisPage {...sp} />
+      case 'lots_semi_finis': return <LotsSemiFinisPage {...sp} />
       case 'epierrage':      return <EpierragePage {...sp} lots={lots} />
       case 'docs_admin':     return <DocsAdminPage {...sp} />
       case 'reglements':    return <ReglementsPage {...sp} />
