@@ -226,7 +226,7 @@ function printAchatSemiFini(row) {
 
 
 function printEpierrage(row, companyName='') {
-  const ecart = ((row.poids_avant||0)-(row.poids_apres||0)).toFixed(2)
+  const ecart = Math.max(0,(row.poids_avant||0)-(row.poids_apres||0)-(row.poids_cailloux||0)).toFixed(2)
   const html = `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">
     <title>Fiche Épierrage ${row.numero||''}</title>
     <style>${CSS_PRINT}</style></head><body>
@@ -3486,7 +3486,8 @@ function EpierragePage({ companies, companyId, toast, readOnly=false, lots=[] })
       }
       const av=parseFloat(e.target.name==='poids_avant'?e.target.value:nf.poids_avant)||0
       const ap=parseFloat(e.target.name==='poids_apres'?e.target.value:nf.poids_apres)||0
-      if(e.target.name==='poids_avant'||e.target.name==='poids_apres') nf.ecart=Math.max(0,av-ap).toFixed(2)
+      const cailloux=parseFloat(e.target.name==='poids_cailloux'?e.target.value:nf.poids_cailloux)||0
+      if(e.target.name==='poids_avant'||e.target.name==='poids_apres'||e.target.name==='poids_cailloux') nf.ecart=Math.max(0,av-ap-cailloux).toFixed(2)
       return nf
     })
   }
@@ -3512,7 +3513,8 @@ function EpierragePage({ companies, companyId, toast, readOnly=false, lots=[] })
     const numero=`EP-${year}-${String((count||0)+1).padStart(4,'0')}`
     const poids_avant=parseFloat(form.poids_avant)||0
     const poids_apres=parseFloat(form.poids_apres)||0
-    const ecart=Math.max(0,poids_avant-poids_apres)
+    const poids_cailloux_val=parseFloat(form.poids_cailloux)||0
+    const ecart=Math.max(0,poids_avant-poids_apres-poids_cailloux_val)
     const { error }=await supabase.from('compta_epierrage').insert({
       company_id:form.company_id||companyId, user_id:uid, numero,
       lot_id:form.lot_id||null, numero_lot:form.numero_lot,
