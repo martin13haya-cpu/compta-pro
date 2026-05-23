@@ -4457,7 +4457,7 @@ function PaiementsEtuvagePage({ companies, companyId, lots, toast, readOnly=fals
     const numero = `PE-${year}-${String((count||0)+1).padStart(4,'0')}`
     const { error } = await supabase.from('compta_paiements_etuvage').insert({
       company_id:form.company_id||companyId, user_id:uid, numero,
-      date_paiement:form.date_paiement, lot_id:form.lot_id||null,
+      date_paiement:form.date_paiement,
       numero_lot:form.numero_lot, etuveuse_cooperative:form.etuveuse_cooperative,
       qte_etuvee_kg:+form.qte_etuvee_kg, prix_unitaire:+form.prix_unitaire,
       montant_brut:+form.montant_brut, taux_aib:+form.taux_aib,
