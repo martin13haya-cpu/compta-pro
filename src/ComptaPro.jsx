@@ -3402,7 +3402,7 @@ function EpierragePage({ companies, companyId, toast, readOnly=false, lots=[] })
               ['Poids avant épierrage',(viewItem.poids_avant||0).toFixed(2)+' kg'],
               ['Poids après épierrage',(viewItem.poids_apres||0).toFixed(2)+' kg'],
               ['Poids des cailloux',(viewItem.poids_cailloux||0).toFixed(2)+' kg'],
-              ['Taux d'humidité',(viewItem.taux_humidite||0)+'%'],
+              ["Taux d'humidité",(viewItem.taux_humidite||0)+'%'],
               ['Observation',viewItem.observation||'—'],['Recommandation',viewItem.recommandation||'—'],
             ].map(([l,v])=>(
               <div key={l} style={{borderBottom:'1px solid #f1f5f9',paddingBottom:8}}>
@@ -3685,7 +3685,7 @@ function ExpressionBesoinPage({ companies, companyId, toast, readOnly=false }) {
             {[
               ['Référence',viewItem.reference],['Date',viewItem.date_fiche],
               ['Réalisé par',viewItem.realise_par||'—'],['Fonction',viewItem.fonction||'—'],
-              ['Direction d'exploitation',viewItem.direction||'—'],['Total TTC',fcfa(viewItem.total_ttc)],
+              ["Direction d'exploitation",viewItem.direction||'—'],['Total TTC',fcfa(viewItem.total_ttc)],
             ].map(([l,v])=>(
               <div key={l} style={{borderBottom:'1px solid #f1f5f9',paddingBottom:8}}>
                 <div style={{fontSize:11,color:'#94a3b8',marginBottom:2}}>{l}</div>
