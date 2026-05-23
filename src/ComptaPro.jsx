@@ -3968,29 +3968,17 @@ function ExpressionBesoinPage({ companies, companyId, toast, readOnly=false }) {
   // WhatsApp send to super admin
   const sendWhatsApp=(fiche)=>{
     const lignesText=(fiche.lignes||[]).map((l,i)=>
-      `  ${l.numero_ordre||i+1}. ${l.description} — Qté: ${l.quantite} — Montant: ${Math.round(l.montant||0).toLocaleString('fr-FR')} FCFA`
-    ).join('
-')
+      `  ${l.numero_ordre||i+1}. ${l.description} - Qte: ${l.quantite} - Montant: ${Math.round(l.montant||0).toLocaleString('fr-FR')} FCFA`
+    ).join('\n')
     const msg=encodeURIComponent(
-      `📋 *EXPRESSION DE BESOIN — ${fiche.reference}*
-`+
-      `📅 Date: ${fiche.date_fiche||'—'}
-`+
-      `👤 Réalisé par: ${fiche.realise_par||'—'} (${fiche.fonction||'—'})
-`+
-      `🏢 Direction: ${fiche.direction||'—'}
-`+
-      `📝 Expression: ${fiche.expression||'—'}
-
-`+
-      `*DÉTAIL DES BESOINS:*
-${lignesText}
-
-`+
-      `💰 *TOTAL TTC: ${Math.round(fiche.total_ttc||0).toLocaleString('fr-FR')} FCFA*
-
-`+
-      `_Veuillez valider cette fiche dans ComptaPro._`
+      `EXPRESSION DE BESOIN - ${fiche.reference}\n`+
+      `Date: ${fiche.date_fiche||'-'}\n`+
+      `Realise par: ${fiche.realise_par||'-'} (${fiche.fonction||'-'})\n`+
+      `Direction: ${fiche.direction||'-'}\n`+
+      `Expression: ${fiche.expression||'-'}\n\n`+
+      `DETAIL DES BESOINS:\n${lignesText}\n\n`+
+      `TOTAL TTC: ${Math.round(fiche.total_ttc||0).toLocaleString('fr-FR')} FCFA\n\n`+
+      `Veuillez valider cette fiche dans ComptaPro.`
     )
     window.open(`https://wa.me/${SUPER_ADMIN_WHATSAPP}?text=${msg}`, '_blank')
   }
