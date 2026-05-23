@@ -224,6 +224,116 @@ function printAchatSemiFini(row) {
   w.document.close()
 }
 
+
+function printEpierrage(row, companyName='') {
+  const ecart = ((row.poids_avant||0)-(row.poids_apres||0)).toFixed(2)
+  const html = `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">
+    <title>Fiche Épierrage ${row.numero||''}</title>
+    <style>${CSS_PRINT}</style></head><body>
+    <button class="print-btn" onclick="window.print()">🖨️ Imprimer / PDF</button>
+    <div class="header">
+      <div>
+        <div class="company-name">${companyName||'ComptaPro'}</div>
+        <div class="doc-numero" style="margin-top:4px">FICHE D'ÉPIERRAGE N° ${row.numero||'—'}</div>
+      </div>
+      <div class="doc-title"><div class="doc-date">Date : ${row.date_epierrage||'—'}</div></div>
+    </div>
+    <table>
+      <thead><tr><th>Désignation</th><th class="r">Valeur</th></tr></thead>
+      <tbody>
+        <tr><td>N° Lot</td><td class="r">${row.numero_lot||'—'}</td></tr>
+        <tr><td>Responsable de section</td><td class="r">${row.responsable||'—'}</td></tr>
+        <tr><td>Poids avant épierrage</td><td class="r">${(row.poids_avant||0).toFixed(2)} kg</td></tr>
+        <tr><td>Poids après épierrage</td><td class="r">${(row.poids_apres||0).toFixed(2)} kg</td></tr>
+        <tr><td>Poids des cailloux</td><td class="r">${(row.poids_cailloux||0).toFixed(2)} kg</td></tr>
+        <tr><td><strong>Écart</strong></td><td class="r"><strong>${ecart} kg</strong></td></tr>
+        <tr><td>Taux d'humidité</td><td class="r">${row.taux_humidite||0}%</td></tr>
+        ${row.observation?`<tr><td>Observation</td><td class="r">${row.observation}</td></tr>`:''}
+        ${row.recommandation?`<tr><td>Recommandation</td><td class="r">${row.recommandation}</td></tr>`:''}
+      </tbody>
+    </table>
+    <div class="signatures">
+      <div class="sig-box">Signature du responsable<br><small>${row.responsable||''}</small></div>
+      <div class="sig-box">Visa de la direction</div>
+    </div>
+  </body></html>`
+  const w = window.open('', '_blank'); w.document.write(html); w.document.close()
+}
+
+function printExpressionBesoin(fiche, lignes, budgets, companyInfo) {
+  const totalTTC = lignes.reduce((s,l)=>{
+    const pu=parseFloat(l.prix_unitaire)||0, qty=parseFloat(l.quantite)||0, tva=parseFloat(l.tva)||0
+    return s + Math.round(pu*qty*(1+tva/100))
+  },0)
+  const lignesHtml = lignes.map((l,i)=>{
+    const pu=parseFloat(l.prix_unitaire)||0, qty=parseFloat(l.quantite)||0, tva=parseFloat(l.tva)||0
+    const montant=Math.round(pu*qty*(1+tva/100))
+    return `<tr>
+      <td>${l.numero_ordre||i+1}</td>
+      <td>${l.description||''}</td>
+      <td class="r">${qty}</td>
+      <td class="r">${pu.toLocaleString('fr-FR')}</td>
+      <td class="r">${tva}%</td>
+      <td class="r">${montant.toLocaleString('fr-FR')}</td>
+    </tr>`
+  }).join('')
+  const budgetsHtml = (fiche.codes_budget||[]).map(cb=>{
+    const b=budgets.find(x=>x.id===cb)||{}
+    return `<tr><td>${b.code||cb}</td><td>${b.libelle||'—'}</td><td class="r">${Math.round(b.montant||0).toLocaleString('fr-FR')} FCFA</td></tr>`
+  }).join('')
+  const css = CSS_PRINT + `
+    .info-grid { display:grid; grid-template-columns:1fr 1fr; gap:6px 24px; margin-bottom:14px; font-size:10pt; }
+    .info-item { border-bottom:1px solid #ccc; padding:4px 0; }
+    .info-label { font-size:8.5pt; color:#666; }
+    .section-title { font-size:10pt; font-weight:700; text-transform:uppercase; color:#0f2044; border-bottom:2px solid #0f2044; padding-bottom:4px; margin:14px 0 8px; }
+  `
+  const html = `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">
+    <title>Expression de Besoin ${fiche.reference||''}</title>
+    <style>${css}</style></head><body>
+    <button class="print-btn" onclick="window.print()">🖨️ Imprimer / PDF</button>
+    <div class="header">
+      <div>
+        <div class="company-name">${companyInfo?.raison_sociale||'ComptaPro'}</div>
+        <div class="company-info">
+          ${companyInfo?.rccm?`RCCM : ${companyInfo.rccm}<br>`:''}
+          ${companyInfo?.adresse||''} ${companyInfo?.tel?`— Tél : ${companyInfo.tel}`:''}
+        </div>
+      </div>
+      <div class="doc-title">
+        <h1>Fiche d'Expression de Besoin</h1>
+        <div class="doc-numero">Réf. ${fiche.reference||'—'}</div>
+        <div class="doc-date">Date : ${fiche.date_fiche||'—'}</div>
+      </div>
+    </div>
+    <div style="font-size:9pt;color:#555;font-style:italic;margin-bottom:10px">
+      NB: La fiche doit être validée par le supérieur hiérarchique.
+    </div>
+    <div class="info-grid">
+      <div class="info-item"><div class="info-label">Réalisé par</div><strong>${fiche.realise_par||'—'}</strong></div>
+      <div class="info-item"><div class="info-label">Direction d'exploitation</div><strong>${fiche.direction||'—'}</strong></div>
+      <div class="info-item"><div class="info-label">Fonction</div><strong>${fiche.fonction||'—'}</strong></div>
+      <div class="info-item"><div class="info-label">Référence</div><strong>${fiche.reference||'—'}</strong></div>
+      <div class="info-item" style="grid-column:1/-1"><div class="info-label">Expression / Description du besoin</div><strong>${fiche.expression||'—'}</strong></div>
+    </div>
+    <div class="section-title">Lignes budgétaires concernées</div>
+    <table><thead><tr><th>Code</th><th>Ligne budgétaire</th><th class="r">Montant</th></tr></thead>
+    <tbody>${budgetsHtml||'<tr><td colspan="3" style="text-align:center;color:#999">Aucune ligne</td></tr>'}</tbody></table>
+    <div class="section-title">Détail des besoins</div>
+    <table><thead><tr><th>N°</th><th>Description</th><th class="r">Quantité</th><th class="r">Prix U.</th><th class="r">TVA</th><th class="r">Montant</th></tr></thead>
+    <tbody>${lignesHtml||'<tr><td colspan="6" style="text-align:center;color:#999">Aucune ligne</td></tr>'}</tbody></table>
+    <div class="totals">
+      <div class="ttc"><span>TOTAL TTC</span><span>${totalTTC.toLocaleString('fr-FR')} FCFA</span></div>
+    </div>
+    <div class="signatures" style="margin-top:50px">
+      <div class="sig-box">Signature de l'agent<br><small>${fiche.realise_par||''}</small></div>
+      <div class="sig-box">Signature du gérant</div>
+      <div class="sig-box">Visa du DG</div>
+    </div>
+    <div style="text-align:center;margin-top:30px;font-size:9pt;color:#888;font-style:italic">NOUS COMPTONS SUR VOTRE DISPONIBILITÉ !!!!</div>
+  </body></html>`
+  const w = window.open('', '_blank'); w.document.write(html); w.document.close()
+}
+
 function printPaiementEtuvage(row) {
   const html = `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">
     <title>${row.numero||'Paiement Étuvage'}</title>
@@ -940,7 +1050,10 @@ const NAV = [
   { id:'conditionnement',    icon:'🎁', label:'Conditionnement' },
   { section:'Achats' },
   { id:'achats',             icon:'🛒', label:'Achats semi-finis' },
+  { id:'epierrage',          icon:'🪨', label:'Épierrage' },
   { id:'etuvage_paiements',  icon:'💰', label:'Paiements étuvage' },
+  { section:'Documents' },
+  { id:'docs_admin',         icon:'📁', label:'Documents administratifs' },
   { section:'Comptabilité' },
   { id:'journal_caisse',     icon:'🏦', label:'Journal Caisse' },
   { id:'journal_banque',     icon:'🏛️',  label:'Journal Banque' },
@@ -3134,6 +3247,567 @@ function AchatsSemisPage({ companies, companyId, toast, readOnly=false }) {
 }
 
 // ── RÈGLEMENTS ────────────────────────────────────────────────────────────────
+
+// ── ÉPIERRAGE ─────────────────────────────────────────────────────────────────
+function EpierragePage({ companies, companyId, toast, readOnly=false, lots=[] }) {
+  const [items,    setItems]   = useState([])
+  const [modal,    setModal]   = useState(false)
+  const [form,     setForm]    = useState({})
+  const [saving,   setSaving]  = useState(false)
+  const [viewItem, setViewItem]= useState(null)
+  const [localLots,setLocalLots]=useState([])
+  const [dateFrom, setDateFrom]= useState('')
+  const [dateTo,   setDateTo]  = useState('')
+
+  useEffect(()=>{
+    const fetchLots=async()=>{
+      const { data:ad }=await supabase.auth.getUser()
+      const uid=ad?.user?.id; if(!uid) return
+      const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
+      let q=supabase.from('compta_lots').select('id,numero_lot').order('created_at',{ascending:false})
+      if(isAdmin&&companyId) q=q.eq('company_id',companyId)
+      else if(companyId) q=q.eq('user_id',uid).eq('company_id',companyId)
+      else q=q.eq('user_id',uid)
+      const { data }=await q; setLocalLots(data||[])
+    }
+    fetchLots()
+  },[companyId])
+
+  const load=useCallback(async()=>{
+    const { data:ad }=await supabase.auth.getUser()
+    const uid=ad?.user?.id; const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
+    let q=supabase.from('compta_epierrage').select('*,compta_companies(raison_sociale)').order('date_epierrage',{ascending:false})
+    if(isAdmin&&companyId) q=q.eq('company_id',companyId)
+    else if(companyId) q=q.eq('user_id',uid).eq('company_id',companyId)
+    else q=q.eq('user_id',uid)
+    if(dateFrom) q=q.gte('date_epierrage',dateFrom)
+    if(dateTo)   q=q.lte('date_epierrage',dateTo)
+    const { data }=await q; setItems(data||[])
+  },[companyId,dateFrom,dateTo])
+
+  useEffect(()=>{ load() },[load])
+
+  const set=e=>{
+    setForm(f=>{
+      const nf={...f,[e.target.name]:e.target.value}
+      if(e.target.name==='lot_id'&&e.target.value){
+        const lot=localLots.find(l=>l.id===e.target.value)
+        if(lot) nf.numero_lot=lot.numero_lot||''
+      }
+      const av=parseFloat(e.target.name==='poids_avant'?e.target.value:nf.poids_avant)||0
+      const ap=parseFloat(e.target.name==='poids_apres'?e.target.value:nf.poids_apres)||0
+      if(e.target.name==='poids_avant'||e.target.name==='poids_apres') nf.ecart=Math.max(0,av-ap).toFixed(2)
+      return nf
+    })
+  }
+
+  const openAdd=()=>{
+    setForm({company_id:companyId||companies[0]?.id||'',lot_id:'',numero_lot:'',date_epierrage:today(),responsable:'',poids_avant:0,poids_apres:0,poids_cailloux:0,ecart:0,taux_humidite:0,observation:'',recommandation:''})
+    setModal(true)
+  }
+  const close=()=>setModal(false)
+
+  const deleteRow=async(id)=>{
+    if(!window.confirm('Supprimer cette fiche ?')) return
+    const { error }=await supabase.from('compta_epierrage').delete().eq('id',id)
+    if(error){ toast.error(error.message); return }
+    toast.success('Fiche supprimée !'); load()
+  }
+
+  const save=async e=>{
+    e.preventDefault(); setSaving(true)
+    const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
+    const year=new Date().getFullYear()
+    const { count }=await supabase.from('compta_epierrage').select('id',{count:'exact',head:true}).eq('user_id',uid)
+    const numero=`EP-${year}-${String((count||0)+1).padStart(4,'0')}`
+    const poids_avant=parseFloat(form.poids_avant)||0
+    const poids_apres=parseFloat(form.poids_apres)||0
+    const ecart=Math.max(0,poids_avant-poids_apres)
+    const { error }=await supabase.from('compta_epierrage').insert({
+      company_id:form.company_id||companyId, user_id:uid, numero,
+      lot_id:form.lot_id||null, numero_lot:form.numero_lot,
+      date_epierrage:form.date_epierrage, responsable:form.responsable,
+      poids_avant, poids_apres, poids_cailloux:parseFloat(form.poids_cailloux)||0,
+      ecart, taux_humidite:parseFloat(form.taux_humidite)||0,
+      observation:form.observation, recommandation:form.recommandation
+    })
+    setSaving(false)
+    if(error){ toast.error(error.message); return }
+    toast.success(`Fiche ${numero} enregistrée !`); close(); load()
+  }
+
+  const totalAvant=items.reduce((s,r)=>s+(r.poids_avant||0),0)
+  const totalApres=items.reduce((s,r)=>s+(r.poids_apres||0),0)
+  const companyName=companies.find(c=>c.id===companyId)?.raison_sociale||''
+
+  return (
+    <div>
+      <PageHeader title="Épierrage" subtitle={`${items.length} fiche(s)`}
+        actions={!readOnly&&<Btn onClick={openAdd}>+ Nouvelle Fiche</Btn>} />
+      <PeriodFilter dateFrom={dateFrom} dateTo={dateTo} onFrom={setDateFrom} onTo={setDateTo} onReset={()=>{setDateFrom('');setDateTo('')}} />
+      <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:12,marginBottom:16}}>
+        {[
+          {l:'Total Poids Avant',v:(totalAvant).toFixed(2)+' kg',c:'#2563eb'},
+          {l:'Total Poids Après',v:(totalApres).toFixed(2)+' kg',c:'#16a34a'},
+          {l:'Total Écart',v:(totalAvant-totalApres).toFixed(2)+' kg',c:'#dc2626'},
+        ].map(s=>(
+          <Card key={s.l}><div style={{fontSize:12,color:'#64748b',marginBottom:4}}>{s.l}</div>
+          <div style={{fontSize:18,fontWeight:800,color:s.c}}>{s.v}</div></Card>
+        ))}
+      </div>
+      <div style={{background:'white',borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
+        {items.length===0?(
+          <div style={{textAlign:'center',padding:'48px 24px',color:'#64748b'}}>🪨 Aucune fiche d'épierrage</div>
+        ):(
+          <div style={{overflowX:'auto'}}>
+          <table style={{width:'100%',borderCollapse:'collapse'}}>
+            <thead><tr>
+              <TH>N°</TH><TH>Date</TH><TH>Lot</TH><TH>Responsable</TH>
+              <TH right>Pds Avant</TH><TH right>Pds Après</TH><TH right>Cailloux</TH>
+              <TH right>Écart</TH><TH right>Humidité</TH><TH>Action</TH>
+            </tr></thead>
+            <tbody>
+              {items.map(r=>(
+                <TR key={r.id}>
+                  <TD bold sm>{r.numero}</TD>
+                  <TD sm>{r.date_epierrage}</TD>
+                  <TD sm>{r.numero_lot||'—'}</TD>
+                  <TD sm>{r.responsable||'—'}</TD>
+                  <TD right>{(r.poids_avant||0).toFixed(2)} kg</TD>
+                  <TD right>{(r.poids_apres||0).toFixed(2)} kg</TD>
+                  <TD right>{(r.poids_cailloux||0).toFixed(2)} kg</TD>
+                  <TD right color="#dc2626">{(r.ecart||0).toFixed(2)} kg</TD>
+                  <TD right>{r.taux_humidite||0}%</TD>
+                  <TD>
+                    <div style={{display:'flex',gap:4}}>
+                      <button title="Voir" onClick={()=>setViewItem(r)} style={{background:'#0ea5e9',border:'none',borderRadius:6,padding:'5px 8px',cursor:'pointer',color:'white',fontSize:13}}>👁️</button>
+                      <button title="Imprimer" onClick={()=>printEpierrage(r,companyName)} style={{background:'#f59e0b',border:'none',borderRadius:6,padding:'5px 8px',cursor:'pointer',color:'white',fontSize:13}}>🖨️</button>
+                      {!readOnly&&<button title="Supprimer" onClick={()=>deleteRow(r.id)} style={{background:'#ef4444',border:'none',borderRadius:6,padding:'5px 8px',cursor:'pointer',color:'white',fontSize:13}}>🗑️</button>}
+                    </div>
+                  </TD>
+                </TR>
+              ))}
+            </tbody>
+          </table>
+          </div>
+        )}
+      </div>
+
+      {viewItem&&(
+        <Modal open={!!viewItem} onClose={()=>setViewItem(null)} title={'Fiche Épierrage — '+(viewItem.numero||'—')} size="lg">
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'10px 24px',fontSize:14}}>
+            {[
+              ['N° Fiche',viewItem.numero||'—'],['Date',viewItem.date_epierrage||'—'],
+              ['N° Lot',viewItem.numero_lot||'—'],['Responsable',viewItem.responsable||'—'],
+              ['Poids avant épierrage',(viewItem.poids_avant||0).toFixed(2)+' kg'],
+              ['Poids après épierrage',(viewItem.poids_apres||0).toFixed(2)+' kg'],
+              ['Poids des cailloux',(viewItem.poids_cailloux||0).toFixed(2)+' kg'],
+              ['Taux d'humidité',(viewItem.taux_humidite||0)+'%'],
+              ['Observation',viewItem.observation||'—'],['Recommandation',viewItem.recommandation||'—'],
+            ].map(([l,v])=>(
+              <div key={l} style={{borderBottom:'1px solid #f1f5f9',paddingBottom:8}}>
+                <div style={{fontSize:11,color:'#94a3b8',marginBottom:2}}>{l}</div>
+                <div style={{fontWeight:600,color:'#1e293b'}}>{v}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{marginTop:20,padding:'14px 18px',background:'#fef2f2',borderRadius:10,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+            <span style={{fontSize:13,color:'#475569',fontWeight:600}}>ÉCART</span>
+            <span style={{fontSize:20,fontWeight:800,color:'#dc2626'}}>{(viewItem.ecart||0).toFixed(2)} kg</span>
+          </div>
+          <Row style={{marginTop:16}}>
+            <Btn variant="danger" onClick={()=>printEpierrage(viewItem,companyName)}>🖨️ Imprimer</Btn>
+            <Btn variant="secondary" onClick={()=>setViewItem(null)}>Fermer</Btn>
+          </Row>
+        </Modal>
+      )}
+
+      <Modal open={modal} onClose={close} title="Nouvelle Fiche Épierrage" size="xl">
+        <form onSubmit={save}>
+          <Grid cols={3} gap={14} style={{marginBottom:16}}>
+            <Input label="Date *" name="date_epierrage" type="date" value={form.date_epierrage||''} onChange={set} required />
+            <Sel label="Lot *" name="lot_id" value={form.lot_id||''} onChange={set}
+              options={[{value:'',label:'— Sélectionner un lot —'},...localLots.map(l=>({value:l.id,label:l.numero_lot||'Sans numéro'}))]} />
+            <Input label="N° Lot" name="numero_lot" value={form.numero_lot||''} onChange={set} placeholder="Auto depuis lot" />
+            <Input label="Responsable de section *" name="responsable" value={form.responsable||''} onChange={set} required />
+            <Input label="Poids avant épierrage (kg) *" name="poids_avant" type="number" value={form.poids_avant} onChange={set} required min="0" step="0.001" />
+            <Input label="Poids après épierrage (kg) *" name="poids_apres" type="number" value={form.poids_apres} onChange={set} required min="0" step="0.001" />
+            <Input label="Poids des cailloux (kg)" name="poids_cailloux" type="number" value={form.poids_cailloux} onChange={set} min="0" step="0.001" />
+            <div>
+              <label style={{display:'block',fontSize:12.5,fontWeight:600,color:'#374151',marginBottom:5}}>Écart calculé (kg)</label>
+              <div style={{padding:'9px 12px',background:'#fef2f2',borderRadius:8,border:'1px solid #fecaca',fontSize:14,fontWeight:700,color:'#dc2626'}}>{parseFloat(form.ecart||0).toFixed(2)} kg</div>
+            </div>
+            <Input label="Taux d'humidité (%)" name="taux_humidite" type="number" value={form.taux_humidite} onChange={set} min="0" max="100" step="0.1" />
+            <Span2><Input label="Observation" name="observation" value={form.observation||''} onChange={set} /></Span2>
+            <Span2><Input label="Recommandation" name="recommandation" value={form.recommandation||''} onChange={set} /></Span2>
+          </Grid>
+          <Row><Btn variant="secondary" onClick={close}>Annuler</Btn><Btn type="submit" disabled={saving}>{saving?'...':'Enregistrer'}</Btn></Row>
+        </form>
+      </Modal>
+    </div>
+  )
+}
+
+
+// ── DOCUMENTS ADMINISTRATIFS ──────────────────────────────────────────────────
+function DocsAdminPage({ companies, companyId, toast, readOnly=false }) {
+  const [subPage, setSubPage] = useState('fiches') // 'fiches' | 'budgets'
+  return (
+    <div>
+      <PageHeader title="Documents administratifs" subtitle="Fiches & Budget" />
+      <div style={{display:'flex',gap:8,marginBottom:20}}>
+        {[{id:'fiches',label:'📋 Expressions de besoin'},{id:'budgets',label:'💼 Gestion Budget'}].map(t=>(
+          <button key={t.id} onClick={()=>setSubPage(t.id)} style={{
+            padding:'8px 18px',borderRadius:8,border:'none',fontWeight:600,fontSize:13,cursor:'pointer',
+            background:subPage===t.id?ACCENT:'#f1f5f9',color:subPage===t.id?'white':'#475569'
+          }}>{t.label}</button>
+        ))}
+      </div>
+      {subPage==='fiches'    && <ExpressionBesoinPage companies={companies} companyId={companyId} toast={toast} readOnly={readOnly} />}
+      {subPage==='budgets'   && <BudgetPage companies={companies} companyId={companyId} toast={toast} readOnly={readOnly} />}
+    </div>
+  )
+}
+
+// ── GESTION BUDGET ────────────────────────────────────────────────────────────
+function BudgetPage({ companies, companyId, toast, readOnly=false }) {
+  const [items,  setItems] = useState([])
+  const [modal,  setModal] = useState(false)
+  const [form,   setForm]  = useState({})
+  const [saving, setSaving]= useState(false)
+  const [edit,   setEdit]  = useState(null)
+
+  const load = useCallback(async()=>{
+    const { data:ad }=await supabase.auth.getUser()
+    const uid=ad?.user?.id; const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
+    let q=supabase.from('compta_budget').select('*').order('code',{ascending:true})
+    if(isAdmin&&companyId) q=q.eq('company_id',companyId)
+    else if(companyId) q=q.eq('user_id',uid).eq('company_id',companyId)
+    else q=q.eq('user_id',uid)
+    const { data }=await q; setItems(data||[])
+  },[companyId])
+
+  useEffect(()=>{ load() },[load])
+
+  const set=e=>setForm(f=>({...f,[e.target.name]:e.target.value}))
+
+  const openAdd=()=>{ setEdit(null); setForm({company_id:companyId||companies[0]?.id||'',code:'',libelle:'',montant:0}); setModal(true) }
+  const openEdit=(r)=>{ setEdit(r); setForm({company_id:r.company_id,code:r.code,libelle:r.libelle,montant:r.montant}); setModal(true) }
+  const close=()=>setModal(false)
+
+  const deleteBudget=async(id)=>{
+    if(!window.confirm('Supprimer cette ligne budgétaire ?')) return
+    const { error }=await supabase.from('compta_budget').delete().eq('id',id)
+    if(error){ toast.error(error.message); return }
+    toast.success('Ligne supprimée !'); load()
+  }
+
+  const save=async e=>{
+    e.preventDefault(); setSaving(true)
+    const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
+    const payload={company_id:form.company_id||companyId,user_id:uid,code:form.code,libelle:form.libelle,montant:parseFloat(form.montant)||0}
+    const { error }=edit
+      ? await supabase.from('compta_budget').update(payload).eq('id',edit.id)
+      : await supabase.from('compta_budget').insert(payload)
+    setSaving(false)
+    if(error){ toast.error(error.message); return }
+    toast.success(edit?'Ligne mise à jour !':'Ligne ajoutée !'); close(); load()
+  }
+
+  const total=items.reduce((s,r)=>s+(r.montant||0),0)
+
+  return (
+    <div>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}}>
+        <div style={{fontSize:13,color:'#64748b'}}>{items.length} ligne(s) — Total : <strong>{fcfa(total)}</strong></div>
+        {!readOnly&&<Btn onClick={openAdd}>+ Nouvelle ligne</Btn>}
+      </div>
+      <div style={{background:'white',borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
+        {items.length===0?(
+          <div style={{textAlign:'center',padding:'48px 24px',color:'#64748b'}}>💼 Aucune ligne budgétaire</div>
+        ):(
+          <table style={{width:'100%',borderCollapse:'collapse'}}>
+            <thead><tr><TH>Code</TH><TH>Libellé / Ligne budgétaire</TH><TH right>Montant</TH><TH>Action</TH></tr></thead>
+            <tbody>
+              {items.map(r=>(
+                <TR key={r.id}>
+                  <TD bold sm>{r.code}</TD>
+                  <TD>{r.libelle}</TD>
+                  <TD right bold>{fcfa(r.montant)}</TD>
+                  <TD>
+                    <div style={{display:'flex',gap:4}}>
+                      <button title="Modifier" onClick={()=>openEdit(r)} style={{background:'#f59e0b',border:'none',borderRadius:6,padding:'5px 8px',cursor:'pointer',color:'white',fontSize:13}}>✏️</button>
+                      {!readOnly&&<button title="Supprimer" onClick={()=>deleteBudget(r.id)} style={{background:'#ef4444',border:'none',borderRadius:6,padding:'5px 8px',cursor:'pointer',color:'white',fontSize:13}}>🗑️</button>}
+                    </div>
+                  </TD>
+                </TR>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+      <Modal open={modal} onClose={close} title={edit?'Modifier la ligne':'Nouvelle ligne budgétaire'} size="md">
+        <form onSubmit={save}>
+          <Grid cols={2} gap={14} style={{marginBottom:16}}>
+            <Input label="Code *" name="code" value={form.code||''} onChange={set} required placeholder="ex: BUDGET-001" />
+            <Input label="Montant (FCFA) *" name="montant" type="number" value={form.montant||0} onChange={set} required min="0" />
+            <Span2><Input label="Libellé / Ligne budgétaire *" name="libelle" value={form.libelle||''} onChange={set} required placeholder="ex: Fournitures de bureau" /></Span2>
+          </Grid>
+          <Row><Btn variant="secondary" onClick={close}>Annuler</Btn><Btn type="submit" disabled={saving}>{saving?'...':edit?'Mettre à jour':'Enregistrer'}</Btn></Row>
+        </form>
+      </Modal>
+    </div>
+  )
+}
+
+// ── EXPRESSION DE BESOIN ──────────────────────────────────────────────────────
+function ExpressionBesoinPage({ companies, companyId, toast, readOnly=false }) {
+  const [fiches,   setFiches]  = useState([])
+  const [budgets,  setBudgets] = useState([])
+  const [modal,    setModal]   = useState(false)
+  const [viewItem, setViewItem]= useState(null)
+  const [saving,   setSaving]  = useState(false)
+  const [form,     setForm]    = useState({})
+  const [lignes,   setLignes]  = useState([])
+  const [selBudgets,setSelBudgets]=useState([])
+
+  const load=useCallback(async()=>{
+    const { data:ad }=await supabase.auth.getUser()
+    const uid=ad?.user?.id; const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
+    let q=supabase.from('compta_expression_besoin').select('*,compta_companies(raison_sociale,rccm,adresse,tel)').order('created_at',{ascending:false})
+    if(isAdmin&&companyId) q=q.eq('company_id',companyId)
+    else if(companyId) q=q.eq('user_id',uid).eq('company_id',companyId)
+    else q=q.eq('user_id',uid)
+    const { data }=await q; setFiches(data||[])
+  },[companyId])
+
+  const loadBudgets=useCallback(async()=>{
+    const { data:ad }=await supabase.auth.getUser()
+    const uid=ad?.user?.id; const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
+    let q=supabase.from('compta_budget').select('*').order('code',{ascending:true})
+    if(isAdmin&&companyId) q=q.eq('company_id',companyId)
+    else if(companyId) q=q.eq('user_id',uid).eq('company_id',companyId)
+    else q=q.eq('user_id',uid)
+    const { data }=await q; setBudgets(data||[])
+  },[companyId])
+
+  useEffect(()=>{ load(); loadBudgets() },[load,loadBudgets])
+
+  const set=e=>setForm(f=>({...f,[e.target.name]:e.target.value}))
+
+  const openAdd=()=>{
+    setForm({company_id:companyId||companies[0]?.id||'',date_fiche:today(),reference:'',realise_par:'',fonction:'',direction:'',expression:''})
+    setLignes([{id:1,numero_ordre:'1',description:'',quantite:1,prix_unitaire:0,tva:0}])
+    setSelBudgets([])
+    setModal(true)
+  }
+  const close=()=>setModal(false)
+
+  const addLigne=()=>setLignes(l=>[...l,{id:Date.now(),numero_ordre:String(l.length+1),description:'',quantite:1,prix_unitaire:0,tva:0}])
+  const removeLigne=id=>setLignes(l=>l.filter(x=>x.id!==id))
+  const setLigne=(id,field,val)=>setLignes(l=>l.map(x=>x.id===id?{...x,[field]:val}:x))
+
+  const toggleBudget=id=>setSelBudgets(s=>s.includes(id)?s.filter(x=>x!==id):[...s,id])
+
+  const totalTTC=lignes.reduce((s,l)=>{
+    const pu=parseFloat(l.prix_unitaire)||0,qty=parseFloat(l.quantite)||0,tva=parseFloat(l.tva)||0
+    return s+Math.round(pu*qty*(1+tva/100))
+  },0)
+
+  const deleteFiche=async(id)=>{
+    if(!window.confirm('Supprimer cette fiche ?')) return
+    const { error }=await supabase.from('compta_expression_besoin').delete().eq('id',id)
+    if(error){ toast.error(error.message); return }
+    toast.success('Fiche supprimée !'); load()
+  }
+
+  const save=async e=>{
+    e.preventDefault(); setSaving(true)
+    const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
+    const year=new Date().getFullYear()
+    const { count }=await supabase.from('compta_expression_besoin').select('id',{count:'exact',head:true}).eq('user_id',uid)
+    const autoRef=`EB-${year}-${String((count||0)+1).padStart(4,'0')}`
+    const payload={
+      company_id:form.company_id||companyId, user_id:uid,
+      reference:form.reference||autoRef, date_fiche:form.date_fiche,
+      realise_par:form.realise_par, fonction:form.fonction,
+      direction:form.direction, expression:form.expression,
+      codes_budget:selBudgets,
+      lignes:lignes.map(l=>({...l,montant:Math.round((parseFloat(l.prix_unitaire)||0)*(parseFloat(l.quantite)||0)*(1+(parseFloat(l.tva)||0)/100))})),
+      total_ttc:totalTTC
+    }
+    const { error }=await supabase.from('compta_expression_besoin').insert(payload)
+    setSaving(false)
+    if(error){ toast.error(error.message); return }
+    toast.success('Fiche enregistrée !'); close(); load()
+  }
+
+  return (
+    <div>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}}>
+        <div style={{fontSize:13,color:'#64748b'}}>{fiches.length} fiche(s)</div>
+        {!readOnly&&<Btn onClick={openAdd}>+ Nouvelle fiche</Btn>}
+      </div>
+      <div style={{background:'white',borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
+        {fiches.length===0?(
+          <div style={{textAlign:'center',padding:'48px 24px',color:'#64748b'}}>📋 Aucune fiche d'expression de besoin</div>
+        ):(
+          <table style={{width:'100%',borderCollapse:'collapse'}}>
+            <thead><tr>
+              <TH>Référence</TH><TH>Date</TH><TH>Réalisé par</TH><TH>Fonction</TH><TH>Direction</TH><TH right>Total TTC</TH><TH>Action</TH>
+            </tr></thead>
+            <tbody>
+              {fiches.map(r=>(
+                <TR key={r.id}>
+                  <TD bold sm>{r.reference}</TD>
+                  <TD sm>{r.date_fiche}</TD>
+                  <TD sm>{r.realise_par||'—'}</TD>
+                  <TD sm>{r.fonction||'—'}</TD>
+                  <TD sm>{r.direction||'—'}</TD>
+                  <TD right bold>{fcfa(r.total_ttc)}</TD>
+                  <TD>
+                    <div style={{display:'flex',gap:4}}>
+                      <button title="Voir" onClick={()=>setViewItem(r)} style={{background:'#0ea5e9',border:'none',borderRadius:6,padding:'5px 8px',cursor:'pointer',color:'white',fontSize:13}}>👁️</button>
+                      <button title="Imprimer" onClick={()=>printExpressionBesoin(r,r.lignes||[],budgets,r.compta_companies)} style={{background:'#f59e0b',border:'none',borderRadius:6,padding:'5px 8px',cursor:'pointer',color:'white',fontSize:13}}>🖨️</button>
+                      {!readOnly&&<button title="Supprimer" onClick={()=>deleteFiche(r.id)} style={{background:'#ef4444',border:'none',borderRadius:6,padding:'5px 8px',cursor:'pointer',color:'white',fontSize:13}}>🗑️</button>}
+                    </div>
+                  </TD>
+                </TR>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {viewItem&&(
+        <Modal open={!!viewItem} onClose={()=>setViewItem(null)} title={'Fiche — '+viewItem.reference} size="xl">
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'10px 24px',fontSize:14,marginBottom:16}}>
+            {[
+              ['Référence',viewItem.reference],['Date',viewItem.date_fiche],
+              ['Réalisé par',viewItem.realise_par||'—'],['Fonction',viewItem.fonction||'—'],
+              ['Direction d'exploitation',viewItem.direction||'—'],['Total TTC',fcfa(viewItem.total_ttc)],
+            ].map(([l,v])=>(
+              <div key={l} style={{borderBottom:'1px solid #f1f5f9',paddingBottom:8}}>
+                <div style={{fontSize:11,color:'#94a3b8',marginBottom:2}}>{l}</div>
+                <div style={{fontWeight:600}}>{v}</div>
+              </div>
+            ))}
+            <div style={{gridColumn:'1/-1',borderBottom:'1px solid #f1f5f9',paddingBottom:8}}>
+              <div style={{fontSize:11,color:'#94a3b8',marginBottom:2}}>Expression / Description</div>
+              <div style={{fontWeight:600}}>{viewItem.expression||'—'}</div>
+            </div>
+          </div>
+          {(viewItem.codes_budget||[]).length>0&&(
+            <div style={{marginBottom:12}}>
+              <div style={{fontSize:12,fontWeight:700,color:'#0f2044',marginBottom:6}}>LIGNES BUDGÉTAIRES</div>
+              {(viewItem.codes_budget||[]).map(id=>{
+                const b=budgets.find(x=>x.id===id)||{}
+                return <div key={id} style={{fontSize:13,padding:'4px 0',borderBottom:'1px solid #f1f5f9',display:'flex',justifyContent:'space-between'}}>
+                  <span>{b.code} — {b.libelle}</span><span style={{fontWeight:700}}>{fcfa(b.montant)}</span>
+                </div>
+              })}
+            </div>
+          )}
+          <div style={{fontSize:12,fontWeight:700,color:'#0f2044',marginBottom:6}}>DÉTAIL DES BESOINS</div>
+          <table style={{width:'100%',borderCollapse:'collapse',marginBottom:12}}>
+            <thead><tr style={{background:'#0f2044',color:'white'}}>
+              {['N°','Description','Qté','Prix U.','TVA','Montant'].map(h=><th key={h} style={{padding:'7px 10px',textAlign:'left',fontSize:12}}>{h}</th>)}
+            </tr></thead>
+            <tbody>
+              {(viewItem.lignes||[]).map((l,i)=>(
+                <tr key={i} style={{borderBottom:'1px solid #e2e8f0'}}>
+                  <td style={{padding:'7px 10px',fontSize:13}}>{l.numero_ordre||i+1}</td>
+                  <td style={{padding:'7px 10px',fontSize:13}}>{l.description}</td>
+                  <td style={{padding:'7px 10px',fontSize:13}}>{l.quantite}</td>
+                  <td style={{padding:'7px 10px',fontSize:13}}>{fcfa(l.prix_unitaire)}</td>
+                  <td style={{padding:'7px 10px',fontSize:13}}>{l.tva}%</td>
+                  <td style={{padding:'7px 10px',fontSize:13,fontWeight:700}}>{fcfa(l.montant)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div style={{padding:'12px 16px',background:'#0f2044',borderRadius:8,display:'flex',justifyContent:'space-between',color:'white',fontWeight:800,fontSize:16}}>
+            <span>TOTAL TTC</span><span>{fcfa(viewItem.total_ttc)}</span>
+          </div>
+          <Row style={{marginTop:16}}>
+            <Btn variant="danger" onClick={()=>printExpressionBesoin(viewItem,viewItem.lignes||[],budgets,viewItem.compta_companies)}>🖨️ Imprimer</Btn>
+            <Btn variant="secondary" onClick={()=>setViewItem(null)}>Fermer</Btn>
+          </Row>
+        </Modal>
+      )}
+
+      <Modal open={modal} onClose={close} title="Nouvelle Fiche d'Expression de Besoin" size="xl">
+        <form onSubmit={save}>
+          <div style={{fontSize:12,fontWeight:700,color:'#0f2044',marginBottom:8,textTransform:'uppercase'}}>Informations générales</div>
+          <Grid cols={3} gap={14} style={{marginBottom:16}}>
+            <Input label="Date *" name="date_fiche" type="date" value={form.date_fiche||''} onChange={set} required />
+            <Input label="Référence (auto si vide)" name="reference" value={form.reference||''} onChange={set} placeholder="ex: EB-2026-0001" />
+            <Input label="Direction d'exploitation" name="direction" value={form.direction||''} onChange={set} />
+            <Input label="Réalisé par *" name="realise_par" value={form.realise_par||''} onChange={set} required />
+            <Input label="Fonction" name="fonction" value={form.fonction||''} onChange={set} />
+            <Span2><Input label="Expression / Description du besoin *" name="expression" value={form.expression||''} onChange={set} required /></Span2>
+          </Grid>
+
+          <div style={{fontSize:12,fontWeight:700,color:'#0f2044',marginBottom:8,textTransform:'uppercase'}}>Lignes budgétaires concernées</div>
+          <div style={{display:'flex',flexWrap:'wrap',gap:8,marginBottom:16,padding:12,background:'#f8fafc',borderRadius:8,border:'1px solid #e2e8f0'}}>
+            {budgets.length===0?<span style={{fontSize:12,color:'#94a3b8'}}>Aucune ligne budgétaire — créez-en dans "Gestion Budget"</span>:
+              budgets.map(b=>(
+                <label key={b.id} style={{display:'flex',alignItems:'center',gap:6,padding:'5px 10px',borderRadius:6,border:'1px solid '+(selBudgets.includes(b.id)?ACCENT:'#e2e8f0'),background:selBudgets.includes(b.id)?'#eff6ff':'white',cursor:'pointer',fontSize:13}}>
+                  <input type="checkbox" checked={selBudgets.includes(b.id)} onChange={()=>toggleBudget(b.id)} style={{accentColor:ACCENT}} />
+                  {b.code} — {b.libelle} ({fcfa(b.montant)})
+                </label>
+              ))
+            }
+          </div>
+
+          <div style={{fontSize:12,fontWeight:700,color:'#0f2044',marginBottom:8,textTransform:'uppercase'}}>Détail des besoins</div>
+          <div style={{background:'#f8fafc',borderRadius:8,border:'1px solid #e2e8f0',overflow:'hidden',marginBottom:12}}>
+            <table style={{width:'100%',borderCollapse:'collapse'}}>
+              <thead><tr style={{background:'#0f2044',color:'white'}}>
+                {['N°','Description','Quantité','Prix Unitaire (FCFA)','TVA (%)','Montant TTC',''].map(h=><th key={h} style={{padding:'8px 10px',textAlign:'left',fontSize:11}}>{h}</th>)}
+              </tr></thead>
+              <tbody>
+                {lignes.map((l,i)=>{
+                  const pu=parseFloat(l.prix_unitaire)||0,qty=parseFloat(l.quantite)||0,tva=parseFloat(l.tva)||0
+                  const montant=Math.round(pu*qty*(1+tva/100))
+                  return (
+                    <tr key={l.id} style={{borderBottom:'1px solid #e2e8f0'}}>
+                      <td style={{padding:'6px 8px',width:40}}>
+                        <input value={l.numero_ordre} onChange={e=>setLigne(l.id,'numero_ordre',e.target.value)} style={{width:'100%',padding:'4px 6px',border:'1px solid #e2e8f0',borderRadius:4,fontSize:12}} />
+                      </td>
+                      <td style={{padding:'6px 8px'}}>
+                        <input value={l.description} onChange={e=>setLigne(l.id,'description',e.target.value)} style={{width:'100%',padding:'4px 6px',border:'1px solid #e2e8f0',borderRadius:4,fontSize:12}} placeholder="Description" />
+                      </td>
+                      <td style={{padding:'6px 8px',width:80}}>
+                        <input type="number" value={l.quantite} onChange={e=>setLigne(l.id,'quantite',e.target.value)} style={{width:'100%',padding:'4px 6px',border:'1px solid #e2e8f0',borderRadius:4,fontSize:12}} min="0" step="0.001" />
+                      </td>
+                      <td style={{padding:'6px 8px',width:120}}>
+                        <input type="number" value={l.prix_unitaire} onChange={e=>setLigne(l.id,'prix_unitaire',e.target.value)} style={{width:'100%',padding:'4px 6px',border:'1px solid #e2e8f0',borderRadius:4,fontSize:12}} min="0" />
+                      </td>
+                      <td style={{padding:'6px 8px',width:70}}>
+                        <input type="number" value={l.tva} onChange={e=>setLigne(l.id,'tva',e.target.value)} style={{width:'100%',padding:'4px 6px',border:'1px solid #e2e8f0',borderRadius:4,fontSize:12}} min="0" max="100" step="0.1" />
+                      </td>
+                      <td style={{padding:'6px 8px',width:120,fontWeight:700,color:ACCENT,fontSize:13}}>{fcfa(montant)}</td>
+                      <td style={{padding:'6px 4px',width:32}}>
+                        {lignes.length>1&&<button type="button" onClick={()=>removeLigne(l.id)} style={{background:'#fee2e2',border:'none',borderRadius:4,padding:'3px 7px',cursor:'pointer',color:'#dc2626',fontSize:12}}>✕</button>}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+            <div style={{padding:'8px 12px',display:'flex',justifyContent:'space-between',alignItems:'center',borderTop:'1px solid #e2e8f0'}}>
+              <button type="button" onClick={addLigne} style={{background:'#eff6ff',border:'1px solid #bfdbfe',borderRadius:6,padding:'5px 12px',cursor:'pointer',color:ACCENT,fontSize:13,fontWeight:600}}>+ Ajouter une ligne</button>
+              <div style={{fontWeight:800,fontSize:15,color:'#0f2044'}}>TOTAL TTC : {fcfa(totalTTC)}</div>
+            </div>
+          </div>
+          <Row><Btn variant="secondary" onClick={close}>Annuler</Btn><Btn type="submit" disabled={saving}>{saving?'...':'Enregistrer la fiche'}</Btn></Row>
+        </form>
+      </Modal>
+    </div>
+  )
+}
+
 function ReglementsPage({ companies, companyId, toast, readOnly=false }) {
   const [items, setItems]   = useState([])
   const [modal, setModal]   = useState(false)
@@ -4235,7 +4909,8 @@ export default function ComptaPro() {
     commercial:'Documents commerciaux', 'commercial-view':'Détail document', lots:'Lots Production',
     etuvage:'Étuvage', decorticage:'Décorticage', calibrage:'Calibrage',
     tri_optique:'Tri Optique', conditionnement:'Conditionnement',
-    achats:'Achats Semi-finis', reglements:'Règlements', etuvage_paiements:'Paiements Étuvage',
+    achats:'Achats Semi-finis', epierrage:'Épierrage', reglements:'Règlements', etuvage_paiements:'Paiements Étuvage',
+    docs_admin:'Documents administratifs',
     prestations:'Prestations', journal_caisse:'Journal Caisse', journal_banque:'Journal Banque',
     suivi_lot:'Suivi de Lot', journal_mobile:'Journal Mobile Money',
   }
@@ -4277,6 +4952,8 @@ export default function ComptaPro() {
       case 'lots':          return <LotsProductionPage {...sp} />
       case 'suivi_lot':     return <SuiviLotPage {...sp} />
       case 'achats':        return <AchatsSemisPage {...sp} />
+      case 'epierrage':      return <EpierragePage {...sp} lots={lots} />
+      case 'docs_admin':     return <DocsAdminPage {...sp} />
       case 'reglements':    return <ReglementsPage {...sp} />
       case 'prestations':   return <PrestationPage {...sp} />
       case 'etuvage_paiements': return <PaiementsEtuvagePage {...sp} lots={lots} />
