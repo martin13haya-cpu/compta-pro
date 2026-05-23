@@ -183,6 +183,47 @@ function DocPreviewModal({ open, onClose, doc, lignes }) {
   )
 }
 
+function printAchatSemiFini(row) {
+  const html = `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">
+    <title>Achat ${row.numero_fact||'Semi-fini'}</title>
+    <style>${CSS_PRINT}</style></head><body>
+    <button class="print-btn" onclick="window.print()">🖨️ Imprimer / PDF</button>
+    <div class="header">
+      <div>
+        <div class="company-name">BON D'ACHAT SEMI-FINI</div>
+        <div class="doc-numero" style="margin-top:4px">N° Fact. ${row.numero_fact||'—'}</div>
+      </div>
+      <div class="doc-title">
+        <div class="doc-date">Date : ${row.date_achat||'—'}</div>
+      </div>
+    </div>
+    <table>
+      <thead><tr><th>Désignation</th><th class="r">Valeur</th></tr></thead>
+      <tbody>
+        <tr><td>Entité</td><td class="r">${row.entite||'—'}</td></tr>
+        <tr><td>Fournisseur</td><td class="r">${row.nom_fournisseur||'—'}</td></tr>
+        <tr><td>Provenance</td><td class="r">${row.provenance||'—'}</td></tr>
+        <tr><td>Acheteur</td><td class="r">${row.nom_acheteur||'—'}</td></tr>
+        <tr><td>ID Produit</td><td class="r">${row.id_produit||'—'}</td></tr>
+        <tr><td>Nature du produit</td><td class="r">${row.nature_produit||'—'}</td></tr>
+        <tr><td>Quantité (kg)</td><td class="r">${(row.quantite||0).toFixed(2)} kg</td></tr>
+        <tr><td>Prix unitaire</td><td class="r">${Math.round(row.prix_unitaire||0).toLocaleString('fr-FR')} FCFA/kg</td></tr>
+        <tr><td>Statut</td><td class="r">${row.statut||'—'}</td></tr>
+      </tbody>
+    </table>
+    <div class="totals">
+      <div class="ttc"><span>MONTANT TOTAL</span><span>${Math.round(row.montant||0).toLocaleString('fr-FR')} FCFA</span></div>
+    </div>
+    <div class="signatures">
+      <div class="sig-box">Signature du fournisseur<br><small>${row.nom_fournisseur||''}</small></div>
+      <div class="sig-box">Signature de l'acheteur<br><small>${row.nom_acheteur||''}</small></div>
+    </div>
+  </body></html>`
+  const w = window.open('', '_blank')
+  w.document.write(html)
+  w.document.close()
+}
+
 function printPaiementEtuvage(row) {
   const html = `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">
     <title>${row.numero||'Paiement Étuvage'}</title>
@@ -2943,6 +2984,7 @@ function AchatsSemisPage({ companies, companyId, toast, readOnly=false }) {
   const [saving,setSaving]  = useState(false)
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo,   setDateTo]   = useState('')
+  const [viewItem, setViewItem] = useState(null)
 
   const load = useCallback(async()=>{
     const uid = (await supabase.auth.getUser()).data?.user?.id
@@ -2966,6 +3008,13 @@ function AchatsSemisPage({ companies, companyId, toast, readOnly=false }) {
   }
   const openAdd = ()=>{ setForm({company_id:companyId||companies[0]?.id||'',numero_fact:'',date_achat:today(),entite:'',nom_fournisseur:'',provenance:'',nom_acheteur:'',id_produit:'',nature_produit:'',quantite:0,prix_unitaire:0,montant:0,statut:'en_cours'}); setModal(true) }
   const close = ()=>setModal(false)
+
+  const deleteAchat = async (id) => {
+    if (!window.confirm('Supprimer cet achat ?')) return
+    const { error } = await supabase.from('compta_achats_semi_finis').delete().eq('id', id)
+    if (error) { toast.error(error.message); return }
+    toast.success('Achat supprimé !'); load()
+  }
 
   const save = async e=>{
     e.preventDefault(); setSaving(true)
@@ -3001,7 +3050,7 @@ function AchatsSemisPage({ companies, companyId, toast, readOnly=false }) {
           <table style={{width:'100%',borderCollapse:'collapse'}}>
             <thead><tr>
               <TH>N° Fact.</TH><TH>Date</TH><TH>Entité</TH><TH>Fournisseur</TH><TH>Provenance</TH>
-              <TH>Produit</TH><TH right>Qté (kg)</TH><TH right>P.U</TH><TH right>Montant</TH><TH>Statut</TH>
+              <TH>Produit</TH><TH right>Qté (kg)</TH><TH right>P.U</TH><TH right>Montant</TH><TH>Statut</TH><TH>Action</TH>
             </tr></thead>
             <tbody>
               {items.map(r=>(
@@ -3013,12 +3062,52 @@ function AchatsSemisPage({ companies, companyId, toast, readOnly=false }) {
                   <TD right sm>{fcfa(r.prix_unitaire)}</TD>
                   <TD right bold>{fcfa(r.montant)}</TD>
                   <TD><Badge type={{en_cours:'warning',receptionne:'success',annule:'danger'}[r.statut]||'secondary'}>{r.statut}</Badge></TD>
+                  <TD>
+                    <div style={{display:'flex',gap:4}}>
+                      <button title="Voir" onClick={()=>setViewItem(r)} style={{background:'#0ea5e9',border:'none',borderRadius:6,padding:'5px 8px',cursor:'pointer',color:'white',fontSize:13}}>👁️</button>
+                      <button title="Imprimer" onClick={()=>printAchatSemiFini(r)} style={{background:'#f59e0b',border:'none',borderRadius:6,padding:'5px 8px',cursor:'pointer',color:'white',fontSize:13}}>🖨️</button>
+                      {!readOnly && <button title="Supprimer" onClick={()=>deleteAchat(r.id)} style={{background:'#ef4444',border:'none',borderRadius:6,padding:'5px 8px',cursor:'pointer',color:'white',fontSize:13}}>🗑️</button>}
+                    </div>
+                  </TD>
                 </TR>
               ))}
             </tbody>
           </table>
         )}
       </div>
+      {viewItem && (
+        <Modal open={!!viewItem} onClose={()=>setViewItem(null)} title={"Détail Achat — "+( viewItem.numero_fact||'—')} size="lg">
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'10px 24px',fontSize:14}}>
+            {[
+              ['N° Facture', viewItem.numero_fact||'—'],
+              ['Date', viewItem.date_achat||'—'],
+              ['Entité', viewItem.entite||'—'],
+              ['Fournisseur', viewItem.nom_fournisseur||'—'],
+              ['Provenance', viewItem.provenance||'—'],
+              ['Acheteur', viewItem.nom_acheteur||'—'],
+              ['ID Produit', viewItem.id_produit||'—'],
+              ['Nature produit', viewItem.nature_produit||'—'],
+              ['Quantité', (viewItem.quantite||0).toFixed(2)+' kg'],
+              ['Prix unitaire', fcfa(viewItem.prix_unitaire)],
+              ['Statut', viewItem.statut||'—'],
+            ].map(([l,v])=>(
+              <div key={l} style={{borderBottom:'1px solid #f1f5f9',paddingBottom:8}}>
+                <div style={{fontSize:11,color:'#94a3b8',marginBottom:2}}>{l}</div>
+                <div style={{fontWeight:600,color:'#1e293b'}}>{v}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{marginTop:20,padding:'14px 18px',background:'#eff6ff',borderRadius:10,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+            <span style={{fontSize:13,color:'#475569',fontWeight:600}}>MONTANT TOTAL</span>
+            <span style={{fontSize:20,fontWeight:800,color:'#1d4ed8'}}>{fcfa(viewItem.montant)}</span>
+          </div>
+          <Row style={{marginTop:16}}>
+            <Btn variant="danger" onClick={()=>printAchatSemiFini(viewItem)}>🖨️ Imprimer</Btn>
+            <Btn variant="secondary" onClick={()=>setViewItem(null)}>Fermer</Btn>
+          </Row>
+        </Modal>
+      )}
+
       <Modal open={modal} onClose={close} title="Nouvel Achat Semi-fini" size="xl">
         <form onSubmit={save}>
           <Grid cols={3} gap={14} style={{marginBottom:16}}>
@@ -3437,6 +3526,7 @@ function PaiementsEtuvagePage({ companies, companyId, lots, toast, readOnly=fals
   const [form,      setForm]    = useState({})
   const [saving,    setSaving]  = useState(false)
   const [localLots, setLocalLots] = useState([])
+  const [viewItem,  setViewItem]  = useState(null)
 
   useEffect(()=>{
     const fetchLots = async () => {
@@ -3485,6 +3575,13 @@ function PaiementsEtuvagePage({ companies, companyId, lots, toast, readOnly=fals
   const openAdd = ()=>{ setForm({company_id:companyId||companies[0]?.id||'',lot_id:'',date_paiement:today(),numero_lot:'',etuveuse_cooperative:'',qte_etuvee_kg:0,prix_unitaire:0,montant_brut:0,taux_aib:'0.03',statut_paiement:'en_attente',mode_paiement:'espèce',reference_paiement:''}); setModal(true) }
   const close = ()=>setModal(false)
 
+  const deleteEtuvage = async (id) => {
+    if (!window.confirm('Supprimer ce paiement ?')) return
+    const { error } = await supabase.from('compta_paiements_etuvage').delete().eq('id', id)
+    if (error) { toast.error(error.message); return }
+    toast.success('Paiement supprimé !'); load()
+  }
+
   const save = async e=>{
     e.preventDefault(); setSaving(true)
     const uid = (await supabase.auth.getUser()).data?.user?.id
@@ -3527,7 +3624,7 @@ function PaiementsEtuvagePage({ companies, companyId, lots, toast, readOnly=fals
               <TH>N°</TH><TH>Date</TH><TH>N° Lot</TH><TH>Étuveuse</TH>
               <TH right>Qté (kg)</TH><TH right>Prix U.</TH><TH right>Montant brut</TH>
               <TH right>AIB</TH><TH right>Retenue AIB</TH><TH right>Net à payer</TH>
-              <TH>Mode</TH><TH>Statut</TH><TH>PDF</TH>
+              <TH>Mode</TH><TH>Statut</TH><TH>Action</TH>
             </tr></thead>
             <tbody>
               {items.map(r=>(
@@ -3542,7 +3639,13 @@ function PaiementsEtuvagePage({ companies, companyId, lots, toast, readOnly=fals
                   <TD right color="#16a34a" bold>{fcfa(r.net_a_payer)}</TD>
                   <TD sm>{r.mode_paiement||'—'}</TD>
                   <TD><Badge type={{en_attente:'warning',paye:'success',annule:'danger'}[r.statut_paiement]||'secondary'}>{r.statut_paiement}</Badge></TD>
-                  <TD><Btn sm variant="danger" onClick={()=>printPaiementEtuvage(r)}>PDF</Btn></TD>
+                  <TD>
+                    <div style={{display:'flex',gap:4}}>
+                      <button title="Voir" onClick={()=>setViewItem(r)} style={{background:'#0ea5e9',border:'none',borderRadius:6,padding:'5px 8px',cursor:'pointer',color:'white',fontSize:13}}>👁️</button>
+                      <button title="Imprimer" onClick={()=>printPaiementEtuvage(r)} style={{background:'#f59e0b',border:'none',borderRadius:6,padding:'5px 8px',cursor:'pointer',color:'white',fontSize:13}}>🖨️</button>
+                      {!readOnly && <button title="Supprimer" onClick={()=>deleteEtuvage(r.id)} style={{background:'#ef4444',border:'none',borderRadius:6,padding:'5px 8px',cursor:'pointer',color:'white',fontSize:13}}>🗑️</button>}
+                    </div>
+                  </TD>
                 </TR>
               ))}
             </tbody>
@@ -3550,6 +3653,40 @@ function PaiementsEtuvagePage({ companies, companyId, lots, toast, readOnly=fals
           </div>
         )}
       </div>
+      {viewItem && (
+        <Modal open={!!viewItem} onClose={()=>setViewItem(null)} title={'Détail Paiement — '+(viewItem.numero||'—')} size="lg">
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'10px 24px',fontSize:14}}>
+            {[
+              ['N° Paiement', viewItem.numero||'—'],
+              ['Date', viewItem.date_paiement||'—'],
+              ['N° Lot', viewItem.numero_lot||'—'],
+              ['Étuveuse / Coopérative', viewItem.etuveuse_cooperative||'—'],
+              ['Quantité étuvée', (viewItem.qte_etuvee_kg||0).toFixed(2)+' kg'],
+              ['Prix unitaire', fcfa(viewItem.prix_unitaire)],
+              ['Montant brut', fcfa(viewItem.montant_brut)],
+              ['Taux AIB', ((viewItem.taux_aib||0)*100).toFixed(0)+'%'],
+              ['Retenue AIB', fcfa(viewItem.retenue_aib)],
+              ['Mode paiement', viewItem.mode_paiement||'—'],
+              ['Référence', viewItem.reference_paiement||'—'],
+              ['Statut', viewItem.statut_paiement||'—'],
+            ].map(([l,v])=>(
+              <div key={l} style={{borderBottom:'1px solid #f1f5f9',paddingBottom:8}}>
+                <div style={{fontSize:11,color:'#94a3b8',marginBottom:2}}>{l}</div>
+                <div style={{fontWeight:600,color:'#1e293b'}}>{v}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{marginTop:20,padding:'14px 18px',background:'#f0fdf4',borderRadius:10,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+            <span style={{fontSize:13,color:'#475569',fontWeight:600}}>NET À PAYER</span>
+            <span style={{fontSize:20,fontWeight:800,color:'#16a34a'}}>{fcfa(viewItem.net_a_payer)}</span>
+          </div>
+          <Row style={{marginTop:16}}>
+            <Btn variant="danger" onClick={()=>printPaiementEtuvage(viewItem)}>🖨️ Imprimer</Btn>
+            <Btn variant="secondary" onClick={()=>setViewItem(null)}>Fermer</Btn>
+          </Row>
+        </Modal>
+      )}
+
       <Modal open={modal} onClose={close} title="Nouveau Paiement Étuvage" size="lg">
         <form onSubmit={save}>
           <Grid cols={2} gap={14} style={{marginBottom:16}}>
