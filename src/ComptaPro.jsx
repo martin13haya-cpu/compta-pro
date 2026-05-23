@@ -978,6 +978,8 @@ function UsersManagementPage({ toast }) {
                       ) : (
                         <select value={u.role} onChange={e=>updateRole(u.id,e.target.value)}
                           style={{padding:'4px 8px',borderRadius:6,border:'1px solid #d1d5db',fontSize:12}}>
+                          <option value="user">Utilisateur simple</option>
+                          <option value="admin_societe">Admin Société</option>
                           <option value="admin">Admin</option>
                           <option value="super_admin">Super Admin</option>
                         </select>
@@ -1067,11 +1069,30 @@ const NAV_ADMIN = [
   { id:'parametres',         icon:'⚙️', label:'Paramètres' },
 ]
 
+const NAV_ADMIN_SOCIETE = [
+  { section:'Administration' },
+  { id:'mes_utilisateurs',   icon:'👥', label:'Mes utilisateurs' },
+  { id:'parametres',         icon:'⚙️', label:'Paramètres' },
+]
+
 function Sidebar({ page, setPage, user, profile, onLogout, open, onClose }) {
   const { isMobile, isTablet } = useResponsive()
   const collapsed = isMobile || isTablet
   const isSuperAdmin = profile?.role === 'super_admin' || user?.email === SUPER_ADMIN_EMAIL
-  const navItems = isSuperAdmin ? [...NAV, ...NAV_ADMIN] : NAV
+  const isAdminSociete = profile?.role === 'admin_societe'
+  const isUtilisateurSimple = profile?.role === 'utilisateur_simple'
+  const permissions = profile?.permissions || {}
+
+  // Filter NAV based on permissions for utilisateur_simple
+  const filteredNAV = isUtilisateurSimple
+    ? NAV.filter(item => !item.id || (permissions[item.id] && permissions[item.id] !== 'none'))
+    : NAV
+
+  const navItems = isSuperAdmin
+    ? [...NAV, ...NAV_ADMIN]
+    : isAdminSociete
+    ? [...NAV, ...NAV_ADMIN_SOCIETE]
+    : filteredNAV
 
   const handleNav = (id) => { setPage(id); if (onClose) onClose() }
 
@@ -1124,7 +1145,9 @@ function Sidebar({ page, setPage, user, profile, onLogout, open, onClose }) {
             </div>
             <div style={{ flex:1, overflow:'hidden' }}>
               <div style={{ color:'white', fontSize:11, fontWeight:600, textOverflow:'ellipsis', overflow:'hidden', whiteSpace:'nowrap' }}>{user?.email}</div>
-              <div style={{ color:'rgba(255,255,255,.4)', fontSize:10 }}>{isSuperAdmin?'Super Admin ⭐':'Administrateur'}</div>
+              <div style={{ color:'rgba(255,255,255,.4)', fontSize:10 }}>
+                {isSuperAdmin?'Super Admin ⭐':isAdminSociete?'Admin Société 🏢':isUtilisateurSimple?'Utilisateur 👤':'Administrateur'}
+              </div>
               <div style={{ color:'rgba(255,255,255,.3)', fontSize:9 }}>{APP_VERSION}</div>
             </div>
             <span onClick={onLogout} style={{ color:'rgba(255,255,255,.4)', cursor:'pointer', fontSize:14 }} title="Déconnexion">🚪</span>
@@ -3439,6 +3462,250 @@ function LotsSemiFinisPage({ companies, companyId, toast, readOnly=false }) {
   )
 }
 
+// ── CONSTANTES SECTIONS ───────────────────────────────────────────────────────
+const ALL_SECTIONS = [
+  ['dashboard','Tableau de bord'],['companies','Sociétés'],['clients','Clients'],
+  ['fournisseurs','Fournisseurs'],['stock','Articles & Stock'],['mouvements','Mouvements'],
+  ['inventaire','Inventaire'],['commercial','Documents commerciaux'],['reglements','Règlements'],
+  ['prestations','Prestations'],['suivi_lot','Suivi de lot'],['lots','Lots Production'],
+  ['etuvage','Étuvage'],['decorticage','Décorticage'],['calibrage','Calibrage'],
+  ['tri_optique','Tri optique'],['conditionnement','Conditionnement'],
+  ['achats','Achats semi-finis'],['lots_semi_finis','Lots Semi-finis'],
+  ['epierrage','Épierrage'],['etuvage_paiements','Paiements étuvage'],
+  ['docs_admin','Documents administratifs'],
+  ['journal_caisse','Journal Caisse'],['journal_banque','Journal Banque'],
+  ['journal_mobile','Journal Mobile Money'],
+]
+
+const SECTION_GROUPS = [
+  {group:'Référentiel', ids:['companies','clients','fournisseurs']},
+  {group:'Stock', ids:['stock','mouvements','inventaire']},
+  {group:'Commercial', ids:['commercial','reglements','prestations']},
+  {group:'Production', ids:['suivi_lot','lots','etuvage','decorticage','calibrage','tri_optique','conditionnement']},
+  {group:'Achats', ids:['achats','lots_semi_finis','epierrage','etuvage_paiements']},
+  {group:'Documents', ids:['docs_admin']},
+  {group:'Comptabilité', ids:['journal_caisse','journal_banque','journal_mobile']},
+]
+
+// ── MES UTILISATEURS (Admin Société) ─────────────────────────────────────────
+function MesUtilisateursPage({ toast, companies, companyId, profile }) {
+  const [users,    setUsers]   = useState([])
+  const [modal,    setModal]   = useState(false)
+  const [form,     setForm]    = useState({})
+  const [perms,    setPerms]   = useState({})
+  const [saving,   setSaving]  = useState(false)
+  const [editItem, setEditItem]= useState(null)
+  const [signataires,setSignataires]=useState([])
+
+  const companyName = companies.find(c=>c.id===companyId)?.raison_sociale||''
+
+  const load=useCallback(async()=>{
+    const {data:ad}=await supabase.auth.getUser(); const uid=ad?.user?.id
+    const {data}=await supabase.from('compta_profiles')
+      .select('*').eq('created_by',uid).eq('role','utilisateur_simple')
+      .order('created_at',{ascending:false})
+    setUsers(data||[])
+  },[])
+
+  const loadSigs=useCallback(async()=>{
+    const {data:ad}=await supabase.auth.getUser(); const uid=ad?.user?.id
+    const {data}=await supabase.from('compta_signataires').select('*').eq('user_id',uid)
+    setSignataires(data||[])
+  },[])
+
+  useEffect(()=>{ load(); loadSigs() },[load,loadSigs])
+
+  const defaultPerms=()=>Object.fromEntries(ALL_SECTIONS.map(([id])=>[id,'read']))
+
+  const openAdd=()=>{
+    setEditItem(null)
+    setForm({nom:'',email:'',whatsapp:'',mot_de_passe:'',signataire_id:''})
+    setPerms(defaultPerms()); setModal(true)
+  }
+
+  const openEdit=(u)=>{
+    setEditItem(u)
+    setForm({nom:u.nom||'',email:u.email||'',whatsapp:u.whatsapp||'',mot_de_passe:'',signataire_id:u.signataire_id||''})
+    setPerms(u.permissions||defaultPerms()); setModal(true)
+  }
+
+  const close=()=>setModal(false)
+  const setPerm=(id,val)=>setPerms(p=>({...p,[id]:val}))
+  const setGroupPerm=(ids,val)=>setPerms(p=>{ const n={...p}; ids.forEach(id=>n[id]=val); return n })
+
+  const deleteUser=async(u)=>{
+    if(!window.confirm('Supprimer cet utilisateur ?')) return
+    await supabase.from('compta_profiles').delete().eq('id',u.id)
+    toast.success('Utilisateur supprimé !'); load()
+  }
+
+  const toggleStatut=async(u)=>{
+    const ns=u.statut==='active'?'suspended':'active'
+    await supabase.from('compta_profiles').update({statut:ns}).eq('id',u.id)
+    toast.success(ns==='active'?'Compte activé !':'Compte suspendu !'); load()
+  }
+
+  const sendWelcomeWA=(nom,wa,email,mdp)=>{
+    if(!wa) return
+    const num=wa.replace(/\D/g,'')
+    const intl=num.startsWith('229')?num:'229'+num
+    const msg=encodeURIComponent(
+      'Bonjour '+nom+' !\n\n'+
+      'Votre compte ComptaPro a ete cree par '+companyName+'.\n\n'+
+      'Email: '+email+'\n'+
+      'Mot de passe: '+mdp+'\n\n'+
+      'Connectez-vous sur: compta-pro-azure.vercel.app\n\n'+
+      'Pensez a changer votre mot de passe apres connexion.'
+    )
+    window.open('https://wa.me/'+intl+'?text='+msg,'_blank')
+  }
+
+  const save=async e=>{
+    e.preventDefault(); setSaving(true)
+    const {data:ad}=await supabase.auth.getUser(); const uid=ad?.user?.id
+
+    if(!editItem){
+      const {data:authData,error:authErr}=await supabase.auth.signUp({
+        email:form.email, password:form.mot_de_passe,
+        options:{emailRedirectTo:window.location.origin}
+      })
+      if(authErr){ toast.error(authErr.message); setSaving(false); return }
+      const newUid=authData?.user?.id
+      if(!newUid){ toast.error('Erreur création compte'); setSaving(false); return }
+      const {error:profErr}=await supabase.from('compta_profiles').upsert({
+        id:newUid, nom:form.nom, email:form.email, whatsapp:form.whatsapp,
+        role:'utilisateur_simple', statut:'active', company_id:companyId,
+        created_by:uid, permissions:perms, signataire_id:form.signataire_id||null,
+      })
+      if(profErr){ toast.error(profErr.message); setSaving(false); return }
+      toast.success('Utilisateur '+form.nom+' créé !')
+      if(form.whatsapp) sendWelcomeWA(form.nom,form.whatsapp,form.email,form.mot_de_passe)
+    } else {
+      await supabase.from('compta_profiles').update({
+        nom:form.nom, whatsapp:form.whatsapp,
+        permissions:perms, signataire_id:form.signataire_id||null,
+      }).eq('id',editItem.id)
+      toast.success('Utilisateur mis à jour !')
+    }
+    setSaving(false); close(); load()
+  }
+
+  return (
+    <div>
+      <PageHeader title="Mes Utilisateurs" subtitle={users.length+' utilisateur(s)'}
+        actions={<Btn onClick={openAdd}>+ Nouvel utilisateur</Btn>} />
+
+      {users.length===0?(
+        <div style={{textAlign:'center',padding:'64px 24px',background:'white',borderRadius:12,border:'1px solid #e2e8f0',color:'#64748b'}}>
+          <div style={{fontSize:40,marginBottom:12}}>👥</div>
+          <div style={{fontSize:15,fontWeight:600,marginBottom:6}}>Aucun utilisateur créé</div>
+          <div style={{fontSize:13}}>Créez des utilisateurs pour votre équipe avec accès personnalisés.</div>
+        </div>
+      ):(
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(300px,1fr))',gap:16}}>
+          {users.map(u=>{
+            const actif=u.statut==='active'
+            const nbW=Object.values(u.permissions||{}).filter(v=>v==='write').length
+            const nbR=Object.values(u.permissions||{}).filter(v=>v==='read').length
+            const sig=signataires.find(s=>s.id===u.signataire_id)
+            return (
+              <div key={u.id} style={{background:'white',borderRadius:12,border:'1px solid '+(actif?'#e2e8f0':'#fecaca'),padding:20}}>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:10}}>
+                  <div>
+                    <div style={{fontSize:15,fontWeight:800,color:'#0f2044'}}>{'👤 '}{u.nom||'—'}</div>
+                    <div style={{fontSize:12,color:'#64748b',marginTop:2}}>{u.email}</div>
+                    {u.whatsapp&&<div style={{fontSize:12,color:'#25d366',marginTop:1}}>{'📱 +229 '}{u.whatsapp.replace(/^229/,'')}</div>}
+                  </div>
+                  <span style={{padding:'4px 10px',borderRadius:20,background:actif?'#dcfce7':'#fee2e2',color:actif?'#16a34a':'#dc2626',fontSize:11,fontWeight:700}}>
+                    {actif?'✅ Actif':'🚫 Suspendu'}
+                  </span>
+                </div>
+                <div style={{fontSize:12,color:'#64748b',marginBottom:6}}>
+                  {'✏️ '}<strong>{nbW}</strong>{' écriture · 👁️ '}<strong>{nbR}</strong>{' lecture'}
+                </div>
+                {sig&&<div style={{fontSize:12,color:'#7c3aed',marginBottom:6}}>{'✍️ Signataire: '}{sig.nom}</div>}
+                <div style={{display:'flex',gap:6,marginTop:10}}>
+                  <button onClick={()=>openEdit(u)} style={{flex:1,background:'#eff6ff',border:'1px solid #bfdbfe',borderRadius:8,padding:'7px',cursor:'pointer',fontSize:12,fontWeight:600,color:'#2563eb'}}>✏️ Modifier</button>
+                  <button onClick={()=>toggleStatut(u)} style={{flex:1,background:actif?'#fef3c7':'#f0fdf4',border:'none',borderRadius:8,padding:'7px',cursor:'pointer',fontSize:12,fontWeight:600,color:actif?'#92400e':'#16a34a'}}>
+                    {actif?'🚫 Suspendre':'✅ Activer'}
+                  </button>
+                  <button onClick={()=>deleteUser(u)} style={{background:'#fee2e2',border:'none',borderRadius:8,padding:'7px 10px',cursor:'pointer',fontSize:13,color:'#dc2626'}}>🗑️</button>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      <Modal open={modal} onClose={close} title={editItem?'Modifier utilisateur':'Nouvel utilisateur simple'} size="xl">
+        <form onSubmit={save}>
+          <div style={{fontSize:12,fontWeight:700,color:'#0f2044',marginBottom:8,textTransform:'uppercase'}}>Informations du compte</div>
+          <Grid cols={3} gap={14} style={{marginBottom:20}}>
+            <Input label="Nom complet *" name="nom" value={form.nom||''} onChange={e=>setForm(f=>({...f,nom:e.target.value}))} required />
+            <Input label="Email *" name="email" type="email" value={form.email||''} onChange={e=>setForm(f=>({...f,email:e.target.value}))} required={!editItem} disabled={!!editItem} />
+            <Input label={editItem?'Nouveau mot de passe (laisser vide)':'Mot de passe temporaire *'} type="text" value={form.mot_de_passe||''} onChange={e=>setForm(f=>({...f,mot_de_passe:e.target.value}))} required={!editItem} placeholder="ex: MonPass123!" />
+            <Input label="WhatsApp (notification bienvenue)" value={form.whatsapp||''} onChange={e=>setForm(f=>({...f,whatsapp:e.target.value}))} placeholder="0196078696" />
+            <Sel label="Signataire assigné" value={form.signataire_id||''} onChange={e=>setForm(f=>({...f,signataire_id:e.target.value}))}
+              options={[{value:'',label:'— Aucun signataire —'},...signataires.map(s=>({value:s.id,label:s.nom+' ('+(s.fonction||'—')+')'}) )]} />
+          </Grid>
+
+          <div style={{fontSize:12,fontWeight:700,color:'#0f2044',marginBottom:4,textTransform:'uppercase'}}>{"Droits d'accès par section"}</div>
+          <div style={{fontSize:12,color:'#64748b',marginBottom:10}}>
+            🚫 Aucun accès = section masquée &nbsp;·&nbsp; 👁️ Lecture = consultation &nbsp;·&nbsp; ✏️ Écriture = création et modification
+          </div>
+          <div style={{display:'flex',gap:8,marginBottom:12,flexWrap:'wrap'}}>
+            <button type="button" onClick={()=>setPerms(Object.fromEntries(ALL_SECTIONS.map(([id])=>[id,'write'])))} style={{padding:'5px 12px',borderRadius:6,border:'1px solid #bbf7d0',background:'#f0fdf4',color:'#16a34a',fontSize:12,fontWeight:600,cursor:'pointer'}}>✅ Tout autoriser</button>
+            <button type="button" onClick={()=>setPerms(Object.fromEntries(ALL_SECTIONS.map(([id])=>[id,'read'])))} style={{padding:'5px 12px',borderRadius:6,border:'1px solid #fde68a',background:'#fffbeb',color:'#92400e',fontSize:12,fontWeight:600,cursor:'pointer'}}>👁️ Tout en lecture</button>
+            <button type="button" onClick={()=>setPerms(Object.fromEntries(ALL_SECTIONS.map(([id])=>[id,'none'])))} style={{padding:'5px 12px',borderRadius:6,border:'1px solid #fecaca',background:'#fef2f2',color:'#dc2626',fontSize:12,fontWeight:600,cursor:'pointer'}}>🚫 Tout bloquer</button>
+          </div>
+          <div style={{display:'flex',flexDirection:'column',gap:10,marginBottom:20}}>
+            {SECTION_GROUPS.map(g=>{
+              const gv=g.ids.map(id=>perms[id])
+              return (
+                <div key={g.group} style={{background:'#f8fafc',borderRadius:10,border:'1px solid #e2e8f0',padding:'12px 16px'}}>
+                  <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+                    <span style={{fontSize:12,fontWeight:700,color:'#0f2044'}}>{g.group}</span>
+                    <div style={{display:'flex',gap:4}}>
+                      <button type="button" onClick={()=>setGroupPerm(g.ids,'write')} style={{padding:'3px 8px',borderRadius:4,border:'none',background:'#dcfce7',color:'#16a34a',fontSize:11,cursor:'pointer',fontWeight:600}}>✏️ Tous</button>
+                      <button type="button" onClick={()=>setGroupPerm(g.ids,'read')} style={{padding:'3px 8px',borderRadius:4,border:'none',background:'#fef3c7',color:'#92400e',fontSize:11,cursor:'pointer',fontWeight:600}}>👁️ Tous</button>
+                      <button type="button" onClick={()=>setGroupPerm(g.ids,'none')} style={{padding:'3px 8px',borderRadius:4,border:'none',background:'#fee2e2',color:'#dc2626',fontSize:11,cursor:'pointer',fontWeight:600}}>🚫 Tous</button>
+                    </div>
+                  </div>
+                  <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(200px,1fr))',gap:6}}>
+                    {g.ids.map(id=>{
+                      const label=ALL_SECTIONS.find(([sid])=>sid===id)?.[1]||id
+                      const val=perms[id]||'none'
+                      return (
+                        <div key={id} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'6px 10px',background:'white',borderRadius:6,border:'1px solid #e2e8f0'}}>
+                          <span style={{fontSize:12,color:'#374151'}}>{label}</span>
+                          <select value={val} onChange={e=>setPerm(id,e.target.value)}
+                            style={{padding:'3px 6px',borderRadius:4,border:'1px solid #e2e8f0',fontSize:11,
+                              background:val==='write'?'#f0fdf4':val==='read'?'#fffbeb':'#fef2f2',
+                              color:val==='write'?'#16a34a':val==='read'?'#92400e':'#dc2626',
+                              fontWeight:700,cursor:'pointer'}}>
+                            <option value="none">🚫 Aucun</option>
+                            <option value="read">👁️ Lecture</option>
+                            <option value="write">✏️ Écriture</option>
+                          </select>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+          <Row>
+            <Btn variant="secondary" onClick={close}>Annuler</Btn>
+            <Btn type="submit" disabled={saving}>{saving?'En cours...':(editItem?'Mettre à jour':'Créer & Notifier WhatsApp')}</Btn>
+          </Row>
+        </form>
+      </Modal>
+    </div>
+  )
+}
+
+
 // ── PARAMÈTRES (Super Admin) ──────────────────────────────────────────────────
 const DOCUMENTS_TYPES = [
   'Expression de besoin','Fiche épierrage','Achat semi-fini',
@@ -5197,6 +5464,8 @@ export default function ComptaPro() {
   const collapsed = isMobile || isTablet
 
   const isSuperAdmin = user?.email === SUPER_ADMIN_EMAIL || profile?.role === 'super_admin'
+  const isAdminSociete = profile?.role === 'admin_societe'
+  const isUtilisateurSimple = profile?.role === 'utilisateur_simple'
 
   // Auth + Profile
   useEffect(()=>{
@@ -5280,7 +5549,7 @@ export default function ComptaPro() {
   const isOwnCompany = adminViewCompany ? adminViewCompany.user_id === user?.id : true
   const readOnly = isSuperAdmin && !!adminViewCompany && !isOwnCompany
 
-  const sp = { companies, companyId: effectiveCompanyId, toast, readOnly }
+  const sp = { companies, companyId: effectiveCompanyId, toast, readOnly, profile, userPermissions:profile?.permissions||{} }
 
   // Production stages config
   const STAGES = {
@@ -5405,7 +5674,8 @@ export default function ComptaPro() {
       case 'journal_banque':    return <JournalPage table="compta_journal_banque" title="Journal Banque" icon="🏛️" journalType="banque" {...sp} />
       case 'journal_mobile':    return <JournalPage table="compta_journal_mobile" title="Journal Mobile Money" icon="📱" journalType="mobile" {...sp} />
       case 'users':          return isSuperAdmin ? <UsersManagementPage toast={toast} /> : <Dashboard {...sp} setPage={setPage} />
-      case 'parametres':     return isSuperAdmin ? <ParametresPage toast={toast} companies={companies} companyId={companyId} /> : <Dashboard {...sp} setPage={setPage} />
+      case 'parametres':     return (isSuperAdmin||profile?.role==='admin_societe') ? <ParametresPage toast={toast} companies={companies} companyId={companyId} /> : <Dashboard {...sp} setPage={setPage} />
+      case 'mes_utilisateurs': return profile?.role==='admin_societe' ? <MesUtilisateursPage toast={toast} companies={companies} companyId={companyId} profile={profile} /> : <Dashboard {...sp} setPage={setPage} />
     }
   }
 
