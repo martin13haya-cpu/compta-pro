@@ -1064,6 +1064,7 @@ const NAV = [
 const NAV_ADMIN = [
   { section:'Administration' },
   { id:'users',              icon:'👤', label:'Utilisateurs' },
+  { id:'parametres',         icon:'⚙️', label:'Paramètres' },
 ]
 
 function Sidebar({ page, setPage, user, profile, onLogout, open, onClose }) {
@@ -3438,6 +3439,128 @@ function LotsSemiFinisPage({ companies, companyId, toast, readOnly=false }) {
   )
 }
 
+// ── PARAMÈTRES (Super Admin) ──────────────────────────────────────────────────
+const DOCUMENTS_TYPES = [
+  'Expression de besoin','Fiche épierrage','Achat semi-fini',
+  'Paiement étuvage','Bon de commande','Facture','Proforma',
+  'Journal caisse','Journal banque','Journal Mobile Money',
+  'Lot de production','Lot semi-fini','Bon livraison','Règlement'
+]
+
+function ParametresPage({ toast, companies, companyId }) {
+  const [signataires, setSignataires] = useState([])
+  const [modal,       setModal]       = useState(false)
+  const [form,        setForm]        = useState({nom:'',fonction:'',documents:[]})
+  const [saving,      setSaving]      = useState(false)
+  const [editItem,    setEditItem]    = useState(null)
+
+  const load=useCallback(async()=>{
+    const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
+    const { data }=await supabase.from('compta_signataires').select('*').eq('user_id',uid).order('created_at',{ascending:true})
+    setSignataires(data||[])
+  },[])
+
+  useEffect(()=>{ load() },[load])
+
+  const toggleDoc=(doc)=>setForm(f=>({
+    ...f,
+    documents: f.documents.includes(doc) ? f.documents.filter(d=>d!==doc) : [...f.documents, doc]
+  }))
+
+  const openAdd=()=>{ setEditItem(null); setForm({nom:'',fonction:'',documents:[]}); setModal(true) }
+  const openEdit=(s)=>{ setEditItem(s); setForm({nom:s.nom,fonction:s.fonction||'',documents:s.documents||[]}); setModal(true) }
+  const close=()=>setModal(false)
+
+  const deleteSign=async(id)=>{
+    if(!window.confirm('Supprimer ce signataire ?')) return
+    const { error }=await supabase.from('compta_signataires').delete().eq('id',id)
+    if(error){ toast.error(error.message); return }
+    toast.success('Signataire supprimé !'); load()
+  }
+
+  const save=async e=>{
+    e.preventDefault(); setSaving(true)
+    const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
+    const payload={user_id:uid,nom:form.nom,fonction:form.fonction,documents:form.documents}
+    const { error }=editItem
+      ? await supabase.from('compta_signataires').update(payload).eq('id',editItem.id)
+      : await supabase.from('compta_signataires').insert(payload)
+    setSaving(false)
+    if(error){ toast.error(error.message); return }
+    toast.success(editItem?'Signataire mis à jour !':'Signataire ajouté !'); close(); load()
+  }
+
+  return (
+    <div>
+      <PageHeader title="Paramètres" subtitle="Gestion des signataires de documents" />
+      <div style={{display:'flex',gap:8,marginBottom:20}}>
+        <div style={{flex:1}}>
+          <div style={{fontSize:14,fontWeight:700,color:'#0f2044',marginBottom:4}}>✍️ Signataires autorisés</div>
+          <div style={{fontSize:13,color:'#64748b'}}>Définissez les personnes habilitées à signer chaque type de document. Leurs noms apparaîtront dans les impressions.</div>
+        </div>
+        <Btn onClick={openAdd}>+ Nouveau signataire</Btn>
+      </div>
+
+      {signataires.length===0?(
+        <div style={{textAlign:'center',padding:'64px 24px',background:'white',borderRadius:12,border:'1px solid #e2e8f0',color:'#64748b'}}>
+          <div style={{fontSize:40,marginBottom:12}}>✍️</div>
+          <div style={{fontSize:15,fontWeight:600,marginBottom:6}}>Aucun signataire configuré</div>
+          <div style={{fontSize:13}}>Ajoutez des signataires pour qu'ils apparaissent dans vos documents imprimés.</div>
+        </div>
+      ):(
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(320px,1fr))',gap:16}}>
+          {signataires.map(s=>(
+            <div key={s.id} style={{background:'white',borderRadius:12,border:'1px solid #e2e8f0',padding:20}}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:12}}>
+                <div>
+                  <div style={{fontSize:15,fontWeight:800,color:'#0f2044'}}>{s.nom}</div>
+                  {s.fonction&&<div style={{fontSize:12,color:'#64748b',marginTop:2}}>{s.fonction}</div>}
+                </div>
+                <div style={{display:'flex',gap:6}}>
+                  <button onClick={()=>openEdit(s)} style={{background:'#f1f5f9',border:'none',borderRadius:6,padding:'5px 8px',cursor:'pointer',fontSize:13}}>✏️</button>
+                  <button onClick={()=>deleteSign(s.id)} style={{background:'#fee2e2',border:'none',borderRadius:6,padding:'5px 8px',cursor:'pointer',fontSize:13,color:'#dc2626'}}>🗑️</button>
+                </div>
+              </div>
+              <div style={{fontSize:11,fontWeight:700,color:'#94a3b8',textTransform:'uppercase',marginBottom:8}}>Documents assignés</div>
+              {(s.documents||[]).length===0?(
+                <div style={{fontSize:12,color:'#cbd5e1',fontStyle:'italic'}}>Aucun document assigné</div>
+              ):(
+                <div style={{display:'flex',flexWrap:'wrap',gap:4}}>
+                  {(s.documents||[]).map(doc=>(
+                    <span key={doc} style={{padding:'3px 8px',borderRadius:20,background:'#eff6ff',color:'#2563eb',fontSize:11,fontWeight:600,border:'1px solid #bfdbfe'}}>{doc}</span>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      <Modal open={modal} onClose={close} title={editItem?'Modifier signataire':'Nouveau signataire'} size="lg">
+        <form onSubmit={save}>
+          <Grid cols={2} gap={14} style={{marginBottom:16}}>
+            <Input label="Nom complet *" name="nom" value={form.nom||''} onChange={e=>setForm(f=>({...f,nom:e.target.value}))} required />
+            <Input label="Fonction / Titre" name="fonction" value={form.fonction||''} onChange={e=>setForm(f=>({...f,fonction:e.target.value}))} placeholder="ex: Directeur Général" />
+          </Grid>
+          <div style={{marginBottom:8,fontSize:12,fontWeight:700,color:'#0f2044',textTransform:'uppercase'}}>Documents pour lesquels ce signataire est habilité</div>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6,padding:12,background:'#f8fafc',borderRadius:8,border:'1px solid #e2e8f0',marginBottom:16}}>
+            {DOCUMENTS_TYPES.map(doc=>(
+              <label key={doc} style={{display:'flex',alignItems:'center',gap:8,padding:'6px 8px',borderRadius:6,
+                border:'1px solid '+(form.documents.includes(doc)?ACCENT:'#e2e8f0'),
+                background:form.documents.includes(doc)?'#eff6ff':'white',cursor:'pointer',fontSize:13}}>
+                <input type="checkbox" checked={form.documents.includes(doc)} onChange={()=>toggleDoc(doc)} style={{accentColor:ACCENT}} />
+                {doc}
+              </label>
+            ))}
+          </div>
+          <Row><Btn variant="secondary" onClick={close}>Annuler</Btn><Btn type="submit" disabled={saving}>{saving?'...':editItem?'Mettre à jour':'Ajouter'}</Btn></Row>
+        </form>
+      </Modal>
+    </div>
+  )
+}
+
+
 // ── ÉPIERRAGE ─────────────────────────────────────────────────────────────────
 function EpierragePage({ companies, companyId, toast, readOnly=false, lots=[] }) {
   const [items,    setItems]   = useState([])
@@ -3657,6 +3780,484 @@ function DocsAdminPage({ companies, companyId, toast, readOnly=false }) {
       </div>
       {subPage==='fiches'    && <ExpressionBesoinPage companies={companies} companyId={companyId} toast={toast} readOnly={readOnly} />}
       {subPage==='budgets'   && <BudgetPage companies={companies} companyId={companyId} toast={toast} readOnly={readOnly} />}
+    </div>
+  )
+}
+
+// ── GESTION BUDGET ────────────────────────────────────────────────────────────
+function BudgetPage({ companies, companyId, toast, readOnly=false }) {
+  const [items,  setItems] = useState([])
+  const [modal,  setModal] = useState(false)
+  const [form,   setForm]  = useState({})
+  const [saving, setSaving]= useState(false)
+  const [edit,   setEdit]  = useState(null)
+
+  const load = useCallback(async()=>{
+    const { data:ad }=await supabase.auth.getUser()
+    const uid=ad?.user?.id; const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
+    let q=supabase.from('compta_budget').select('*').order('code',{ascending:true})
+    if(isAdmin&&companyId) q=q.eq('company_id',companyId)
+    else if(companyId) q=q.eq('user_id',uid).eq('company_id',companyId)
+    else q=q.eq('user_id',uid)
+    const { data }=await q; setItems(data||[])
+  },[companyId])
+
+  useEffect(()=>{ load() },[load])
+
+  const set=e=>setForm(f=>({...f,[e.target.name]:e.target.value}))
+
+  const openAdd=()=>{ setEdit(null); setForm({company_id:companyId||companies[0]?.id||'',code:'',libelle:'',montant:0}); setModal(true) }
+  const openEdit=(r)=>{ setEdit(r); setForm({company_id:r.company_id,code:r.code,libelle:r.libelle,montant:r.montant}); setModal(true) }
+  const close=()=>setModal(false)
+
+  const deleteBudget=async(id)=>{
+    if(!window.confirm('Supprimer cette ligne budgétaire ?')) return
+    const { error }=await supabase.from('compta_budget').delete().eq('id',id)
+    if(error){ toast.error(error.message); return }
+    toast.success('Ligne supprimée !'); load()
+  }
+
+  const save=async e=>{
+    e.preventDefault(); setSaving(true)
+    const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
+    const payload={company_id:form.company_id||companyId,user_id:uid,code:form.code,libelle:form.libelle,montant:parseFloat(form.montant)||0}
+    const { error }=edit
+      ? await supabase.from('compta_budget').update(payload).eq('id',edit.id)
+      : await supabase.from('compta_budget').insert(payload)
+    setSaving(false)
+    if(error){ toast.error(error.message); return }
+    toast.success(edit?'Ligne mise à jour !':'Ligne ajoutée !'); close(); load()
+  }
+
+  const total=items.reduce((s,r)=>s+(r.montant||0),0)
+
+  return (
+    <div>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}}>
+        <div style={{fontSize:13,color:'#64748b'}}>{items.length} ligne(s) — Total : <strong>{fcfa(total)}</strong></div>
+        {!readOnly&&<Btn onClick={openAdd}>+ Nouvelle ligne</Btn>}
+      </div>
+      <div style={{background:'white',borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
+        {items.length===0?(
+          <div style={{textAlign:'center',padding:'48px 24px',color:'#64748b'}}>💼 Aucune ligne budgétaire</div>
+        ):(
+          <table style={{width:'100%',borderCollapse:'collapse'}}>
+            <thead><tr><TH>Code</TH><TH>Libellé / Ligne budgétaire</TH><TH right>Montant</TH><TH>Action</TH></tr></thead>
+            <tbody>
+              {items.map(r=>(
+                <TR key={r.id}>
+                  <TD bold sm>{r.code}</TD>
+                  <TD>{r.libelle}</TD>
+                  <TD right bold>{fcfa(r.montant)}</TD>
+                  <TD>
+                    <div style={{display:'flex',gap:4}}>
+                      <button title="Modifier" onClick={()=>openEdit(r)} style={{background:'#f59e0b',border:'none',borderRadius:6,padding:'5px 8px',cursor:'pointer',color:'white',fontSize:13}}>✏️</button>
+                      {!readOnly&&<button title="Supprimer" onClick={()=>deleteBudget(r.id)} style={{background:'#ef4444',border:'none',borderRadius:6,padding:'5px 8px',cursor:'pointer',color:'white',fontSize:13}}>🗑️</button>}
+                    </div>
+                  </TD>
+                </TR>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+      <Modal open={modal} onClose={close} title={edit?'Modifier la ligne':'Nouvelle ligne budgétaire'} size="md">
+        <form onSubmit={save}>
+          <Grid cols={2} gap={14} style={{marginBottom:16}}>
+            <Input label="Code *" name="code" value={form.code||''} onChange={set} required placeholder="ex: BUDGET-001" />
+            <Input label="Montant (FCFA) *" name="montant" type="number" value={form.montant||0} onChange={set} required min="0" />
+            <Span2><Input label="Libellé / Ligne budgétaire *" name="libelle" value={form.libelle||''} onChange={set} required placeholder="ex: Fournitures de bureau" /></Span2>
+          </Grid>
+          <Row><Btn variant="secondary" onClick={close}>Annuler</Btn><Btn type="submit" disabled={saving}>{saving?'...':edit?'Mettre à jour':'Enregistrer'}</Btn></Row>
+        </form>
+      </Modal>
+    </div>
+  )
+}
+
+// ── EXPRESSION DE BESOIN ──────────────────────────────────────────────────────
+function ExpressionBesoinPage({ companies, companyId, toast, readOnly=false }) {
+  const [fiches,      setFiches]     = useState([])
+  const [budgets,     setBudgets]    = useState([])
+  const [modal,       setModal]      = useState(false)
+  const [viewItem,    setViewItem]   = useState(null)
+  const [validModal,  setValidModal] = useState(null) // fiche en cours de validation
+  const [saving,      setSaving]     = useState(false)
+  const [form,        setForm]       = useState({})
+  const [lignes,      setLignes]     = useState([])
+  const [selBudgets,  setSelBudgets] = useState([])
+  const [validLignes, setValidLignes]= useState([]) // lignes de validation
+  const [isSuperAdmin,setIsSuperAdmin]=useState(false)
+
+  useEffect(()=>{
+    supabase.auth.getUser().then(({data:ad})=>{
+      setIsSuperAdmin(ad?.user?.email===SUPER_ADMIN_EMAIL)
+    })
+  },[])
+
+  const load=useCallback(async()=>{
+    const { data:ad }=await supabase.auth.getUser()
+    const uid=ad?.user?.id; const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
+    let q=supabase.from('compta_expression_besoin').select('*,compta_companies(raison_sociale,rccm,adresse,tel)').order('created_at',{ascending:false})
+    if(isAdmin&&companyId) q=q.eq('company_id',companyId)
+    else if(companyId) q=q.eq('user_id',uid).eq('company_id',companyId)
+    else q=q.eq('user_id',uid)
+    const { data }=await q; setFiches(data||[])
+  },[companyId])
+
+  const loadBudgets=useCallback(async()=>{
+    const { data:ad }=await supabase.auth.getUser()
+    const uid=ad?.user?.id; const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
+    let q=supabase.from('compta_budget').select('*').order('code',{ascending:true})
+    if(isAdmin&&companyId) q=q.eq('company_id',companyId)
+    else if(companyId) q=q.eq('user_id',uid).eq('company_id',companyId)
+    else q=q.eq('user_id',uid)
+    const { data }=await q; setBudgets(data||[])
+  },[companyId])
+
+  useEffect(()=>{ load(); loadBudgets() },[load,loadBudgets])
+
+  const set=e=>setForm(f=>({...f,[e.target.name]:e.target.value}))
+
+  const openAdd=()=>{
+    setForm({company_id:companyId||companies[0]?.id||'',date_fiche:today(),reference:'',realise_par:'',fonction:'',direction:'',expression:''})
+    setLignes([{id:1,numero_ordre:'1',description:'',quantite:1,prix_unitaire:0,tva:0}])
+    setSelBudgets([])
+    setModal(true)
+  }
+  const close=()=>setModal(false)
+
+  const addLigne=()=>setLignes(l=>[...l,{id:Date.now(),numero_ordre:String(l.length+1),description:'',quantite:1,prix_unitaire:0,tva:0}])
+  const removeLigne=id=>setLignes(l=>l.filter(x=>x.id!==id))
+  const setLigne=(id,field,val)=>setLignes(l=>l.map(x=>x.id===id?{...x,[field]:val}:x))
+  const toggleBudget=id=>setSelBudgets(s=>s.includes(id)?s.filter(x=>x!==id):[...s,id])
+
+  const totalTTC=lignes.reduce((s,l)=>{
+    const pu=parseFloat(l.prix_unitaire)||0,qty=parseFloat(l.quantite)||0,tva=parseFloat(l.tva)||0
+    return s+Math.round(pu*qty*(1+tva/100))
+  },0)
+
+  const deleteFiche=async(id)=>{
+    if(!window.confirm('Supprimer cette fiche ?')) return
+    const { error }=await supabase.from('compta_expression_besoin').delete().eq('id',id)
+    if(error){ toast.error(error.message); return }
+    toast.success('Fiche supprimée !'); load()
+  }
+
+  const save=async e=>{
+    e.preventDefault(); setSaving(true)
+    const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
+    const year=new Date().getFullYear()
+    const { count }=await supabase.from('compta_expression_besoin').select('id',{count:'exact',head:true}).eq('user_id',uid)
+    const autoRef=`EB-${year}-${String((count||0)+1).padStart(4,'0')}`
+    const payload={
+      company_id:form.company_id||companyId, user_id:uid,
+      reference:form.reference||autoRef, date_fiche:form.date_fiche,
+      realise_par:form.realise_par, fonction:form.fonction,
+      direction:form.direction, expression:form.expression,
+      codes_budget:selBudgets,
+      lignes:lignes.map(l=>({...l,montant:Math.round((parseFloat(l.prix_unitaire)||0)*(parseFloat(l.quantite)||0)*(1+(parseFloat(l.tva)||0)/100)),validation:'en_attente',montant_autorise:0})),
+      total_ttc:totalTTC, total_autorise:0
+    }
+    const { error }=await supabase.from('compta_expression_besoin').insert(payload)
+    setSaving(false)
+    if(error){ toast.error(error.message); return }
+    toast.success('Fiche enregistrée !'); close(); load()
+  }
+
+  // WhatsApp send to super admin
+  const sendWhatsApp=(fiche)=>{
+    const lignesText=(fiche.lignes||[]).map((l,i)=>
+      `  ${l.numero_ordre||i+1}. ${l.description} — Qté: ${l.quantite} — Montant: ${Math.round(l.montant||0).toLocaleString('fr-FR')} FCFA`
+    ).join('
+')
+    const msg=encodeURIComponent(
+      `📋 *EXPRESSION DE BESOIN — ${fiche.reference}*
+`+
+      `📅 Date: ${fiche.date_fiche||'—'}
+`+
+      `👤 Réalisé par: ${fiche.realise_par||'—'} (${fiche.fonction||'—'})
+`+
+      `🏢 Direction: ${fiche.direction||'—'}
+`+
+      `📝 Expression: ${fiche.expression||'—'}
+
+`+
+      `*DÉTAIL DES BESOINS:*
+${lignesText}
+
+`+
+      `💰 *TOTAL TTC: ${Math.round(fiche.total_ttc||0).toLocaleString('fr-FR')} FCFA*
+
+`+
+      `_Veuillez valider cette fiche dans ComptaPro._`
+    )
+    window.open(`https://wa.me/${SUPER_ADMIN_WHATSAPP}?text=${msg}`, '_blank')
+  }
+
+  // Open validation modal (super admin)
+  const openValidation=(fiche)=>{
+    const lignesInit=(fiche.lignes||[]).map(l=>({
+      ...l,
+      validation:l.validation||'en_attente',
+      montant_autorise:l.montant_autorise||l.montant||0,
+      quantite_autorisee:l.quantite_autorisee||l.quantite||0
+    }))
+    setValidLignes(lignesInit)
+    setValidModal(fiche)
+  }
+
+  const setValidLigne=(id,field,val)=>setValidLignes(l=>l.map(x=>x.id===id?{...x,[field]:val}:x))
+
+  const saveValidation=async()=>{
+    if(!validModal) return
+    const totalAutorise=validLignes.reduce((s,l)=>
+      l.validation==='approuve'?s+Math.round(parseFloat(l.montant_autorise)||0):s
+    ,0)
+    const { error }=await supabase.from('compta_expression_besoin').update({
+      lignes:validLignes,
+      total_autorise:totalAutorise,
+      statut_validation:validLignes.every(l=>l.validation!=='en_attente')?'traitee':'en_cours'
+    }).eq('id',validModal.id)
+    if(error){ toast.error(error.message); return }
+    toast.success('Validation enregistrée !'); setValidModal(null); load()
+  }
+
+  const getStatutBadge=(fiche)=>{
+    const s=fiche.statut_validation||'en_attente'
+    const cfg={en_attente:{c:'#f59e0b',bg:'#fef3c7',label:'En attente'},en_cours:{c:'#3b82f6',bg:'#eff6ff',label:'En cours'},traitee:{c:'#16a34a',bg:'#f0fdf4',label:'Traitée'}}
+    const t=cfg[s]||cfg.en_attente
+    return <span style={{padding:'3px 8px',borderRadius:20,background:t.bg,color:t.c,fontSize:11,fontWeight:700}}>{t.label}</span>
+  }
+
+  return (
+    <div>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}}>
+        <div style={{fontSize:13,color:'#64748b'}}>{fiches.length} fiche(s)</div>
+        {!readOnly&&<Btn onClick={openAdd}>+ Nouvelle fiche</Btn>}
+      </div>
+      <div style={{background:'white',borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
+        {fiches.length===0?(
+          <div style={{textAlign:'center',padding:'48px 24px',color:'#64748b'}}>📋 Aucune fiche d'expression de besoin</div>
+        ):(
+          <table style={{width:'100%',borderCollapse:'collapse'}}>
+            <thead><tr>
+              <TH>Référence</TH><TH>Date</TH><TH>Réalisé par</TH><TH>Direction</TH>
+              <TH right>Total demandé</TH><TH right>Total autorisé</TH><TH>Statut</TH><TH>Action</TH>
+            </tr></thead>
+            <tbody>
+              {fiches.map(r=>(
+                <TR key={r.id}>
+                  <TD bold sm>{r.reference}</TD>
+                  <TD sm>{r.date_fiche}</TD>
+                  <TD sm>{r.realise_par||'—'}</TD>
+                  <TD sm>{r.direction||'—'}</TD>
+                  <TD right bold>{fcfa(r.total_ttc)}</TD>
+                  <TD right bold color="#16a34a">{fcfa(r.total_autorise||0)}</TD>
+                  <TD>{getStatutBadge(r)}</TD>
+                  <TD>
+                    <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
+                      <button title="Voir" onClick={()=>setViewItem(r)} style={{background:'#0ea5e9',border:'none',borderRadius:6,padding:'5px 8px',cursor:'pointer',color:'white',fontSize:13}}>👁️</button>
+                      <button title="Envoyer par WhatsApp" onClick={()=>sendWhatsApp(r)} style={{background:'#25d366',border:'none',borderRadius:6,padding:'5px 8px',cursor:'pointer',color:'white',fontSize:13}}>
+                        <svg width="14" height="14" viewBox="0 0 32 32" fill="none"><path d="M16 3C8.832 3 3 8.832 3 16c0 2.29.614 4.437 1.682 6.29L3 29l6.9-1.655A12.93 12.93 0 0 0 16 29c7.168 0 13-5.832 13-13S23.168 3 16 3Z" fill="white"/><path d="M21.75 19.25c-.32-.16-1.89-.93-2.18-1.04-.29-.1-.5-.16-.71.16-.21.32-.82 1.04-.99 1.25-.17.21-.35.24-.65.08-.32-.16-1.33-.49-2.53-1.56-.94-.83-1.57-1.86-1.75-2.18-.18-.32-.02-.49.13-.65.14-.14.32-.37.48-.55.16-.18.21-.32.32-.53.1-.21.05-.39-.03-.55-.08-.16-.71-1.71-.97-2.34-.26-.62-.52-.53-.71-.54h-.61c-.21 0-.55.08-.84.39-.29.32-1.1 1.07-1.1 2.62s1.13 3.04 1.29 3.25c.16.21 2.22 3.38 5.38 4.74.75.32 1.34.52 1.8.66.76.24 1.45.21 2 .13.61-.09 1.89-.77 2.16-1.52.26-.75.26-1.39.18-1.52-.08-.13-.29-.21-.61-.37Z" fill="#25d366"/></svg>
+                      </button>
+                      <button title="Imprimer" onClick={()=>printExpressionBesoin(r,r.lignes||[],budgets,r.compta_companies)} style={{background:'#f59e0b',border:'none',borderRadius:6,padding:'5px 8px',cursor:'pointer',color:'white',fontSize:13}}>🖨️</button>
+                      {isSuperAdmin&&<button title="Valider" onClick={()=>openValidation(r)} style={{background:'#7c3aed',border:'none',borderRadius:6,padding:'5px 8px',cursor:'pointer',color:'white',fontSize:13}}>✅</button>}
+                      {!readOnly&&<button title="Supprimer" onClick={()=>deleteFiche(r.id)} style={{background:'#ef4444',border:'none',borderRadius:6,padding:'5px 8px',cursor:'pointer',color:'white',fontSize:13}}>🗑️</button>}
+                    </div>
+                  </TD>
+                </TR>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {/* ── Modal Validation Super Admin ── */}
+      {validModal&&(
+        <Modal open={!!validModal} onClose={()=>setValidModal(null)} title={`Validation — ${validModal.reference}`} size="xl">
+          <div style={{marginBottom:16,padding:'12px 16px',background:'#f8fafc',borderRadius:8,display:'flex',gap:24}}>
+            <div><span style={{fontSize:12,color:'#94a3b8'}}>Total demandé</span><div style={{fontSize:16,fontWeight:800,color:'#0f2044'}}>{fcfa(validModal.total_ttc)}</div></div>
+            <div><span style={{fontSize:12,color:'#94a3b8'}}>Total autorisé</span>
+              <div style={{fontSize:16,fontWeight:800,color:'#16a34a'}}>
+                {fcfa(validLignes.reduce((s,l)=>l.validation==='approuve'?s+Math.round(parseFloat(l.montant_autorise)||0):s,0))}
+              </div>
+            </div>
+          </div>
+          <div style={{overflowX:'auto'}}>
+            <table style={{width:'100%',borderCollapse:'collapse'}}>
+              <thead>
+                <tr style={{background:'#0f2044',color:'white'}}>
+                  {['N°','Description','Qté dem.','Montant dem.','Statut','Qté autorisée','Montant autorisé'].map(h=>(
+                    <th key={h} style={{padding:'8px 10px',textAlign:'left',fontSize:11,fontWeight:600}}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {validLignes.map((l,i)=>{
+                  const isApprove=l.validation==='approuve'
+                  const isRefuse=l.validation==='refuse'
+                  const rowBg=isApprove?'#f0fdf4':isRefuse?'#fef2f2':'white'
+                  return (
+                    <tr key={l.id||i} style={{borderBottom:'1px solid #e2e8f0',background:rowBg}}>
+                      <td style={{padding:'8px 10px',fontSize:13}}>{l.numero_ordre||i+1}</td>
+                      <td style={{padding:'8px 10px',fontSize:13,maxWidth:200}}>{l.description}</td>
+                      <td style={{padding:'8px 10px',fontSize:13}}>{l.quantite}</td>
+                      <td style={{padding:'8px 10px',fontSize:13,fontWeight:700}}>{fcfa(l.montant)}</td>
+                      <td style={{padding:'8px 6px'}}>
+                        <select value={l.validation||'en_attente'} onChange={e=>setValidLigne(l.id||i,'validation',e.target.value)}
+                          style={{padding:'5px 8px',borderRadius:6,border:'1px solid #e2e8f0',fontSize:12,
+                            background:isApprove?'#dcfce7':isRefuse?'#fee2e2':'#fef3c7',
+                            color:isApprove?'#16a34a':isRefuse?'#dc2626':'#92400e',fontWeight:700}}>
+                          <option value="en_attente">⏳ En attente</option>
+                          <option value="approuve">✅ Approuvé</option>
+                          <option value="refuse">❌ Refusé</option>
+                        </select>
+                      </td>
+                      <td style={{padding:'8px 6px'}}>
+                        <input type="number" disabled={!isApprove} value={l.quantite_autorisee||0}
+                          onChange={e=>setValidLigne(l.id||i,'quantite_autorisee',e.target.value)}
+                          style={{width:80,padding:'5px 8px',border:'1px solid #e2e8f0',borderRadius:6,fontSize:12,
+                            opacity:isApprove?1:0.4,background:isApprove?'white':'#f8fafc'}} />
+                      </td>
+                      <td style={{padding:'8px 6px'}}>
+                        <input type="number" disabled={!isApprove} value={l.montant_autorise||0}
+                          onChange={e=>setValidLigne(l.id||i,'montant_autorise',e.target.value)}
+                          style={{width:110,padding:'5px 8px',border:'1px solid #e2e8f0',borderRadius:6,fontSize:12,
+                            opacity:isApprove?1:0.4,background:isApprove?'white':'#f8fafc'}} />
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+          <Row style={{marginTop:16}}>
+            <Btn variant="secondary" onClick={()=>setValidModal(null)}>Annuler</Btn>
+            <Btn onClick={saveValidation}>💾 Enregistrer la validation</Btn>
+          </Row>
+        </Modal>
+      )}
+
+      {/* ── Modal Aperçu fiche ── */}
+      {viewItem&&(
+        <Modal open={!!viewItem} onClose={()=>setViewItem(null)} title={"Fiche — "+viewItem.reference} size="xl">
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'10px 24px',fontSize:14,marginBottom:16}}>
+            {[
+              ['Référence',viewItem.reference],['Date',viewItem.date_fiche],
+              ['Réalisé par',viewItem.realise_par||'—'],['Fonction',viewItem.fonction||'—'],
+              ["Direction d'exploitation",viewItem.direction||'—'],
+            ].map(([l,v])=>(
+              <div key={l} style={{borderBottom:'1px solid #f1f5f9',paddingBottom:8}}>
+                <div style={{fontSize:11,color:'#94a3b8',marginBottom:2}}>{l}</div>
+                <div style={{fontWeight:600}}>{v}</div>
+              </div>
+            ))}
+            <div style={{gridColumn:'1/-1',borderBottom:'1px solid #f1f5f9',paddingBottom:8}}>
+              <div style={{fontSize:11,color:'#94a3b8',marginBottom:2}}>Expression / Description</div>
+              <div style={{fontWeight:600}}>{viewItem.expression||'—'}</div>
+            </div>
+          </div>
+          <div style={{fontSize:12,fontWeight:700,color:'#0f2044',marginBottom:6}}>DÉTAIL DES BESOINS</div>
+          <table style={{width:'100%',borderCollapse:'collapse',marginBottom:12}}>
+            <thead><tr style={{background:'#0f2044',color:'white'}}>
+              {['N°','Description','Qté dem.','Montant dem.','Statut','Qté aut.','Montant aut.'].map(h=>(
+                <th key={h} style={{padding:'7px 10px',textAlign:'left',fontSize:11}}>{h}</th>
+              ))}
+            </tr></thead>
+            <tbody>
+              {(viewItem.lignes||[]).map((l,i)=>{
+                const sv=l.validation||'en_attente'
+                const vc={approuve:{c:'#16a34a',bg:'#f0fdf4',t:'✅ Approuvé'},refuse:{c:'#dc2626',bg:'#fef2f2',t:'❌ Refusé'},en_attente:{c:'#f59e0b',bg:'#fef3c7',t:'⏳ En attente'}}
+                const v=vc[sv]||vc.en_attente
+                return (
+                  <tr key={i} style={{borderBottom:'1px solid #e2e8f0',background:v.bg}}>
+                    <td style={{padding:'7px 10px',fontSize:13}}>{l.numero_ordre||i+1}</td>
+                    <td style={{padding:'7px 10px',fontSize:13}}>{l.description}</td>
+                    <td style={{padding:'7px 10px',fontSize:13}}>{l.quantite}</td>
+                    <td style={{padding:'7px 10px',fontSize:13,fontWeight:700}}>{fcfa(l.montant)}</td>
+                    <td style={{padding:'7px 10px'}}><span style={{padding:'3px 8px',borderRadius:20,background:v.bg,color:v.c,fontSize:11,fontWeight:700,border:`1px solid ${v.c}`}}>{v.t}</span></td>
+                    <td style={{padding:'7px 10px',fontSize:13}}>{sv==='approuve'?(l.quantite_autorisee||0):'—'}</td>
+                    <td style={{padding:'7px 10px',fontSize:13,fontWeight:700,color:'#16a34a'}}>{sv==='approuve'?fcfa(l.montant_autorise):'—'}</td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:12}}>
+            <div style={{padding:'12px 16px',background:'#0f2044',borderRadius:8,display:'flex',justifyContent:'space-between',color:'white',fontWeight:800}}>
+              <span>TOTAL DEMANDÉ</span><span>{fcfa(viewItem.total_ttc)}</span>
+            </div>
+            <div style={{padding:'12px 16px',background:'#16a34a',borderRadius:8,display:'flex',justifyContent:'space-between',color:'white',fontWeight:800}}>
+              <span>TOTAL AUTORISÉ</span><span>{fcfa(viewItem.total_autorise||0)}</span>
+            </div>
+          </div>
+          <Row style={{marginTop:8}}>
+            <button onClick={()=>sendWhatsApp(viewItem)} style={{background:'#25d366',border:'none',borderRadius:8,padding:'9px 18px',cursor:'pointer',color:'white',fontWeight:700,fontSize:13,display:'flex',alignItems:'center',gap:6}}>
+              <svg width="16" height="16" viewBox="0 0 32 32" fill="none"><path d="M16 3C8.832 3 3 8.832 3 16c0 2.29.614 4.437 1.682 6.29L3 29l6.9-1.655A12.93 12.93 0 0 0 16 29c7.168 0 13-5.832 13-13S23.168 3 16 3Z" fill="white"/><path d="M21.75 19.25c-.32-.16-1.89-.93-2.18-1.04-.29-.1-.5-.16-.71.16-.21.32-.82 1.04-.99 1.25-.17.21-.35.24-.65.08-.32-.16-1.33-.49-2.53-1.56-.94-.83-1.57-1.86-1.75-2.18-.18-.32-.02-.49.13-.65.14-.14.32-.37.48-.55.16-.18.21-.32.32-.53.1-.21.05-.39-.03-.55-.08-.16-.71-1.71-.97-2.34-.26-.62-.52-.53-.71-.54h-.61c-.21 0-.55.08-.84.39-.29.32-1.1 1.07-1.1 2.62s1.13 3.04 1.29 3.25c.16.21 2.22 3.38 5.38 4.74.75.32 1.34.52 1.8.66.76.24 1.45.21 2 .13.61-.09 1.89-.77 2.16-1.52.26-.75.26-1.39.18-1.52-.08-.13-.29-.21-.61-.37Z" fill="#25d366"/></svg>
+              Envoyer au Super Admin
+            </button>
+            <Btn variant="danger" onClick={()=>printExpressionBesoin(viewItem,viewItem.lignes||[],budgets,viewItem.compta_companies)}>🖨️ Imprimer</Btn>
+            <Btn variant="secondary" onClick={()=>setViewItem(null)}>Fermer</Btn>
+          </Row>
+        </Modal>
+      )}
+
+      {/* ── Modal Création fiche ── */}
+      <Modal open={modal} onClose={close} title="Nouvelle Fiche d'Expression de Besoin" size="xl">
+        <form onSubmit={save}>
+          <div style={{fontSize:12,fontWeight:700,color:'#0f2044',marginBottom:8,textTransform:'uppercase'}}>Informations générales</div>
+          <Grid cols={3} gap={14} style={{marginBottom:16}}>
+            <Input label="Date *" name="date_fiche" type="date" value={form.date_fiche||''} onChange={set} required />
+            <Input label="Référence (auto si vide)" name="reference" value={form.reference||''} onChange={set} placeholder="ex: EB-2026-0001" />
+            <Input label="Direction d'exploitation" name="direction" value={form.direction||''} onChange={set} />
+            <Input label="Réalisé par *" name="realise_par" value={form.realise_par||''} onChange={set} required />
+            <Input label="Fonction" name="fonction" value={form.fonction||''} onChange={set} />
+            <Span2><Input label="Expression / Description du besoin *" name="expression" value={form.expression||''} onChange={set} required /></Span2>
+          </Grid>
+          <div style={{fontSize:12,fontWeight:700,color:'#0f2044',marginBottom:8,textTransform:'uppercase'}}>Lignes budgétaires concernées</div>
+          <div style={{display:'flex',flexWrap:'wrap',gap:8,marginBottom:16,padding:12,background:'#f8fafc',borderRadius:8,border:'1px solid #e2e8f0'}}>
+            {budgets.length===0?<span style={{fontSize:12,color:'#94a3b8'}}>Aucune ligne budgétaire — créez-en dans "Gestion Budget"</span>:
+              budgets.map(b=>(
+                <label key={b.id} style={{display:'flex',alignItems:'center',gap:6,padding:'5px 10px',borderRadius:6,border:'1px solid '+(selBudgets.includes(b.id)?ACCENT:'#e2e8f0'),background:selBudgets.includes(b.id)?'#eff6ff':'white',cursor:'pointer',fontSize:13}}>
+                  <input type="checkbox" checked={selBudgets.includes(b.id)} onChange={()=>toggleBudget(b.id)} style={{accentColor:ACCENT}} />
+                  {b.code} — {b.libelle} ({fcfa(b.montant)})
+                </label>
+              ))
+            }
+          </div>
+          <div style={{fontSize:12,fontWeight:700,color:'#0f2044',marginBottom:8,textTransform:'uppercase'}}>Détail des besoins</div>
+          <div style={{background:'#f8fafc',borderRadius:8,border:'1px solid #e2e8f0',overflow:'hidden',marginBottom:12}}>
+            <table style={{width:'100%',borderCollapse:'collapse'}}>
+              <thead><tr style={{background:'#0f2044',color:'white'}}>
+                {['N°','Description','Quantité','Prix Unitaire (FCFA)','TVA (%)','Montant TTC',''].map(h=><th key={h} style={{padding:'8px 10px',textAlign:'left',fontSize:11}}>{h}</th>)}
+              </tr></thead>
+              <tbody>
+                {lignes.map((l,i)=>{
+                  const pu=parseFloat(l.prix_unitaire)||0,qty=parseFloat(l.quantite)||0,tva=parseFloat(l.tva)||0
+                  const montant=Math.round(pu*qty*(1+tva/100))
+                  return (
+                    <tr key={l.id} style={{borderBottom:'1px solid #e2e8f0'}}>
+                      <td style={{padding:'6px 8px',width:40}}><input value={l.numero_ordre} onChange={e=>setLigne(l.id,'numero_ordre',e.target.value)} style={{width:'100%',padding:'4px 6px',border:'1px solid #e2e8f0',borderRadius:4,fontSize:12}} /></td>
+                      <td style={{padding:'6px 8px'}}><input value={l.description} onChange={e=>setLigne(l.id,'description',e.target.value)} style={{width:'100%',padding:'4px 6px',border:'1px solid #e2e8f0',borderRadius:4,fontSize:12}} placeholder="Description" /></td>
+                      <td style={{padding:'6px 8px',width:80}}><input type="number" value={l.quantite} onChange={e=>setLigne(l.id,'quantite',e.target.value)} style={{width:'100%',padding:'4px 6px',border:'1px solid #e2e8f0',borderRadius:4,fontSize:12}} min="0" step="0.001" /></td>
+                      <td style={{padding:'6px 8px',width:120}}><input type="number" value={l.prix_unitaire} onChange={e=>setLigne(l.id,'prix_unitaire',e.target.value)} style={{width:'100%',padding:'4px 6px',border:'1px solid #e2e8f0',borderRadius:4,fontSize:12}} min="0" /></td>
+                      <td style={{padding:'6px 8px',width:70}}><input type="number" value={l.tva} onChange={e=>setLigne(l.id,'tva',e.target.value)} style={{width:'100%',padding:'4px 6px',border:'1px solid #e2e8f0',borderRadius:4,fontSize:12}} min="0" max="100" step="0.1" /></td>
+                      <td style={{padding:'6px 8px',width:120,fontWeight:700,color:ACCENT,fontSize:13}}>{fcfa(montant)}</td>
+                      <td style={{padding:'6px 4px',width:32}}>{lignes.length>1&&<button type="button" onClick={()=>removeLigne(l.id)} style={{background:'#fee2e2',border:'none',borderRadius:4,padding:'3px 7px',cursor:'pointer',color:'#dc2626',fontSize:12}}>✕</button>}</td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+            <div style={{padding:'8px 12px',display:'flex',justifyContent:'space-between',alignItems:'center',borderTop:'1px solid #e2e8f0'}}>
+              <button type="button" onClick={addLigne} style={{background:'#eff6ff',border:'1px solid #bfdbfe',borderRadius:6,padding:'5px 12px',cursor:'pointer',color:ACCENT,fontSize:13,fontWeight:600}}>+ Ajouter une ligne</button>
+              <div style={{fontWeight:800,fontSize:15,color:'#0f2044'}}>TOTAL TTC : {fcfa(totalTTC)}</div>
+            </div>
+          </div>
+          <Row><Btn variant="secondary" onClick={close}>Annuler</Btn><Btn type="submit" disabled={saving}>{saving?'...':'Enregistrer la fiche'}</Btn></Row>
+        </form>
+      </Modal>
     </div>
   )
 }
@@ -5102,7 +5703,7 @@ export default function ComptaPro() {
     etuvage:'Étuvage', decorticage:'Décorticage', calibrage:'Calibrage',
     tri_optique:'Tri Optique', conditionnement:'Conditionnement',
     achats:'Achats Semi-finis', lots_semi_finis:'Lots Semi-finis', epierrage:'Épierrage', reglements:'Règlements', etuvage_paiements:'Paiements Étuvage',
-    docs_admin:'Documents administratifs',
+    docs_admin:'Documents administratifs', parametres:'Paramètres',
     prestations:'Prestations', journal_caisse:'Journal Caisse', journal_banque:'Journal Banque',
     suivi_lot:'Suivi de Lot', journal_mobile:'Journal Mobile Money',
   }
@@ -5154,6 +5755,7 @@ export default function ComptaPro() {
       case 'journal_banque':    return <JournalPage table="compta_journal_banque" title="Journal Banque" icon="🏛️" journalType="banque" {...sp} />
       case 'journal_mobile':    return <JournalPage table="compta_journal_mobile" title="Journal Mobile Money" icon="📱" journalType="mobile" {...sp} />
       case 'users':          return isSuperAdmin ? <UsersManagementPage toast={toast} /> : <Dashboard {...sp} setPage={setPage} />
+      case 'parametres':     return isSuperAdmin ? <ParametresPage toast={toast} companies={companies} companyId={companyId} /> : <Dashboard {...sp} setPage={setPage} />
     }
   }
 
