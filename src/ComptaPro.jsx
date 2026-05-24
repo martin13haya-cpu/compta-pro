@@ -397,7 +397,7 @@ function printExpressionBesoin(fiche, lignes, budgets, companyInfo, sigImg=null,
         ${sigImg?`<img src="${sigImg}" style="max-width:100px;max-height:60px;margin-top:8px;display:block" />`:''}
       </div>
       <div class="sig-box">
-        ${isValidee?'Signature d'autorisation':'Signature du gérant'}
+        ${isValidee?"Signature d'autorisation":"Signature du gérant"}
         ${cachetImg?`<img src="${cachetImg}" style="max-width:120px;max-height:70px;margin-top:8px;display:block" />`:''}
       </div>
       <div class="sig-box">
