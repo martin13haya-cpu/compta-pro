@@ -47,3 +47,15 @@ export default defineConfig({
     }),
   ],
 })
+// Dans vite.config.js
+export default defineConfig({
+  plugins: [...],
+  build: {
+    rollupOptions: {
+      output: {
+        entryFileNames: 'assets/[name]-[hash].js',
+        chunkFileNames: 'assets/[name]-[hash].js',
+      }
+    }
+  }
+})

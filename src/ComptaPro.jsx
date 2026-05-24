@@ -1066,6 +1066,7 @@ const NAV = [
 const NAV_ADMIN = [
   { section:'Administration' },
   { id:'users',              icon:'👤', label:'Utilisateurs' },
+  { id:'mes_utilisateurs',   icon:'👥', label:'Mes utilisateurs' },
   { id:'parametres',         icon:'⚙️', label:'Paramètres' },
 ]
 
@@ -5675,7 +5676,7 @@ export default function ComptaPro() {
       case 'journal_mobile':    return <JournalPage table="compta_journal_mobile" title="Journal Mobile Money" icon="📱" journalType="mobile" {...sp} />
       case 'users':          return isSuperAdmin ? <UsersManagementPage toast={toast} /> : <Dashboard {...sp} setPage={setPage} />
       case 'parametres':     return (isSuperAdmin||profile?.role==='admin_societe') ? <ParametresPage toast={toast} companies={companies} companyId={companyId} /> : <Dashboard {...sp} setPage={setPage} />
-      case 'mes_utilisateurs': return profile?.role==='admin_societe' ? <MesUtilisateursPage toast={toast} companies={companies} companyId={companyId} profile={profile} /> : <Dashboard {...sp} setPage={setPage} />
+      case 'mes_utilisateurs': return (profile?.role==='admin_societe'||isSuperAdmin) ? <MesUtilisateursPage toast={toast} companies={companies} companyId={companyId} profile={profile} /> : <Dashboard {...sp} setPage={setPage} />
     }
   }
 
