@@ -17,13 +17,34 @@ async function buildQuery(q, uid, companyId, isAdmin) {
 
 // ── RESPONSIVE HOOK ─────────────────────────────────────────────────────────
 function useResponsive() {
-  const [width, setWidth] = useState(window.innerWidth)
+  const getSize = () => ({
+    width: window.innerWidth,
+    height: window.innerHeight,
+    isLandscape: window.innerWidth > window.innerHeight
+  })
+  const [size, setSize] = useState(getSize)
+
   useEffect(() => {
-    const handler = () => setWidth(window.innerWidth)
+    const handler = () => setSize(getSize())
     window.addEventListener('resize', handler)
-    return () => window.removeEventListener('resize', handler)
+    window.addEventListener('orientationchange', () => {
+      // Délai pour laisser le navigateur finir la rotation
+      setTimeout(() => setSize(getSize()), 100)
+    })
+    return () => {
+      window.removeEventListener('resize', handler)
+      window.removeEventListener('orientationchange', handler)
+    }
   }, [])
-  return { isMobile: width < 768, isTablet: width >= 768 && width < 1024, isDesktop: width >= 1024, width }
+
+  const { width, height, isLandscape } = size
+  // En paysage sur mobile (ex: 667px large), traiter comme tablette
+  const isMobile  = width < 768 && !isLandscape
+  const isMobileLandscape = width < 1024 && isLandscape && height < 500
+  const isTablet  = (width >= 768 && width < 1024) || isMobileLandscape
+  const isDesktop = width >= 1024 && !isMobileLandscape
+
+  return { isMobile, isTablet, isDesktop, isLandscape, isMobileLandscape, width, height }
 }
 
 // ── UTILITIES ───────────────────────────────────────────────────────────────
@@ -1077,8 +1098,9 @@ const NAV_ADMIN_SOCIETE = [
 ]
 
 function Sidebar({ page, setPage, user, profile, onLogout, open, onClose }) {
-  const { isMobile, isTablet } = useResponsive()
-  const collapsed = isMobile || isTablet
+  const { isMobile, isTablet, isLandscape, isMobileLandscape } = useResponsive()
+  // En paysage sur mobile : sidebar visible en mode compact
+  const collapsed = isMobile && !isLandscape
   const isSuperAdmin = profile?.role === 'super_admin' || user?.email === SUPER_ADMIN_EMAIL
   const isAdminSociete = profile?.role === 'admin_societe' || profile?.role === 'admin'
   const isUtilisateurSimple = profile?.role === 'utilisateur_simple'
@@ -5461,8 +5483,9 @@ export default function ComptaPro() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [adminViewCompany, setAdminViewCompany] = useState(null)
   const toast = useToast()
-  const { isMobile, isTablet } = useResponsive()
-  const collapsed = isMobile || isTablet
+  const { isMobile, isTablet, isLandscape, isMobileLandscape } = useResponsive()
+  // En paysage mobile : sidebar visible mais compacte, contenu plein écran
+  const collapsed = isMobile && !isLandscape
 
   const isSuperAdmin = user?.email === SUPER_ADMIN_EMAIL || profile?.role === 'super_admin'
   const isAdminSociete = profile?.role === 'admin_societe' || profile?.role === 'admin'
