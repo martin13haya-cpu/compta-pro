@@ -1271,7 +1271,8 @@ function Dashboard({ companyId, toast, setPage }) {
       {stats.recent_docs.length>0 && (
         <Card>
           <SectionTitle>Derniers documents commerciaux</SectionTitle>
-          <table style={{ width:'100%', borderCollapse:'collapse' }}>
+          <div style={{overflowX:'auto',WebkitOverflowScrolling:'touch'}}>
+            <table style={{ width:'100%', borderCollapse:'collapse' }}>
             <thead><tr>
               {['N° Document','Type','Date',{l:'Montant TTC',r:true},'Statut'].map((h,i)=>(
                 <TH key={i} right={h?.r}>{h?.l||h}</TH>
@@ -1289,6 +1290,7 @@ function Dashboard({ companyId, toast, setPage }) {
               ))}
             </tbody>
           </table>
+          </div>
         </Card>
       )}
     </div>
@@ -1508,7 +1510,8 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
           </div>
         ) : (
           <TableWrap>
-          <table style={{width:'100%',borderCollapse:'collapse'}}>
+          <div style={{overflowX:'auto',WebkitOverflowScrolling:'touch'}}>
+            <table style={{width:'100%',borderCollapse:'collapse',minWidth:600}}>
             <thead><tr>
               {table==='compta_clients' && <TH>Type</TH>}
               <TH>Nom</TH><TH>Téléphone</TH><TH>Provenance</TH>
@@ -1537,6 +1540,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
               ))}
             </tbody>
           </table>
+          </div>
           </TableWrap>
         )}
       </div>
@@ -1637,7 +1641,8 @@ function StockPage({ companies, companyId, setPage, toast, readOnly=false }) {
             {!readOnly && <Btn onClick={openAdd}>+ Créer un article</Btn>}
           </div>
         ) : (
-          <table style={{width:'100%',borderCollapse:'collapse'}}>
+          <div style={{overflowX:'auto',WebkitOverflowScrolling:'touch'}}>
+            <table style={{width:'100%',borderCollapse:'collapse',minWidth:600}}>
             <thead><tr>
               <TH>Code</TH><TH>Désignation</TH><TH>Catégorie</TH><TH>Unité</TH>
               <TH right>Stock actuel</TH><TH right>Stock min</TH>
@@ -1669,6 +1674,7 @@ function StockPage({ companies, companyId, setPage, toast, readOnly=false }) {
               })}
             </tbody>
           </table>
+          </div>
         )}
       </div>
       <Modal open={!!modal} onClose={close} title={modal==='add'?'Nouvel Article':'Modifier Article'} size="lg">
@@ -1912,7 +1918,8 @@ function MouvementsPage({ companies, companyId, setPage, readOnly=false }) {
         {items.length===0 ? (
           <div style={{textAlign:'center',padding:'48px 24px',color:'#64748b'}}>↕️ Aucun mouvement sur cette période</div>
         ) : (
-          <table style={{width:'100%',borderCollapse:'collapse'}}>
+          <div style={{overflowX:'auto',WebkitOverflowScrolling:'touch'}}>
+            <table style={{width:'100%',borderCollapse:'collapse',minWidth:600}}>
             <thead><tr>
               <TH>Date</TH><TH>Article</TH><TH>Type</TH><TH>Motif</TH>
               <TH right>Quantité</TH><TH right>P.U</TH><TH right>Montant</TH><TH>Référence</TH>
@@ -1932,6 +1939,7 @@ function MouvementsPage({ companies, companyId, setPage, readOnly=false }) {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </div>
     </div>
@@ -1995,7 +2003,8 @@ function InventairePage({ companies, companyId, setCompanyId }) {
                 <div style={{padding:'12px 20px',background:'#f8fafc',borderBottom:'1px solid #e2e8f0',fontWeight:700}}>
                   {CAT_LABELS[cat]||cat} <span style={{color:'#94a3b8',fontWeight:400,fontSize:12}}>— {artsCat.length} article(s)</span>
                 </div>
-                <table style={{width:'100%',borderCollapse:'collapse'}}>
+                <div style={{overflowX:'auto',WebkitOverflowScrolling:'touch'}}>
+                  <table style={{width:'100%',borderCollapse:'collapse',minWidth:600}}>
                   <thead><tr>
                     <TH>Code</TH><TH>Désignation</TH><TH>Unité</TH>
                     <TH right>Stock actuel</TH><TH right>Stock min</TH>
@@ -2018,6 +2027,7 @@ function InventairePage({ companies, companyId, setCompanyId }) {
                     })}
                   </tbody>
                 </table>
+                </div>
               </div>
             )
           })}
@@ -2112,7 +2122,8 @@ function CommercialPage({ companies, companyId, setPage, setDocId, toast, readOn
         {docs.length===0 ? (
           <div style={{textAlign:'center',padding:'48px 24px',color:'#64748b'}}>📄 Aucun document commercial</div>
         ) : (
-          <table style={{width:'100%',borderCollapse:'collapse'}}>
+          <div style={{overflowX:'auto',WebkitOverflowScrolling:'touch'}}>
+            <table style={{width:'100%',borderCollapse:'collapse',minWidth:600}}>
             <thead><tr>
               <TH>N° Document</TH><TH>Type</TH><TH>Client</TH><TH>Date</TH>
               <TH right>Montant TTC</TH><TH right>Payé</TH><TH right>Reste</TH>
@@ -2152,6 +2163,7 @@ function CommercialPage({ companies, companyId, setPage, setDocId, toast, readOn
               })}
             </tbody>
           </table>
+          </div>
         )}
       </div>
       <DocPreviewModal open={!!preview} onClose={()=>setPreview(null)} doc={preview?.doc} lignes={preview?.lignes||[]} />
@@ -2243,7 +2255,7 @@ function CommercialNewPage({ companies, companyId, typeDoc, setPage, toast }) {
             <Card style={{marginBottom:16}}>
               <SectionTitle>Lignes du document</SectionTitle>
               <div style={{overflowX:'auto'}}>
-                <table style={{width:'100%',borderCollapse:'collapse'}}>
+                <table style={{width:'100%',borderCollapse:'collapse',minWidth:600}}>
                   <thead>
                     <tr style={{background:'#f8fafc'}}>
                       {['Désignation *','Unité','Quantité','Prix unitaire (FCFA)','Montant',''].map((h,i)=>(
@@ -2380,7 +2392,7 @@ function CommercialViewPage({ docId, setPage, toast }) {
             </div>
           )}
           <div style={{overflowX:'auto'}}>
-          <table style={{width:'100%',borderCollapse:'collapse',marginBottom:12,fontSize:13}}>
+          <table style={{width:'100%',borderCollapse:'collapse',marginBottom:12,fontSize:13,minWidth:600}}>
             <thead style={{background:'#d6d6d6'}}>
               <tr>{['Désignation','Unité','Quantité','Prix U.','Montant'].map((h,i)=>(
                 <th key={i} style={{padding:'8px 10px',textAlign:i>=2?'right':'left',fontWeight:700,border:'1px solid #ccc',whiteSpace:'nowrap'}}>{h}</th>
@@ -2498,7 +2510,8 @@ function LotsProductionPage({ companies, companyId, toast, readOnly=false }) {
         {lots.length===0 ? (
           <div style={{textAlign:'center',padding:'48px 24px',color:'#64748b'}}>🏭 Aucun lot de production</div>
         ) : (
-          <table style={{width:'100%',borderCollapse:'collapse'}}>
+          <div style={{overflowX:'auto',WebkitOverflowScrolling:'touch'}}>
+            <table style={{width:'100%',borderCollapse:'collapse',minWidth:600}}>
             <thead><tr><TH>N° Lot</TH><TH>Date début</TH><TH>Date fin</TH><TH right>Qté paddy (kg)</TH><TH>Statut</TH><TH>Actions</TH></tr></thead>
             <tbody>
               {lots.map(l=>{
@@ -2532,6 +2545,7 @@ function LotsProductionPage({ companies, companyId, toast, readOnly=false }) {
               )})}
             </tbody>
           </table>
+          </div>
         )}
       </div>
       {/* Aperçu lot */}
@@ -2855,7 +2869,8 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
         {items.length===0 ? (
           <div style={{textAlign:'center',padding:'48px 24px',color:'#64748b'}}>{title} — Aucun enregistrement</div>
         ) : (
-          <table style={{width:'100%',borderCollapse:'collapse'}}>
+          <div style={{overflowX:'auto',WebkitOverflowScrolling:'touch'}}>
+            <table style={{width:'100%',borderCollapse:'collapse',minWidth:600}}>
             <thead><tr>
               <TH>Date</TH><TH>N° Lot</TH>
               {summaryFields.map(f=><TH key={f.name} right={f.type==='number'}>{f.label}</TH>)}
@@ -2884,6 +2899,7 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </div>
       <Modal open={modal} onClose={close} title={editItem ? `Modifier — ${title}` : `Nouveau — ${title}`} size="lg">
@@ -3082,7 +3098,8 @@ function PrestationPage({ companies, companyId, toast, readOnly=false }) {
             <Btn onClick={openAdd}>+ Créer une prestation</Btn>
           </div>
         ) : (
-          <table style={{width:'100%',borderCollapse:'collapse'}}>
+          <div style={{overflowX:'auto',WebkitOverflowScrolling:'touch'}}>
+            <table style={{width:'100%',borderCollapse:'collapse',minWidth:600}}>
             <thead><tr>
               <TH>N° Facture</TH><TH>Date</TH><TH>Client</TH>
               <TH>Description</TH><TH right>Qté</TH><TH right>Prix U.</TH>
@@ -3109,6 +3126,7 @@ function PrestationPage({ companies, companyId, toast, readOnly=false }) {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </div>
 
@@ -3208,7 +3226,8 @@ function AchatsSemisPage({ companies, companyId, toast, readOnly=false }) {
         {items.length===0 ? (
           <div style={{textAlign:'center',padding:'48px 24px',color:'#64748b'}}>🛒 Aucun achat semi-fini</div>
         ) : (
-          <table style={{width:'100%',borderCollapse:'collapse'}}>
+          <div style={{overflowX:'auto',WebkitOverflowScrolling:'touch'}}>
+            <table style={{width:'100%',borderCollapse:'collapse',minWidth:600}}>
             <thead><tr>
               <TH>N° Fact.</TH><TH>Date</TH><TH>Entité</TH><TH>Fournisseur</TH><TH>Provenance</TH>
               <TH>Produit</TH><TH right>Qté (kg)</TH><TH right>P.U</TH><TH right>Montant</TH><TH>Statut</TH><TH>Action</TH>
@@ -3234,6 +3253,7 @@ function AchatsSemisPage({ companies, companyId, toast, readOnly=false }) {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </div>
       {viewItem && (
@@ -3413,7 +3433,8 @@ function LotsSemiFinisPage({ companies, companyId, toast, readOnly=false }) {
         {lots.length===0?(
           <div style={{textAlign:'center',padding:'48px 24px',color:'#64748b'}}>📦 Aucun lot semi-fini</div>
         ):(
-          <table style={{width:'100%',borderCollapse:'collapse'}}>
+          <div style={{overflowX:'auto',WebkitOverflowScrolling:'touch'}}>
+            <table style={{width:'100%',borderCollapse:'collapse',minWidth:600}}>
             <thead><tr>
               <TH>N° Lot</TH><TH>Date récep.</TH><TH>Fournisseur</TH><TH>Provenance</TH>
               <TH>Produit</TH><TH right>Qté reçue</TH><TH>Statut</TH><TH>Actions</TH>
@@ -3440,6 +3461,7 @@ function LotsSemiFinisPage({ companies, companyId, toast, readOnly=false }) {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </div>
 
@@ -3965,7 +3987,7 @@ function EpierragePage({ companies, companyId, toast, readOnly=false, lots=[] })
           <div style={{textAlign:'center',padding:'48px 24px',color:'#64748b'}}>🪨 Aucune fiche d'épierrage</div>
         ):(
           <div style={{overflowX:'auto'}}>
-          <table style={{width:'100%',borderCollapse:'collapse'}}>
+          <table style={{width:'100%',borderCollapse:'collapse',minWidth:600}}>
             <thead><tr>
               <TH>N°</TH><TH>Date</TH><TH>Lot</TH><TH>Responsable</TH>
               <TH right>Pds Avant</TH><TH right>Pds Après</TH><TH right>Cailloux</TH>
@@ -4131,7 +4153,8 @@ function BudgetPage({ companies, companyId, toast, readOnly=false }) {
         {items.length===0?(
           <div style={{textAlign:'center',padding:'48px 24px',color:'#64748b'}}>💼 Aucune ligne budgétaire</div>
         ):(
-          <table style={{width:'100%',borderCollapse:'collapse'}}>
+          <div style={{overflowX:'auto',WebkitOverflowScrolling:'touch'}}>
+            <table style={{width:'100%',borderCollapse:'collapse',minWidth:600}}>
             <thead><tr><TH>Code</TH><TH>Libellé / Ligne budgétaire</TH><TH right>Montant</TH><TH>Action</TH></tr></thead>
             <tbody>
               {items.map(r=>(
@@ -4149,6 +4172,7 @@ function BudgetPage({ companies, companyId, toast, readOnly=false }) {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </div>
       <Modal open={modal} onClose={close} title={edit?'Modifier la ligne':'Nouvelle ligne budgétaire'} size="md">
@@ -4318,7 +4342,8 @@ function ExpressionBesoinPage({ companies, companyId, toast, readOnly=false }) {
         {fiches.length===0?(
           <div style={{textAlign:'center',padding:'48px 24px',color:'#64748b'}}>📋 Aucune fiche d'expression de besoin</div>
         ):(
-          <table style={{width:'100%',borderCollapse:'collapse'}}>
+          <div style={{overflowX:'auto',WebkitOverflowScrolling:'touch'}}>
+            <table style={{width:'100%',borderCollapse:'collapse',minWidth:600}}>
             <thead><tr>
               <TH>Référence</TH><TH>Date</TH><TH>Réalisé par</TH><TH>Direction</TH>
               <TH right>Total demandé</TH><TH right>Total autorisé</TH><TH>Statut</TH><TH>Action</TH>
@@ -4348,6 +4373,7 @@ function ExpressionBesoinPage({ companies, companyId, toast, readOnly=false }) {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </div>
 
@@ -4363,7 +4389,7 @@ function ExpressionBesoinPage({ companies, companyId, toast, readOnly=false }) {
             </div>
           </div>
           <div style={{overflowX:'auto'}}>
-            <table style={{width:'100%',borderCollapse:'collapse'}}>
+            <table style={{width:'100%',borderCollapse:'collapse',minWidth:600}}>
               <thead>
                 <tr style={{background:'#0f2044',color:'white'}}>
                   {['N°','Description','Qté dem.','Montant dem.','Statut','Qté autorisée','Montant autorisé'].map(h=>(
@@ -4437,7 +4463,8 @@ function ExpressionBesoinPage({ companies, companyId, toast, readOnly=false }) {
             </div>
           </div>
           <div style={{fontSize:12,fontWeight:700,color:'#0f2044',marginBottom:6}}>DÉTAIL DES BESOINS</div>
-          <table style={{width:'100%',borderCollapse:'collapse',marginBottom:12}}>
+          <div style={{overflowX:'auto',WebkitOverflowScrolling:'touch'}}>
+            <table style={{width:'100%',borderCollapse:'collapse',marginBottom:12,minWidth:600}}>
             <thead><tr style={{background:'#0f2044',color:'white'}}>
               {['N°','Description','Qté dem.','Montant dem.','Statut','Qté aut.','Montant aut.'].map(h=>(
                 <th key={h} style={{padding:'7px 10px',textAlign:'left',fontSize:11}}>{h}</th>
@@ -4462,6 +4489,7 @@ function ExpressionBesoinPage({ companies, companyId, toast, readOnly=false }) {
               })}
             </tbody>
           </table>
+          </div>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:12}}>
             <div style={{padding:'12px 16px',background:'#0f2044',borderRadius:8,display:'flex',justifyContent:'space-between',color:'white',fontWeight:800}}>
               <span>TOTAL DEMANDÉ</span><span>{fcfa(viewItem.total_ttc)}</span>
@@ -4506,7 +4534,8 @@ function ExpressionBesoinPage({ companies, companyId, toast, readOnly=false }) {
           </div>
           <div style={{fontSize:12,fontWeight:700,color:'#0f2044',marginBottom:8,textTransform:'uppercase'}}>Détail des besoins</div>
           <div style={{background:'#f8fafc',borderRadius:8,border:'1px solid #e2e8f0',overflow:'hidden',marginBottom:12}}>
-            <table style={{width:'100%',borderCollapse:'collapse'}}>
+            <div style={{overflowX:'auto',WebkitOverflowScrolling:'touch'}}>
+              <table style={{width:'100%',borderCollapse:'collapse',minWidth:600}}>
               <thead><tr style={{background:'#0f2044',color:'white'}}>
                 {['N°','Description','Quantité','Prix Unitaire (FCFA)','TVA (%)','Montant TTC',''].map(h=><th key={h} style={{padding:'8px 10px',textAlign:'left',fontSize:11}}>{h}</th>)}
               </tr></thead>
@@ -4528,6 +4557,7 @@ function ExpressionBesoinPage({ companies, companyId, toast, readOnly=false }) {
                 })}
               </tbody>
             </table>
+            </div>
             <div style={{padding:'8px 12px',display:'flex',justifyContent:'space-between',alignItems:'center',borderTop:'1px solid #e2e8f0'}}>
               <button type="button" onClick={addLigne} style={{background:'#eff6ff',border:'1px solid #bfdbfe',borderRadius:6,padding:'5px 12px',cursor:'pointer',color:ACCENT,fontSize:13,fontWeight:600}}>+ Ajouter une ligne</button>
               <div style={{fontWeight:800,fontSize:15,color:'#0f2044'}}>TOTAL TTC : {fcfa(totalTTC)}</div>
@@ -4598,7 +4628,8 @@ function ReglementsPage({ companies, companyId, toast, readOnly=false }) {
         {items.length===0 ? (
           <div style={{textAlign:'center',padding:'48px 24px',color:'#64748b'}}>💳 Aucun règlement enregistré</div>
         ) : (
-          <table style={{width:'100%',borderCollapse:'collapse'}}>
+          <div style={{overflowX:'auto',WebkitOverflowScrolling:'touch'}}>
+            <table style={{width:'100%',borderCollapse:'collapse',minWidth:600}}>
             <thead><tr>
               <TH>N° Fact.</TH><TH>Date</TH><TH>Entité</TH><TH>Type</TH>
               <TH>Tiers</TH><TH>Provenance</TH><TH>Produit</TH>
@@ -4619,6 +4650,7 @@ function ReglementsPage({ companies, companyId, toast, readOnly=false }) {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </div>
       <Modal open={modal} onClose={close} title="Nouveau Règlement" size="xl">
@@ -4849,7 +4881,7 @@ function JournalPage({ table, title, icon, journalType='caisse', companies, comp
           </div>
         ) : (
           <div style={{overflowX:'auto'}}>
-          <table style={{width:'100%',borderCollapse:'collapse',fontSize:12.5}}>
+          <table style={{width:'100%',borderCollapse:'collapse',fontSize:12.5,minWidth:600}}>
             <thead><tr>
               <TH>Date</TH><TH>N° Pièce</TH><TH>Libellé</TH><TH>Tiers</TH>
               {isBanque && <TH>Mode</TH>}
@@ -5026,7 +5058,7 @@ function PaiementsEtuvagePage({ companies, companyId, lots, toast, readOnly=fals
           <div style={{textAlign:'center',padding:'48px 24px',color:'#64748b'}}>🔥 Aucun paiement étuvage</div>
         ) : (
           <div style={{overflowX:'auto'}}>
-          <table style={{width:'100%',borderCollapse:'collapse'}}>
+          <table style={{width:'100%',borderCollapse:'collapse',minWidth:600}}>
             <thead><tr>
               <TH>N°</TH><TH>Date</TH><TH>N° Lot</TH><TH>Étuveuse</TH>
               <TH right>Qté (kg)</TH><TH right>Prix U.</TH><TH right>Montant brut</TH>
