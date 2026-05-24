@@ -4077,7 +4077,7 @@ function EpierragePage({ companies, companyId, toast, readOnly=false, lots=[] })
 
 
 // ── DOCUMENTS ADMINISTRATIFS ──────────────────────────────────────────────────
-function DocsAdminPage({ companies, companyId, toast, readOnly=false }) {
+function DocsAdminPage({ companies, companyId, toast, readOnly=false, profile }) {
   const [subPage, setSubPage] = useState('fiches') // 'fiches' | 'budgets'
   return (
     <div>
@@ -4090,7 +4090,7 @@ function DocsAdminPage({ companies, companyId, toast, readOnly=false }) {
           }}>{t.label}</button>
         ))}
       </div>
-      {subPage==='fiches'    && <ExpressionBesoinPage companies={companies} companyId={companyId} toast={toast} readOnly={readOnly} />}
+      {subPage==='fiches'    && <ExpressionBesoinPage companies={companies} companyId={companyId} toast={toast} readOnly={readOnly} profile={profile} />}
       {subPage==='budgets'   && <BudgetPage companies={companies} companyId={companyId} toast={toast} readOnly={readOnly} />}
     </div>
   )
@@ -4190,7 +4190,7 @@ function BudgetPage({ companies, companyId, toast, readOnly=false }) {
 }
 
 // ── EXPRESSION DE BESOIN ──────────────────────────────────────────────────────
-function ExpressionBesoinPage({ companies, companyId, toast, readOnly=false }) {
+function ExpressionBesoinPage({ companies, companyId, toast, readOnly=false, profile }) {
   const [fiches,      setFiches]     = useState([])
   const [budgets,     setBudgets]    = useState([])
   const [modal,       setModal]      = useState(false)
@@ -4204,8 +4204,9 @@ function ExpressionBesoinPage({ companies, companyId, toast, readOnly=false }) {
   const [isSuperAdmin,setIsSuperAdmin]=useState(false)
 
   useEffect(()=>{
-    supabase.auth.getUser().then(({data:ad})=>{
-      setIsSuperAdmin(ad?.user?.email===SUPER_ADMIN_EMAIL)
+    supabase.auth.getUser().then(async ({data:ad})=>{
+      const isSuper = ad?.user?.email===SUPER_ADMIN_EMAIL
+      setIsSuperAdmin(isSuper)
     })
   },[])
 
@@ -4365,7 +4366,7 @@ function ExpressionBesoinPage({ companies, companyId, toast, readOnly=false }) {
                         <svg width="14" height="14" viewBox="0 0 32 32" fill="none"><path d="M16 3C8.832 3 3 8.832 3 16c0 2.29.614 4.437 1.682 6.29L3 29l6.9-1.655A12.93 12.93 0 0 0 16 29c7.168 0 13-5.832 13-13S23.168 3 16 3Z" fill="white"/><path d="M21.75 19.25c-.32-.16-1.89-.93-2.18-1.04-.29-.1-.5-.16-.71.16-.21.32-.82 1.04-.99 1.25-.17.21-.35.24-.65.08-.32-.16-1.33-.49-2.53-1.56-.94-.83-1.57-1.86-1.75-2.18-.18-.32-.02-.49.13-.65.14-.14.32-.37.48-.55.16-.18.21-.32.32-.53.1-.21.05-.39-.03-.55-.08-.16-.71-1.71-.97-2.34-.26-.62-.52-.53-.71-.54h-.61c-.21 0-.55.08-.84.39-.29.32-1.1 1.07-1.1 2.62s1.13 3.04 1.29 3.25c.16.21 2.22 3.38 5.38 4.74.75.32 1.34.52 1.8.66.76.24 1.45.21 2 .13.61-.09 1.89-.77 2.16-1.52.26-.75.26-1.39.18-1.52-.08-.13-.29-.21-.61-.37Z" fill="#25d366"/></svg>
                       </button>
                       <button title="Imprimer" onClick={()=>printExpressionBesoin(r,r.lignes||[],budgets,r.compta_companies)} style={{background:'#f59e0b',border:'none',borderRadius:6,padding:'5px 8px',cursor:'pointer',color:'white',fontSize:13}}>🖨️</button>
-                      {isSuperAdmin&&<button title="Valider" onClick={()=>openValidation(r)} style={{background:'#7c3aed',border:'none',borderRadius:6,padding:'5px 8px',cursor:'pointer',color:'white',fontSize:13}}>✅</button>}
+                      {(isSuperAdmin||profile?.role==='admin_societe'||profile?.role==='admin')&&<button title="Valider" onClick={()=>openValidation(r)} style={{background:'#7c3aed',border:'none',borderRadius:6,padding:'5px 8px',cursor:'pointer',color:'white',fontSize:13}}>✅</button>}
                       {!readOnly&&<button title="Supprimer" onClick={()=>deleteFiche(r.id)} style={{background:'#ef4444',border:'none',borderRadius:6,padding:'5px 8px',cursor:'pointer',color:'white',fontSize:13}}>🗑️</button>}
                     </div>
                   </TD>
@@ -5722,7 +5723,7 @@ export default function ComptaPro() {
       case 'achats':        return <AchatsSemisPage {...sp} />
       case 'lots_semi_finis': return <LotsSemiFinisPage {...sp} />
       case 'epierrage':      return <EpierragePage {...sp} lots={lots} />
-      case 'docs_admin':     return <DocsAdminPage {...sp} />
+      case 'docs_admin':     return <DocsAdminPage {...sp} profile={profile} />
       case 'reglements':    return <ReglementsPage {...sp} />
       case 'prestations':   return <PrestationPage {...sp} />
       case 'etuvage_paiements': return <PaiementsEtuvagePage {...sp} lots={lots} />
