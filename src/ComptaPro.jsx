@@ -1080,7 +1080,7 @@ function Sidebar({ page, setPage, user, profile, onLogout, open, onClose }) {
   const { isMobile, isTablet } = useResponsive()
   const collapsed = isMobile || isTablet
   const isSuperAdmin = profile?.role === 'super_admin' || user?.email === SUPER_ADMIN_EMAIL
-  const isAdminSociete = profile?.role === 'admin_societe'
+  const isAdminSociete = profile?.role === 'admin_societe' || profile?.role === 'admin'
   const isUtilisateurSimple = profile?.role === 'utilisateur_simple'
   const permissions = profile?.permissions || {}
 
@@ -5465,7 +5465,7 @@ export default function ComptaPro() {
   const collapsed = isMobile || isTablet
 
   const isSuperAdmin = user?.email === SUPER_ADMIN_EMAIL || profile?.role === 'super_admin'
-  const isAdminSociete = profile?.role === 'admin_societe'
+  const isAdminSociete = profile?.role === 'admin_societe' || profile?.role === 'admin'
   const isUtilisateurSimple = profile?.role === 'utilisateur_simple'
 
   // Auth + Profile
@@ -5675,8 +5675,8 @@ export default function ComptaPro() {
       case 'journal_banque':    return <JournalPage table="compta_journal_banque" title="Journal Banque" icon="🏛️" journalType="banque" {...sp} />
       case 'journal_mobile':    return <JournalPage table="compta_journal_mobile" title="Journal Mobile Money" icon="📱" journalType="mobile" {...sp} />
       case 'users':          return isSuperAdmin ? <UsersManagementPage toast={toast} /> : <Dashboard {...sp} setPage={setPage} />
-      case 'parametres':     return (isSuperAdmin||profile?.role==='admin_societe') ? <ParametresPage toast={toast} companies={companies} companyId={companyId} /> : <Dashboard {...sp} setPage={setPage} />
-      case 'mes_utilisateurs': return (profile?.role==='admin_societe'||isSuperAdmin) ? <MesUtilisateursPage toast={toast} companies={companies} companyId={companyId} profile={profile} /> : <Dashboard {...sp} setPage={setPage} />
+      case 'parametres':     return (isSuperAdmin||profile?.role==='admin_societe'||profile?.role==='admin') ? <ParametresPage toast={toast} companies={companies} companyId={companyId} /> : <Dashboard {...sp} setPage={setPage} />
+      case 'mes_utilisateurs': return (profile?.role==='admin_societe'||profile?.role==='admin'||isSuperAdmin) ? <MesUtilisateursPage toast={toast} companies={companies} companyId={companyId} profile={profile} /> : <Dashboard {...sp} setPage={setPage} />
     }
   }
 
