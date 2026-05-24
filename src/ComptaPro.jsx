@@ -282,34 +282,65 @@ function printEpierrage(row, companyName='') {
 }
 
 function printExpressionBesoin(fiche, lignes, budgets, companyInfo, sigImg=null, cachetImg=null) {
+  // Détermine si la fiche est validée (traitée) => Fiche d'Autorisation de Dépense
+  const isValidee = fiche.statut_validation === 'traitee'
+  const docTitle  = isValidee ? "Fiche d'Autorisation de Dépense" : "Fiche d'Expression de Besoin"
+  const totalAutorise = (lignes||[]).reduce((s,l)=>l.validation==='approuve'?s+Math.round(parseFloat(l.montant_autorise)||0):s,0)
+
   const totalTTC = lignes.reduce((s,l)=>{
     const pu=parseFloat(l.prix_unitaire)||0, qty=parseFloat(l.quantite)||0, tva=parseFloat(l.tva)||0
     return s + Math.round(pu*qty*(1+tva/100))
   },0)
-  const lignesHtml = lignes.map((l,i)=>{
+
+  // Lignes demandées (toujours affichées)
+  const lignesDemandeesHtml = lignes.map((l,i)=>{
     const pu=parseFloat(l.prix_unitaire)||0, qty=parseFloat(l.quantite)||0, tva=parseFloat(l.tva)||0
     const montant=Math.round(pu*qty*(1+tva/100))
-    return `<tr>
+    const sv=l.validation||'en_attente'
+    const rowStyle=isValidee?(sv==='approuve'?'background:#f0fdf4':sv==='refuse'?'background:#fef2f2;opacity:0.6':'')  :''
+    const badge=isValidee?(sv==='approuve'?'<span style="color:#16a34a;font-weight:700">✅</span>':sv==='refuse'?'<span style="color:#dc2626;font-weight:700">❌</span>':'<span style="color:#f59e0b">⏳</span>')  :''
+    return `<tr style="${rowStyle}">
       <td>${l.numero_ordre||i+1}</td>
-      <td>${l.description||''}</td>
+      <td>${l.description||''}${isValidee?' '+badge:''}</td>
       <td class="r">${qty}</td>
       <td class="r">${pu.toLocaleString('fr-FR')}</td>
       <td class="r">${tva}%</td>
       <td class="r">${montant.toLocaleString('fr-FR')}</td>
     </tr>`
   }).join('')
+
+  // Lignes autorisées (uniquement pour Fiche Autorisation de Dépense)
+  const lignesAutoriseeHtml = isValidee ? lignes.filter(l=>l.validation==='approuve').map((l,i)=>{
+    const pu=parseFloat(l.prix_unitaire)||0, tva=parseFloat(l.tva)||0
+    const qtyAut=parseFloat(l.quantite_autorisee||l.quantite)||0
+    const montantAut=Math.round(parseFloat(l.montant_autorise)||0)
+    return `<tr style="background:#f0fdf4">
+      <td>${l.numero_ordre||i+1}</td>
+      <td>${l.description||''}</td>
+      <td class="r"><strong>${qtyAut}</strong></td>
+      <td class="r">${pu.toLocaleString('fr-FR')}</td>
+      <td class="r">${tva}%</td>
+      <td class="r"><strong style="color:#16a34a">${montantAut.toLocaleString('fr-FR')}</strong></td>
+    </tr>`
+  }).join('') : ''
+
   const budgetsHtml = (fiche.codes_budget||[]).map(cb=>{
     const b=budgets.find(x=>x.id===cb)||{}
     return `<tr><td>${b.code||cb}</td><td>${b.libelle||'—'}</td><td class="r">${Math.round(b.montant||0).toLocaleString('fr-FR')} FCFA</td></tr>`
   }).join('')
+
   const css = CSS_PRINT + `
     .info-grid { display:grid; grid-template-columns:1fr 1fr; gap:6px 24px; margin-bottom:14px; font-size:10pt; }
     .info-item { border-bottom:1px solid #ccc; padding:4px 0; }
     .info-label { font-size:8.5pt; color:#666; }
     .section-title { font-size:10pt; font-weight:700; text-transform:uppercase; color:#0f2044; border-bottom:2px solid #0f2044; padding-bottom:4px; margin:14px 0 8px; }
+    .autorisation-badge { display:inline-block; background:#dcfce7; color:#16a34a; border:1px solid #bbf7d0; padding:4px 12px; border-radius:20px; font-size:9pt; font-weight:700; margin-top:6px; }
+    .totals-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:16px; }
+    .total-box { padding:10px 14px; border-radius:6px; display:flex; justify-content:space-between; font-size:11pt; font-weight:700; }
   `
+
   const html = `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">
-    <title>Expression de Besoin ${fiche.reference||''}</title>
+    <title>${docTitle} ${fiche.reference||''}</title>
     <style>${css}</style></head><body>
     <button class="print-btn" onclick="window.print()">🖨️ Imprimer / PDF</button>
     <div class="header">
@@ -321,38 +352,53 @@ function printExpressionBesoin(fiche, lignes, budgets, companyInfo, sigImg=null,
         </div>
       </div>
       <div class="doc-title">
-        <h1>Fiche d'Expression de Besoin</h1>
+        <h1>${docTitle}</h1>
         <div class="doc-numero">Réf. ${fiche.reference||'—'}</div>
         <div class="doc-date">Date : ${fiche.date_fiche||'—'}</div>
+        ${isValidee?'<div class="autorisation-badge">✅ VALIDÉE ET AUTORISÉE</div>':''}
       </div>
     </div>
     <div style="font-size:9pt;color:#555;font-style:italic;margin-bottom:10px">
-      NB: La fiche doit être validée par le supérieur hiérarchique.
+      ${isValidee?'Cette fiche a été validée et autorisée par la direction.':'NB: La fiche doit être validée par le supérieur hiérarchique.'}
     </div>
     <div class="info-grid">
       <div class="info-item"><div class="info-label">Réalisé par</div><strong>${fiche.realise_par||'—'}</strong></div>
       <div class="info-item"><div class="info-label">Direction d'exploitation</div><strong>${fiche.direction||'—'}</strong></div>
       <div class="info-item"><div class="info-label">Fonction</div><strong>${fiche.fonction||'—'}</strong></div>
       <div class="info-item"><div class="info-label">Référence</div><strong>${fiche.reference||'—'}</strong></div>
-      <div class="info-item" style="grid-column:1/-1"><div class="info-label">Expression / Description du besoin</div><strong>${fiche.expression||'—'}</strong></div>
+      <div class="info-item" style="grid-column:1/-1"><div class="info-label">Objet / Description</div><strong>${fiche.expression||'—'}</strong></div>
     </div>
     <div class="section-title">Lignes budgétaires concernées</div>
     <table><thead><tr><th>Code</th><th>Ligne budgétaire</th><th class="r">Montant</th></tr></thead>
     <tbody>${budgetsHtml||'<tr><td colspan="3" style="text-align:center;color:#999">Aucune ligne</td></tr>'}</tbody></table>
-    <div class="section-title">Détail des besoins</div>
-    <table><thead><tr><th>N°</th><th>Description</th><th class="r">Quantité</th><th class="r">Prix U.</th><th class="r">TVA</th><th class="r">Montant</th></tr></thead>
-    <tbody>${lignesHtml||'<tr><td colspan="6" style="text-align:center;color:#999">Aucune ligne</td></tr>'}</tbody></table>
-    <div class="totals">
-      <div class="ttc"><span>TOTAL TTC</span><span>${totalTTC.toLocaleString('fr-FR')} FCFA</span></div>
+
+    <div class="section-title">${isValidee?'Détail des besoins exprimés':'Détail des besoins'}</div>
+    <table><thead><tr style="background:#0f2044;color:white"><th>N°</th><th>Description</th><th class="r">Qté demandée</th><th class="r">Prix U.</th><th class="r">TVA</th><th class="r">Montant demandé</th></tr></thead>
+    <tbody>${lignesDemandeesHtml||'<tr><td colspan="6" style="text-align:center;color:#999">Aucune ligne</td></tr>'}</tbody></table>
+
+    ${isValidee&&lignesAutoriseeHtml?`
+    <div class="section-title" style="color:#16a34a;border-color:#16a34a">✅ Lignes autorisées</div>
+    <table><thead><tr style="background:#16a34a;color:white"><th>N°</th><th>Description</th><th class="r">Qté autorisée</th><th class="r">Prix U.</th><th class="r">TVA</th><th class="r">Montant autorisé</th></tr></thead>
+    <tbody>${lignesAutoriseeHtml}</tbody></table>
+    `:''}
+
+    <div class="totals-grid">
+      <div class="total-box" style="background:#f1f5f9;color:#0f2044">
+        <span>TOTAL DEMANDÉ</span><span>${totalTTC.toLocaleString('fr-FR')} FCFA</span>
+      </div>
+      ${isValidee?`<div class="total-box" style="background:#dcfce7;color:#16a34a">
+        <span>TOTAL AUTORISÉ</span><span>${totalAutorise.toLocaleString('fr-FR')} FCFA</span>
+      </div>`:''}
     </div>
+
     <div class="signatures" style="margin-top:50px">
       <div class="sig-box">
         Signature de l'agent<br><small>${fiche.realise_par||''}</small>
         ${sigImg?`<img src="${sigImg}" style="max-width:100px;max-height:60px;margin-top:8px;display:block" />`:''}
       </div>
       <div class="sig-box">
-        Signature du gérant
-        ${cachetImg?`<img src="${cachetImg}" style="max-width:100px;max-height:60px;margin-top:8px;display:block" />`:''}
+        ${isValidee?'Signature d'autorisation':'Signature du gérant'}
+        ${cachetImg?`<img src="${cachetImg}" style="max-width:120px;max-height:70px;margin-top:8px;display:block" />`:''}
       </div>
       <div class="sig-box">
         Visa du DG
