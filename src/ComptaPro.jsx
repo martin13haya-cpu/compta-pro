@@ -281,7 +281,7 @@ function printEpierrage(row, companyName='') {
   const w = window.open('', '_blank'); w.document.write(html); w.document.close()
 }
 
-function printExpressionBesoin(fiche, lignes, budgets, companyInfo) {
+function printExpressionBesoin(fiche, lignes, budgets, companyInfo, sigImg=null, cachetImg=null) {
   const totalTTC = lignes.reduce((s,l)=>{
     const pu=parseFloat(l.prix_unitaire)||0, qty=parseFloat(l.quantite)||0, tva=parseFloat(l.tva)||0
     return s + Math.round(pu*qty*(1+tva/100))
@@ -346,9 +346,18 @@ function printExpressionBesoin(fiche, lignes, budgets, companyInfo) {
       <div class="ttc"><span>TOTAL TTC</span><span>${totalTTC.toLocaleString('fr-FR')} FCFA</span></div>
     </div>
     <div class="signatures" style="margin-top:50px">
-      <div class="sig-box">Signature de l'agent<br><small>${fiche.realise_par||''}</small></div>
-      <div class="sig-box">Signature du gérant</div>
-      <div class="sig-box">Visa du DG</div>
+      <div class="sig-box">
+        Signature de l'agent<br><small>${fiche.realise_par||''}</small>
+        ${sigImg?`<img src="${sigImg}" style="max-width:100px;max-height:60px;margin-top:8px;display:block" />`:''}
+      </div>
+      <div class="sig-box">
+        Signature du gérant
+        ${cachetImg?`<img src="${cachetImg}" style="max-width:100px;max-height:60px;margin-top:8px;display:block" />`:''}
+      </div>
+      <div class="sig-box">
+        Visa du DG
+        ${sigImg?`<img src="${sigImg}" style="max-width:100px;max-height:60px;margin-top:8px;display:block" />`:''}
+      </div>
     </div>
     <div style="text-align:center;margin-top:30px;font-size:9pt;color:#888;font-style:italic">NOUS COMPTONS SUR VOTRE DISPONIBILITÉ !!!!</div>
   </body></html>`
@@ -4202,6 +4211,9 @@ function ExpressionBesoinPage({ companies, companyId, toast, readOnly=false, pro
   const [selBudgets,  setSelBudgets] = useState([])
   const [validLignes, setValidLignes]= useState([]) // lignes de validation
   const [isSuperAdmin,setIsSuperAdmin]=useState(false)
+  const [signatureImg, setSignatureImg]=useState(null)   // base64 signature
+  const [cachetImg,    setCachetImg]   =useState(null)   // base64 cachet
+  const [printModal,   setPrintModal]  =useState(null)   // fiche à imprimer avec options
 
   useEffect(()=>{
     supabase.auth.getUser().then(async ({data:ad})=>{
@@ -4210,15 +4222,32 @@ function ExpressionBesoinPage({ companies, companyId, toast, readOnly=false, pro
     })
   },[])
 
+  const handleImageUpload=(setter)=>(e)=>{
+    const file=e.target.files?.[0]; if(!file) return
+    const reader=new FileReader()
+    reader.onload=ev=>setter(ev.target.result)
+    reader.readAsDataURL(file)
+  }
+
+  const openPrintModal=(fiche)=>setPrintModal(fiche)
+
   const load=useCallback(async()=>{
     const { data:ad }=await supabase.auth.getUser()
-    const uid=ad?.user?.id; const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
+    const uid=ad?.user?.id
+    const isSuper=ad?.user?.email===SUPER_ADMIN_EMAIL
+    const isAdminRole=profile?.role==='admin_societe'||profile?.role==='admin'
     let q=supabase.from('compta_expression_besoin').select('*,compta_companies(raison_sociale,rccm,adresse,tel)').order('created_at',{ascending:false})
-    if(isAdmin&&companyId) q=q.eq('company_id',companyId)
-    else if(companyId) q=q.eq('user_id',uid).eq('company_id',companyId)
-    else q=q.eq('user_id',uid)
+    // Super admin voit TOUTES les fiches de toutes les sociétés
+    if(isSuper){
+      if(companyId) q=q.eq('company_id',companyId) // filtré si société sélectionnée
+      // sinon pas de filtre = toutes les fiches
+    } else if(companyId){
+      q=q.eq('user_id',uid).eq('company_id',companyId)
+    } else {
+      q=q.eq('user_id',uid)
+    }
     const { data }=await q; setFiches(data||[])
-  },[companyId])
+  },[companyId,profile])
 
   const loadBudgets=useCallback(async()=>{
     const { data:ad }=await supabase.auth.getUser()
@@ -4346,12 +4375,14 @@ function ExpressionBesoinPage({ companies, companyId, toast, readOnly=false, pro
           <div style={{overflowX:'auto',WebkitOverflowScrolling:'touch'}}>
             <table style={{width:'100%',borderCollapse:'collapse',minWidth:600}}>
             <thead><tr>
+              {isSuperAdmin&&<TH>Société</TH>}
               <TH>Référence</TH><TH>Date</TH><TH>Réalisé par</TH><TH>Direction</TH>
               <TH right>Total demandé</TH><TH right>Total autorisé</TH><TH>Statut</TH><TH>Action</TH>
             </tr></thead>
             <tbody>
               {fiches.map(r=>(
                 <TR key={r.id}>
+                  {isSuperAdmin&&<TD sm style={{maxWidth:140,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{r.compta_companies?.raison_sociale||'—'}</TD>}
                   <TD bold sm>{r.reference}</TD>
                   <TD sm>{r.date_fiche}</TD>
                   <TD sm>{r.realise_par||'—'}</TD>
@@ -4365,7 +4396,7 @@ function ExpressionBesoinPage({ companies, companyId, toast, readOnly=false, pro
                       <button title="Envoyer par WhatsApp" onClick={()=>sendWhatsApp(r)} style={{background:'#25d366',border:'none',borderRadius:6,padding:'5px 8px',cursor:'pointer',color:'white',fontSize:13}}>
                         <svg width="14" height="14" viewBox="0 0 32 32" fill="none"><path d="M16 3C8.832 3 3 8.832 3 16c0 2.29.614 4.437 1.682 6.29L3 29l6.9-1.655A12.93 12.93 0 0 0 16 29c7.168 0 13-5.832 13-13S23.168 3 16 3Z" fill="white"/><path d="M21.75 19.25c-.32-.16-1.89-.93-2.18-1.04-.29-.1-.5-.16-.71.16-.21.32-.82 1.04-.99 1.25-.17.21-.35.24-.65.08-.32-.16-1.33-.49-2.53-1.56-.94-.83-1.57-1.86-1.75-2.18-.18-.32-.02-.49.13-.65.14-.14.32-.37.48-.55.16-.18.21-.32.32-.53.1-.21.05-.39-.03-.55-.08-.16-.71-1.71-.97-2.34-.26-.62-.52-.53-.71-.54h-.61c-.21 0-.55.08-.84.39-.29.32-1.1 1.07-1.1 2.62s1.13 3.04 1.29 3.25c.16.21 2.22 3.38 5.38 4.74.75.32 1.34.52 1.8.66.76.24 1.45.21 2 .13.61-.09 1.89-.77 2.16-1.52.26-.75.26-1.39.18-1.52-.08-.13-.29-.21-.61-.37Z" fill="#25d366"/></svg>
                       </button>
-                      <button title="Imprimer" onClick={()=>printExpressionBesoin(r,r.lignes||[],budgets,r.compta_companies)} style={{background:'#f59e0b',border:'none',borderRadius:6,padding:'5px 8px',cursor:'pointer',color:'white',fontSize:13}}>🖨️</button>
+                      <button title="Imprimer avec signature" onClick={()=>openPrintModal(r)} style={{background:'#f59e0b',border:'none',borderRadius:6,padding:'5px 8px',cursor:'pointer',color:'white',fontSize:13}}>🖨️</button>
                       {(isSuperAdmin||profile?.role==='admin_societe'||profile?.role==='admin')&&<button title="Valider" onClick={()=>openValidation(r)} style={{background:'#7c3aed',border:'none',borderRadius:6,padding:'5px 8px',cursor:'pointer',color:'white',fontSize:13}}>✅</button>}
                       {!readOnly&&<button title="Supprimer" onClick={()=>deleteFiche(r.id)} style={{background:'#ef4444',border:'none',borderRadius:6,padding:'5px 8px',cursor:'pointer',color:'white',fontSize:13}}>🗑️</button>}
                     </div>
@@ -4377,6 +4408,68 @@ function ExpressionBesoinPage({ companies, companyId, toast, readOnly=false, pro
           </div>
         )}
       </div>
+
+
+      {/* ── Modal Impression avec Signature & Cachet ── */}
+      {printModal&&(
+        <Modal open={!!printModal} onClose={()=>setPrintModal(null)} title={'Imprimer — '+printModal.reference} size="lg">
+          <div style={{marginBottom:20}}>
+            <div style={{fontSize:13,color:'#64748b',marginBottom:16}}>
+              Importez votre signature et/ou cachet avant d'imprimer. Ces images apparaîtront dans les zones de signature du document.
+            </div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,marginBottom:20}}>
+              {/* Signature */}
+              <div style={{border:'2px dashed #e2e8f0',borderRadius:10,padding:16,textAlign:'center',background:'#f8fafc'}}>
+                <div style={{fontSize:13,fontWeight:700,color:'#0f2044',marginBottom:8}}>✍️ Signature</div>
+                {signatureImg?(
+                  <div>
+                    <img src={signatureImg} alt="Signature" style={{maxWidth:'100%',maxHeight:80,objectFit:'contain',marginBottom:8}} />
+                    <button onClick={()=>setSignatureImg(null)} style={{display:'block',margin:'0 auto',background:'#fee2e2',border:'none',borderRadius:6,padding:'4px 10px',cursor:'pointer',color:'#dc2626',fontSize:12}}>✕ Supprimer</button>
+                  </div>
+                ):(
+                  <label style={{cursor:'pointer'}}>
+                    <div style={{fontSize:32,marginBottom:6}}>📷</div>
+                    <div style={{fontSize:12,color:'#94a3b8',marginBottom:8}}>Cliquer pour importer</div>
+                    <div style={{fontSize:11,color:'#cbd5e1'}}>PNG, JPG recommandé</div>
+                    <input type="file" accept="image/*" onChange={handleImageUpload(setSignatureImg)} style={{display:'none'}} />
+                  </label>
+                )}
+              </div>
+              {/* Cachet */}
+              <div style={{border:'2px dashed #e2e8f0',borderRadius:10,padding:16,textAlign:'center',background:'#f8fafc'}}>
+                <div style={{fontSize:13,fontWeight:700,color:'#0f2044',marginBottom:8}}>🔏 Cachet / Tampon</div>
+                {cachetImg?(
+                  <div>
+                    <img src={cachetImg} alt="Cachet" style={{maxWidth:'100%',maxHeight:80,objectFit:'contain',marginBottom:8}} />
+                    <button onClick={()=>setCachetImg(null)} style={{display:'block',margin:'0 auto',background:'#fee2e2',border:'none',borderRadius:6,padding:'4px 10px',cursor:'pointer',color:'#dc2626',fontSize:12}}>✕ Supprimer</button>
+                  </div>
+                ):(
+                  <label style={{cursor:'pointer'}}>
+                    <div style={{fontSize:32,marginBottom:6}}>🖼️</div>
+                    <div style={{fontSize:12,color:'#94a3b8',marginBottom:8}}>Cliquer pour importer</div>
+                    <div style={{fontSize:11,color:'#cbd5e1'}}>PNG transparent recommandé</div>
+                    <input type="file" accept="image/*" onChange={handleImageUpload(setCachetImg)} style={{display:'none'}} />
+                  </label>
+                )}
+              </div>
+            </div>
+            <div style={{padding:'12px 16px',background:'#eff6ff',borderRadius:8,fontSize:12,color:'#1d4ed8',marginBottom:16}}>
+              💡 Les images sont utilisées uniquement pour cette impression — elles ne sont pas enregistrées en base de données.
+            </div>
+          </div>
+          <Row>
+            <Btn variant="secondary" onClick={()=>setPrintModal(null)}>Annuler</Btn>
+            <button onClick={()=>{ sendWhatsApp(printModal); setPrintModal(null) }}
+              style={{background:'#25d366',border:'none',borderRadius:8,padding:'9px 18px',cursor:'pointer',color:'white',fontWeight:700,fontSize:13,display:'flex',alignItems:'center',gap:6}}>
+              <svg width="16" height="16" viewBox="0 0 32 32" fill="none"><path d="M16 3C8.832 3 3 8.832 3 16c0 2.29.614 4.437 1.682 6.29L3 29l6.9-1.655A12.93 12.93 0 0 0 16 29c7.168 0 13-5.832 13-13S23.168 3 16 3Z" fill="white"/><path d="M21.75 19.25c-.32-.16-1.89-.93-2.18-1.04-.29-.1-.5-.16-.71.16-.21.32-.82 1.04-.99 1.25-.17.21-.35.24-.65.08-.32-.16-1.33-.49-2.53-1.56-.94-.83-1.57-1.86-1.75-2.18-.18-.32-.02-.49.13-.65.14-.14.32-.37.48-.55.16-.18.21-.32.32-.53.1-.21.05-.39-.03-.55-.08-.16-.71-1.71-.97-2.34-.26-.62-.52-.53-.71-.54h-.61c-.21 0-.55.08-.84.39-.29.32-1.1 1.07-1.1 2.62s1.13 3.04 1.29 3.25c.16.21 2.22 3.38 5.38 4.74.75.32 1.34.52 1.8.66.76.24 1.45.21 2 .13.61-.09 1.89-.77 2.16-1.52.26-.75.26-1.39.18-1.52-.08-.13-.29-.21-.61-.37Z" fill="#25d366"/></svg>
+              WhatsApp
+            </button>
+            <Btn onClick={()=>{ printExpressionBesoin(printModal,printModal.lignes||[],budgets,printModal.compta_companies,signatureImg,cachetImg); setPrintModal(null) }}>
+              🖨️ Imprimer
+            </Btn>
+          </Row>
+        </Modal>
+      )}
 
       {/* ── Modal Validation Super Admin ── */}
       {validModal&&(
@@ -4504,7 +4597,7 @@ function ExpressionBesoinPage({ companies, companyId, toast, readOnly=false, pro
               <svg width="16" height="16" viewBox="0 0 32 32" fill="none"><path d="M16 3C8.832 3 3 8.832 3 16c0 2.29.614 4.437 1.682 6.29L3 29l6.9-1.655A12.93 12.93 0 0 0 16 29c7.168 0 13-5.832 13-13S23.168 3 16 3Z" fill="white"/><path d="M21.75 19.25c-.32-.16-1.89-.93-2.18-1.04-.29-.1-.5-.16-.71.16-.21.32-.82 1.04-.99 1.25-.17.21-.35.24-.65.08-.32-.16-1.33-.49-2.53-1.56-.94-.83-1.57-1.86-1.75-2.18-.18-.32-.02-.49.13-.65.14-.14.32-.37.48-.55.16-.18.21-.32.32-.53.1-.21.05-.39-.03-.55-.08-.16-.71-1.71-.97-2.34-.26-.62-.52-.53-.71-.54h-.61c-.21 0-.55.08-.84.39-.29.32-1.1 1.07-1.1 2.62s1.13 3.04 1.29 3.25c.16.21 2.22 3.38 5.38 4.74.75.32 1.34.52 1.8.66.76.24 1.45.21 2 .13.61-.09 1.89-.77 2.16-1.52.26-.75.26-1.39.18-1.52-.08-.13-.29-.21-.61-.37Z" fill="#25d366"/></svg>
               Envoyer au Super Admin
             </button>
-            <Btn variant="danger" onClick={()=>printExpressionBesoin(viewItem,viewItem.lignes||[],budgets,viewItem.compta_companies)}>🖨️ Imprimer</Btn>
+            <Btn variant="danger" onClick={()=>{ setViewItem(null); openPrintModal(viewItem) }}>🖨️ Imprimer</Btn>
             <Btn variant="secondary" onClick={()=>setViewItem(null)}>Fermer</Btn>
           </Row>
         </Modal>
