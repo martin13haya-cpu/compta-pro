@@ -1534,9 +1534,8 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
       if (!cid) { toast.error('Veuillez sélectionner une société avant d\'enregistrer.'); setSaving(false); return }
       pay.company_id = cid
     }
-    if (table==='compta_clients') {
+    if (table==='compta_clients' || table==='compta_fournisseurs') {
       pay.type = form.type||'physique'
-      // Fix: include nom_societe for "personne morale" clients
       if (form.type==='morale') pay.nom_societe = form.nom_societe||''
     }
     const { error } = modal==='add'
@@ -1553,9 +1552,9 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     toast.success('Archivé.'); load()
   }
 
-  const displayName = it => table==='compta_clients'
-    ? (it.type==='morale' ? it.nom_societe : `${it.nom||''} ${it.prenom||''}`)
-    : `${it.nom||''} ${it.prenom||''}`
+  const displayName = it => (table==='compta_clients' || table==='compta_fournisseurs')
+    ? (it.type==='morale' ? it.nom_societe : `${it.nom||''} ${it.prenom||''}`.trim())
+    : `${it.nom||''} ${it.prenom||''}`.trim()
 
   return (
     <div>
@@ -1565,7 +1564,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
         <div style={{display:'flex',gap:10,flexWrap:'wrap',alignItems:'center'}}>
           <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="🔍 Rechercher par nom..."
             style={{padding:'8px 14px',borderRadius:8,border:'1px solid #d1d5db',fontSize:13,flex:1,minWidth:180}} />
-          {table==='compta_clients' && (
+          {(table==='compta_clients'||table==='compta_fournisseurs') && (
             <select value={filterType} onChange={e=>setFilterType(e.target.value)}
               style={{padding:'8px 12px',borderRadius:8,border:'1px solid #d1d5db',fontSize:13,background:'white'}}>
               <option value=''>Tous types</option>
@@ -1601,7 +1600,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
           <div style={{overflowX:'auto',WebkitOverflowScrolling:'touch'}}>
             <table style={{width:'100%',borderCollapse:'collapse',minWidth:600}}>
             <thead><tr>
-              {table==='compta_clients' && <TH>Type</TH>}
+              {(table==='compta_clients'||table==='compta_fournisseurs') && <TH>Type</TH>}
               <TH>Nom</TH><TH>Téléphone</TH><TH>Provenance</TH>
               {extraFields?.headers?.map((h,i)=><TH key={i}>{h}</TH>)}
               <TH>IFU</TH><TH>CIP</TH>{!readOnly && <TH>Actions</TH>}
@@ -1609,7 +1608,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
             <tbody>
               {filtered.map(it=>(
                 <TR key={it.id}>
-                  {table==='compta_clients' && <TD><Badge type={it.type==='morale'?'info':'success'}>{it.type==='morale'?'Société':'Physique'}</Badge></TD>}
+                  {(table==='compta_clients'||table==='compta_fournisseurs') && <TD><Badge type={it.type==='morale'?'info':'success'}>{it.type==='morale'?'Société':'Physique'}</Badge></TD>}
                   <TD bold>{displayName(it)}</TD>
                   <TD>{it.telephone||'—'}</TD>
                   <TD>{it.provenance||'—'}</TD>
@@ -1635,15 +1634,19 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
       <Modal open={!!modal} onClose={close} title={modal==='add'?`Nouveau(elle) ${titleSingle}`:`Modifier ${titleSingle}`} size="lg">
         <form onSubmit={save}>
           <Grid cols={2} gap={14} style={{marginBottom:16}}>
-            {table==='compta_clients' && (
-              <Sel label="Type" name="type" value={form.type} onChange={set}
-                options={[{value:'physique',label:'Personne physique'},{value:'morale',label:'Personne morale'}]} />
+            {(table==='compta_clients'||table==='compta_fournisseurs') && (
+              <Sel label="Type de personne" name="type" value={form.type||'physique'} onChange={set}
+                options={[{value:'physique',label:'👤 Personne physique'},{value:'morale',label:'🏢 Personne morale'}]} />
             )}
-            {table==='compta_clients' && form.type==='morale' ? (
-              <Span2><Input label="Nom société *" name="nom_societe" value={form.nom_societe} onChange={set} required /></Span2>
+            {(table==='compta_clients'||table==='compta_fournisseurs') && (form.type||'physique')==='morale' ? (
+              <Span2><Input label="Raison sociale *" name="nom_societe" value={form.nom_societe||''} onChange={set} required /></Span2>
             ) : (
-              <><Input label="Nom *" name="nom" value={form.nom} onChange={set} required />
-              <Input label="Prénom" name="prenom" value={form.prenom} onChange={set} /></>
+              <><Input label="Nom *" name="nom" value={form.nom||''} onChange={set} required />
+              <Input label="Prénom" name="prenom" value={form.prenom||''} onChange={set} /></>
+            )}
+            {(table==='compta_fournisseurs') && (form.type||'physique')==='morale' && (
+              <><Input label="Nom du représentant" name="nom" value={form.nom||''} onChange={set} />
+              <Input label="Prénom du représentant" name="prenom" value={form.prenom||''} onChange={set} /></>
             )}
             <Input label="Téléphone" name="telephone" value={form.telephone} onChange={set} />
             <Input label="Provenance" name="provenance" value={form.provenance} onChange={set} />
@@ -5882,7 +5885,7 @@ export default function ComptaPro() {
       case 'clients':       return <TiersPage table="compta_clients" title="Clients" titleSingle="Client" icon="👥" {...sp}
                               extraFields={{ names:[], headers:[], fields:[], defaults:{type:'physique',nom_societe:''} }} />
       case 'fournisseurs':  return <TiersPage table="compta_fournisseurs" title="Fournisseurs" titleSingle="Fournisseur" icon="🚚" {...sp}
-                              extraFields={{ names:['cooperation'], headers:['Coopérative'], fields:[{name:'cooperation',label:'Coopérative affiliée'}], defaults:{} }} />
+                              extraFields={{ names:['cooperation'], headers:['Coopérative'], fields:[{name:'cooperation',label:'Coopérative affiliée'}], defaults:{type:'physique',nom_societe:''} }} />
       case 'stock':         return <StockPage {...sp} setPage={setPage} />
       case 'stock-entree':  return <StockEntreePage {...sp} setPage={setPage} />
       case 'stock-sortie':  return <StockSortiePage {...sp} setPage={setPage} />
