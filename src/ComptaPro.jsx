@@ -3889,22 +3889,27 @@ function EtvRepertoirePage({ companies, companyId, toast, readOnly=false }) {
   },[companyId])
 
   const loadFourn = useCallback(async()=>{
-    const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
-    const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
-    let ownerUid = uid
-    if(isAdmin && companyId){
-      const { data:comp }=await supabase.from('compta_companies').select('user_id').eq('id',companyId).single()
-      if(comp?.user_id) ownerUid = comp.user_id
-    }
-    // Pas de order('nom') car nom peut être null pour personnes morales
-    const { data }=await supabase.from('compta_fournisseurs')
-      .select('id,nom,prenom,nom_societe,type,tel,ifu')
-      .eq('user_id', ownerUid)
-    setFourn((data||[]).sort((a,b)=>{
-      const na=(a.type==='morale'?a.nom_societe:`${a.nom||''} ${a.prenom||''}`).trim().toLowerCase()
-      const nb=(b.type==='morale'?b.nom_societe:`${b.nom||''} ${b.prenom||''}`).trim().toLowerCase()
-      return na.localeCompare(nb)
-    }))
+    try {
+      const sess = await supabase.auth.getSession()
+      if(!sess.data?.session) return
+      const uid = sess.data.session.user.id
+      const email = sess.data.session.user.email
+      const isAdmin = email===SUPER_ADMIN_EMAIL
+      let ownerUid = uid
+      if(isAdmin && companyId){
+        const { data:comp }=await supabase.from('compta_companies').select('user_id').eq('id',companyId).single()
+        if(comp?.user_id) ownerUid = comp.user_id
+      }
+      const { data, error }=await supabase.from('compta_fournisseurs')
+        .select('id,nom,prenom,nom_societe,type,telephone,ifu')
+        .eq('user_id', ownerUid)
+      if(error){ console.error('loadFourn:', error.message); return }
+      setFourn((data||[]).sort((a,b)=>{
+        const na=(a.type==='morale'?a.nom_societe:`${a.nom||''} ${a.prenom||''}`).trim().toLowerCase()
+        const nb=(b.type==='morale'?b.nom_societe:`${b.nom||''} ${b.prenom||''}`).trim().toLowerCase()
+        return na.localeCompare(nb)
+      }))
+    } catch(e){ console.error('loadFourn error:', e) }
   },[companyId])
 
   useEffect(()=>{ load(); loadFourn() },[load,loadFourn])
