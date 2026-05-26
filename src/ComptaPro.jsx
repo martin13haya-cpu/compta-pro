@@ -4760,6 +4760,7 @@ function ReglementsPage({ companies, companyId, toast, readOnly=false, mode='cli
   const [dateFrom, setDateFrom]= useState('')
   const [dateTo,   setDateTo]  = useState('')
   const [factures, setFactures]= useState([])
+  const [viewItem, setViewItem]= useState(null)
 
   const load = useCallback(async()=>{
     const { data:ad } = await supabase.auth.getUser()
@@ -4813,7 +4814,18 @@ function ReglementsPage({ companies, companyId, toast, readOnly=false, mode='cli
       provenance:       '',
       acheteur_vendeur: '',
       nature_produit:   '',
+      _montant_ttc:     fac.montant_ttc||0,  // montant total de la facture
+      solde:            fac.montant_ttc||0,   // solde = total au départ
+      montant_paye:     0,
     }))
+  }
+
+  // Recalculer solde quand montant_paye change
+  const onMontantChange = (e) => {
+    const paye = parseFloat(e.target.value)||0
+    const total = parseFloat(form._montant_ttc)||0
+    const solde = Math.max(0, total - paye)
+    setForm(f=>({...f, montant_paye:e.target.value, solde:Math.round(solde)}))
   }
 
   const emptyForm = {
@@ -4823,6 +4835,13 @@ function ReglementsPage({ companies, companyId, toast, readOnly=false, mode='cli
     acheteur_vendeur:'', nature_produit:'',
     montant_paye:0, solde:0,
     mode_paiement:'espèce', reference_paiement:'', notes:''
+  }
+
+  const deleteRegl = async(id)=>{
+    if(!window.confirm('Supprimer ce règlement ?')) return
+    const { error }=await supabase.from('compta_reglements').delete().eq('id',id)
+    if(error){ toast.error(error.message); return }
+    toast.success('Règlement supprimé !'); load()
   }
 
   const openAdd = ()=>{ setForm(emptyForm); setModal(true) }
@@ -4878,7 +4897,7 @@ function ReglementsPage({ companies, companyId, toast, readOnly=false, mode='cli
               <TH>N° Fact.</TH><TH>Date</TH>
               <TH>{isClients?'Client':'Fournisseur'}</TH>
               <TH>Provenance</TH><TH>Produit</TH>
-              <TH right>Montant payé</TH><TH right>Solde</TH><TH>Mode</TH><TH>PDF</TH>
+              <TH right>Montant payé</TH><TH right>Solde</TH><TH>Mode</TH><TH>Actions</TH>
             </tr></thead>
             <tbody>
               {items.map(r=>(
@@ -4891,7 +4910,13 @@ function ReglementsPage({ companies, companyId, toast, readOnly=false, mode='cli
                   <TD right color="#16a34a" bold>{fcfa(r.montant_paye)}</TD>
                   <TD right color={(r.solde||0)>0?'#dc2626':'#16a34a'}>{fcfa(r.solde)}</TD>
                   <TD sm>{r.mode_paiement||'—'}</TD>
-                  <TD><Btn sm variant="danger" onClick={()=>printReglement(r)}>PDF</Btn></TD>
+                  <TD>
+                    <div style={{display:'flex',gap:4}}>
+                      <button title="Voir" onClick={()=>setViewItem(r)} style={{background:'#0ea5e9',border:'none',borderRadius:6,padding:'5px 8px',cursor:'pointer',color:'white',fontSize:13}}>👁️</button>
+                      <button title="Imprimer" onClick={()=>printReglement(r)} style={{background:'#f59e0b',border:'none',borderRadius:6,padding:'5px 8px',cursor:'pointer',color:'white',fontSize:13}}>🖨️</button>
+                      {!readOnly&&<button title="Supprimer" onClick={()=>deleteRegl(r.id)} style={{background:'#ef4444',border:'none',borderRadius:6,padding:'5px 8px',cursor:'pointer',color:'white',fontSize:13}}>🗑️</button>}
+                    </div>
+                  </TD>
                 </TR>
               ))}
             </tbody>
@@ -4899,6 +4924,45 @@ function ReglementsPage({ companies, companyId, toast, readOnly=false, mode='cli
           </div>
         )}
       </div>
+
+
+      {/* ── Modal Vue règlement ── */}
+      {viewItem&&(
+        <Modal open={!!viewItem} onClose={()=>setViewItem(null)} title={'Règlement — '+(viewItem.numero_facture||'—')} size="lg">
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'10px 24px',fontSize:14,marginBottom:16}}>
+            {[
+              ['N° Facture', viewItem.numero_facture||'—'],
+              ['Date', viewItem.date_paiement||'—'],
+              [isClients?'Client':'Fournisseur', viewItem.tiers_nom||'—'],
+              ['Provenance', viewItem.provenance||'—'],
+              ['Acheteur / Vendeur', viewItem.acheteur_vendeur||'—'],
+              ['Nature du produit', viewItem.nature_produit||'—'],
+              ['Mode de paiement', viewItem.mode_paiement||'—'],
+              ['Référence', viewItem.reference_paiement||'—'],
+            ].map(([l,v])=>(
+              <div key={l} style={{borderBottom:'1px solid #f1f5f9',paddingBottom:8}}>
+                <div style={{fontSize:11,color:'#94a3b8',marginBottom:2}}>{l}</div>
+                <div style={{fontWeight:600,color:'#1e293b'}}>{v}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:12}}>
+            <div style={{padding:'12px 16px',background:'#f0fdf4',borderRadius:8,display:'flex',justifyContent:'space-between',fontWeight:800}}>
+              <span style={{color:'#475569'}}>Montant payé</span>
+              <span style={{color:'#16a34a',fontSize:16}}>{fcfa(viewItem.montant_paye)}</span>
+            </div>
+            <div style={{padding:'12px 16px',background:(viewItem.solde||0)>0?'#fef2f2':'#f0fdf4',borderRadius:8,display:'flex',justifyContent:'space-between',fontWeight:800}}>
+              <span style={{color:'#475569'}}>Solde restant</span>
+              <span style={{color:(viewItem.solde||0)>0?'#dc2626':'#16a34a',fontSize:16}}>{fcfa(viewItem.solde)}</span>
+            </div>
+          </div>
+          {viewItem.notes&&<div style={{padding:'10px 14px',background:'#f8fafc',borderRadius:8,fontSize:13,color:'#475569'}}><strong>Notes :</strong> {viewItem.notes}</div>}
+          <Row style={{marginTop:16}}>
+            <Btn variant="danger" onClick={()=>printReglement(viewItem)}>🖨️ Imprimer</Btn>
+            <Btn variant="secondary" onClick={()=>setViewItem(null)}>Fermer</Btn>
+          </Row>
+        </Modal>
+      )}
 
       <Modal open={modal} onClose={close} title={`Nouveau Règlement ${isClients?'Client':'Fournisseur'}`} size="xl">
         <form onSubmit={save}>
@@ -4968,8 +5032,20 @@ function ReglementsPage({ companies, companyId, toast, readOnly=false, mode='cli
               <input name="nature_produit" value={form.nature_produit||''} onChange={set} style={autoStyle('nature_produit')} />
             </div>
 
-            <Input label="Montant payé (FCFA) *" name="montant_paye" type="number" value={form.montant_paye||0} onChange={set} required min="0" />
-            <Input label="Solde restant (FCFA)" name="solde" type="number" value={form.solde||0} onChange={set} min="0" />
+            <div>
+              <label style={{display:'block',fontSize:12.5,fontWeight:600,color:'#374151',marginBottom:5}}>Montant payé (FCFA) *</label>
+              <input type="number" name="montant_paye" value={form.montant_paye||0} onChange={onMontantChange} required min="0"
+                style={{width:'100%',padding:'9px 12px',borderRadius:8,border:'1.5px solid #e2e8f0',fontSize:13,boxSizing:'border-box'}} />
+            </div>
+            <div>
+              <label style={{display:'block',fontSize:12.5,fontWeight:600,color:'#374151',marginBottom:5}}>
+                Solde restant <span style={{fontSize:10,color:'#16a34a',fontWeight:700}}>⚡ calculé</span>
+              </label>
+              <div style={{padding:'9px 12px',borderRadius:8,border:'1.5px solid #e2e8f0',fontSize:14,fontWeight:800,
+                color:(form.solde||0)>0?'#dc2626':'#16a34a',background:(form.solde||0)>0?'#fef2f2':'#f0fdf4'}}>
+                {fcfa(form.solde||0)}
+              </div>
+            </div>
             <Sel label="Mode de paiement" name="mode_paiement" value={form.mode_paiement||'espèce'} onChange={set}
               options={['espèce','virement','mobile_money','chèque','autre'].map(m=>({value:m,label:m.charAt(0).toUpperCase()+m.slice(1)}))} />
             <Input label="Référence de paiement" name="reference_paiement" value={form.reference_paiement||''} onChange={set} />
