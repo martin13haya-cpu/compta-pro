@@ -4782,8 +4782,7 @@ function ReglementsPage({ companies, companyId, toast, readOnly=false, mode='cli
     const { data:ad }=await supabase.auth.getUser()
     const uid=ad?.user?.id; const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
     let q = supabase.from('compta_documents')
-      .select('id,numero,type_doc,nom_client,provenance,acheteur,nature_produit,total_ttc')
-      .in('type_doc',['facture','bon_livraison'])
+      .select('id,numero,type_doc,nom_client,provenance,acheteur,nature_produit,total_ttc,statut')
       .order('created_at',{ascending:false})
     if(isAdmin&&companyId) q=q.eq('company_id',companyId)
     else if(companyId) q=q.eq('user_id',uid).eq('company_id',companyId)
