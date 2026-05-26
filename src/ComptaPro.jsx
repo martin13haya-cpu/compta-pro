@@ -3890,17 +3890,20 @@ function EtvRepertoirePage({ companies, companyId, toast, readOnly=false }) {
   const loadFourn = useCallback(async()=>{
     const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
     const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
-    // Trouver le vrai propriétaire des fournisseurs
     let ownerUid = uid
     if(isAdmin && companyId){
       const { data:comp }=await supabase.from('compta_companies').select('user_id').eq('id',companyId).single()
       if(comp?.user_id) ownerUid = comp.user_id
     }
+    // Pas de order('nom') car nom peut être null pour personnes morales
     const { data }=await supabase.from('compta_fournisseurs')
       .select('id,nom,prenom,nom_societe,type,tel')
       .eq('user_id', ownerUid)
-      .order('nom',{ascending:true})
-    setFourn(data||[])
+    setFourn((data||[]).sort((a,b)=>{
+      const na=(a.type==='morale'?a.nom_societe:`${a.nom||''} ${a.prenom||''}`).trim().toLowerCase()
+      const nb=(b.type==='morale'?b.nom_societe:`${b.nom||''} ${b.prenom||''}`).trim().toLowerCase()
+      return na.localeCompare(nb)
+    }))
   },[companyId])
 
   useEffect(()=>{ load(); loadFourn() },[load,loadFourn])
