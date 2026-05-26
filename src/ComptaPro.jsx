@@ -1168,6 +1168,7 @@ const NAV = [
   { id:'etv_entrees',     icon:'📥', label:'Entrées Magasin' },
   { id:'etv_sorties',     icon:'📤', label:'Sorties Magasin' },
   { id:'etv_inventaire',  icon:'📊', label:'Inventaire' },
+  { id:'etv_tresorerie',  icon:'💼', label:'Trésorerie' },
   { section:'Achats' },
   { id:'achats',             icon:'🛒', label:'Achats semi-finis' },
   { id:'lots_semi_finis',    icon:'📦', label:'Lots Semi-finis' },
@@ -3617,7 +3618,7 @@ const ALL_SECTIONS = [
   ['tri_optique','Tri optique'],['conditionnement','Conditionnement'],
   ['etv_repertoire','Répertoire Étuveuses'],['etv_avances','Avances'],
   ['etv_bc','Bons de Commande'],['etv_br','Bons de Réception'],
-  ['etv_entrees','Entrées Magasin'],['etv_sorties','Sorties Magasin'],['etv_inventaire','Inventaire'],
+  ['etv_entrees','Entrées Magasin'],['etv_sorties','Sorties Magasin'],['etv_inventaire','Inventaire'],['etv_tresorerie','Trésorerie'],
   ['achats','Achats semi-finis'],['lots_semi_finis','Lots Semi-finis'],
   ['epierrage','Épierrage'],['etuvage_paiements','Paiements étuvage'],
   ['docs_admin','Documents administratifs'],
@@ -3630,7 +3631,7 @@ const SECTION_GROUPS = [
   {group:'Stock', ids:['stock','mouvements','inventaire']},
   {group:'Commercial', ids:['commercial','reglements_clients','reglements_fourn','prestations']},
   {group:'Production', ids:['suivi_lot','lots','etuvage','decorticage','calibrage','tri_optique','conditionnement']},
-  {group:'Étuveuses', ids:['etv_repertoire','etv_avances','etv_bc','etv_br','etv_entrees','etv_sorties','etv_inventaire']},
+  {group:'Étuveuses', ids:['etv_repertoire','etv_avances','etv_bc','etv_br','etv_entrees','etv_sorties','etv_inventaire','etv_tresorerie']},
   {group:'Achats', ids:['achats','lots_semi_finis','epierrage','etuvage_paiements']},
   {group:'Documents', ids:['docs_admin']},
   {group:'Comptabilité', ids:['journal_caisse','journal_banque','journal_mobile']},
@@ -5364,6 +5365,278 @@ function EtvInventairePage({ companies, companyId, toast }) {
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+
+// ── TRÉSORERIE ÉTUVEUSES ──────────────────────────────────────────────────────
+function EtvTresoreriePage({ companies, companyId, toast }) {
+  const [etuveuses,  setEtuveuses]  = useState([])
+  const [avances,    setAvances]    = useState([])
+  const [entrees,    setEntrees]    = useState([])
+  const [sorties,    setSorties]    = useState([])
+  const [loading,    setLoading]    = useState(false)
+  const [filterEtv,  setFilterEtv]  = useState('')
+  const [selected,   setSelected]   = useState(null) // étuveuse sélectionnée pour détail
+
+  const loadAll = useCallback(async()=>{
+    setLoading(true)
+    try {
+      const sess = await supabase.auth.getSession()
+      if(!sess.data?.session) return
+      const uid = sess.data.session.user.id
+      const isAdmin = sess.data.session.user.email === SUPER_ADMIN_EMAIL
+      let ownerUid = uid
+      if(isAdmin && companyId){
+        const { data:comp } = await supabase.from('compta_companies').select('user_id').eq('id',companyId).single()
+        if(comp?.user_id) ownerUid = comp.user_id
+      }
+
+      const [resEtv, resAv, resEnt, resSor] = await Promise.all([
+        supabase.from('compta_etuveuses').select('id,code_etuveuse,nom_etuveuse,ifu').eq('user_id',ownerUid),
+        supabase.from('compta_avances_etuveuses').select('etuveuse_id,montant,montant_rembourse,date_avance,numero').eq('user_id',ownerUid),
+        supabase.from('compta_entrees_magasin').select('etuveuse_id,quantite_kg,prix_unitaire,montant,date_entree,numero_lot,variete').eq('user_id',ownerUid),
+        supabase.from('compta_sorties_magasin').select('etuveuse_id,quantite_kg,date_sortie,numero_lot').eq('user_id',ownerUid),
+      ])
+
+      setEtuveuses(resEtv.data||[])
+      setAvances(resAv.data||[])
+      setEntrees(resEnt.data||[])
+      setSorties(resSor.data||[])
+    } catch(e){ console.error(e) }
+    setLoading(false)
+  },[companyId])
+
+  useEffect(()=>{ loadAll() },[loadAll])
+
+  // Calcul trésorerie par étuveuse
+  const getTresorerie = (etvId) => {
+    const av    = avances.filter(a=>a.etuveuse_id===etvId)
+    const ent   = entrees.filter(e=>e.etuveuse_id===etvId)
+    const sor   = sorties.filter(s=>s.etuveuse_id===etvId)
+
+    const totalAvance     = av.reduce((s,a)=>s+(a.montant||0),0)
+    const totalRembourse  = av.reduce((s,a)=>s+(a.montant_rembourse||0),0)
+    const soldeAvance     = totalAvance - totalRembourse
+
+    const qteEntree       = ent.reduce((s,e)=>s+(e.quantite_kg||0),0)
+    const qteSortie       = sor.reduce((s,e)=>s+(e.quantite_kg||0),0)
+    const qteStock        = Math.max(0, qteEntree - qteSortie)
+
+    const valeurEntree    = ent.reduce((s,e)=>s+(e.montant||0),0)
+    const soldeDu         = Math.max(0, soldeAvance - valeurEntree)
+
+    return {
+      totalAvance, totalRembourse, soldeAvance,
+      qteEntree, qteSortie, qteStock,
+      valeurEntree, soldeDu,
+      avances: av, entrees: ent, sorties: sor,
+      // Situation : créditeur si livré > avance, débiteur sinon
+      situation: valeurEntree >= soldeAvance ? 'equilibre' : 'debiteur'
+    }
+  }
+
+  const filteredEtvs = filterEtv ? etuveuses.filter(e=>e.id===filterEtv) : etuveuses
+  const tresoGlobale = etuveuses.reduce((acc, e) => {
+    const t = getTresorerie(e.id)
+    acc.totalAvances    += t.totalAvance
+    acc.totalLivre      += t.valeurEntree
+    acc.totalSolde      += t.soldeDu
+    acc.totalStock      += t.qteStock
+    return acc
+  }, {totalAvances:0,totalLivre:0,totalSolde:0,totalStock:0})
+
+  const SITUATION_STYLE = {
+    equilibre: {bg:'#f0fdf4',c:'#16a34a',label:'✅ Équilibré'},
+    debiteur:  {bg:'#fef2f2',c:'#dc2626',label:'⚠️ Solde dû'},
+  }
+
+  const printTresorerie = () => {
+    const rows = filteredEtvs.map(e=>{
+      const t = getTresorerie(e.id)
+      return `<tr>
+        <td>${e.code_etuveuse||'—'}</td>
+        <td>${e.nom_etuveuse||'—'}</td>
+        <td class="r">${Math.round(t.totalAvance).toLocaleString('fr-FR')} FCFA</td>
+        <td class="r">${Math.round(t.valeurEntree).toLocaleString('fr-FR')} FCFA</td>
+        <td class="r">${t.qteEntree.toFixed(2)} kg</td>
+        <td class="r">${t.qteStock.toFixed(2)} kg</td>
+        <td class="r" style="font-weight:700;color:${t.soldeDu>0?'#dc2626':'#16a34a'}">${Math.round(t.soldeDu).toLocaleString('fr-FR')} FCFA</td>
+        <td>${t.soldeDu>0?'⚠️ Solde dû':'✅ Équilibré'}</td>
+      </tr>`
+    }).join('')
+    const html=`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Trésorerie Étuveuses</title>
+    <style>${CSS_PRINT}
+    .kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:20px}
+    .kpi{padding:12px;border-radius:8px;text-align:center}
+    </style></head><body>
+    <button class="print-btn" onclick="window.print()">🖨️ Imprimer</button>
+    <div class="header"><div><div class="company-name">SITUATION DE TRÉSORERIE</div></div>
+    <div class="doc-title"><h1>Étuveuses</h1><div class="doc-date">Au : ${new Date().toLocaleDateString('fr-FR')}</div></div></div>
+    <div class="kpi-grid">
+      <div class="kpi" style="background:#eff6ff"><div>Total Avances</div><div style="font-weight:800;font-size:13pt;color:#2563eb">${Math.round(tresoGlobale.totalAvances).toLocaleString('fr-FR')} FCFA</div></div>
+      <div class="kpi" style="background:#f0fdf4"><div>Total Livré</div><div style="font-weight:800;font-size:13pt;color:#16a34a">${Math.round(tresoGlobale.totalLivre).toLocaleString('fr-FR')} FCFA</div></div>
+      <div class="kpi" style="background:#fef2f2"><div>Solde Dû Total</div><div style="font-weight:800;font-size:13pt;color:#dc2626">${Math.round(tresoGlobale.totalSolde).toLocaleString('fr-FR')} FCFA</div></div>
+      <div class="kpi" style="background:#fef3c7"><div>Stock Total</div><div style="font-weight:800;font-size:13pt;color:#92400e">${tresoGlobale.totalStock.toFixed(2)} kg</div></div>
+    </div>
+    <table><thead><tr>
+      <th>Code</th><th>Étuveuse</th><th class="r">Avances</th><th class="r">Livré</th>
+      <th class="r">Qté livrée</th><th class="r">Stock</th><th class="r">Solde dû</th><th>Situation</th>
+    </tr></thead><tbody>${rows}</tbody></table>
+    </body></html>`
+    const w=window.open('','_blank'); w.document.write(html); w.document.close()
+  }
+
+  return (
+    <div>
+      <PageHeader title="Trésorerie Étuveuses"
+        subtitle="Situation financière par étuveuse (avances, livraisons, soldes)"
+        actions={<Btn variant="danger" onClick={printTresorerie}>🖨️ Imprimer</Btn>} />
+
+      {/* KPIs globaux */}
+      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(180px,1fr))',gap:12,marginBottom:20}}>
+        {[
+          {l:'Total Avances',    v:fcfa(tresoGlobale.totalAvances),  c:'#2563eb', bg:'#eff6ff', icon:'💰'},
+          {l:'Total Livré',      v:fcfa(tresoGlobale.totalLivre),    c:'#16a34a', bg:'#f0fdf4', icon:'📥'},
+          {l:'Solde Dû Total',   v:fcfa(tresoGlobale.totalSolde),    c:'#dc2626', bg:'#fef2f2', icon:'⚠️'},
+          {l:'Stock Total',      v:tresoGlobale.totalStock.toFixed(2)+' kg', c:'#92400e', bg:'#fef3c7', icon:'📦'},
+        ].map(s=>(
+          <Card key={s.l} style={{background:s.bg,border:'none'}}>
+            <div style={{fontSize:12,color:'#64748b',marginBottom:4}}>{s.icon} {s.l}</div>
+            <div style={{fontSize:16,fontWeight:800,color:s.c}}>{s.v}</div>
+          </Card>
+        ))}
+      </div>
+
+      {/* Filtre */}
+      <div style={{display:'flex',gap:12,marginBottom:16,alignItems:'center'}}>
+        <select value={filterEtv} onChange={e=>setFilterEtv(e.target.value)}
+          style={{padding:'9px 12px',borderRadius:8,border:'1px solid #e2e8f0',fontSize:13,background:'white',minWidth:240}}>
+          <option value=''>Toutes les étuveuses</option>
+          {etuveuses.map(e=><option key={e.id} value={e.id}>{e.code_etuveuse} — {e.nom_etuveuse||'—'}</option>)}
+        </select>
+        {filterEtv&&<button onClick={()=>setFilterEtv('')} style={{background:'#f1f5f9',border:'none',borderRadius:6,padding:'8px 14px',cursor:'pointer',fontSize:12,color:'#64748b'}}>✕ Réinitialiser</button>}
+      </div>
+
+      {loading ? (
+        <div style={{textAlign:'center',padding:48,color:'#64748b'}}>Chargement...</div>
+      ) : (
+        <div style={{display:'flex',flexDirection:'column',gap:16}}>
+          {filteredEtvs.map(e=>{
+            const t = getTresorerie(e.id)
+            const sit = SITUATION_STYLE[t.situation]
+            return (
+              <div key={e.id} style={{background:'white',borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
+                {/* En-tête étuveuse */}
+                <div style={{padding:'14px 20px',background:sit.bg,display:'flex',justifyContent:'space-between',alignItems:'center',cursor:'pointer'}}
+                  onClick={()=>setSelected(selected===e.id?null:e.id)}>
+                  <div>
+                    <span style={{fontWeight:800,fontSize:15,color:'#0f2044'}}>{e.code_etuveuse}</span>
+                    <span style={{marginLeft:10,fontSize:13,color:'#64748b'}}>{e.nom_etuveuse||'—'}</span>
+                    {e.ifu&&<span style={{marginLeft:8,fontSize:11,color:'#94a3b8'}}>IFU: {e.ifu}</span>}
+                  </div>
+                  <div style={{display:'flex',alignItems:'center',gap:12}}>
+                    <span style={{padding:'4px 12px',borderRadius:20,background:sit.bg,color:sit.c,fontSize:12,fontWeight:700,border:`1px solid ${sit.c}`}}>{sit.label}</span>
+                    <span style={{color:'#94a3b8',fontSize:16}}>{selected===e.id?'▲':'▼'}</span>
+                  </div>
+                </div>
+
+                {/* KPIs ligne */}
+                <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(150px,1fr))',gap:0,borderBottom:'1px solid #f1f5f9'}}>
+                  {[
+                    {l:'Avances reçues',    v:fcfa(t.totalAvance),    c:'#2563eb'},
+                    {l:'Remboursé',         v:fcfa(t.totalRembourse), c:'#16a34a'},
+                    {l:'Solde avances',     v:fcfa(t.soldeAvance),    c:t.soldeAvance>0?'#dc2626':'#16a34a'},
+                    {l:'Qté livrée',        v:t.qteEntree.toFixed(2)+' kg', c:'#0ea5e9'},
+                    {l:'En stock',          v:t.qteStock.toFixed(2)+' kg', c:'#f59e0b'},
+                    {l:'Valeur livrée',     v:fcfa(t.valeurEntree),   c:'#16a34a'},
+                    {l:'Solde dû',          v:fcfa(t.soldeDu),        c:t.soldeDu>0?'#dc2626':'#16a34a'},
+                  ].map(k=>(
+                    <div key={k.l} style={{padding:'12px 16px',borderRight:'1px solid #f1f5f9'}}>
+                      <div style={{fontSize:11,color:'#94a3b8',marginBottom:3}}>{k.l}</div>
+                      <div style={{fontSize:13,fontWeight:700,color:k.c}}>{k.v}</div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Détail expandable */}
+                {selected===e.id&&(
+                  <div style={{padding:16}}>
+                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:16}}>
+
+                      {/* Avances */}
+                      <div>
+                        <div style={{fontSize:12,fontWeight:700,color:'#0f2044',marginBottom:8,textTransform:'uppercase'}}>💰 Avances</div>
+                        {t.avances.length===0?<div style={{fontSize:12,color:'#94a3b8'}}>Aucune avance</div>:(
+                          t.avances.map((a,i)=>(
+                            <div key={i} style={{padding:'8px 10px',background:'#f8fafc',borderRadius:6,marginBottom:6,fontSize:12}}>
+                              <div style={{fontWeight:600}}>{a.numero||'—'} — {a.date_avance}</div>
+                              <div style={{display:'flex',justifyContent:'space-between',marginTop:3}}>
+                                <span style={{color:'#2563eb'}}>Avance: {fcfa(a.montant)}</span>
+                                <span style={{color:'#16a34a'}}>Remb.: {fcfa(a.montant_rembourse)}</span>
+                              </div>
+                            </div>
+                          ))
+                        )}
+                      </div>
+
+                      {/* Entrées */}
+                      <div>
+                        <div style={{fontSize:12,fontWeight:700,color:'#0f2044',marginBottom:8,textTransform:'uppercase'}}>📥 Livraisons en magasin</div>
+                        {t.entrees.length===0?<div style={{fontSize:12,color:'#94a3b8'}}>Aucune entrée</div>:(
+                          t.entrees.map((en,i)=>(
+                            <div key={i} style={{padding:'8px 10px',background:'#f8fafc',borderRadius:6,marginBottom:6,fontSize:12}}>
+                              <div style={{fontWeight:600}}>Lot {en.numero_lot||'—'} — {en.date_entree}</div>
+                              <div style={{display:'flex',justifyContent:'space-between',marginTop:3}}>
+                                <span style={{color:'#0ea5e9'}}>{(en.quantite_kg||0).toFixed(2)} kg</span>
+                                <span style={{color:'#16a34a'}}>{fcfa(en.montant)}</span>
+                              </div>
+                              {en.variete&&<div style={{color:'#94a3b8',marginTop:2}}>{en.variete}</div>}
+                            </div>
+                          ))
+                        )}
+                      </div>
+
+                      {/* Situation */}
+                      <div>
+                        <div style={{fontSize:12,fontWeight:700,color:'#0f2044',marginBottom:8,textTransform:'uppercase'}}>📊 Bilan</div>
+                        <div style={{background:t.soldeDu>0?'#fef2f2':'#f0fdf4',borderRadius:8,padding:16}}>
+                          <div style={{display:'grid',gap:8}}>
+                            {[
+                              ['Total avances',  fcfa(t.totalAvance),   '#2563eb'],
+                              ['Valeur livrée',  '− '+fcfa(t.valeurEntree), '#16a34a'],
+                            ].map(([l,v,c])=>(
+                              <div key={l} style={{display:'flex',justifyContent:'space-between',fontSize:13}}>
+                                <span style={{color:'#475569'}}>{l}</span>
+                                <span style={{fontWeight:700,color:c}}>{v}</span>
+                              </div>
+                            ))}
+                            <div style={{borderTop:'2px solid #e2e8f0',paddingTop:8,display:'flex',justifyContent:'space-between',fontSize:14}}>
+                              <span style={{fontWeight:700}}>Solde dû</span>
+                              <span style={{fontWeight:800,fontSize:15,color:t.soldeDu>0?'#dc2626':'#16a34a'}}>{fcfa(t.soldeDu)}</span>
+                            </div>
+                            <div style={{marginTop:4,display:'flex',justifyContent:'space-between',fontSize:12}}>
+                              <span style={{color:'#64748b'}}>Stock en magasin</span>
+                              <span style={{fontWeight:700,color:'#f59e0b'}}>{t.qteStock.toFixed(2)} kg</span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )
+          })}
+          {filteredEtvs.length===0&&(
+            <div style={{textAlign:'center',padding:'64px 24px',background:'white',borderRadius:12,border:'1px solid #e2e8f0',color:'#64748b'}}>
+              <div style={{fontSize:40,marginBottom:8}}>💼</div>
+              <p>Aucune étuveuse trouvée</p>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
@@ -7586,7 +7859,7 @@ export default function ComptaPro() {
     tri_optique:'Tri Optique', conditionnement:'Conditionnement',
     etv_repertoire:'Répertoire Étuveuses', etv_avances:'Avances sur Commande',
     etv_bc:'Bons de Commande', etv_br:'Bons de Réception',
-    etv_entrees:'Entrées Magasin', etv_sorties:'Sorties Magasin', etv_inventaire:'Inventaire Étuveuses',
+    etv_entrees:'Entrées Magasin', etv_sorties:'Sorties Magasin', etv_inventaire:'Inventaire Étuveuses', etv_tresorerie:'Trésorerie Étuveuses',
     achats:'Achats Semi-finis', lots_semi_finis:'Lots Semi-finis', epierrage:'Épierrage', reglements_clients:'Règlements Clients', reglements_fourn:'Règlements Fournisseurs', etuvage_paiements:'Paiements Étuvage',
     docs_admin:'Documents administratifs', parametres:'Paramètres',
     prestations:'Prestations', journal_caisse:'Journal Caisse', journal_banque:'Journal Banque',
@@ -7636,6 +7909,7 @@ export default function ComptaPro() {
       case 'etv_entrees':     return <EtvEntreesPage {...sp} />
       case 'etv_sorties':     return <EtvSortiesPage {...sp} />
       case 'etv_inventaire':  return <EtvInventairePage {...sp} />
+      case 'etv_tresorerie':  return <EtvTresoreriePage {...sp} />
       case 'achats':          return <AchatsSemisPage {...sp} />
       case 'lots_semi_finis': return <LotsSemiFinisPage {...sp} />
       case 'epierrage':      return <EpierragePage {...sp} lots={lots} />
