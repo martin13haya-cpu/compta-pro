@@ -4748,15 +4748,15 @@ function ExpressionBesoinPage({ companies, companyId, toast, readOnly=false, pro
 
 // ── GESTION BUDGET ────────────────────────────────────────────────────────────
 function ReglementsPage({ companies, companyId, toast, readOnly=false }) {
-  const [items, setItems]   = useState([])
-  const [modal, setModal]   = useState(false)
-  const [form,  setForm]    = useState({})
-  const [saving,setSaving]  = useState(false)
-  const [dateFrom, setDateFrom] = useState('')
-  const [dateTo,   setDateTo]   = useState('')
+  const [items,    setItems]   = useState([])
+  const [modal,    setModal]   = useState(false)
+  const [form,     setForm]    = useState({})
+  const [saving,   setSaving]  = useState(false)
+  const [dateFrom, setDateFrom]= useState('')
+  const [dateTo,   setDateTo]  = useState('')
+  const [factures, setFactures]= useState([]) // liste des factures disponibles
 
   const load = useCallback(async()=>{
-    const uid = (await supabase.auth.getUser()).data?.user?.id
     const { data:adnts } = await supabase.auth.getUser(); const uidnts=adnts?.user?.id; const isAdmnts=adnts?.user?.email===SUPER_ADMIN_EMAIL
     let q = supabase.from('compta_reglements').select('*,compta_companies(raison_sociale)').order('date_paiement',{ascending:false})
     q = isAdmnts&&companyId ? q.eq('company_id',companyId) : q.eq('user_id',uidnts); if(companyId&&!isAdmnts) q=q.eq('company_id',companyId)
@@ -4765,13 +4765,48 @@ function ReglementsPage({ companies, companyId, toast, readOnly=false }) {
     const { data } = await q; setItems(data||[])
   },[companyId,dateFrom,dateTo])
 
+  // Charger les factures depuis compta_documents (proformas, factures, BL)
+  const loadFactures = useCallback(async()=>{
+    const { data:ad } = await supabase.auth.getUser(); const uid=ad?.user?.id; const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
+    let q = supabase.from('compta_documents')
+      .select('id,numero,type_doc,nom_client,provenance,acheteur,nature_produit,total_ttc,created_at')
+      .in('type_doc',['facture','proforma','bon_livraison'])
+      .order('created_at',{ascending:false})
+    if(isAdmin&&companyId) q=q.eq('company_id',companyId)
+    else if(companyId) q=q.eq('user_id',uid).eq('company_id',companyId)
+    else q=q.eq('user_id',uid)
+    const { data } = await q; setFactures(data||[])
+  },[companyId])
+
   useEffect(()=>{ load() },[load])
+  useEffect(()=>{ loadFactures() },[loadFactures])
 
   const total = items.reduce((s,r)=>s+(r.montant_paye||0),0)
   const set = e=>setForm(f=>({...f,[e.target.name]:e.target.value}))
   const companyNameR = companies.find(c=>c.id===companyId)?.raison_sociale||''
 
-  const openAdd = ()=>{ setForm({company_id:companyId||companies[0]?.id||'',numero_facture:'',date_paiement:today(),entite:'',tiers_type:'client',tiers_nom:'',provenance:'',acheteur_vendeur:'',nature_produit:'',montant_paye:0,solde:0,mode_paiement:'espèce',reference_paiement:'',notes:''}); setModal(true) }
+  // Quand une facture est sélectionnée → auto-remplir les champs
+  const onSelectFacture = (numeroFact) => {
+    const fac = factures.find(f=>f.numero===numeroFact)
+    if (!fac) {
+      setForm(f=>({...f, numero_facture:numeroFact}))
+      return
+    }
+    setForm(f=>({
+      ...f,
+      numero_facture: fac.numero,
+      tiers_nom:      fac.nom_client||'',
+      provenance:     fac.provenance||'',
+      acheteur_vendeur: fac.acheteur||'',
+      nature_produit: fac.nature_produit||'',
+      tiers_type:     'client',
+    }))
+  }
+
+  const openAdd = ()=>{
+    setForm({company_id:companyId||companies[0]?.id||'',numero_facture:'',date_paiement:today(),entite:'',tiers_type:'client',tiers_nom:'',provenance:'',acheteur_vendeur:'',nature_produit:'',montant_paye:0,solde:0,mode_paiement:'espèce',reference_paiement:'',notes:''})
+    setModal(true)
+  }
   const close = ()=>setModal(false)
 
   const save = async e=>{
@@ -4832,21 +4867,81 @@ function ReglementsPage({ companies, companyId, toast, readOnly=false }) {
       <Modal open={modal} onClose={close} title="Nouveau Règlement" size="xl">
         <form onSubmit={save}>
           <Grid cols={3} gap={14} style={{marginBottom:16}}>
-            <Input label="N° Facture" name="numero_facture" value={form.numero_facture} onChange={set} />
-            <Input label="Date *" name="date_paiement" type="date" value={form.date_paiement} onChange={set} required />
-            <Input label="Entité" name="entite" value={form.entite} onChange={set} />
-            <Sel label="Type tiers" name="tiers_type" value={form.tiers_type} onChange={set}
+
+            {/* N° Facture — liste déroulante des factures enregistrées */}
+            <div>
+              <label style={{display:'block',fontSize:12.5,fontWeight:600,color:'#374151',marginBottom:5}}>
+                N° Facture <span style={{fontSize:10,color:'#94a3b8'}}>(sélectionner ou saisir)</span>
+              </label>
+              <select value={form.numero_facture||''} onChange={e=>onSelectFacture(e.target.value)}
+                style={{width:'100%',padding:'9px 12px',borderRadius:8,border:'1.5px solid #e2e8f0',fontSize:13,background:'white',cursor:'pointer'}}>
+                <option value=''>— Saisir manuellement —</option>
+                {factures.map(f=>(
+                  <option key={f.id} value={f.numero}>
+                    {f.numero} · {f.type_doc?.toUpperCase()} · {f.nom_client||'?'}
+                  </option>
+                ))}
+              </select>
+              {/* Champ manuel si rien sélectionné */}
+              {!factures.find(f=>f.numero===form.numero_facture) && (
+                <input value={form.numero_facture||''} onChange={e=>setForm(f=>({...f,numero_facture:e.target.value}))}
+                  placeholder="ex: FACT-2026-0001"
+                  style={{width:'100%',marginTop:6,padding:'8px 12px',borderRadius:8,border:'1.5px solid #e2e8f0',fontSize:13,boxSizing:'border-box'}} />
+              )}
+            </div>
+
+            <Input label="Date *" name="date_paiement" type="date" value={form.date_paiement||''} onChange={set} required />
+            <Input label="Entité" name="entite" value={form.entite||''} onChange={set} />
+            <Sel label="Type tiers" name="tiers_type" value={form.tiers_type||'client'} onChange={set}
               options={[{value:'client',label:'Client'},{value:'fournisseur',label:'Fournisseur'}]} />
-            <Input label="Nom du tiers" name="tiers_nom" value={form.tiers_nom} onChange={set} />
-            <Input label="Provenance" name="provenance" value={form.provenance} onChange={set} />
-            <Input label="Acheteur / Vendeur" name="acheteur_vendeur" value={form.acheteur_vendeur} onChange={set} />
-            <Input label="Nature du produit" name="nature_produit" value={form.nature_produit} onChange={set} />
-            <Input label="Montant payé (FCFA) *" name="montant_paye" type="number" value={form.montant_paye} onChange={set} required min="0" />
-            <Input label="Solde restant (FCFA)" name="solde" type="number" value={form.solde} onChange={set} min="0" />
-            <Sel label="Mode de paiement" name="mode_paiement" value={form.mode_paiement} onChange={set}
+
+            {/* Champs auto-remplis depuis la facture — fond coloré si rempli auto */}
+            <div>
+              <label style={{display:'block',fontSize:12.5,fontWeight:600,color:'#374151',marginBottom:5}}>
+                Nom du tiers
+                {form.tiers_nom && factures.find(f=>f.numero===form.numero_facture) &&
+                  <span style={{marginLeft:6,fontSize:10,color:'#16a34a',fontWeight:700}}>✅ auto</span>}
+              </label>
+              <input name="tiers_nom" value={form.tiers_nom||''} onChange={set}
+                style={{width:'100%',padding:'9px 12px',borderRadius:8,border:'1.5px solid '+(form.tiers_nom&&factures.find(f=>f.numero===form.numero_facture)?'#bbf7d0':'#e2e8f0'),fontSize:13,background:form.tiers_nom&&factures.find(f=>f.numero===form.numero_facture)?'#f0fdf4':'white',boxSizing:'border-box'}} />
+            </div>
+
+            <div>
+              <label style={{display:'block',fontSize:12.5,fontWeight:600,color:'#374151',marginBottom:5}}>
+                Provenance
+                {form.provenance && factures.find(f=>f.numero===form.numero_facture) &&
+                  <span style={{marginLeft:6,fontSize:10,color:'#16a34a',fontWeight:700}}>✅ auto</span>}
+              </label>
+              <input name="provenance" value={form.provenance||''} onChange={set}
+                style={{width:'100%',padding:'9px 12px',borderRadius:8,border:'1.5px solid '+(form.provenance&&factures.find(f=>f.numero===form.numero_facture)?'#bbf7d0':'#e2e8f0'),fontSize:13,background:form.provenance&&factures.find(f=>f.numero===form.numero_facture)?'#f0fdf4':'white',boxSizing:'border-box'}} />
+            </div>
+
+            <div>
+              <label style={{display:'block',fontSize:12.5,fontWeight:600,color:'#374151',marginBottom:5}}>
+                Acheteur / Vendeur
+                {form.acheteur_vendeur && factures.find(f=>f.numero===form.numero_facture) &&
+                  <span style={{marginLeft:6,fontSize:10,color:'#16a34a',fontWeight:700}}>✅ auto</span>}
+              </label>
+              <input name="acheteur_vendeur" value={form.acheteur_vendeur||''} onChange={set}
+                style={{width:'100%',padding:'9px 12px',borderRadius:8,border:'1.5px solid '+(form.acheteur_vendeur&&factures.find(f=>f.numero===form.numero_facture)?'#bbf7d0':'#e2e8f0'),fontSize:13,background:form.acheteur_vendeur&&factures.find(f=>f.numero===form.numero_facture)?'#f0fdf4':'white',boxSizing:'border-box'}} />
+            </div>
+
+            <div>
+              <label style={{display:'block',fontSize:12.5,fontWeight:600,color:'#374151',marginBottom:5}}>
+                Nature du produit
+                {form.nature_produit && factures.find(f=>f.numero===form.numero_facture) &&
+                  <span style={{marginLeft:6,fontSize:10,color:'#16a34a',fontWeight:700}}>✅ auto</span>}
+              </label>
+              <input name="nature_produit" value={form.nature_produit||''} onChange={set}
+                style={{width:'100%',padding:'9px 12px',borderRadius:8,border:'1.5px solid '+(form.nature_produit&&factures.find(f=>f.numero===form.numero_facture)?'#bbf7d0':'#e2e8f0'),fontSize:13,background:form.nature_produit&&factures.find(f=>f.numero===form.numero_facture)?'#f0fdf4':'white',boxSizing:'border-box'}} />
+            </div>
+
+            <Input label="Montant payé (FCFA) *" name="montant_paye" type="number" value={form.montant_paye||0} onChange={set} required min="0" />
+            <Input label="Solde restant (FCFA)" name="solde" type="number" value={form.solde||0} onChange={set} min="0" />
+            <Sel label="Mode de paiement" name="mode_paiement" value={form.mode_paiement||'espèce'} onChange={set}
               options={['espèce','virement','mobile_money','chèque','autre'].map(m=>({value:m,label:m.charAt(0).toUpperCase()+m.slice(1)}))} />
-            <Input label="Référence de paiement" name="reference_paiement" value={form.reference_paiement} onChange={set} />
-            <Input label="Notes" name="notes" value={form.notes} onChange={set} />
+            <Input label="Référence de paiement" name="reference_paiement" value={form.reference_paiement||''} onChange={set} />
+            <Input label="Notes" name="notes" value={form.notes||''} onChange={set} />
           </Grid>
           <Row><Btn variant="secondary" onClick={close}>Annuler</Btn><Btn type="submit" disabled={saving}>{saving?'...':'Enregistrer'}</Btn></Row>
         </form>
