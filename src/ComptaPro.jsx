@@ -4782,7 +4782,7 @@ function ReglementsPage({ companies, companyId, toast, readOnly=false, mode='cli
     const { data:ad }=await supabase.auth.getUser()
     const uid=ad?.user?.id; const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
     let q = supabase.from('compta_documents')
-      .select('id,numero,type_doc,nom_client,provenance,acheteur,nature_produit,total_ttc,statut')
+      .select('id,numero,type_doc,statut,montant_ttc,client_id,compta_clients(nom,prenom,nom_societe,type)')
       .order('created_at',{ascending:false})
     if(isAdmin&&companyId) q=q.eq('company_id',companyId)
     else if(companyId) q=q.eq('user_id',uid).eq('company_id',companyId)
@@ -4798,15 +4798,21 @@ function ReglementsPage({ companies, companyId, toast, readOnly=false, mode='cli
   const companyNameR = companies.find(c=>c.id===companyId)?.raison_sociale||''
 
   // Auto-remplissage depuis facture sélectionnée
+  const getClientName = (fac) => {
+    const c = fac.compta_clients
+    if(!c) return ''
+    return c.type==='morale' ? (c.nom_societe||'') : `${c.nom||''} ${c.prenom||''}`.trim()
+  }
+
   const onSelectFacture = (num) => {
     const fac = factures.find(f=>f.numero===num)
     if(!fac){ setForm(f=>({...f,numero_facture:num})); return }
     setForm(f=>({...f,
       numero_facture:   fac.numero,
-      tiers_nom:        fac.nom_client||'',
-      provenance:       fac.provenance||'',
-      acheteur_vendeur: fac.acheteur||'',
-      nature_produit:   fac.nature_produit||'',
+      tiers_nom:        getClientName(fac),
+      provenance:       '',
+      acheteur_vendeur: '',
+      nature_produit:   '',
     }))
   }
 
@@ -4910,7 +4916,7 @@ function ReglementsPage({ companies, companyId, toast, readOnly=false, mode='cli
                     <option value=''>— Sélectionner une facture —</option>
                     {factures.map(f=>(
                       <option key={f.id} value={f.numero}>
-                        {f.numero} · {(f.type_doc||'').toUpperCase()} · {f.nom_client||'?'}
+                        {f.numero} · {(f.type_doc||'').toUpperCase()} · {f.compta_clients?.type==='morale'?f.compta_clients?.nom_societe:`${f.compta_clients?.nom||''} ${f.compta_clients?.prenom||''}`.trim()||'?'}
                       </option>
                     ))}
                   </select>
