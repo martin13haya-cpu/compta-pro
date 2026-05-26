@@ -1149,7 +1149,8 @@ const NAV = [
   { id:'inventaire',         icon:'📋', label:'Inventaire' },
   { section:'Commercial' },
   { id:'commercial',         icon:'📄', label:'Documents' },
-  { id:'reglements',         icon:'💳', label:'Règlements' },
+  { id:'reglements_clients',   icon:'💳', label:'Règlements Clients' },
+  { id:'reglements_fourn',     icon:'💸', label:'Règlements Fournisseurs' },
   { id:'prestations',        icon:'🛠️',  label:'Prestations' },
   { section:'Production' },
   { id:'suivi_lot',          icon:'🔎', label:'Suivi de lot' },
@@ -3602,7 +3603,7 @@ function LotsSemiFinisPage({ companies, companyId, toast, readOnly=false }) {
 const ALL_SECTIONS = [
   ['dashboard','Tableau de bord'],['companies','Sociétés'],['clients','Clients'],
   ['fournisseurs','Fournisseurs'],['stock','Articles & Stock'],['mouvements','Mouvements'],
-  ['inventaire','Inventaire'],['commercial','Documents commerciaux'],['reglements','Règlements'],
+  ['inventaire','Inventaire'],['commercial','Documents commerciaux'],['reglements_clients','Règlements Clients'],['reglements_fourn','Règlements Fournisseurs'],
   ['prestations','Prestations'],['suivi_lot','Suivi de lot'],['lots','Lots Production'],
   ['etuvage','Étuvage'],['decorticage','Décorticage'],['calibrage','Calibrage'],
   ['tri_optique','Tri optique'],['conditionnement','Conditionnement'],
@@ -3616,7 +3617,7 @@ const ALL_SECTIONS = [
 const SECTION_GROUPS = [
   {group:'Référentiel', ids:['companies','clients','fournisseurs']},
   {group:'Stock', ids:['stock','mouvements','inventaire']},
-  {group:'Commercial', ids:['commercial','reglements','prestations']},
+  {group:'Commercial', ids:['commercial','reglements_clients','reglements_fourn','prestations']},
   {group:'Production', ids:['suivi_lot','lots','etuvage','decorticage','calibrage','tri_optique','conditionnement']},
   {group:'Achats', ids:['achats','lots_semi_finis','epierrage','etuvage_paiements']},
   {group:'Documents', ids:['docs_admin']},
@@ -4747,36 +4748,48 @@ function ExpressionBesoinPage({ companies, companyId, toast, readOnly=false, pro
 }
 
 // ── GESTION BUDGET ────────────────────────────────────────────────────────────
-function ReglementsPage({ companies, companyId, toast, readOnly=false }) {
+function ReglementsPage({ companies, companyId, toast, readOnly=false, mode='clients' }) {
+  const isClients = mode==='clients'
+  const title     = isClients ? 'Règlements Clients' : 'Règlements Fournisseurs'
+  const filterKey = isClients ? 'client' : 'fournisseur'
+
   const [items,    setItems]   = useState([])
   const [modal,    setModal]   = useState(false)
   const [form,     setForm]    = useState({})
   const [saving,   setSaving]  = useState(false)
   const [dateFrom, setDateFrom]= useState('')
   const [dateTo,   setDateTo]  = useState('')
-  const [factures, setFactures]= useState([]) // liste des factures disponibles
+  const [factures, setFactures]= useState([])
 
   const load = useCallback(async()=>{
-    const { data:adnts } = await supabase.auth.getUser(); const uidnts=adnts?.user?.id; const isAdmnts=adnts?.user?.email===SUPER_ADMIN_EMAIL
-    let q = supabase.from('compta_reglements').select('*,compta_companies(raison_sociale)').order('date_paiement',{ascending:false})
-    q = isAdmnts&&companyId ? q.eq('company_id',companyId) : q.eq('user_id',uidnts); if(companyId&&!isAdmnts) q=q.eq('company_id',companyId)
-    if (dateFrom)  q=q.gte('date_paiement',dateFrom)
-    if (dateTo)    q=q.lte('date_paiement',dateTo)
-    const { data } = await q; setItems(data||[])
-  },[companyId,dateFrom,dateTo])
+    const { data:ad } = await supabase.auth.getUser()
+    const uid=ad?.user?.id; const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
+    let q = supabase.from('compta_reglements')
+      .select('*,compta_companies(raison_sociale)')
+      .eq('tiers_type', filterKey)
+      .order('date_paiement',{ascending:false})
+    if(isAdmin&&companyId) q=q.eq('company_id',companyId)
+    else if(companyId) q=q.eq('user_id',uid).eq('company_id',companyId)
+    else q=q.eq('user_id',uid)
+    if(dateFrom) q=q.gte('date_paiement',dateFrom)
+    if(dateTo)   q=q.lte('date_paiement',dateTo)
+    const { data }=await q; setItems(data||[])
+  },[companyId,dateFrom,dateTo,filterKey])
 
-  // Charger les factures depuis compta_documents (proformas, factures, BL)
+  // Charger factures livrées (clients uniquement)
   const loadFactures = useCallback(async()=>{
-    const { data:ad } = await supabase.auth.getUser(); const uid=ad?.user?.id; const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
+    if(!isClients) return
+    const { data:ad }=await supabase.auth.getUser()
+    const uid=ad?.user?.id; const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
     let q = supabase.from('compta_documents')
-      .select('id,numero,type_doc,nom_client,provenance,acheteur,nature_produit,total_ttc,created_at')
-      .in('type_doc',['facture','proforma','bon_livraison'])
+      .select('id,numero,type_doc,nom_client,provenance,acheteur,nature_produit,total_ttc')
+      .in('type_doc',['facture','bon_livraison'])
       .order('created_at',{ascending:false})
     if(isAdmin&&companyId) q=q.eq('company_id',companyId)
     else if(companyId) q=q.eq('user_id',uid).eq('company_id',companyId)
     else q=q.eq('user_id',uid)
-    const { data } = await q; setFactures(data||[])
-  },[companyId])
+    const { data }=await q; setFactures(data||[])
+  },[companyId,isClients])
 
   useEffect(()=>{ load() },[load])
   useEffect(()=>{ loadFactures() },[loadFactures])
@@ -4785,50 +4798,63 @@ function ReglementsPage({ companies, companyId, toast, readOnly=false }) {
   const set = e=>setForm(f=>({...f,[e.target.name]:e.target.value}))
   const companyNameR = companies.find(c=>c.id===companyId)?.raison_sociale||''
 
-  // Quand une facture est sélectionnée → auto-remplir les champs
-  const onSelectFacture = (numeroFact) => {
-    const fac = factures.find(f=>f.numero===numeroFact)
-    if (!fac) {
-      setForm(f=>({...f, numero_facture:numeroFact}))
-      return
-    }
-    setForm(f=>({
-      ...f,
-      numero_facture: fac.numero,
-      tiers_nom:      fac.nom_client||'',
-      provenance:     fac.provenance||'',
+  // Auto-remplissage depuis facture sélectionnée
+  const onSelectFacture = (num) => {
+    const fac = factures.find(f=>f.numero===num)
+    if(!fac){ setForm(f=>({...f,numero_facture:num})); return }
+    setForm(f=>({...f,
+      numero_facture:   fac.numero,
+      tiers_nom:        fac.nom_client||'',
+      provenance:       fac.provenance||'',
       acheteur_vendeur: fac.acheteur||'',
-      nature_produit: fac.nature_produit||'',
-      tiers_type:     'client',
+      nature_produit:   fac.nature_produit||'',
     }))
   }
 
-  const openAdd = ()=>{
-    setForm({company_id:companyId||companies[0]?.id||'',numero_facture:'',date_paiement:today(),entite:'',tiers_type:'client',tiers_nom:'',provenance:'',acheteur_vendeur:'',nature_produit:'',montant_paye:0,solde:0,mode_paiement:'espèce',reference_paiement:'',notes:''})
-    setModal(true)
+  const emptyForm = {
+    company_id:companyId||companies[0]?.id||'',
+    numero_facture:'', date_paiement:today(),
+    tiers_type: filterKey, tiers_nom:'', provenance:'',
+    acheteur_vendeur:'', nature_produit:'',
+    montant_paye:0, solde:0,
+    mode_paiement:'espèce', reference_paiement:'', notes:''
   }
-  const close = ()=>setModal(false)
+
+  const openAdd = ()=>{ setForm(emptyForm); setModal(true) }
+  const close   = ()=>setModal(false)
 
   const save = async e=>{
     e.preventDefault(); setSaving(true)
-    const uid = (await supabase.auth.getUser()).data?.user?.id
-    const { company_id,numero_facture,date_paiement,entite,tiers_type,tiers_nom,provenance,acheteur_vendeur,nature_produit,montant_paye,solde,mode_paiement,reference_paiement,notes } = form
-    const { error } = await supabase.from('compta_reglements').insert({ company_id,user_id:uid,numero_facture,date_paiement,entite,tiers_type,tiers_nom,provenance,acheteur_vendeur,nature_produit,montant_paye:+montant_paye,solde:+solde,mode_paiement,reference_paiement,notes })
+    const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
+    const { company_id,numero_facture,date_paiement,tiers_type,tiers_nom,provenance,acheteur_vendeur,nature_produit,montant_paye,solde,mode_paiement,reference_paiement,notes } = form
+    const { error }=await supabase.from('compta_reglements').insert({
+      company_id,user_id:uid,numero_facture,date_paiement,
+      tiers_type:filterKey, tiers_nom,provenance,acheteur_vendeur,nature_produit,
+      montant_paye:+montant_paye,solde:+solde,mode_paiement,reference_paiement,notes
+    })
     setSaving(false)
-    if (error) { toast.error(error.message); return }
+    if(error){ toast.error(error.message); return }
     toast.success('Règlement enregistré !'); close(); load()
   }
 
   const printFilteredR = () => {
-    const headers = [{label:'N° Fact.'},{label:'Date'},{label:'Entité'},{label:'Type'},{label:'Tiers'},{label:'Provenance'},{label:'Produit'},{label:'Mode'},{label:'Montant payé',r:true},{label:'Solde',r:true}]
-    const rows = items.map(r=>[r.numero_facture||'—',r.date_paiement,r.entite||'—',r.tiers_type==='client'?'Client':'Fourn.',r.tiers_nom||'—',r.provenance||'—',r.nature_produit||'—',r.mode_paiement||'—',Math.round(r.montant_paye||0).toLocaleString('fr-FR')+' FCFA',Math.round(r.solde||0).toLocaleString('fr-FR')+' FCFA'])
-    printFilteredList({ title:'Règlements Clients / Fournisseurs', companyName:companyNameR, headers, rows, dateFrom, dateTo,
+    const headers = [{label:'N° Fact.'},{label:'Date'},{label:isClients?'Client':'Fournisseur'},{label:'Provenance'},{label:'Produit'},{label:'Mode'},{label:'Montant payé',r:true},{label:'Solde',r:true}]
+    const rows = items.map(r=>[r.numero_facture||'—',r.date_paiement,r.tiers_nom||'—',r.provenance||'—',r.nature_produit||'—',r.mode_paiement||'—',Math.round(r.montant_paye||0).toLocaleString('fr-FR')+' FCFA',Math.round(r.solde||0).toLocaleString('fr-FR')+' FCFA'])
+    printFilteredList({ title, companyName:companyNameR, headers, rows, dateFrom, dateTo,
       totals:[{label:'Total payé', value:Math.round(total).toLocaleString('fr-FR')+' FCFA'}]})
   }
 
+  // Vérifie si champ vient d'une facture sélectionnée
+  const autoFilled = (field) => isClients && form[field] && factures.find(f=>f.numero===form.numero_facture)
+  const autoStyle  = (field) => ({
+    width:'100%', padding:'9px 12px', borderRadius:8, fontSize:13, boxSizing:'border-box',
+    border:'1.5px solid '+(autoFilled(field)?'#bbf7d0':'#e2e8f0'),
+    background: autoFilled(field)?'#f0fdf4':'white'
+  })
+
   return (
     <div>
-      <PageHeader title="Règlements Clients / Fournisseurs"
+      <PageHeader title={title}
         subtitle={`${items.length} règlement(s) — Total payé : ${fcfa(total)}`}
         actions={<>
           <Btn sm variant="danger" onClick={printFilteredR}>🖨️ PDF liste</Btn>
@@ -4837,22 +4863,26 @@ function ReglementsPage({ companies, companyId, toast, readOnly=false }) {
       <PeriodFilter dateFrom={dateFrom} dateTo={dateTo} onFrom={setDateFrom} onTo={setDateTo} onReset={()=>{setDateFrom('');setDateTo('')}} />
       <div style={{background:'white',borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
         {items.length===0 ? (
-          <div style={{textAlign:'center',padding:'48px 24px',color:'#64748b'}}>💳 Aucun règlement enregistré</div>
+          <div style={{textAlign:'center',padding:'48px 24px',color:'#64748b'}}>
+            {isClients?'💳':'💸'} Aucun règlement {isClients?'client':'fournisseur'} enregistré
+          </div>
         ) : (
           <div style={{overflowX:'auto',WebkitOverflowScrolling:'touch'}}>
             <table style={{width:'100%',borderCollapse:'collapse',minWidth:600}}>
             <thead><tr>
-              <TH>N° Fact.</TH><TH>Date</TH><TH>Entité</TH><TH>Type</TH>
-              <TH>Tiers</TH><TH>Provenance</TH><TH>Produit</TH>
+              <TH>N° Fact.</TH><TH>Date</TH>
+              <TH>{isClients?'Client':'Fournisseur'}</TH>
+              <TH>Provenance</TH><TH>Produit</TH>
               <TH right>Montant payé</TH><TH right>Solde</TH><TH>Mode</TH><TH>PDF</TH>
             </tr></thead>
             <tbody>
               {items.map(r=>(
                 <TR key={r.id}>
-                  <TD bold sm>{r.numero_facture||'—'}</TD><TD sm>{r.date_paiement}</TD>
-                  <TD sm>{r.entite||'—'}</TD>
-                  <TD><Badge type={r.tiers_type==='client'?'success':'warning'}>{r.tiers_type==='client'?'Client':'Fourn.'}</Badge></TD>
-                  <TD sm>{r.tiers_nom||'—'}</TD><TD sm>{r.provenance||'—'}</TD><TD sm>{r.nature_produit||'—'}</TD>
+                  <TD bold sm>{r.numero_facture||'—'}</TD>
+                  <TD sm>{r.date_paiement}</TD>
+                  <TD sm>{r.tiers_nom||'—'}</TD>
+                  <TD sm>{r.provenance||'—'}</TD>
+                  <TD sm>{r.nature_produit||'—'}</TD>
                   <TD right color="#16a34a" bold>{fcfa(r.montant_paye)}</TD>
                   <TD right color={(r.solde||0)>0?'#dc2626':'#16a34a'}>{fcfa(r.solde)}</TD>
                   <TD sm>{r.mode_paiement||'—'}</TD>
@@ -4864,76 +4894,73 @@ function ReglementsPage({ companies, companyId, toast, readOnly=false }) {
           </div>
         )}
       </div>
-      <Modal open={modal} onClose={close} title="Nouveau Règlement" size="xl">
+
+      <Modal open={modal} onClose={close} title={`Nouveau Règlement ${isClients?'Client':'Fournisseur'}`} size="xl">
         <form onSubmit={save}>
           <Grid cols={3} gap={14} style={{marginBottom:16}}>
 
-            {/* N° Facture — liste déroulante des factures enregistrées */}
-            <div>
+            {/* N° Facture */}
+            <div style={{gridColumn:'1/2'}}>
               <label style={{display:'block',fontSize:12.5,fontWeight:600,color:'#374151',marginBottom:5}}>
-                N° Facture <span style={{fontSize:10,color:'#94a3b8'}}>(sélectionner ou saisir)</span>
+                N° Facture {isClients&&<span style={{fontSize:10,color:'#94a3b8'}}>(depuis les factures livrées)</span>}
               </label>
-              <select value={form.numero_facture||''} onChange={e=>onSelectFacture(e.target.value)}
-                style={{width:'100%',padding:'9px 12px',borderRadius:8,border:'1.5px solid #e2e8f0',fontSize:13,background:'white',cursor:'pointer'}}>
-                <option value=''>— Saisir manuellement —</option>
-                {factures.map(f=>(
-                  <option key={f.id} value={f.numero}>
-                    {f.numero} · {f.type_doc?.toUpperCase()} · {f.nom_client||'?'}
-                  </option>
-                ))}
-              </select>
-              {/* Champ manuel si rien sélectionné */}
-              {!factures.find(f=>f.numero===form.numero_facture) && (
+              {isClients ? (
+                <>
+                  <select value={form.numero_facture||''} onChange={e=>onSelectFacture(e.target.value)}
+                    style={{width:'100%',padding:'9px 12px',borderRadius:8,border:'1.5px solid #e2e8f0',fontSize:13,background:'white',cursor:'pointer'}}>
+                    <option value=''>— Sélectionner une facture —</option>
+                    {factures.map(f=>(
+                      <option key={f.id} value={f.numero}>
+                        {f.numero} · {(f.type_doc||'').toUpperCase()} · {f.nom_client||'?'}
+                      </option>
+                    ))}
+                  </select>
+                  {factures.length===0&&<div style={{fontSize:11,color:'#f59e0b',marginTop:4}}>⚠️ Aucune facture livrée trouvée — vérifiez les Documents commerciaux</div>}
+                </>
+              ) : (
                 <input value={form.numero_facture||''} onChange={e=>setForm(f=>({...f,numero_facture:e.target.value}))}
                   placeholder="ex: FACT-2026-0001"
-                  style={{width:'100%',marginTop:6,padding:'8px 12px',borderRadius:8,border:'1.5px solid #e2e8f0',fontSize:13,boxSizing:'border-box'}} />
+                  style={{width:'100%',padding:'9px 12px',borderRadius:8,border:'1.5px solid #e2e8f0',fontSize:13,boxSizing:'border-box'}} />
               )}
             </div>
 
             <Input label="Date *" name="date_paiement" type="date" value={form.date_paiement||''} onChange={set} required />
-            <Input label="Entité" name="entite" value={form.entite||''} onChange={set} />
-            <Sel label="Type tiers" name="tiers_type" value={form.tiers_type||'client'} onChange={set}
-              options={[{value:'client',label:'Client'},{value:'fournisseur',label:'Fournisseur'}]} />
+            <div /> {/* spacer */}
 
-            {/* Champs auto-remplis depuis la facture — fond coloré si rempli auto */}
+            {/* Nom du tiers */}
             <div>
               <label style={{display:'block',fontSize:12.5,fontWeight:600,color:'#374151',marginBottom:5}}>
-                Nom du tiers
-                {form.tiers_nom && factures.find(f=>f.numero===form.numero_facture) &&
-                  <span style={{marginLeft:6,fontSize:10,color:'#16a34a',fontWeight:700}}>✅ auto</span>}
+                {isClients?'Nom du client':'Nom du fournisseur'} *
+                {autoFilled('tiers_nom')&&<span style={{marginLeft:6,fontSize:10,color:'#16a34a',fontWeight:700}}>✅ auto</span>}
               </label>
-              <input name="tiers_nom" value={form.tiers_nom||''} onChange={set}
-                style={{width:'100%',padding:'9px 12px',borderRadius:8,border:'1.5px solid '+(form.tiers_nom&&factures.find(f=>f.numero===form.numero_facture)?'#bbf7d0':'#e2e8f0'),fontSize:13,background:form.tiers_nom&&factures.find(f=>f.numero===form.numero_facture)?'#f0fdf4':'white',boxSizing:'border-box'}} />
+              <input name="tiers_nom" value={form.tiers_nom||''} onChange={set} required style={autoStyle('tiers_nom')} />
             </div>
 
+            {/* Provenance */}
             <div>
               <label style={{display:'block',fontSize:12.5,fontWeight:600,color:'#374151',marginBottom:5}}>
                 Provenance
-                {form.provenance && factures.find(f=>f.numero===form.numero_facture) &&
-                  <span style={{marginLeft:6,fontSize:10,color:'#16a34a',fontWeight:700}}>✅ auto</span>}
+                {autoFilled('provenance')&&<span style={{marginLeft:6,fontSize:10,color:'#16a34a',fontWeight:700}}>✅ auto</span>}
               </label>
-              <input name="provenance" value={form.provenance||''} onChange={set}
-                style={{width:'100%',padding:'9px 12px',borderRadius:8,border:'1.5px solid '+(form.provenance&&factures.find(f=>f.numero===form.numero_facture)?'#bbf7d0':'#e2e8f0'),fontSize:13,background:form.provenance&&factures.find(f=>f.numero===form.numero_facture)?'#f0fdf4':'white',boxSizing:'border-box'}} />
+              <input name="provenance" value={form.provenance||''} onChange={set} style={autoStyle('provenance')} />
             </div>
 
+            {/* Acheteur / Vendeur */}
             <div>
               <label style={{display:'block',fontSize:12.5,fontWeight:600,color:'#374151',marginBottom:5}}>
-                Acheteur / Vendeur
-                {form.acheteur_vendeur && factures.find(f=>f.numero===form.numero_facture) &&
-                  <span style={{marginLeft:6,fontSize:10,color:'#16a34a',fontWeight:700}}>✅ auto</span>}
+                {isClients?'Acheteur':'Vendeur'}
+                {autoFilled('acheteur_vendeur')&&<span style={{marginLeft:6,fontSize:10,color:'#16a34a',fontWeight:700}}>✅ auto</span>}
               </label>
-              <input name="acheteur_vendeur" value={form.acheteur_vendeur||''} onChange={set}
-                style={{width:'100%',padding:'9px 12px',borderRadius:8,border:'1.5px solid '+(form.acheteur_vendeur&&factures.find(f=>f.numero===form.numero_facture)?'#bbf7d0':'#e2e8f0'),fontSize:13,background:form.acheteur_vendeur&&factures.find(f=>f.numero===form.numero_facture)?'#f0fdf4':'white',boxSizing:'border-box'}} />
+              <input name="acheteur_vendeur" value={form.acheteur_vendeur||''} onChange={set} style={autoStyle('acheteur_vendeur')} />
             </div>
 
+            {/* Nature produit */}
             <div>
               <label style={{display:'block',fontSize:12.5,fontWeight:600,color:'#374151',marginBottom:5}}>
                 Nature du produit
-                {form.nature_produit && factures.find(f=>f.numero===form.numero_facture) &&
-                  <span style={{marginLeft:6,fontSize:10,color:'#16a34a',fontWeight:700}}>✅ auto</span>}
+                {autoFilled('nature_produit')&&<span style={{marginLeft:6,fontSize:10,color:'#16a34a',fontWeight:700}}>✅ auto</span>}
               </label>
-              <input name="nature_produit" value={form.nature_produit||''} onChange={set}
-                style={{width:'100%',padding:'9px 12px',borderRadius:8,border:'1.5px solid '+(form.nature_produit&&factures.find(f=>f.numero===form.numero_facture)?'#bbf7d0':'#e2e8f0'),fontSize:13,background:form.nature_produit&&factures.find(f=>f.numero===form.numero_facture)?'#f0fdf4':'white',boxSizing:'border-box'}} />
+              <input name="nature_produit" value={form.nature_produit||''} onChange={set} style={autoStyle('nature_produit')} />
             </div>
 
             <Input label="Montant payé (FCFA) *" name="montant_paye" type="number" value={form.montant_paye||0} onChange={set} required min="0" />
@@ -4941,7 +4968,7 @@ function ReglementsPage({ companies, companyId, toast, readOnly=false }) {
             <Sel label="Mode de paiement" name="mode_paiement" value={form.mode_paiement||'espèce'} onChange={set}
               options={['espèce','virement','mobile_money','chèque','autre'].map(m=>({value:m,label:m.charAt(0).toUpperCase()+m.slice(1)}))} />
             <Input label="Référence de paiement" name="reference_paiement" value={form.reference_paiement||''} onChange={set} />
-            <Input label="Notes" name="notes" value={form.notes||''} onChange={set} />
+            <Span2><Input label="Notes" name="notes" value={form.notes||''} onChange={set} /></Span2>
           </Grid>
           <Row><Btn variant="secondary" onClick={close}>Annuler</Btn><Btn type="submit" disabled={saving}>{saving?'...':'Enregistrer'}</Btn></Row>
         </form>
@@ -4949,6 +4976,8 @@ function ReglementsPage({ companies, companyId, toast, readOnly=false }) {
     </div>
   )
 }
+
+
 
 // ── JOURNAL CAISSE / BANQUE ───────────────────────────────────────────────────
 function JournalPage({ table, title, icon, journalType='caisse', companies, companyId, toast, readOnly=false }) {
@@ -5948,7 +5977,7 @@ export default function ComptaPro() {
     commercial:'Documents commerciaux', 'commercial-view':'Détail document', lots:'Lots Production',
     etuvage:'Étuvage', decorticage:'Décorticage', calibrage:'Calibrage',
     tri_optique:'Tri Optique', conditionnement:'Conditionnement',
-    achats:'Achats Semi-finis', lots_semi_finis:'Lots Semi-finis', epierrage:'Épierrage', reglements:'Règlements', etuvage_paiements:'Paiements Étuvage',
+    achats:'Achats Semi-finis', lots_semi_finis:'Lots Semi-finis', epierrage:'Épierrage', reglements_clients:'Règlements Clients', reglements_fourn:'Règlements Fournisseurs', etuvage_paiements:'Paiements Étuvage',
     docs_admin:'Documents administratifs', parametres:'Paramètres',
     prestations:'Prestations', journal_caisse:'Journal Caisse', journal_banque:'Journal Banque',
     suivi_lot:'Suivi de Lot', journal_mobile:'Journal Mobile Money',
@@ -5994,7 +6023,8 @@ export default function ComptaPro() {
       case 'lots_semi_finis': return <LotsSemiFinisPage {...sp} />
       case 'epierrage':      return <EpierragePage {...sp} lots={lots} />
       case 'docs_admin':     return <DocsAdminPage {...sp} profile={profile} />
-      case 'reglements':    return <ReglementsPage {...sp} />
+      case 'reglements_clients': return <ReglementsPage {...sp} mode="clients" />
+      case 'reglements_fourn':    return <ReglementsPage {...sp} mode="fournisseurs" />
       case 'prestations':   return <PrestationPage {...sp} />
       case 'etuvage_paiements': return <PaiementsEtuvagePage {...sp} lots={lots} />
       case 'journal_caisse':    return <JournalPage table="compta_journal_caisse" title="Journal Caisse" icon="🏦" journalType="caisse" {...sp} />
