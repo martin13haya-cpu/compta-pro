@@ -4341,6 +4341,12 @@ function EtvBCPage({ companies, companyId, toast, readOnly=false }) {
     toast.success('BC supprimé !'); load()
   }
 
+  const changeStatut=async(id, newStatut)=>{
+    const { error }=await supabase.from('compta_bc_etuveuses').update({statut:newStatut}).eq('id',id)
+    if(error){ toast.error(error.message); return }
+    toast.success('Statut mis à jour !'); load()
+  }
+
   const save=async e=>{
     e.preventDefault(); setSaving(true)
     const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
@@ -4401,9 +4407,21 @@ function EtvBCPage({ companies, companyId, toast, readOnly=false }) {
                     <TD sm>{getEtvName(r.compta_etuveuses)}</TD>
                     <TD right bold>{fcfa(r.montant_total)}</TD>
                     <TD><span style={{padding:'3px 10px',borderRadius:20,background:s.bg,color:s.c,fontSize:11,fontWeight:700}}>{s.t}</span></TD>
-                    <TD><div style={{display:'flex',gap:4}}>
+                    <TD><div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
                       {BTN_ACTION('👁️','#0ea5e9',()=>setViewItem(r),'Voir')}
                       {BTN_ACTION('🖨️','#f59e0b',()=>printBC(r),'Imprimer')}
+                      {!readOnly&&r.statut==='en_attente'&&(
+                        <button title="Valider" onClick={()=>changeStatut(r.id,'valide')}
+                          style={{background:'#16a34a',border:'none',borderRadius:6,padding:'5px 8px',cursor:'pointer',color:'white',fontSize:11,fontWeight:700}}>✅ Valider</button>
+                      )}
+                      {!readOnly&&r.statut==='en_attente'&&(
+                        <button title="Refuser" onClick={()=>changeStatut(r.id,'refuse')}
+                          style={{background:'#dc2626',border:'none',borderRadius:6,padding:'5px 8px',cursor:'pointer',color:'white',fontSize:11,fontWeight:700}}>❌ Refuser</button>
+                      )}
+                      {!readOnly&&r.statut!=='en_attente'&&(
+                        <button title="Remettre en attente" onClick={()=>changeStatut(r.id,'en_attente')}
+                          style={{background:'#f59e0b',border:'none',borderRadius:6,padding:'5px 8px',cursor:'pointer',color:'white',fontSize:11,fontWeight:700}}>↩️</button>
+                      )}
                       {!readOnly&&BTN_ACTION('🗑️','#ef4444',()=>deleteItem(r.id),'Supprimer')}
                     </div></TD>
                   </TR>
@@ -4537,23 +4555,41 @@ function EtvBRPage({ companies, companyId, toast, readOnly=false }) {
   },[companyId])
 
   const loadBCs=useCallback(async()=>{
-    const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
-    const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
-    let q=supabase.from('compta_bc_etuveuses').select('id,numero,etuveuse_id,lignes').eq('statut','valide').order('date_bc',{ascending:false})
-    if(isAdmin&&companyId) q=q.eq('company_id',companyId)
-    else if(companyId) q=q.eq('user_id',uid).eq('company_id',companyId)
-    else q=q.eq('user_id',uid)
-    const { data }=await q; setBcs(data||[])
+    try {
+      const sess=await supabase.auth.getSession()
+      if(!sess.data?.session) return
+      const uid=sess.data.session.user.id
+      const isAdmin=sess.data.session.user.email===SUPER_ADMIN_EMAIL
+      let ownerUid=uid
+      if(isAdmin&&companyId){
+        const { data:comp }=await supabase.from('compta_companies').select('user_id').eq('id',companyId).single()
+        if(comp?.user_id) ownerUid=comp.user_id
+      }
+      const { data }=await supabase.from('compta_bc_etuveuses')
+        .select('id,numero,statut,etuveuse_id,lignes')
+        .eq('user_id',ownerUid)
+        .order('date_bc',{ascending:false})
+      setBcs(data||[])
+    } catch(e){ console.error('loadBCs:', e) }
   },[companyId])
 
   const load=useCallback(async()=>{
-    const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
-    const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
-    let q=supabase.from('compta_br_etuveuses').select('*,compta_etuveuses(code_etuveuse,fournisseur_id)').order('date_br',{ascending:false})
-    if(isAdmin&&companyId) q=q.eq('company_id',companyId)
-    else if(companyId) q=q.eq('user_id',uid).eq('company_id',companyId)
-    else q=q.eq('user_id',uid)
-    const { data }=await q; setItems(data||[])
+    try {
+      const sess=await supabase.auth.getSession()
+      if(!sess.data?.session) return
+      const uid=sess.data.session.user.id
+      const isAdmin=sess.data.session.user.email===SUPER_ADMIN_EMAIL
+      let ownerUid=uid
+      if(isAdmin&&companyId){
+        const { data:comp }=await supabase.from('compta_companies').select('user_id').eq('id',companyId).single()
+        if(comp?.user_id) ownerUid=comp.user_id
+      }
+      const { data }=await supabase.from('compta_br_etuveuses')
+        .select('*,compta_etuveuses(code_etuveuse,nom_etuveuse)')
+        .eq('user_id',ownerUid)
+        .order('date_br',{ascending:false})
+      setItems(data||[])
+    } catch(e){ console.error('loadBR:', e) }
   },[companyId])
 
   useEffect(()=>{ load(); loadEtuveuses(); loadBCs() },[load,loadEtuveuses,loadBCs])
@@ -4599,10 +4635,11 @@ function EtvBRPage({ companies, companyId, toast, readOnly=false }) {
     const { count }=await supabase.from('compta_br_etuveuses').select('id',{count:'exact',head:true}).eq('user_id',uid)
     const numero=form.numero||`BR-ETV-${year}-${String((count||0)+1).padStart(4,'0')}`
     const { error }=await supabase.from('compta_br_etuveuses').insert({
-      ...form, user_id:uid, company_id:form.company_id||companyId,
-      numero, lignes,
-      montant_demande:Math.round(totalDemande),
-      montant_accorde:Math.round(totalAccorde)
+      company_id:form.company_id||companyId, user_id:uid,
+      etuveuse_id:form.etuveuse_id||null,
+      bc_id:form.bc_id||null,  // null si vide, pas ""
+      numero, date_br:form.date_br, notes:form.notes||'',
+      lignes, montant_demande:Math.round(totalDemande), montant_accorde:Math.round(totalAccorde)
     })
     setSaving(false)
     if(error){ toast.error(error.message); return }
@@ -4717,7 +4754,9 @@ function EtvBRPage({ companies, companyId, toast, readOnly=false }) {
               <select name="bc_id" value={form.bc_id||''} onChange={e=>onSelectBC(e.target.value)}
                 style={{width:'100%',padding:'9px 12px',borderRadius:8,border:'1.5px solid #e2e8f0',fontSize:13}}>
                 <option value=''>— Sélectionner un BC validé —</option>
-                {bcs.map(b=><option key={b.id} value={b.id}>{b.numero}</option>)}
+                {bcs.map(b=><option key={b.id} value={b.id}>
+                  {b.numero} {b.statut==='valide'?'✅':b.statut==='en_attente'?'⏳':'❌'}
+                </option>)}
               </select>
             </div>
             <div style={{gridColumn:'1/-1'}}>
