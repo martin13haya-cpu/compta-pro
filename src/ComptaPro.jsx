@@ -1696,7 +1696,6 @@ function StockPage({ companies, companyId, setPage, toast, readOnly=false }) {
   useEffect(()=>{ load() },[load])
 
   const valeur = articles.reduce((s,a)=>s+(a.stock_actuel||0)*(a.prix_achat||0),0)
-  const getEtvDisplayName = (r) => r?.nom_etuveuse || r?.code_etuveuse || '—'
   const set = e=>setForm(f=>({...f,[e.target.name]:e.target.value}))
 
   const openAdd = ()=>{ setForm({company_id:companyId||companies[0]?.id||'',code:'',designation:'',categorie:'riz_paddy',unite:'kg',prix_achat:0,prix_vente:0,stock_min:0,stock_actuel:0}); setModal('add') }
@@ -3920,6 +3919,7 @@ function EtvRepertoirePage({ companies, companyId, toast, readOnly=false }) {
   }
 
   const set = e=>setForm(f=>({...f,[e.target.name]:e.target.value}))
+  const getEtvDisplayName = (r) => r?.nom_etuveuse || r?.code_etuveuse || '—'
 
   const openAdd = ()=>{
     setForm({company_id:companyId||companies[0]?.id||'',
