@@ -3880,7 +3880,7 @@ function EtvRepertoirePage({ companies, companyId, toast, readOnly=false }) {
   const load = useCallback(async()=>{
     const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
     const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
-    let q=supabase.from('compta_etuveuses').select('*,compta_fournisseurs(nom,prenom,nom_societe,type,tel)').order('created_at',{ascending:false})
+    let q=supabase.from('compta_etuveuses').select('*').order('created_at',{ascending:false})
     if(isAdmin&&companyId) q=q.eq('company_id',companyId)
     else if(companyId) q=q.eq('user_id',uid).eq('company_id',companyId)
     else q=q.eq('user_id',uid)
@@ -3943,7 +3943,7 @@ function EtvRepertoirePage({ companies, companyId, toast, readOnly=false }) {
   }
 
   const printFiche = (r) => {
-    const fn=getFournName(r.compta_fournisseurs)
+    const fn=getFournById(r.fournisseur_id)
     const html=`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Fiche Étuveuse ${r.code_etuveuse||''}</title>
     <style>${CSS_PRINT}</style></head><body>
     <button class="print-btn" onclick="window.print()">🖨️ Imprimer</button>
@@ -3998,9 +3998,9 @@ function EtvRepertoirePage({ companies, companyId, toast, readOnly=false }) {
       </div>
 
       {viewItem&&(
-        <Modal open={!!viewItem} onClose={()=>setViewItem(null)} title={'Fiche — '+getFournName(viewItem.compta_fournisseurs)} size="md">
+        <Modal open={!!viewItem} onClose={()=>setViewItem(null)} title={'Fiche — '+getFournById(viewItem.fournisseur_id)} size="md">
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'10px 24px',fontSize:14}}>
-            {[['Code',viewItem.code_etuveuse||'—'],['Fournisseur',getFournName(viewItem.compta_fournisseurs)],
+            {[['Code',viewItem.code_etuveuse||'—'],['Fournisseur',getFournById(viewItem.fournisseur_id)],
               ['Date contrat',viewItem.date_contrat||'—'],['Zone',viewItem.zone||'—'],
               ['Capacité',(viewItem.capacite_kg||0).toLocaleString('fr-FR')+' kg'],
               ['Observations',viewItem.observations||'—']
@@ -4054,7 +4054,7 @@ function EtvAvancesPage({ companies, companyId, toast, readOnly=false }) {
   const loadEtuveuses = useCallback(async()=>{
     const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
     const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
-    let q=supabase.from('compta_etuveuses').select('id,code_etuveuse,fournisseur_id,compta_fournisseurs(nom,prenom,nom_societe,type)').order('code_etuveuse')
+    let q=supabase.from('compta_etuveuses').select('id,code_etuveuse,fournisseur_id').order('code_etuveuse')
     if(isAdmin&&companyId){
       const { data:comp }=await supabase.from('compta_companies').select('user_id').eq('id',companyId).single()
       if(comp?.user_id) q=q.eq('user_id',comp.user_id)
@@ -4067,7 +4067,7 @@ function EtvAvancesPage({ companies, companyId, toast, readOnly=false }) {
   const load = useCallback(async()=>{
     const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
     const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
-    let q=supabase.from('compta_avances_etuveuses').select('*,compta_etuveuses(code_etuveuse,compta_fournisseurs(nom,prenom,nom_societe,type))').order('date_avance',{ascending:false})
+    let q=supabase.from('compta_avances_etuveuses').select('*,compta_etuveuses(code_etuveuse,fournisseur_id)').order('date_avance',{ascending:false})
     if(isAdmin&&companyId) q=q.eq('company_id',companyId)
     else if(companyId) q=q.eq('user_id',uid).eq('company_id',companyId)
     else q=q.eq('user_id',uid)
@@ -4260,7 +4260,7 @@ function EtvBCPage({ companies, companyId, toast, readOnly=false }) {
   const loadEtuveuses=useCallback(async()=>{
     const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
     const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
-    let q=supabase.from('compta_etuveuses').select('id,code_etuveuse,compta_fournisseurs(nom,prenom,nom_societe,type)').order('code_etuveuse')
+    let q=supabase.from('compta_etuveuses').select('id,code_etuveuse,fournisseur_id').order('code_etuveuse')
     if(isAdmin&&companyId){
       const { data:comp }=await supabase.from('compta_companies').select('user_id').eq('id',companyId).single()
       if(comp?.user_id) q=q.eq('user_id',comp.user_id)
@@ -4273,7 +4273,7 @@ function EtvBCPage({ companies, companyId, toast, readOnly=false }) {
   const load=useCallback(async()=>{
     const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
     const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
-    let q=supabase.from('compta_bc_etuveuses').select('*,compta_etuveuses(code_etuveuse,compta_fournisseurs(nom,prenom,nom_societe,type))').order('date_bc',{ascending:false})
+    let q=supabase.from('compta_bc_etuveuses').select('*,compta_etuveuses(code_etuveuse,fournisseur_id)').order('date_bc',{ascending:false})
     if(isAdmin&&companyId) q=q.eq('company_id',companyId)
     else if(companyId) q=q.eq('user_id',uid).eq('company_id',companyId)
     else q=q.eq('user_id',uid)
@@ -4284,7 +4284,7 @@ function EtvBCPage({ companies, companyId, toast, readOnly=false }) {
 
   const getEtvName=(e)=>{
     if(!e) return '—'
-    const f=e.compta_fournisseurs
+    const f=fournisseurs.find(x=>x.id===e.fournisseur_id)
     const nom=f?(f.type==='morale'?f.nom_societe:`${f.nom||''} ${f.prenom||''}`.trim()):''
     return `${e.code_etuveuse||''} — ${nom}`
   }
@@ -4494,7 +4494,7 @@ function EtvBRPage({ companies, companyId, toast, readOnly=false }) {
   const loadEtuveuses=useCallback(async()=>{
     const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
     const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
-    let q=supabase.from('compta_etuveuses').select('id,code_etuveuse,compta_fournisseurs(nom,prenom,nom_societe,type)').order('code_etuveuse')
+    let q=supabase.from('compta_etuveuses').select('id,code_etuveuse,fournisseur_id').order('code_etuveuse')
     if(isAdmin&&companyId){
       const { data:comp }=await supabase.from('compta_companies').select('user_id').eq('id',companyId).single()
       if(comp?.user_id) q=q.eq('user_id',comp.user_id)
@@ -4517,7 +4517,7 @@ function EtvBRPage({ companies, companyId, toast, readOnly=false }) {
   const load=useCallback(async()=>{
     const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
     const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
-    let q=supabase.from('compta_br_etuveuses').select('*,compta_etuveuses(code_etuveuse,compta_fournisseurs(nom,prenom,nom_societe,type))').order('date_br',{ascending:false})
+    let q=supabase.from('compta_br_etuveuses').select('*,compta_etuveuses(code_etuveuse,fournisseur_id)').order('date_br',{ascending:false})
     if(isAdmin&&companyId) q=q.eq('company_id',companyId)
     else if(companyId) q=q.eq('user_id',uid).eq('company_id',companyId)
     else q=q.eq('user_id',uid)
@@ -4528,7 +4528,7 @@ function EtvBRPage({ companies, companyId, toast, readOnly=false }) {
 
   const getEtvName=(e)=>{
     if(!e) return '—'
-    const f=e.compta_fournisseurs
+    const f=fournisseurs.find(x=>x.id===e.fournisseur_id)
     const nom=f?(f.type==='morale'?f.nom_societe:`${f.nom||''} ${f.prenom||''}`.trim()):''
     return `${e.code_etuveuse||''} — ${nom}`
   }
@@ -4756,7 +4756,7 @@ function EtvEntreesPage({ companies, companyId, toast, readOnly=false }) {
   const loadEtuveuses=useCallback(async()=>{
     const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
     const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
-    let q=supabase.from('compta_etuveuses').select('id,code_etuveuse,compta_fournisseurs(nom,prenom,nom_societe,type)').order('code_etuveuse')
+    let q=supabase.from('compta_etuveuses').select('id,code_etuveuse,fournisseur_id').order('code_etuveuse')
     if(isAdmin&&companyId){
       const { data:comp }=await supabase.from('compta_companies').select('user_id').eq('id',companyId).single()
       if(comp?.user_id) q=q.eq('user_id',comp.user_id)
@@ -4769,7 +4769,7 @@ function EtvEntreesPage({ companies, companyId, toast, readOnly=false }) {
   const load=useCallback(async()=>{
     const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
     const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
-    let q=supabase.from('compta_entrees_magasin').select('*,compta_etuveuses(code_etuveuse,compta_fournisseurs(nom,prenom,nom_societe,type))').order('date_entree',{ascending:false})
+    let q=supabase.from('compta_entrees_magasin').select('*,compta_etuveuses(code_etuveuse,fournisseur_id)').order('date_entree',{ascending:false})
     if(isAdmin&&companyId) q=q.eq('company_id',companyId)
     else if(companyId) q=q.eq('user_id',uid).eq('company_id',companyId)
     else q=q.eq('user_id',uid)
@@ -4782,7 +4782,7 @@ function EtvEntreesPage({ companies, companyId, toast, readOnly=false }) {
 
   const getEtvName=(e)=>{
     if(!e) return '—'
-    const f=e.compta_fournisseurs
+    const f=fournisseurs.find(x=>x.id===e.fournisseur_id)
     const nom=f?(f.type==='morale'?f.nom_societe:`${f.nom||''} ${f.prenom||''}`.trim()):''
     return `${e.code_etuveuse||''} — ${nom}`
   }
@@ -4956,7 +4956,7 @@ function EtvSortiesPage({ companies, companyId, toast, readOnly=false }) {
   const loadEtuveuses=useCallback(async()=>{
     const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
     const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
-    let q=supabase.from('compta_etuveuses').select('id,code_etuveuse,compta_fournisseurs(nom,prenom,nom_societe,type)').order('code_etuveuse')
+    let q=supabase.from('compta_etuveuses').select('id,code_etuveuse,fournisseur_id').order('code_etuveuse')
     if(isAdmin&&companyId){
       const { data:comp }=await supabase.from('compta_companies').select('user_id').eq('id',companyId).single()
       if(comp?.user_id) q=q.eq('user_id',comp.user_id)
@@ -4979,7 +4979,7 @@ function EtvSortiesPage({ companies, companyId, toast, readOnly=false }) {
   const load=useCallback(async()=>{
     const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
     const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
-    let q=supabase.from('compta_sorties_magasin').select('*,compta_etuveuses(code_etuveuse,compta_fournisseurs(nom,prenom,nom_societe,type))').order('date_sortie',{ascending:false})
+    let q=supabase.from('compta_sorties_magasin').select('*,compta_etuveuses(code_etuveuse,fournisseur_id)').order('date_sortie',{ascending:false})
     if(isAdmin&&companyId) q=q.eq('company_id',companyId)
     else if(companyId) q=q.eq('user_id',uid).eq('company_id',companyId)
     else q=q.eq('user_id',uid)
@@ -4992,7 +4992,7 @@ function EtvSortiesPage({ companies, companyId, toast, readOnly=false }) {
 
   const getEtvName=(e)=>{
     if(!e) return '—'
-    const f=e.compta_fournisseurs
+    const f=fournisseurs.find(x=>x.id===e.fournisseur_id)
     const nom=f?(f.type==='morale'?f.nom_societe:`${f.nom||''} ${f.prenom||''}`.trim()):''
     return `${e.code_etuveuse||''} — ${nom}`
   }
@@ -5160,7 +5160,7 @@ function EtvInventairePage({ companies, companyId, toast }) {
   const loadEtuveuses=useCallback(async()=>{
     const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
     const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
-    let q=supabase.from('compta_etuveuses').select('id,code_etuveuse,compta_fournisseurs(nom,prenom,nom_societe,type)').order('code_etuveuse')
+    let q=supabase.from('compta_etuveuses').select('id,code_etuveuse,fournisseur_id').order('code_etuveuse')
     if(isAdmin&&companyId){
       const { data:comp }=await supabase.from('compta_companies').select('user_id').eq('id',companyId).single()
       if(comp?.user_id) q=q.eq('user_id',comp.user_id)
