@@ -1160,6 +1160,14 @@ const NAV = [
   { id:'calibrage',          icon:'📐', label:'Calibrage' },
   { id:'tri_optique',        icon:'🔍', label:'Tri optique' },
   { id:'conditionnement',    icon:'🎁', label:'Conditionnement' },
+  { section:'Étuveuses' },
+  { id:'etv_repertoire',  icon:'👩', label:'Répertoire' },
+  { id:'etv_avances',     icon:'💰', label:'Avances' },
+  { id:'etv_bc',          icon:'📋', label:'Bons de Commande' },
+  { id:'etv_br',          icon:'✅', label:'Bons de Réception' },
+  { id:'etv_entrees',     icon:'📥', label:'Entrées Magasin' },
+  { id:'etv_sorties',     icon:'📤', label:'Sorties Magasin' },
+  { id:'etv_inventaire',  icon:'📊', label:'Inventaire' },
   { section:'Achats' },
   { id:'achats',             icon:'🛒', label:'Achats semi-finis' },
   { id:'lots_semi_finis',    icon:'📦', label:'Lots Semi-finis' },
@@ -3607,6 +3615,9 @@ const ALL_SECTIONS = [
   ['prestations','Prestations'],['suivi_lot','Suivi de lot'],['lots','Lots Production'],
   ['etuvage','Étuvage'],['decorticage','Décorticage'],['calibrage','Calibrage'],
   ['tri_optique','Tri optique'],['conditionnement','Conditionnement'],
+  ['etv_repertoire','Répertoire Étuveuses'],['etv_avances','Avances'],
+  ['etv_bc','Bons de Commande'],['etv_br','Bons de Réception'],
+  ['etv_entrees','Entrées Magasin'],['etv_sorties','Sorties Magasin'],['etv_inventaire','Inventaire'],
   ['achats','Achats semi-finis'],['lots_semi_finis','Lots Semi-finis'],
   ['epierrage','Épierrage'],['etuvage_paiements','Paiements étuvage'],
   ['docs_admin','Documents administratifs'],
@@ -3619,6 +3630,7 @@ const SECTION_GROUPS = [
   {group:'Stock', ids:['stock','mouvements','inventaire']},
   {group:'Commercial', ids:['commercial','reglements_clients','reglements_fourn','prestations']},
   {group:'Production', ids:['suivi_lot','lots','etuvage','decorticage','calibrage','tri_optique','conditionnement']},
+  {group:'Étuveuses', ids:['etv_repertoire','etv_avances','etv_bc','etv_br','etv_entrees','etv_sorties','etv_inventaire']},
   {group:'Achats', ids:['achats','lots_semi_finis','epierrage','etuvage_paiements']},
   {group:'Documents', ids:['docs_admin']},
   {group:'Comptabilité', ids:['journal_caisse','journal_banque','journal_mobile']},
@@ -3838,6 +3850,1428 @@ function MesUtilisateursPage({ toast, companies, companyId, profile }) {
           </Row>
         </form>
       </Modal>
+    </div>
+  )
+}
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SECTION ÉTUVEUSES — Répertoire, Avances, BC, BR, Entrées, Sorties, Inventaire
+// ══════════════════════════════════════════════════════════════════════════════
+
+// ── Helpers communs ───────────────────────────────────────────────────────────
+const ETV_VARIETES = ['Orylux 6','Wassa','Sikasso','IR 841','NERICA','Adny 11','Autre']
+const BTN_ACTION   = (icon,bg,onClick,title) => (
+  <button title={title} onClick={onClick}
+    style={{background:bg,border:'none',borderRadius:6,padding:'5px 8px',cursor:'pointer',color:'white',fontSize:13}}>
+    {icon}
+  </button>
+)
+
+// ── RÉPERTOIRE ÉTUVEUSES ──────────────────────────────────────────────────────
+function EtvRepertoirePage({ companies, companyId, toast, readOnly=false }) {
+  const [items,    setItems]   = useState([])
+  const [fournisseurs, setFourn] = useState([])
+  const [modal,    setModal]   = useState(false)
+  const [form,     setForm]    = useState({})
+  const [viewItem, setViewItem]= useState(null)
+  const [saving,   setSaving]  = useState(false)
+
+  const load = useCallback(async()=>{
+    const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
+    const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
+    let q=supabase.from('compta_etuveuses').select('*,compta_fournisseurs(nom,prenom,nom_societe,type,tel)').order('created_at',{ascending:false})
+    if(isAdmin&&companyId) q=q.eq('company_id',companyId)
+    else if(companyId) q=q.eq('user_id',uid).eq('company_id',companyId)
+    else q=q.eq('user_id',uid)
+    const { data }=await q; setItems(data||[])
+  },[companyId])
+
+  const loadFourn = useCallback(async()=>{
+    const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
+    const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
+    let q=supabase.from('compta_fournisseurs').select('id,nom,prenom,nom_societe,type,tel').order('nom',{ascending:true})
+    if(isAdmin&&companyId) q=q.eq('company_id',companyId)
+    else if(companyId) q=q.eq('user_id',uid).eq('company_id',companyId)
+    else q=q.eq('user_id',uid)
+    const { data }=await q; setFourn(data||[])
+  },[companyId])
+
+  useEffect(()=>{ load(); loadFourn() },[load,loadFourn])
+
+  const getFournName = (f) => {
+    if(!f) return '—'
+    return f.type==='morale'?(f.nom_societe||'—'):`${f.nom||''} ${f.prenom||''}`.trim()||'—'
+  }
+
+  const set = e=>setForm(f=>({...f,[e.target.name]:e.target.value}))
+
+  const openAdd = ()=>{
+    setForm({company_id:companyId||companies[0]?.id||'',fournisseur_id:'',
+      code_etuveuse:'',date_contrat:today(),capacite_kg:0,
+      zone:'',observations:''})
+    setModal(true)
+  }
+  const close=()=>setModal(false)
+
+  const deleteItem=async(id)=>{
+    if(!window.confirm('Supprimer cette étuveuse ?')) return
+    const { error }=await supabase.from('compta_etuveuses').delete().eq('id',id)
+    if(error){ toast.error(error.message); return }
+    toast.success('Étuveuse supprimée !'); load()
+  }
+
+  const save=async e=>{
+    e.preventDefault(); setSaving(true)
+    const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
+    const { error }=await supabase.from('compta_etuveuses').insert({
+      ...form, user_id:uid, company_id:form.company_id||companyId,
+      capacite_kg:parseFloat(form.capacite_kg)||0
+    })
+    setSaving(false)
+    if(error){ toast.error(error.message); return }
+    toast.success('Étuveuse enregistrée !'); close(); load()
+  }
+
+  const printFiche = (r) => {
+    const fn=getFournName(r.compta_fournisseurs)
+    const html=`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Fiche Étuveuse ${r.code_etuveuse||''}</title>
+    <style>${CSS_PRINT}</style></head><body>
+    <button class="print-btn" onclick="window.print()">🖨️ Imprimer</button>
+    <div class="header"><div><div class="company-name">FICHE ÉTUVEUSE</div></div>
+    <div class="doc-title"><h1>${fn}</h1><div class="doc-numero">${r.code_etuveuse||'—'}</div>
+    <div class="doc-date">Contrat : ${r.date_contrat||'—'}</div></div></div>
+    <table><thead><tr><th>Désignation</th><th class="r">Valeur</th></tr></thead><tbody>
+    <tr><td>Code étuveuse</td><td class="r">${r.code_etuveuse||'—'}</td></tr>
+    <tr><td>Fournisseur lié</td><td class="r">${fn}</td></tr>
+    <tr><td>Date du contrat</td><td class="r">${r.date_contrat||'—'}</td></tr>
+    <tr><td>Capacité de traitement</td><td class="r">${(r.capacite_kg||0).toLocaleString('fr-FR')} kg</td></tr>
+    <tr><td>Zone / Localité</td><td class="r">${r.zone||'—'}</td></tr>
+    ${r.observations?`<tr><td>Observations</td><td class="r">${r.observations}</td></tr>`:''}
+    </tbody></table>
+    <div class="signatures"><div class="sig-box">Signature étuveuse</div><div class="sig-box">Visa direction</div></div>
+    </body></html>`
+    const w=window.open('','_blank'); w.document.write(html); w.document.close()
+  }
+
+  return (
+    <div>
+      <PageHeader title="Répertoire Étuveuses" subtitle={`${items.length} étuveuse(s) enregistrée(s)`}
+        actions={!readOnly&&<Btn onClick={openAdd}>+ Nouvelle Étuveuse</Btn>} />
+      <div style={{background:'white',borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
+        {items.length===0?(
+          <div style={{textAlign:'center',padding:'48px 24px',color:'#64748b'}}>
+            <div style={{fontSize:40,marginBottom:8}}>👩</div><p>Aucune étuveuse enregistrée</p>
+          </div>
+        ):(
+          <div style={{overflowX:'auto',WebkitOverflowScrolling:'touch'}}>
+          <table style={{width:'100%',borderCollapse:'collapse',minWidth:600}}>
+            <thead><tr><TH>Code</TH><TH>Fournisseur</TH><TH>Date Contrat</TH><TH>Zone</TH><TH right>Capacité (kg)</TH><TH>Actions</TH></tr></thead>
+            <tbody>
+              {items.map(r=>(
+                <TR key={r.id}>
+                  <TD bold>{r.code_etuveuse||'—'}</TD>
+                  <TD>{getFournName(r.compta_fournisseurs)}</TD>
+                  <TD sm>{r.date_contrat||'—'}</TD>
+                  <TD sm>{r.zone||'—'}</TD>
+                  <TD right>{(r.capacite_kg||0).toLocaleString('fr-FR')} kg</TD>
+                  <TD><div style={{display:'flex',gap:4}}>
+                    {BTN_ACTION('👁️','#0ea5e9',()=>setViewItem(r),'Voir')}
+                    {BTN_ACTION('🖨️','#f59e0b',()=>printFiche(r),'Imprimer')}
+                    {!readOnly&&BTN_ACTION('🗑️','#ef4444',()=>deleteItem(r.id),'Supprimer')}
+                  </div></TD>
+                </TR>
+              ))}
+            </tbody>
+          </table>
+          </div>
+        )}
+      </div>
+
+      {viewItem&&(
+        <Modal open={!!viewItem} onClose={()=>setViewItem(null)} title={'Fiche — '+getFournName(viewItem.compta_fournisseurs)} size="md">
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'10px 24px',fontSize:14}}>
+            {[['Code',viewItem.code_etuveuse||'—'],['Fournisseur',getFournName(viewItem.compta_fournisseurs)],
+              ['Date contrat',viewItem.date_contrat||'—'],['Zone',viewItem.zone||'—'],
+              ['Capacité',(viewItem.capacite_kg||0).toLocaleString('fr-FR')+' kg'],
+              ['Observations',viewItem.observations||'—']
+            ].map(([l,v])=>(
+              <div key={l} style={{borderBottom:'1px solid #f1f5f9',paddingBottom:8}}>
+                <div style={{fontSize:11,color:'#94a3b8',marginBottom:2}}>{l}</div>
+                <div style={{fontWeight:600}}>{v}</div>
+              </div>
+            ))}
+          </div>
+          <Row style={{marginTop:16}}>
+            <Btn variant="danger" onClick={()=>printFiche(viewItem)}>🖨️ Imprimer fiche</Btn>
+            <Btn variant="secondary" onClick={()=>setViewItem(null)}>Fermer</Btn>
+          </Row>
+        </Modal>
+      )}
+
+      <Modal open={modal} onClose={close} title="Nouvelle Étuveuse" size="lg">
+        <form onSubmit={save}>
+          <Grid cols={2} gap={14} style={{marginBottom:16}}>
+            <Input label="Code étuveuse *" name="code_etuveuse" value={form.code_etuveuse||''} onChange={set} required placeholder="ex: ETV-001" />
+            <div>
+              <label style={{display:'block',fontSize:12.5,fontWeight:600,color:'#374151',marginBottom:5}}>Fournisseur lié *</label>
+              <select name="fournisseur_id" value={form.fournisseur_id||''} onChange={set} required
+                style={{width:'100%',padding:'9px 12px',borderRadius:8,border:'1.5px solid #e2e8f0',fontSize:13}}>
+                <option value=''>— Sélectionner un fournisseur —</option>
+                {fournisseurs.map(f=><option key={f.id} value={f.id}>{getFournName(f)}</option>)}
+              </select>
+            </div>
+            <Input label="Date du contrat *" name="date_contrat" type="date" value={form.date_contrat||''} onChange={set} required />
+            <Input label="Capacité de traitement (kg)" name="capacite_kg" type="number" value={form.capacite_kg||0} onChange={set} min="0" step="0.001" />
+            <Span2><Input label="Zone / Localité" name="zone" value={form.zone||''} onChange={set} placeholder="ex: Tanguiéta - Quartier Hamdallaye" /></Span2>
+            <Span2><Input label="Observations / Notes contrat" name="observations" value={form.observations||''} onChange={set} /></Span2>
+          </Grid>
+          <Row><Btn variant="secondary" onClick={close}>Annuler</Btn><Btn type="submit" disabled={saving}>{saving?'...':'Enregistrer'}</Btn></Row>
+        </form>
+      </Modal>
+    </div>
+  )
+}
+
+// ── AVANCES SUR COMMANDE ──────────────────────────────────────────────────────
+function EtvAvancesPage({ companies, companyId, toast, readOnly=false }) {
+  const [items,    setItems]   = useState([])
+  const [etuveuses,setEtuveuses]=useState([])
+  const [modal,    setModal]   = useState(false)
+  const [form,     setForm]    = useState({})
+  const [viewItem, setViewItem]= useState(null)
+  const [saving,   setSaving]  = useState(false)
+
+  const loadEtuveuses = useCallback(async()=>{
+    const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
+    const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
+    let q=supabase.from('compta_etuveuses').select('id,code_etuveuse,fournisseur_id,compta_fournisseurs(nom,prenom,nom_societe,type)').order('code_etuveuse')
+    if(isAdmin&&companyId) q=q.eq('company_id',companyId)
+    else if(companyId) q=q.eq('user_id',uid).eq('company_id',companyId)
+    else q=q.eq('user_id',uid)
+    const { data }=await q; setEtuveuses(data||[])
+  },[companyId])
+
+  const load = useCallback(async()=>{
+    const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
+    const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
+    let q=supabase.from('compta_avances_etuveuses').select('*,compta_etuveuses(code_etuveuse,compta_fournisseurs(nom,prenom,nom_societe,type))').order('date_avance',{ascending:false})
+    if(isAdmin&&companyId) q=q.eq('company_id',companyId)
+    else if(companyId) q=q.eq('user_id',uid).eq('company_id',companyId)
+    else q=q.eq('user_id',uid)
+    const { data }=await q; setItems(data||[])
+  },[companyId])
+
+  useEffect(()=>{ load(); loadEtuveuses() },[load,loadEtuveuses])
+
+  const getEtvName = (e) => {
+    if(!e) return '—'
+    const f=e.compta_fournisseurs
+    const nom=f?(f.type==='morale'?f.nom_societe:`${f.nom||''} ${f.prenom||''}`.trim()):''
+    return `${e.code_etuveuse||''} — ${nom}`
+  }
+
+  const set=e=>setForm(f=>({...f,[e.target.name]:e.target.value}))
+
+  const getSoldeEtuveuse = (etvId) => {
+    const avances=items.filter(i=>i.etuveuse_id===etvId)
+    return avances.reduce((s,a)=>s+(a.montant||0)-(a.montant_rembourse||0),0)
+  }
+
+  const openAdd=()=>{
+    setForm({company_id:companyId||companies[0]?.id||'',etuveuse_id:'',
+      numero:'',date_avance:today(),montant:0,montant_rembourse:0,
+      mode_paiement:'espèce',reference:'',notes:''})
+    setModal(true)
+  }
+  const close=()=>setModal(false)
+
+  const deleteItem=async(id)=>{
+    if(!window.confirm('Supprimer cette avance ?')) return
+    await supabase.from('compta_avances_etuveuses').delete().eq('id',id)
+    toast.success('Avance supprimée !'); load()
+  }
+
+  const save=async e=>{
+    e.preventDefault(); setSaving(true)
+    const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
+    const year=new Date().getFullYear()
+    const { count }=await supabase.from('compta_avances_etuveuses').select('id',{count:'exact',head:true}).eq('user_id',uid)
+    const numero=form.numero||`AVA-${year}-${String((count||0)+1).padStart(4,'0')}`
+    const { error }=await supabase.from('compta_avances_etuveuses').insert({
+      ...form, user_id:uid, company_id:form.company_id||companyId,
+      numero, montant:parseFloat(form.montant)||0, montant_rembourse:parseFloat(form.montant_rembourse)||0
+    })
+    setSaving(false)
+    if(error){ toast.error(error.message); return }
+    toast.success('Avance enregistrée !'); close(); load()
+  }
+
+  const totalAvances=items.reduce((s,r)=>s+(r.montant||0),0)
+  const totalRembourse=items.reduce((s,r)=>s+(r.montant_rembourse||0),0)
+
+  const printAvance=(r)=>{
+    const en=r.compta_etuveuses
+    const html=`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Avance ${r.numero}</title>
+    <style>${CSS_PRINT}</style></head><body>
+    <button class="print-btn" onclick="window.print()">🖨️ Imprimer</button>
+    <div class="header"><div><div class="company-name">BON D'AVANCE SUR COMMANDE</div></div>
+    <div class="doc-title"><h1>${r.numero}</h1><div class="doc-date">Date : ${r.date_avance||'—'}</div></div></div>
+    <table><thead><tr><th>Désignation</th><th class="r">Valeur</th></tr></thead><tbody>
+    <tr><td>Étuveuse</td><td class="r">${getEtvName(en)}</td></tr>
+    <tr><td>Mode de paiement</td><td class="r">${r.mode_paiement||'—'}</td></tr>
+    <tr><td>Référence</td><td class="r">${r.reference||'—'}</td></tr>
+    ${r.notes?`<tr><td>Notes</td><td class="r">${r.notes}</td></tr>`:''}
+    </tbody></table>
+    <div class="totals">
+      <div style="display:flex;justify-content:space-between;padding:10px 16px;background:#eff6ff;border-radius:8px;margin-top:8px">
+        <span style="font-weight:700">MONTANT AVANCE</span><span style="font-weight:800;font-size:16pt">${Math.round(r.montant||0).toLocaleString('fr-FR')} FCFA</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;padding:10px 16px;background:#f0fdf4;border-radius:8px;margin-top:8px">
+        <span style="font-weight:700">MONTANT REMBOURSÉ</span><span style="font-weight:800;font-size:16pt;color:#16a34a">${Math.round(r.montant_rembourse||0).toLocaleString('fr-FR')} FCFA</span>
+      </div>
+      <div class="ttc" style="margin-top:8px"><span>SOLDE RESTANT</span><span>${Math.round((r.montant||0)-(r.montant_rembourse||0)).toLocaleString('fr-FR')} FCFA</span></div>
+    </div>
+    <div class="signatures"><div class="sig-box">Signature étuveuse<br><small>${getEtvName(en)}</small></div><div class="sig-box">Visa direction</div></div>
+    </body></html>`
+    const w=window.open('','_blank'); w.document.write(html); w.document.close()
+  }
+
+  return (
+    <div>
+      <PageHeader title="Avances sur Commande" subtitle={`${items.length} avance(s) — Total : ${fcfa(totalAvances)} | Remboursé : ${fcfa(totalRembourse)}`}
+        actions={!readOnly&&<Btn onClick={openAdd}>+ Nouvelle Avance</Btn>} />
+      <div style={{background:'white',borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
+        {items.length===0?(
+          <div style={{textAlign:'center',padding:'48px 24px',color:'#64748b'}}>💰 Aucune avance enregistrée</div>
+        ):(
+          <div style={{overflowX:'auto',WebkitOverflowScrolling:'touch'}}>
+          <table style={{width:'100%',borderCollapse:'collapse',minWidth:600}}>
+            <thead><tr><TH>N° Avance</TH><TH>Date</TH><TH>Étuveuse</TH><TH right>Montant</TH><TH right>Remboursé</TH><TH right>Solde</TH><TH>Mode</TH><TH>Actions</TH></tr></thead>
+            <tbody>
+              {items.map(r=>{
+                const solde=(r.montant||0)-(r.montant_rembourse||0)
+                return (
+                  <TR key={r.id}>
+                    <TD bold sm>{r.numero}</TD>
+                    <TD sm>{r.date_avance}</TD>
+                    <TD sm>{getEtvName(r.compta_etuveuses)}</TD>
+                    <TD right bold>{fcfa(r.montant)}</TD>
+                    <TD right color="#16a34a">{fcfa(r.montant_rembourse)}</TD>
+                    <TD right bold color={solde>0?'#dc2626':'#16a34a'}>{fcfa(solde)}</TD>
+                    <TD sm>{r.mode_paiement||'—'}</TD>
+                    <TD><div style={{display:'flex',gap:4}}>
+                      {BTN_ACTION('👁️','#0ea5e9',()=>setViewItem(r),'Voir')}
+                      {BTN_ACTION('🖨️','#f59e0b',()=>printAvance(r),'Imprimer')}
+                      {!readOnly&&BTN_ACTION('🗑️','#ef4444',()=>deleteItem(r.id),'Supprimer')}
+                    </div></TD>
+                  </TR>
+                )
+              })}
+            </tbody>
+          </table>
+          </div>
+        )}
+      </div>
+
+      {viewItem&&(
+        <Modal open={!!viewItem} onClose={()=>setViewItem(null)} title={'Avance — '+viewItem.numero} size="md">
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'10px 24px',fontSize:14,marginBottom:16}}>
+            {[['N° Avance',viewItem.numero],['Date',viewItem.date_avance],
+              ['Étuveuse',getEtvName(viewItem.compta_etuveuses)],['Mode',viewItem.mode_paiement||'—'],
+              ['Référence',viewItem.reference||'—'],['Notes',viewItem.notes||'—']
+            ].map(([l,v])=>(
+              <div key={l} style={{borderBottom:'1px solid #f1f5f9',paddingBottom:8}}>
+                <div style={{fontSize:11,color:'#94a3b8',marginBottom:2}}>{l}</div>
+                <div style={{fontWeight:600}}>{v}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10}}>
+            <div style={{padding:'10px',background:'#eff6ff',borderRadius:8,textAlign:'center'}}>
+              <div style={{fontSize:11,color:'#94a3b8'}}>Avance</div>
+              <div style={{fontWeight:800,color:ACCENT,fontSize:15}}>{fcfa(viewItem.montant)}</div>
+            </div>
+            <div style={{padding:'10px',background:'#f0fdf4',borderRadius:8,textAlign:'center'}}>
+              <div style={{fontSize:11,color:'#94a3b8'}}>Remboursé</div>
+              <div style={{fontWeight:800,color:'#16a34a',fontSize:15}}>{fcfa(viewItem.montant_rembourse)}</div>
+            </div>
+            <div style={{padding:'10px',background:(viewItem.montant||0)-(viewItem.montant_rembourse||0)>0?'#fef2f2':'#f0fdf4',borderRadius:8,textAlign:'center'}}>
+              <div style={{fontSize:11,color:'#94a3b8'}}>Solde</div>
+              <div style={{fontWeight:800,color:(viewItem.montant||0)-(viewItem.montant_rembourse||0)>0?'#dc2626':'#16a34a',fontSize:15}}>{fcfa((viewItem.montant||0)-(viewItem.montant_rembourse||0))}</div>
+            </div>
+          </div>
+          <Row style={{marginTop:16}}>
+            <Btn variant="danger" onClick={()=>printAvance(viewItem)}>🖨️ Imprimer</Btn>
+            <Btn variant="secondary" onClick={()=>setViewItem(null)}>Fermer</Btn>
+          </Row>
+        </Modal>
+      )}
+
+      <Modal open={modal} onClose={close} title="Nouvelle Avance sur Commande" size="lg">
+        <form onSubmit={save}>
+          <Grid cols={2} gap={14} style={{marginBottom:16}}>
+            <Input label="N° Avance (auto si vide)" name="numero" value={form.numero||''} onChange={set} placeholder="AVA-2026-0001" />
+            <Input label="Date *" name="date_avance" type="date" value={form.date_avance||''} onChange={set} required />
+            <div style={{gridColumn:'1/-1'}}>
+              <label style={{display:'block',fontSize:12.5,fontWeight:600,color:'#374151',marginBottom:5}}>Étuveuse *</label>
+              <select name="etuveuse_id" value={form.etuveuse_id||''} onChange={set} required
+                style={{width:'100%',padding:'9px 12px',borderRadius:8,border:'1.5px solid #e2e8f0',fontSize:13}}>
+                <option value=''>— Sélectionner une étuveuse —</option>
+                {etuveuses.map(e=><option key={e.id} value={e.id}>{getEtvName(e)}</option>)}
+              </select>
+            </div>
+            <Input label="Montant avance (FCFA) *" name="montant" type="number" value={form.montant||0} onChange={set} required min="0" />
+            <Input label="Montant déjà remboursé (FCFA)" name="montant_rembourse" type="number" value={form.montant_rembourse||0} onChange={set} min="0" />
+            <Sel label="Mode de paiement" name="mode_paiement" value={form.mode_paiement||'espèce'} onChange={set}
+              options={['espèce','virement','mobile_money','chèque'].map(m=>({value:m,label:m.charAt(0).toUpperCase()+m.slice(1)}))} />
+            <Input label="Référence paiement" name="reference" value={form.reference||''} onChange={set} />
+            <Span2><Input label="Notes" name="notes" value={form.notes||''} onChange={set} /></Span2>
+          </Grid>
+          <Row><Btn variant="secondary" onClick={close}>Annuler</Btn><Btn type="submit" disabled={saving}>{saving?'...':'Enregistrer'}</Btn></Row>
+        </form>
+      </Modal>
+    </div>
+  )
+}
+
+// ── BONS DE COMMANDE ÉTUVEUSES ────────────────────────────────────────────────
+function EtvBCPage({ companies, companyId, toast, readOnly=false }) {
+  const [items, setItems]=useState([])
+  const [etuveuses, setEtuveuses]=useState([])
+  const [modal, setModal]=useState(false)
+  const [viewItem, setViewItem]=useState(null)
+  const [form, setForm]=useState({})
+  const [lignes, setLignes]=useState([])
+  const [saving, setSaving]=useState(false)
+
+  const loadEtuveuses=useCallback(async()=>{
+    const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
+    const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
+    let q=supabase.from('compta_etuveuses').select('id,code_etuveuse,compta_fournisseurs(nom,prenom,nom_societe,type)').order('code_etuveuse')
+    if(isAdmin&&companyId) q=q.eq('company_id',companyId)
+    else if(companyId) q=q.eq('user_id',uid).eq('company_id',companyId)
+    else q=q.eq('user_id',uid)
+    const { data }=await q; setEtuveuses(data||[])
+  },[companyId])
+
+  const load=useCallback(async()=>{
+    const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
+    const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
+    let q=supabase.from('compta_bc_etuveuses').select('*,compta_etuveuses(code_etuveuse,compta_fournisseurs(nom,prenom,nom_societe,type))').order('date_bc',{ascending:false})
+    if(isAdmin&&companyId) q=q.eq('company_id',companyId)
+    else if(companyId) q=q.eq('user_id',uid).eq('company_id',companyId)
+    else q=q.eq('user_id',uid)
+    const { data }=await q; setItems(data||[])
+  },[companyId])
+
+  useEffect(()=>{ load(); loadEtuveuses() },[load,loadEtuveuses])
+
+  const getEtvName=(e)=>{
+    if(!e) return '—'
+    const f=e.compta_fournisseurs
+    const nom=f?(f.type==='morale'?f.nom_societe:`${f.nom||''} ${f.prenom||''}`.trim()):''
+    return `${e.code_etuveuse||''} — ${nom}`
+  }
+
+  const set=e=>setForm(f=>({...f,[e.target.name]:e.target.value}))
+  const addLigne=()=>setLignes(l=>[...l,{id:Date.now(),variete:'',quantite_kg:0,prix_unitaire:0}])
+  const removeLigne=id=>setLignes(l=>l.filter(x=>x.id!==id))
+  const setLigne=(id,field,val)=>setLignes(l=>l.map(x=>x.id===id?{...x,[field]:val}:x))
+
+  const totalBC=lignes.reduce((s,l)=>s+((parseFloat(l.quantite_kg)||0)*(parseFloat(l.prix_unitaire)||0)),0)
+
+  const openAdd=()=>{
+    setForm({company_id:companyId||companies[0]?.id||'',etuveuse_id:'',numero:'',date_bc:today(),statut:'en_attente',notes:''})
+    setLignes([{id:1,variete:'',quantite_kg:0,prix_unitaire:0}])
+    setModal(true)
+  }
+  const close=()=>setModal(false)
+
+  const deleteItem=async(id)=>{
+    if(!window.confirm('Supprimer ce bon de commande ?')) return
+    await supabase.from('compta_bc_etuveuses').delete().eq('id',id)
+    toast.success('BC supprimé !'); load()
+  }
+
+  const save=async e=>{
+    e.preventDefault(); setSaving(true)
+    const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
+    const year=new Date().getFullYear()
+    const { count }=await supabase.from('compta_bc_etuveuses').select('id',{count:'exact',head:true}).eq('user_id',uid)
+    const numero=form.numero||`BC-ETV-${year}-${String((count||0)+1).padStart(4,'0')}`
+    const montant_total=Math.round(totalBC)
+    const { error }=await supabase.from('compta_bc_etuveuses').insert({
+      ...form, user_id:uid, company_id:form.company_id||companyId,
+      numero, lignes, montant_total
+    })
+    setSaving(false)
+    if(error){ toast.error(error.message); return }
+    toast.success('Bon de commande enregistré !'); close(); load()
+  }
+
+  const STATUT_BC={en_attente:{c:'#f59e0b',bg:'#fef3c7',t:'En attente'},valide:{c:'#16a34a',bg:'#dcfce7',t:'Validé'},refuse:{c:'#dc2626',bg:'#fee2e2',t:'Refusé'}}
+
+  const printBC=(r)=>{
+    const lignesHtml=(r.lignes||[]).map((l,i)=>`<tr>
+      <td>${i+1}</td><td>${l.variete||'—'}</td>
+      <td class="r">${(parseFloat(l.quantite_kg)||0).toLocaleString('fr-FR')} kg</td>
+      <td class="r">${Math.round(parseFloat(l.prix_unitaire)||0).toLocaleString('fr-FR')} FCFA/kg</td>
+      <td class="r">${Math.round((parseFloat(l.quantite_kg)||0)*(parseFloat(l.prix_unitaire)||0)).toLocaleString('fr-FR')} FCFA</td>
+    </tr>`).join('')
+    const html=`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Bon de Commande ${r.numero}</title>
+    <style>${CSS_PRINT}</style></head><body>
+    <button class="print-btn" onclick="window.print()">🖨️ Imprimer</button>
+    <div class="header"><div><div class="company-name">BON DE COMMANDE ÉTUVEUSE</div></div>
+    <div class="doc-title"><h1>${r.numero}</h1><div class="doc-date">Date : ${r.date_bc||'—'}</div></div></div>
+    <p><strong>Étuveuse :</strong> ${getEtvName(r.compta_etuveuses)}</p>
+    <table><thead><tr><th>N°</th><th>Variété</th><th class="r">Quantité (kg)</th><th class="r">Prix U. (FCFA/kg)</th><th class="r">Montant</th></tr></thead>
+    <tbody>${lignesHtml}</tbody></table>
+    <div class="totals"><div class="ttc"><span>TOTAL</span><span>${Math.round(r.montant_total||0).toLocaleString('fr-FR')} FCFA</span></div></div>
+    <div class="signatures"><div class="sig-box">Signature étuveuse<br><small>${getEtvName(r.compta_etuveuses)}</small></div><div class="sig-box">Validation société</div></div>
+    </body></html>`
+    const w=window.open('','_blank'); w.document.write(html); w.document.close()
+  }
+
+  return (
+    <div>
+      <PageHeader title="Bons de Commande Étuveuses" subtitle={`${items.length} bon(s) de commande`}
+        actions={!readOnly&&<Btn onClick={openAdd}>+ Nouveau BC</Btn>} />
+      <div style={{background:'white',borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
+        {items.length===0?(
+          <div style={{textAlign:'center',padding:'48px 24px',color:'#64748b'}}>📋 Aucun bon de commande</div>
+        ):(
+          <div style={{overflowX:'auto',WebkitOverflowScrolling:'touch'}}>
+          <table style={{width:'100%',borderCollapse:'collapse',minWidth:600}}>
+            <thead><tr><TH>N° BC</TH><TH>Date</TH><TH>Étuveuse</TH><TH right>Montant total</TH><TH>Statut</TH><TH>Actions</TH></tr></thead>
+            <tbody>
+              {items.map(r=>{
+                const s=STATUT_BC[r.statut]||STATUT_BC.en_attente
+                return (
+                  <TR key={r.id}>
+                    <TD bold sm>{r.numero}</TD>
+                    <TD sm>{r.date_bc}</TD>
+                    <TD sm>{getEtvName(r.compta_etuveuses)}</TD>
+                    <TD right bold>{fcfa(r.montant_total)}</TD>
+                    <TD><span style={{padding:'3px 10px',borderRadius:20,background:s.bg,color:s.c,fontSize:11,fontWeight:700}}>{s.t}</span></TD>
+                    <TD><div style={{display:'flex',gap:4}}>
+                      {BTN_ACTION('👁️','#0ea5e9',()=>setViewItem(r),'Voir')}
+                      {BTN_ACTION('🖨️','#f59e0b',()=>printBC(r),'Imprimer')}
+                      {!readOnly&&BTN_ACTION('🗑️','#ef4444',()=>deleteItem(r.id),'Supprimer')}
+                    </div></TD>
+                  </TR>
+                )
+              })}
+            </tbody>
+          </table>
+          </div>
+        )}
+      </div>
+
+      {viewItem&&(
+        <Modal open={!!viewItem} onClose={()=>setViewItem(null)} title={'BC — '+viewItem.numero} size="lg">
+          <div style={{marginBottom:12,fontSize:14}}>
+            <strong>Étuveuse :</strong> {getEtvName(viewItem.compta_etuveuses)} &nbsp;|&nbsp;
+            <strong>Date :</strong> {viewItem.date_bc}
+          </div>
+          <table style={{width:'100%',borderCollapse:'collapse',marginBottom:12}}>
+            <thead><tr style={{background:'#0f2044',color:'white'}}>
+              {['N°','Variété','Qté demandée (kg)','Prix U. (FCFA/kg)','Montant'].map(h=><th key={h} style={{padding:'8px 10px',textAlign:'left',fontSize:12}}>{h}</th>)}
+            </tr></thead>
+            <tbody>
+              {(viewItem.lignes||[]).map((l,i)=>(
+                <tr key={i} style={{borderBottom:'1px solid #e2e8f0'}}>
+                  <td style={{padding:'8px 10px',fontSize:13}}>{i+1}</td>
+                  <td style={{padding:'8px 10px',fontSize:13}}>{l.variete||'—'}</td>
+                  <td style={{padding:'8px 10px',fontSize:13,textAlign:'right'}}>{(parseFloat(l.quantite_kg)||0).toLocaleString('fr-FR')} kg</td>
+                  <td style={{padding:'8px 10px',fontSize:13,textAlign:'right'}}>{Math.round(parseFloat(l.prix_unitaire)||0).toLocaleString('fr-FR')}</td>
+                  <td style={{padding:'8px 10px',fontSize:13,textAlign:'right',fontWeight:700}}>{fcfa((parseFloat(l.quantite_kg)||0)*(parseFloat(l.prix_unitaire)||0))}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div style={{padding:'12px 16px',background:'#0f2044',borderRadius:8,display:'flex',justifyContent:'space-between',color:'white',fontWeight:800}}>
+            <span>TOTAL</span><span>{fcfa(viewItem.montant_total)}</span>
+          </div>
+          <Row style={{marginTop:16}}>
+            <Btn variant="danger" onClick={()=>printBC(viewItem)}>🖨️ Imprimer</Btn>
+            <Btn variant="secondary" onClick={()=>setViewItem(null)}>Fermer</Btn>
+          </Row>
+        </Modal>
+      )}
+
+      <Modal open={modal} onClose={close} title="Nouveau Bon de Commande" size="xl">
+        <form onSubmit={save}>
+          <Grid cols={3} gap={14} style={{marginBottom:16}}>
+            <Input label="N° BC (auto si vide)" name="numero" value={form.numero||''} onChange={set} placeholder="BC-ETV-2026-0001" />
+            <Input label="Date *" name="date_bc" type="date" value={form.date_bc||''} onChange={set} required />
+            <Sel label="Statut" name="statut" value={form.statut||'en_attente'} onChange={set}
+              options={[{value:'en_attente',label:'En attente'},{value:'valide',label:'Validé'},{value:'refuse',label:'Refusé'}]} />
+            <div style={{gridColumn:'1/-1'}}>
+              <label style={{display:'block',fontSize:12.5,fontWeight:600,color:'#374151',marginBottom:5}}>Étuveuse *</label>
+              <select name="etuveuse_id" value={form.etuveuse_id||''} onChange={set} required
+                style={{width:'100%',padding:'9px 12px',borderRadius:8,border:'1.5px solid #e2e8f0',fontSize:13}}>
+                <option value=''>— Sélectionner une étuveuse —</option>
+                {etuveuses.map(e=><option key={e.id} value={e.id}>{getEtvName(e)}</option>)}
+              </select>
+            </div>
+          </Grid>
+
+          <div style={{fontSize:12,fontWeight:700,color:'#0f2044',marginBottom:8,textTransform:'uppercase'}}>Lignes de commande</div>
+          <div style={{background:'#f8fafc',borderRadius:8,border:'1px solid #e2e8f0',overflow:'hidden',marginBottom:12}}>
+            <table style={{width:'100%',borderCollapse:'collapse'}}>
+              <thead><tr style={{background:'#0f2044',color:'white'}}>
+                {['Variété de riz','Quantité demandée (kg)','Prix unitaire (FCFA/kg)','Montant',''].map(h=><th key={h} style={{padding:'8px 10px',textAlign:'left',fontSize:11}}>{h}</th>)}
+              </tr></thead>
+              <tbody>
+                {lignes.map(l=>{
+                  const mt=Math.round((parseFloat(l.quantite_kg)||0)*(parseFloat(l.prix_unitaire)||0))
+                  return (
+                    <tr key={l.id} style={{borderBottom:'1px solid #e2e8f0'}}>
+                      <td style={{padding:'6px 8px'}}>
+                        <select value={l.variete||''} onChange={e=>setLigne(l.id,'variete',e.target.value)}
+                          style={{width:'100%',padding:'5px 8px',border:'1px solid #e2e8f0',borderRadius:4,fontSize:12}}>
+                          <option value=''>— Variété —</option>
+                          {ETV_VARIETES.map(v=><option key={v} value={v}>{v}</option>)}
+                        </select>
+                      </td>
+                      <td style={{padding:'6px 8px',width:150}}>
+                        <input type="number" value={l.quantite_kg||0} onChange={e=>setLigne(l.id,'quantite_kg',e.target.value)} min="0" step="0.001"
+                          style={{width:'100%',padding:'5px 8px',border:'1px solid #e2e8f0',borderRadius:4,fontSize:12}} />
+                      </td>
+                      <td style={{padding:'6px 8px',width:150}}>
+                        <input type="number" value={l.prix_unitaire||0} onChange={e=>setLigne(l.id,'prix_unitaire',e.target.value)} min="0"
+                          style={{width:'100%',padding:'5px 8px',border:'1px solid #e2e8f0',borderRadius:4,fontSize:12}} />
+                      </td>
+                      <td style={{padding:'6px 8px',width:130,fontWeight:700,color:ACCENT,fontSize:13}}>{fcfa(mt)}</td>
+                      <td style={{padding:'6px 4px',width:32}}>
+                        {lignes.length>1&&<button type="button" onClick={()=>removeLigne(l.id)} style={{background:'#fee2e2',border:'none',borderRadius:4,padding:'3px 7px',cursor:'pointer',color:'#dc2626',fontSize:12}}>✕</button>}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+            <div style={{padding:'8px 12px',display:'flex',justifyContent:'space-between',alignItems:'center',borderTop:'1px solid #e2e8f0'}}>
+              <button type="button" onClick={addLigne} style={{background:'#eff6ff',border:'1px solid #bfdbfe',borderRadius:6,padding:'5px 12px',cursor:'pointer',color:ACCENT,fontSize:13,fontWeight:600}}>+ Ajouter une ligne</button>
+              <div style={{fontWeight:800,fontSize:15,color:'#0f2044'}}>TOTAL : {fcfa(Math.round(totalBC))}</div>
+            </div>
+          </div>
+          <Input label="Notes" name="notes" value={form.notes||''} onChange={set} />
+          <Row style={{marginTop:12}}><Btn variant="secondary" onClick={close}>Annuler</Btn><Btn type="submit" disabled={saving}>{saving?'...':'Enregistrer'}</Btn></Row>
+        </form>
+      </Modal>
+    </div>
+  )
+}
+
+// ── BONS DE RÉCEPTION ─────────────────────────────────────────────────────────
+function EtvBRPage({ companies, companyId, toast, readOnly=false }) {
+  const [items, setItems]=useState([])
+  const [etuveuses, setEtuveuses]=useState([])
+  const [bcs, setBcs]=useState([])
+  const [modal, setModal]=useState(false)
+  const [viewItem, setViewItem]=useState(null)
+  const [form, setForm]=useState({})
+  const [lignes, setLignes]=useState([])
+  const [saving, setSaving]=useState(false)
+
+  const loadEtuveuses=useCallback(async()=>{
+    const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
+    const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
+    let q=supabase.from('compta_etuveuses').select('id,code_etuveuse,compta_fournisseurs(nom,prenom,nom_societe,type)').order('code_etuveuse')
+    if(isAdmin&&companyId) q=q.eq('company_id',companyId)
+    else if(companyId) q=q.eq('user_id',uid).eq('company_id',companyId)
+    else q=q.eq('user_id',uid)
+    const { data }=await q; setEtuveuses(data||[])
+  },[companyId])
+
+  const loadBCs=useCallback(async()=>{
+    const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
+    const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
+    let q=supabase.from('compta_bc_etuveuses').select('id,numero,etuveuse_id,lignes').eq('statut','valide').order('date_bc',{ascending:false})
+    if(isAdmin&&companyId) q=q.eq('company_id',companyId)
+    else if(companyId) q=q.eq('user_id',uid).eq('company_id',companyId)
+    else q=q.eq('user_id',uid)
+    const { data }=await q; setBcs(data||[])
+  },[companyId])
+
+  const load=useCallback(async()=>{
+    const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
+    const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
+    let q=supabase.from('compta_br_etuveuses').select('*,compta_etuveuses(code_etuveuse,compta_fournisseurs(nom,prenom,nom_societe,type))').order('date_br',{ascending:false})
+    if(isAdmin&&companyId) q=q.eq('company_id',companyId)
+    else if(companyId) q=q.eq('user_id',uid).eq('company_id',companyId)
+    else q=q.eq('user_id',uid)
+    const { data }=await q; setItems(data||[])
+  },[companyId])
+
+  useEffect(()=>{ load(); loadEtuveuses(); loadBCs() },[load,loadEtuveuses,loadBCs])
+
+  const getEtvName=(e)=>{
+    if(!e) return '—'
+    const f=e.compta_fournisseurs
+    const nom=f?(f.type==='morale'?f.nom_societe:`${f.nom||''} ${f.prenom||''}`.trim()):''
+    return `${e.code_etuveuse||''} — ${nom}`
+  }
+
+  const set=e=>setForm(f=>({...f,[e.target.name]:e.target.value}))
+  const setLigne=(id,field,val)=>setLignes(l=>l.map(x=>x.id===id?{...x,[field]:val}:x))
+
+  const onSelectBC=(bcId)=>{
+    const bc=bcs.find(b=>b.id===bcId)
+    if(!bc){ setForm(f=>({...f,bc_id:bcId})); return }
+    setForm(f=>({...f,bc_id:bcId,etuveuse_id:bc.etuveuse_id}))
+    setLignes((bc.lignes||[]).map((l,i)=>({
+      id:i+1, variete:l.variete||'', prix_unitaire:l.prix_unitaire||0,
+      qte_demandee:parseFloat(l.quantite_kg)||0,
+      qte_accordee:parseFloat(l.quantite_kg)||0
+    })))
+  }
+
+  const totalDemande=lignes.reduce((s,l)=>s+(parseFloat(l.qte_demandee)||0)*(parseFloat(l.prix_unitaire)||0),0)
+  const totalAccorde=lignes.reduce((s,l)=>s+(parseFloat(l.qte_accordee)||0)*(parseFloat(l.prix_unitaire)||0),0)
+
+  const openAdd=()=>{
+    setForm({company_id:companyId||companies[0]?.id||'',etuveuse_id:'',bc_id:'',numero:'',date_br:today(),notes:''})
+    setLignes([]); setModal(true)
+  }
+  const close=()=>setModal(false)
+
+  const deleteItem=async(id)=>{
+    if(!window.confirm('Supprimer ce bon de réception ?')) return
+    await supabase.from('compta_br_etuveuses').delete().eq('id',id)
+    toast.success('BR supprimé !'); load()
+  }
+
+  const save=async e=>{
+    e.preventDefault(); setSaving(true)
+    const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
+    const year=new Date().getFullYear()
+    const { count }=await supabase.from('compta_br_etuveuses').select('id',{count:'exact',head:true}).eq('user_id',uid)
+    const numero=form.numero||`BR-ETV-${year}-${String((count||0)+1).padStart(4,'0')}`
+    const { error }=await supabase.from('compta_br_etuveuses').insert({
+      ...form, user_id:uid, company_id:form.company_id||companyId,
+      numero, lignes,
+      montant_demande:Math.round(totalDemande),
+      montant_accorde:Math.round(totalAccorde)
+    })
+    setSaving(false)
+    if(error){ toast.error(error.message); return }
+    toast.success('Bon de réception enregistré !'); close(); load()
+  }
+
+  const printBR=(r)=>{
+    const lignesHtml=(r.lignes||[]).map((l,i)=>`<tr>
+      <td>${i+1}</td><td>${l.variete||'—'}</td>
+      <td class="r">${(parseFloat(l.qte_demandee)||0).toLocaleString('fr-FR')} kg</td>
+      <td class="r" style="color:#16a34a;font-weight:700">${(parseFloat(l.qte_accordee)||0).toLocaleString('fr-FR')} kg</td>
+      <td class="r">${Math.round(parseFloat(l.prix_unitaire)||0).toLocaleString('fr-FR')}</td>
+      <td class="r" style="font-weight:700">${Math.round((parseFloat(l.qte_accordee)||0)*(parseFloat(l.prix_unitaire)||0)).toLocaleString('fr-FR')}</td>
+    </tr>`).join('')
+    const html=`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Bon de Réception ${r.numero}</title>
+    <style>${CSS_PRINT}</style></head><body>
+    <button class="print-btn" onclick="window.print()">🖨️ Imprimer</button>
+    <div class="header"><div><div class="company-name">BON DE RÉCEPTION ÉTUVEUSE</div></div>
+    <div class="doc-title"><h1>${r.numero}</h1><div class="doc-date">Date : ${r.date_br||'—'}</div></div></div>
+    <p><strong>Étuveuse :</strong> ${getEtvName(r.compta_etuveuses)} | <strong>BC lié :</strong> ${r.bc_id||'—'}</p>
+    <table><thead><tr><th>N°</th><th>Variété</th><th class="r">Qté demandée</th><th class="r">Qté accordée</th><th class="r">Prix U.</th><th class="r">Montant accordé</th></tr></thead>
+    <tbody>${lignesHtml}</tbody></table>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:16px">
+      <div style="padding:10px 16px;background:#f1f5f9;border-radius:8px;display:flex;justify-content:space-between;font-weight:700">
+        <span>Total demandé</span><span>${Math.round(r.montant_demande||0).toLocaleString('fr-FR')} FCFA</span>
+      </div>
+      <div style="padding:10px 16px;background:#dcfce7;border-radius:8px;display:flex;justify-content:space-between;font-weight:700;color:#16a34a">
+        <span>Total accordé</span><span>${Math.round(r.montant_accorde||0).toLocaleString('fr-FR')} FCFA</span>
+      </div>
+    </div>
+    <div class="signatures"><div class="sig-box">Signature étuveuse<br><small>${getEtvName(r.compta_etuveuses)}</small></div><div class="sig-box">Approbation société</div></div>
+    </body></html>`
+    const w=window.open('','_blank'); w.document.write(html); w.document.close()
+  }
+
+  return (
+    <div>
+      <PageHeader title="Bons de Réception Étuveuses" subtitle={`${items.length} bon(s) de réception`}
+        actions={!readOnly&&<Btn onClick={openAdd}>+ Nouveau BR</Btn>} />
+      <div style={{background:'white',borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
+        {items.length===0?(
+          <div style={{textAlign:'center',padding:'48px 24px',color:'#64748b'}}>✅ Aucun bon de réception</div>
+        ):(
+          <div style={{overflowX:'auto',WebkitOverflowScrolling:'touch'}}>
+          <table style={{width:'100%',borderCollapse:'collapse',minWidth:600}}>
+            <thead><tr><TH>N° BR</TH><TH>Date</TH><TH>Étuveuse</TH><TH right>Montant demandé</TH><TH right>Montant accordé</TH><TH>Actions</TH></tr></thead>
+            <tbody>
+              {items.map(r=>(
+                <TR key={r.id}>
+                  <TD bold sm>{r.numero}</TD>
+                  <TD sm>{r.date_br}</TD>
+                  <TD sm>{getEtvName(r.compta_etuveuses)}</TD>
+                  <TD right>{fcfa(r.montant_demande)}</TD>
+                  <TD right bold color="#16a34a">{fcfa(r.montant_accorde)}</TD>
+                  <TD><div style={{display:'flex',gap:4}}>
+                    {BTN_ACTION('👁️','#0ea5e9',()=>setViewItem(r),'Voir')}
+                    {BTN_ACTION('🖨️','#f59e0b',()=>printBR(r),'Imprimer')}
+                    {!readOnly&&BTN_ACTION('🗑️','#ef4444',()=>deleteItem(r.id),'Supprimer')}
+                  </div></TD>
+                </TR>
+              ))}
+            </tbody>
+          </table>
+          </div>
+        )}
+      </div>
+
+      {viewItem&&(
+        <Modal open={!!viewItem} onClose={()=>setViewItem(null)} title={'BR — '+viewItem.numero} size="lg">
+          <div style={{marginBottom:12,fontSize:14}}>
+            <strong>Étuveuse :</strong> {getEtvName(viewItem.compta_etuveuses)} &nbsp;|&nbsp; <strong>Date :</strong> {viewItem.date_br}
+          </div>
+          <table style={{width:'100%',borderCollapse:'collapse',marginBottom:12}}>
+            <thead><tr style={{background:'#0f2044',color:'white'}}>
+              {['N°','Variété','Qté demandée','Qté accordée','Prix U.','Montant accordé'].map(h=><th key={h} style={{padding:'8px',fontSize:11}}>{h}</th>)}
+            </tr></thead>
+            <tbody>
+              {(viewItem.lignes||[]).map((l,i)=>(
+                <tr key={i} style={{borderBottom:'1px solid #e2e8f0',background:parseFloat(l.qte_accordee)<parseFloat(l.qte_demandee)?'#fef9c3':'white'}}>
+                  <td style={{padding:'8px',fontSize:12}}>{i+1}</td>
+                  <td style={{padding:'8px',fontSize:12}}>{l.variete||'—'}</td>
+                  <td style={{padding:'8px',fontSize:12,textAlign:'right'}}>{(parseFloat(l.qte_demandee)||0).toLocaleString('fr-FR')} kg</td>
+                  <td style={{padding:'8px',fontSize:12,textAlign:'right',color:'#16a34a',fontWeight:700}}>{(parseFloat(l.qte_accordee)||0).toLocaleString('fr-FR')} kg</td>
+                  <td style={{padding:'8px',fontSize:12,textAlign:'right'}}>{fcfa(l.prix_unitaire)}</td>
+                  <td style={{padding:'8px',fontSize:12,textAlign:'right',fontWeight:700}}>{fcfa((parseFloat(l.qte_accordee)||0)*(parseFloat(l.prix_unitaire)||0))}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+            <div style={{padding:'10px',background:'#f1f5f9',borderRadius:8,display:'flex',justifyContent:'space-between',fontWeight:700}}>
+              <span>Total demandé</span><span>{fcfa(viewItem.montant_demande)}</span>
+            </div>
+            <div style={{padding:'10px',background:'#dcfce7',borderRadius:8,display:'flex',justifyContent:'space-between',fontWeight:700,color:'#16a34a'}}>
+              <span>Total accordé</span><span>{fcfa(viewItem.montant_accorde)}</span>
+            </div>
+          </div>
+          <Row style={{marginTop:16}}>
+            <Btn variant="danger" onClick={()=>printBR(viewItem)}>🖨️ Imprimer</Btn>
+            <Btn variant="secondary" onClick={()=>setViewItem(null)}>Fermer</Btn>
+          </Row>
+        </Modal>
+      )}
+
+      <Modal open={modal} onClose={close} title="Nouveau Bon de Réception" size="xl">
+        <form onSubmit={save}>
+          <Grid cols={3} gap={14} style={{marginBottom:16}}>
+            <Input label="N° BR (auto si vide)" name="numero" value={form.numero||''} onChange={set} />
+            <Input label="Date *" name="date_br" type="date" value={form.date_br||''} onChange={set} required />
+            <div>
+              <label style={{display:'block',fontSize:12.5,fontWeight:600,color:'#374151',marginBottom:5}}>BC lié (optionnel)</label>
+              <select name="bc_id" value={form.bc_id||''} onChange={e=>onSelectBC(e.target.value)}
+                style={{width:'100%',padding:'9px 12px',borderRadius:8,border:'1.5px solid #e2e8f0',fontSize:13}}>
+                <option value=''>— Sélectionner un BC validé —</option>
+                {bcs.map(b=><option key={b.id} value={b.id}>{b.numero}</option>)}
+              </select>
+            </div>
+            <div style={{gridColumn:'1/-1'}}>
+              <label style={{display:'block',fontSize:12.5,fontWeight:600,color:'#374151',marginBottom:5}}>Étuveuse *</label>
+              <select name="etuveuse_id" value={form.etuveuse_id||''} onChange={set} required
+                style={{width:'100%',padding:'9px 12px',borderRadius:8,border:'1.5px solid #e2e8f0',fontSize:13}}>
+                <option value=''>— Sélectionner une étuveuse —</option>
+                {etuveuses.map(e=><option key={e.id} value={e.id}>{getEtvName(e)}</option>)}
+              </select>
+            </div>
+          </Grid>
+
+          {lignes.length>0&&(
+            <div style={{marginBottom:12}}>
+              <div style={{fontSize:12,fontWeight:700,color:'#0f2044',marginBottom:8}}>LIGNES — Quantités demandées vs accordées</div>
+              <div style={{overflowX:'auto'}}>
+              <table style={{width:'100%',borderCollapse:'collapse',background:'#f8fafc',borderRadius:8,overflow:'hidden'}}>
+                <thead><tr style={{background:'#0f2044',color:'white'}}>
+                  {['Variété','Qté demandée (kg)','Qté accordée (kg)','Prix U.','Montant accordé'].map(h=><th key={h} style={{padding:'8px 10px',fontSize:11,textAlign:'left'}}>{h}</th>)}
+                </tr></thead>
+                <tbody>
+                  {lignes.map(l=>{
+                    const diff=parseFloat(l.qte_accordee)<parseFloat(l.qte_demandee)
+                    return (
+                      <tr key={l.id} style={{borderBottom:'1px solid #e2e8f0',background:diff?'#fef9c3':'white'}}>
+                        <td style={{padding:'7px 10px',fontSize:13,fontWeight:600}}>{l.variete||'—'}</td>
+                        <td style={{padding:'7px 10px',fontSize:13,textAlign:'right',color:'#64748b'}}>{(parseFloat(l.qte_demandee)||0).toLocaleString('fr-FR')} kg</td>
+                        <td style={{padding:'7px 6px'}}>
+                          <input type="number" value={l.qte_accordee||0} onChange={e=>setLigne(l.id,'qte_accordee',e.target.value)}
+                            max={l.qte_demandee} min="0" step="0.001"
+                            style={{width:110,padding:'5px 8px',border:'1.5px solid '+(diff?'#f59e0b':'#bbf7d0'),borderRadius:6,fontSize:12,fontWeight:700,color:diff?'#92400e':'#16a34a'}} />
+                        </td>
+                        <td style={{padding:'7px 10px',fontSize:12,textAlign:'right'}}>{fcfa(l.prix_unitaire)}</td>
+                        <td style={{padding:'7px 10px',fontSize:13,fontWeight:700,color:'#16a34a',textAlign:'right'}}>{fcfa((parseFloat(l.qte_accordee)||0)*(parseFloat(l.prix_unitaire)||0))}</td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+              </div>
+              <div style={{display:'flex',justifyContent:'flex-end',gap:16,padding:'8px 12px',background:'#f8fafc',borderTop:'1px solid #e2e8f0',fontSize:13,fontWeight:700}}>
+                <span>Demandé : <span style={{color:'#64748b'}}>{fcfa(Math.round(totalDemande))}</span></span>
+                <span>Accordé : <span style={{color:'#16a34a'}}>{fcfa(Math.round(totalAccorde))}</span></span>
+              </div>
+            </div>
+          )}
+          <Input label="Notes" name="notes" value={form.notes||''} onChange={set} />
+          <Row style={{marginTop:12}}><Btn variant="secondary" onClick={close}>Annuler</Btn><Btn type="submit" disabled={saving}>{saving?'...':'Enregistrer'}</Btn></Row>
+        </form>
+      </Modal>
+    </div>
+  )
+}
+
+// ── ENTRÉES MAGASIN ───────────────────────────────────────────────────────────
+function EtvEntreesPage({ companies, companyId, toast, readOnly=false }) {
+  const [items, setItems]=useState([])
+  const [etuveuses, setEtuveuses]=useState([])
+  const [modal, setModal]=useState(false)
+  const [viewItem, setViewItem]=useState(null)
+  const [form, setForm]=useState({})
+  const [saving, setSaving]=useState(false)
+  const [dateFrom, setDateFrom]=useState('')
+  const [dateTo, setDateTo]=useState('')
+
+  const loadEtuveuses=useCallback(async()=>{
+    const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
+    const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
+    let q=supabase.from('compta_etuveuses').select('id,code_etuveuse,compta_fournisseurs(nom,prenom,nom_societe,type)').order('code_etuveuse')
+    if(isAdmin&&companyId) q=q.eq('company_id',companyId)
+    else if(companyId) q=q.eq('user_id',uid).eq('company_id',companyId)
+    else q=q.eq('user_id',uid)
+    const { data }=await q; setEtuveuses(data||[])
+  },[companyId])
+
+  const load=useCallback(async()=>{
+    const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
+    const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
+    let q=supabase.from('compta_entrees_magasin').select('*,compta_etuveuses(code_etuveuse,compta_fournisseurs(nom,prenom,nom_societe,type))').order('date_entree',{ascending:false})
+    if(isAdmin&&companyId) q=q.eq('company_id',companyId)
+    else if(companyId) q=q.eq('user_id',uid).eq('company_id',companyId)
+    else q=q.eq('user_id',uid)
+    if(dateFrom) q=q.gte('date_entree',dateFrom)
+    if(dateTo) q=q.lte('date_entree',dateTo)
+    const { data }=await q; setItems(data||[])
+  },[companyId,dateFrom,dateTo])
+
+  useEffect(()=>{ load(); loadEtuveuses() },[load,loadEtuveuses])
+
+  const getEtvName=(e)=>{
+    if(!e) return '—'
+    const f=e.compta_fournisseurs
+    const nom=f?(f.type==='morale'?f.nom_societe:`${f.nom||''} ${f.prenom||''}`.trim()):''
+    return `${e.code_etuveuse||''} — ${nom}`
+  }
+
+  const set=e=>setForm(f=>({...f,[e.target.name]:e.target.value}))
+
+  const openAdd=()=>{
+    setForm({company_id:companyId||companies[0]?.id||'',etuveuse_id:'',
+      numero_lot:'',date_entree:today(),variete:'',annee_production:new Date().getFullYear(),
+      quantite_kg:0,prix_unitaire:0,provenance:'',observations:''})
+    setModal(true)
+  }
+  const close=()=>setModal(false)
+
+  const deleteItem=async(id)=>{
+    if(!window.confirm('Supprimer cette entrée magasin ?')) return
+    await supabase.from('compta_entrees_magasin').delete().eq('id',id)
+    toast.success('Entrée supprimée !'); load()
+  }
+
+  const save=async e=>{
+    e.preventDefault(); setSaving(true)
+    const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
+    const montant=Math.round((parseFloat(form.quantite_kg)||0)*(parseFloat(form.prix_unitaire)||0))
+    const { error }=await supabase.from('compta_entrees_magasin').insert({
+      ...form, user_id:uid, company_id:form.company_id||companyId,
+      quantite_kg:parseFloat(form.quantite_kg)||0,
+      prix_unitaire:parseFloat(form.prix_unitaire)||0,
+      annee_production:parseInt(form.annee_production)||new Date().getFullYear(),
+      montant
+    })
+    setSaving(false)
+    if(error){ toast.error(error.message); return }
+    toast.success('Entrée magasin enregistrée !'); close(); load()
+  }
+
+  const totalKg=items.reduce((s,r)=>s+(r.quantite_kg||0),0)
+  const totalVal=items.reduce((s,r)=>s+(r.montant||0),0)
+
+  const printEntree=(r)=>{
+    const html=`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Bon Entrée Magasin ${r.numero_lot||''}</title>
+    <style>${CSS_PRINT}</style></head><body>
+    <button class="print-btn" onclick="window.print()">🖨️ Imprimer</button>
+    <div class="header"><div><div class="company-name">BON D'ENTRÉE EN MAGASIN</div></div>
+    <div class="doc-title"><h1>N° LOT : ${r.numero_lot||'—'}</h1><div class="doc-date">Date : ${r.date_entree||'—'}</div></div></div>
+    <table><thead><tr><th>Désignation</th><th class="r">Valeur</th></tr></thead><tbody>
+    <tr><td>Étuveuse</td><td class="r">${getEtvName(r.compta_etuveuses)}</td></tr>
+    <tr><td>N° Lot / Étiquette</td><td class="r"><strong>${r.numero_lot||'—'}</strong></td></tr>
+    <tr><td>Variété</td><td class="r">${r.variete||'—'}</td></tr>
+    <tr><td>Année de production</td><td class="r">${r.annee_production||'—'}</td></tr>
+    <tr><td>Quantité reçue</td><td class="r"><strong>${(r.quantite_kg||0).toLocaleString('fr-FR')} kg</strong></td></tr>
+    <tr><td>Prix unitaire</td><td class="r">${Math.round(r.prix_unitaire||0).toLocaleString('fr-FR')} FCFA/kg</td></tr>
+    <tr><td>Provenance</td><td class="r">${r.provenance||'—'}</td></tr>
+    ${r.observations?`<tr><td>Observations</td><td class="r">${r.observations}</td></tr>`:''}
+    </tbody></table>
+    <div class="totals"><div class="ttc"><span>VALEUR TOTALE</span><span>${Math.round(r.montant||0).toLocaleString('fr-FR')} FCFA</span></div></div>
+    <div style="margin-top:24px;padding:16px;background:#eff6ff;border-radius:8px;text-align:center">
+      <div style="font-size:9pt;color:#555;margin-bottom:8px">ÉTIQUETTE SAC</div>
+      <div style="font-size:14pt;font-weight:800;border:2px solid #0f2044;display:inline-block;padding:8px 24px;border-radius:6px">
+        ${r.numero_lot||'—'} | ${r.variete||'—'} | ${r.annee_production||'—'}
+      </div>
+    </div>
+    <div class="signatures"><div class="sig-box">Responsable magasin</div><div class="sig-box">Signature étuveuse<br><small>${getEtvName(r.compta_etuveuses)}</small></div></div>
+    </body></html>`
+    const w=window.open('','_blank'); w.document.write(html); w.document.close()
+  }
+
+  return (
+    <div>
+      <PageHeader title="Entrées Magasin" subtitle={`${items.length} entrée(s) — ${totalKg.toFixed(2)} kg — ${fcfa(totalVal)}`}
+        actions={!readOnly&&<Btn onClick={openAdd}>+ Nouvelle Entrée</Btn>} />
+      <PeriodFilter dateFrom={dateFrom} dateTo={dateTo} onFrom={setDateFrom} onTo={setDateTo} onReset={()=>{setDateFrom('');setDateTo('')}} />
+      <div style={{background:'white',borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
+        {items.length===0?(
+          <div style={{textAlign:'center',padding:'48px 24px',color:'#64748b'}}>📥 Aucune entrée magasin</div>
+        ):(
+          <div style={{overflowX:'auto',WebkitOverflowScrolling:'touch'}}>
+          <table style={{width:'100%',borderCollapse:'collapse',minWidth:600}}>
+            <thead><tr><TH>N° Lot</TH><TH>Date</TH><TH>Étuveuse</TH><TH>Variété</TH><TH>Année</TH><TH right>Qté (kg)</TH><TH right>Valeur</TH><TH>Actions</TH></tr></thead>
+            <tbody>
+              {items.map(r=>(
+                <TR key={r.id}>
+                  <TD bold>{r.numero_lot||'—'}</TD>
+                  <TD sm>{r.date_entree}</TD>
+                  <TD sm>{getEtvName(r.compta_etuveuses)}</TD>
+                  <TD sm>{r.variete||'—'}</TD>
+                  <TD sm>{r.annee_production||'—'}</TD>
+                  <TD right bold>{(r.quantite_kg||0).toLocaleString('fr-FR')} kg</TD>
+                  <TD right>{fcfa(r.montant)}</TD>
+                  <TD><div style={{display:'flex',gap:4}}>
+                    {BTN_ACTION('👁️','#0ea5e9',()=>setViewItem(r),'Voir')}
+                    {BTN_ACTION('🖨️','#f59e0b',()=>printEntree(r),'Imprimer')}
+                    {!readOnly&&BTN_ACTION('🗑️','#ef4444',()=>deleteItem(r.id),'Supprimer')}
+                  </div></TD>
+                </TR>
+              ))}
+            </tbody>
+          </table>
+          </div>
+        )}
+      </div>
+
+      {viewItem&&(
+        <Modal open={!!viewItem} onClose={()=>setViewItem(null)} title={'Entrée — N° Lot '+viewItem.numero_lot} size="md">
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'10px 24px',fontSize:14,marginBottom:16}}>
+            {[['N° Lot',viewItem.numero_lot||'—'],['Date',viewItem.date_entree||'—'],
+              ['Étuveuse',getEtvName(viewItem.compta_etuveuses)],['Variété',viewItem.variete||'—'],
+              ['Année de production',viewItem.annee_production||'—'],['Provenance',viewItem.provenance||'—'],
+              ['Prix unitaire',fcfa(viewItem.prix_unitaire)+'/kg'],['Observations',viewItem.observations||'—']
+            ].map(([l,v])=>(
+              <div key={l} style={{borderBottom:'1px solid #f1f5f9',paddingBottom:8}}>
+                <div style={{fontSize:11,color:'#94a3b8',marginBottom:2}}>{l}</div>
+                <div style={{fontWeight:600}}>{v}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{padding:'14px 18px',background:'#eff6ff',borderRadius:10,display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
+            <span style={{fontWeight:600}}>Quantité reçue</span>
+            <span style={{fontSize:18,fontWeight:800,color:ACCENT}}>{(viewItem.quantite_kg||0).toLocaleString('fr-FR')} kg</span>
+          </div>
+          <div style={{padding:'10px 16px',background:'#0f2044',borderRadius:8,display:'flex',justifyContent:'space-between',color:'white',fontWeight:800}}>
+            <span>VALEUR TOTALE</span><span>{fcfa(viewItem.montant)}</span>
+          </div>
+          <Row style={{marginTop:16}}>
+            <Btn variant="danger" onClick={()=>printEntree(viewItem)}>🖨️ Imprimer</Btn>
+            <Btn variant="secondary" onClick={()=>setViewItem(null)}>Fermer</Btn>
+          </Row>
+        </Modal>
+      )}
+
+      <Modal open={modal} onClose={close} title="Nouvelle Entrée Magasin" size="lg">
+        <form onSubmit={save}>
+          <Grid cols={3} gap={14} style={{marginBottom:16}}>
+            <Input label="N° Lot / Étiquette *" name="numero_lot" value={form.numero_lot||''} onChange={set} required placeholder="ex: LOT-ETV-001" />
+            <Input label="Date d'entrée *" name="date_entree" type="date" value={form.date_entree||''} onChange={set} required />
+            <div>
+              <label style={{display:'block',fontSize:12.5,fontWeight:600,color:'#374151',marginBottom:5}}>Étuveuse *</label>
+              <select name="etuveuse_id" value={form.etuveuse_id||''} onChange={set} required
+                style={{width:'100%',padding:'9px 12px',borderRadius:8,border:'1.5px solid #e2e8f0',fontSize:13}}>
+                <option value=''>— Sélectionner —</option>
+                {etuveuses.map(e=><option key={e.id} value={e.id}>{getEtvName(e)}</option>)}
+              </select>
+            </div>
+            <Sel label="Variété *" name="variete" value={form.variete||''} onChange={set}
+              options={[{value:'',label:'— Variété —'},...ETV_VARIETES.map(v=>({value:v,label:v}))]} />
+            <Input label="Année de production *" name="annee_production" type="number" value={form.annee_production||new Date().getFullYear()} onChange={set} required min="2000" max="2100" />
+            <Input label="Quantité (kg) *" name="quantite_kg" type="number" value={form.quantite_kg||0} onChange={set} required min="0" step="0.001" />
+            <Input label="Prix unitaire (FCFA/kg)" name="prix_unitaire" type="number" value={form.prix_unitaire||0} onChange={set} min="0" />
+            <Span2><Input label="Provenance" name="provenance" value={form.provenance||''} onChange={set} /></Span2>
+            <Span2><Input label="Observations" name="observations" value={form.observations||''} onChange={set} /></Span2>
+          </Grid>
+          <Row><Btn variant="secondary" onClick={close}>Annuler</Btn><Btn type="submit" disabled={saving}>{saving?'...':'Enregistrer'}</Btn></Row>
+        </form>
+      </Modal>
+    </div>
+  )
+}
+
+// ── SORTIES MAGASIN ───────────────────────────────────────────────────────────
+function EtvSortiesPage({ companies, companyId, toast, readOnly=false }) {
+  const [items, setItems]=useState([])
+  const [etuveuses, setEtuveuses]=useState([])
+  const [lots, setLots]=useState([])
+  const [modal, setModal]=useState(false)
+  const [viewItem, setViewItem]=useState(null)
+  const [form, setForm]=useState({})
+  const [saving, setSaving]=useState(false)
+  const [dateFrom, setDateFrom]=useState('')
+  const [dateTo, setDateTo]=useState('')
+
+  const loadEtuveuses=useCallback(async()=>{
+    const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
+    const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
+    let q=supabase.from('compta_etuveuses').select('id,code_etuveuse,compta_fournisseurs(nom,prenom,nom_societe,type)').order('code_etuveuse')
+    if(isAdmin&&companyId) q=q.eq('company_id',companyId)
+    else if(companyId) q=q.eq('user_id',uid).eq('company_id',companyId)
+    else q=q.eq('user_id',uid)
+    const { data }=await q; setEtuveuses(data||[])
+  },[companyId])
+
+  const loadLots=useCallback(async()=>{
+    const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
+    const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
+    let q=supabase.from('compta_entrees_magasin').select('id,numero_lot,etuveuse_id,variete,annee_production,quantite_kg').order('date_entree',{ascending:false})
+    if(isAdmin&&companyId) q=q.eq('company_id',companyId)
+    else if(companyId) q=q.eq('user_id',uid).eq('company_id',companyId)
+    else q=q.eq('user_id',uid)
+    const { data }=await q; setLots(data||[])
+  },[companyId])
+
+  const load=useCallback(async()=>{
+    const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
+    const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
+    let q=supabase.from('compta_sorties_magasin').select('*,compta_etuveuses(code_etuveuse,compta_fournisseurs(nom,prenom,nom_societe,type))').order('date_sortie',{ascending:false})
+    if(isAdmin&&companyId) q=q.eq('company_id',companyId)
+    else if(companyId) q=q.eq('user_id',uid).eq('company_id',companyId)
+    else q=q.eq('user_id',uid)
+    if(dateFrom) q=q.gte('date_sortie',dateFrom)
+    if(dateTo) q=q.lte('date_sortie',dateTo)
+    const { data }=await q; setItems(data||[])
+  },[companyId,dateFrom,dateTo])
+
+  useEffect(()=>{ load(); loadEtuveuses(); loadLots() },[load,loadEtuveuses,loadLots])
+
+  const getEtvName=(e)=>{
+    if(!e) return '—'
+    const f=e.compta_fournisseurs
+    const nom=f?(f.type==='morale'?f.nom_societe:`${f.nom||''} ${f.prenom||''}`.trim()):''
+    return `${e.code_etuveuse||''} — ${nom}`
+  }
+
+  const set=e=>setForm(f=>({...f,[e.target.name]:e.target.value}))
+
+  const onSelectLot=(lotId)=>{
+    const lot=lots.find(l=>l.id===lotId)
+    if(!lot){ setForm(f=>({...f,entree_id:lotId})); return }
+    setForm(f=>({...f,entree_id:lotId,numero_lot:lot.numero_lot,etuveuse_id:lot.etuveuse_id,
+      variete:lot.variete,annee_production:lot.annee_production}))
+  }
+
+  const openAdd=()=>{
+    setForm({company_id:companyId||companies[0]?.id||'',etuveuse_id:'',entree_id:'',
+      numero_lot:'',date_sortie:today(),variete:'',annee_production:new Date().getFullYear(),
+      quantite_kg:0,motif:'',destination:'',observations:''})
+    setModal(true)
+  }
+  const close=()=>setModal(false)
+
+  const deleteItem=async(id)=>{
+    if(!window.confirm('Supprimer cette sortie magasin ?')) return
+    await supabase.from('compta_sorties_magasin').delete().eq('id',id)
+    toast.success('Sortie supprimée !'); load()
+  }
+
+  const save=async e=>{
+    e.preventDefault(); setSaving(true)
+    const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
+    const { error }=await supabase.from('compta_sorties_magasin').insert({
+      ...form, user_id:uid, company_id:form.company_id||companyId,
+      quantite_kg:parseFloat(form.quantite_kg)||0,
+      annee_production:parseInt(form.annee_production)||new Date().getFullYear()
+    })
+    setSaving(false)
+    if(error){ toast.error(error.message); return }
+    toast.success('Sortie magasin enregistrée !'); close(); load()
+  }
+
+  const totalKg=items.reduce((s,r)=>s+(r.quantite_kg||0),0)
+
+  const printSortie=(r)=>{
+    const html=`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Bon Sortie Magasin</title>
+    <style>${CSS_PRINT}</style></head><body>
+    <button class="print-btn" onclick="window.print()">🖨️ Imprimer</button>
+    <div class="header"><div><div class="company-name">BON DE SORTIE MAGASIN</div></div>
+    <div class="doc-title"><h1>DÉSTOCKAGE</h1><div class="doc-date">Date : ${r.date_sortie||'—'}</div></div></div>
+    <table><thead><tr><th>Désignation</th><th class="r">Valeur</th></tr></thead><tbody>
+    <tr><td>Étuveuse</td><td class="r">${getEtvName(r.compta_etuveuses)}</td></tr>
+    <tr><td>N° Lot</td><td class="r"><strong>${r.numero_lot||'—'}</strong></td></tr>
+    <tr><td>Variété</td><td class="r">${r.variete||'—'}</td></tr>
+    <tr><td>Année de production</td><td class="r">${r.annee_production||'—'}</td></tr>
+    <tr><td>Quantité sortie</td><td class="r"><strong>${(r.quantite_kg||0).toLocaleString('fr-FR')} kg</strong></td></tr>
+    <tr><td>Motif</td><td class="r">${r.motif||'—'}</td></tr>
+    <tr><td>Destination</td><td class="r">${r.destination||'—'}</td></tr>
+    </tbody></table>
+    <div class="signatures"><div class="sig-box">Responsable magasin</div><div class="sig-box">Visa direction</div></div>
+    </body></html>`
+    const w=window.open('','_blank'); w.document.write(html); w.document.close()
+  }
+
+  return (
+    <div>
+      <PageHeader title="Sorties Magasin" subtitle={`${items.length} sortie(s) — ${totalKg.toFixed(2)} kg déstockés`}
+        actions={!readOnly&&<Btn onClick={openAdd}>+ Nouvelle Sortie</Btn>} />
+      <PeriodFilter dateFrom={dateFrom} dateTo={dateTo} onFrom={setDateFrom} onTo={setDateTo} onReset={()=>{setDateFrom('');setDateTo('')}} />
+      <div style={{background:'white',borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
+        {items.length===0?(
+          <div style={{textAlign:'center',padding:'48px 24px',color:'#64748b'}}>📤 Aucune sortie magasin</div>
+        ):(
+          <div style={{overflowX:'auto',WebkitOverflowScrolling:'touch'}}>
+          <table style={{width:'100%',borderCollapse:'collapse',minWidth:600}}>
+            <thead><tr><TH>Date</TH><TH>Étuveuse</TH><TH>N° Lot</TH><TH>Variété</TH><TH>Année</TH><TH right>Qté sortie (kg)</TH><TH>Motif</TH><TH>Actions</TH></tr></thead>
+            <tbody>
+              {items.map(r=>(
+                <TR key={r.id}>
+                  <TD sm>{r.date_sortie}</TD>
+                  <TD sm>{getEtvName(r.compta_etuveuses)}</TD>
+                  <TD bold>{r.numero_lot||'—'}</TD>
+                  <TD sm>{r.variete||'—'}</TD>
+                  <TD sm>{r.annee_production||'—'}</TD>
+                  <TD right bold color="#dc2626">{(r.quantite_kg||0).toLocaleString('fr-FR')} kg</TD>
+                  <TD sm>{r.motif||'—'}</TD>
+                  <TD><div style={{display:'flex',gap:4}}>
+                    {BTN_ACTION('👁️','#0ea5e9',()=>setViewItem(r),'Voir')}
+                    {BTN_ACTION('🖨️','#f59e0b',()=>printSortie(r),'Imprimer')}
+                    {!readOnly&&BTN_ACTION('🗑️','#ef4444',()=>deleteItem(r.id),'Supprimer')}
+                  </div></TD>
+                </TR>
+              ))}
+            </tbody>
+          </table>
+          </div>
+        )}
+      </div>
+
+      {viewItem&&(
+        <Modal open={!!viewItem} onClose={()=>setViewItem(null)} title='Détail Sortie Magasin' size="md">
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'10px 24px',fontSize:14}}>
+            {[['Date',viewItem.date_sortie||'—'],['Étuveuse',getEtvName(viewItem.compta_etuveuses)],
+              ['N° Lot',viewItem.numero_lot||'—'],['Variété',viewItem.variete||'—'],
+              ['Année',viewItem.annee_production||'—'],['Motif',viewItem.motif||'—'],
+              ['Destination',viewItem.destination||'—'],['Observations',viewItem.observations||'—']
+            ].map(([l,v])=>(
+              <div key={l} style={{borderBottom:'1px solid #f1f5f9',paddingBottom:8}}>
+                <div style={{fontSize:11,color:'#94a3b8',marginBottom:2}}>{l}</div>
+                <div style={{fontWeight:600}}>{v}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{padding:'14px 18px',background:'#fef2f2',borderRadius:10,display:'flex',justifyContent:'space-between',alignItems:'center',marginTop:16}}>
+            <span style={{fontWeight:600}}>Quantité sortie</span>
+            <span style={{fontSize:18,fontWeight:800,color:'#dc2626'}}>{(viewItem.quantite_kg||0).toLocaleString('fr-FR')} kg</span>
+          </div>
+          <Row style={{marginTop:16}}>
+            <Btn variant="danger" onClick={()=>printSortie(viewItem)}>🖨️ Imprimer</Btn>
+            <Btn variant="secondary" onClick={()=>setViewItem(null)}>Fermer</Btn>
+          </Row>
+        </Modal>
+      )}
+
+      <Modal open={modal} onClose={close} title="Nouvelle Sortie Magasin" size="lg">
+        <form onSubmit={save}>
+          <Grid cols={3} gap={14} style={{marginBottom:16}}>
+            <Input label="Date de sortie *" name="date_sortie" type="date" value={form.date_sortie||''} onChange={set} required />
+            <div>
+              <label style={{display:'block',fontSize:12.5,fontWeight:600,color:'#374151',marginBottom:5}}>Lot en stock <span style={{fontSize:10,color:'#94a3b8'}}>(auto-rempli)</span></label>
+              <select value={form.entree_id||''} onChange={e=>onSelectLot(e.target.value)}
+                style={{width:'100%',padding:'9px 12px',borderRadius:8,border:'1.5px solid #e2e8f0',fontSize:13}}>
+                <option value=''>— Sélectionner un lot —</option>
+                {lots.map(l=><option key={l.id} value={l.id}>{l.numero_lot} | {l.variete} | {l.annee_production} ({(l.quantite_kg||0).toLocaleString('fr-FR')} kg)</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={{display:'block',fontSize:12.5,fontWeight:600,color:'#374151',marginBottom:5}}>Étuveuse *</label>
+              <select name="etuveuse_id" value={form.etuveuse_id||''} onChange={set} required
+                style={{width:'100%',padding:'9px 12px',borderRadius:8,border:'1.5px solid #e2e8f0',fontSize:13}}>
+                <option value=''>— Sélectionner —</option>
+                {etuveuses.map(e=><option key={e.id} value={e.id}>{getEtvName(e)}</option>)}
+              </select>
+            </div>
+            <Input label="N° Lot" name="numero_lot" value={form.numero_lot||''} onChange={set} />
+            <Input label="Variété" name="variete" value={form.variete||''} onChange={set} />
+            <Input label="Année production" name="annee_production" type="number" value={form.annee_production||new Date().getFullYear()} onChange={set} />
+            <Input label="Quantité à sortir (kg) *" name="quantite_kg" type="number" value={form.quantite_kg||0} onChange={set} required min="0" step="0.001" />
+            <Input label="Motif de sortie" name="motif" value={form.motif||''} onChange={set} placeholder="ex: Livraison, Transformation..." />
+            <Input label="Destination" name="destination" value={form.destination||''} onChange={set} />
+            <Span2><Input label="Observations" name="observations" value={form.observations||''} onChange={set} /></Span2>
+          </Grid>
+          <Row><Btn variant="secondary" onClick={close}>Annuler</Btn><Btn type="submit" disabled={saving}>{saving?'...':'Enregistrer'}</Btn></Row>
+        </form>
+      </Modal>
+    </div>
+  )
+}
+
+// ── INVENTAIRE PAR ÉTUVEUSE ───────────────────────────────────────────────────
+function EtvInventairePage({ companies, companyId, toast }) {
+  const [inventaire, setInventaire]=useState([])
+  const [loading, setLoading]=useState(false)
+  const [etuveuses, setEtuveuses]=useState([])
+  const [filterEtv, setFilterEtv]=useState('')
+
+  const loadEtuveuses=useCallback(async()=>{
+    const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
+    const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
+    let q=supabase.from('compta_etuveuses').select('id,code_etuveuse,compta_fournisseurs(nom,prenom,nom_societe,type)').order('code_etuveuse')
+    if(isAdmin&&companyId) q=q.eq('company_id',companyId)
+    else if(companyId) q=q.eq('user_id',uid).eq('company_id',companyId)
+    else q=q.eq('user_id',uid)
+    const { data }=await q; setEtuveuses(data||[])
+  },[companyId])
+
+  const load=useCallback(async()=>{
+    setLoading(true)
+    const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
+    const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
+
+    let qE=supabase.from('compta_entrees_magasin').select('etuveuse_id,numero_lot,variete,annee_production,quantite_kg')
+    let qS=supabase.from('compta_sorties_magasin').select('etuveuse_id,numero_lot,variete,annee_production,quantite_kg')
+
+    if(isAdmin&&companyId){ qE=qE.eq('company_id',companyId); qS=qS.eq('company_id',companyId) }
+    else if(companyId){ qE=qE.eq('user_id',uid).eq('company_id',companyId); qS=qS.eq('user_id',uid).eq('company_id',companyId) }
+    else { qE=qE.eq('user_id',uid); qS=qS.eq('user_id',uid) }
+
+    if(filterEtv){ qE=qE.eq('etuveuse_id',filterEtv); qS=qS.eq('etuveuse_id',filterEtv) }
+
+    const [{ data:entrees },{ data:sorties }]=await Promise.all([qE,qS])
+
+    // Grouper par etuveuse_id + numero_lot
+    const map={}
+    ;(entrees||[]).forEach(e=>{
+      const key=`${e.etuveuse_id}__${e.numero_lot}`
+      if(!map[key]) map[key]={etuveuse_id:e.etuveuse_id,numero_lot:e.numero_lot,variete:e.variete,annee_production:e.annee_production,entrees:0,sorties:0}
+      map[key].entrees+=(parseFloat(e.quantite_kg)||0)
+    })
+    ;(sorties||[]).forEach(s=>{
+      const key=`${s.etuveuse_id}__${s.numero_lot}`
+      if(!map[key]) map[key]={etuveuse_id:s.etuveuse_id,numero_lot:s.numero_lot,variete:s.variete,annee_production:s.annee_production,entrees:0,sorties:0}
+      map[key].sorties+=(parseFloat(s.quantite_kg)||0)
+    })
+
+    setInventaire(Object.values(map).map(r=>({...r,stock:Math.max(0,r.entrees-r.sorties)})).sort((a,b)=>a.numero_lot?.localeCompare(b.numero_lot||'')||0))
+    setLoading(false)
+  },[companyId,filterEtv])
+
+  useEffect(()=>{ loadEtuveuses() },[loadEtuveuses])
+  useEffect(()=>{ load() },[load])
+
+  const getEtvName=(etvId)=>{
+    const e=etuveuses.find(x=>x.id===etvId)
+    if(!e) return etvId
+    const f=e.compta_fournisseurs
+    const nom=f?(f.type==='morale'?f.nom_societe:`${f.nom||''} ${f.prenom||''}`.trim()):''
+    return `${e.code_etuveuse||''} — ${nom}`
+  }
+
+  const totalEntrees=inventaire.reduce((s,r)=>s+r.entrees,0)
+  const totalSorties=inventaire.reduce((s,r)=>s+r.sorties,0)
+  const totalStock=inventaire.reduce((s,r)=>s+r.stock,0)
+
+  const printInventaire=()=>{
+    const lignesHtml=inventaire.map(r=>`<tr>
+      <td>${getEtvName(r.etuveuse_id)}</td><td>${r.numero_lot||'—'}</td>
+      <td>${r.variete||'—'}</td><td>${r.annee_production||'—'}</td>
+      <td class="r">${r.entrees.toFixed(2)} kg</td>
+      <td class="r">${r.sorties.toFixed(2)} kg</td>
+      <td class="r" style="font-weight:700;color:${r.stock>0?'#16a34a':'#dc2626'}">${r.stock.toFixed(2)} kg</td>
+    </tr>`).join('')
+    const html=`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Inventaire Étuveuses</title>
+    <style>${CSS_PRINT}</style></head><body>
+    <button class="print-btn" onclick="window.print()">🖨️ Imprimer</button>
+    <div class="header"><div><div class="company-name">INVENTAIRE ÉTUVEUSES</div></div>
+    <div class="doc-title"><h1>ÉTAT DES STOCKS</h1><div class="doc-date">Au : ${new Date().toLocaleDateString('fr-FR')}</div></div></div>
+    <table><thead><tr><th>Étuveuse</th><th>N° Lot</th><th>Variété</th><th>Année</th><th class="r">Entrées</th><th class="r">Sorties</th><th class="r">Stock</th></tr></thead>
+    <tbody>${lignesHtml}</tbody></table>
+    <div class="totals">
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-top:12px">
+        <div style="padding:10px;background:#eff6ff;border-radius:6px;text-align:center"><div>Total Entrées</div><div style="font-weight:800">${totalEntrees.toFixed(2)} kg</div></div>
+        <div style="padding:10px;background:#fef2f2;border-radius:6px;text-align:center"><div>Total Sorties</div><div style="font-weight:800;color:#dc2626">${totalSorties.toFixed(2)} kg</div></div>
+        <div style="padding:10px;background:#f0fdf4;border-radius:6px;text-align:center"><div>Stock Total</div><div style="font-weight:800;color:#16a34a">${totalStock.toFixed(2)} kg</div></div>
+      </div>
+    </div>
+    </body></html>`
+    const w=window.open('','_blank'); w.document.write(html); w.document.close()
+  }
+
+  return (
+    <div>
+      <PageHeader title="Inventaire Étuveuses" subtitle="Stock calculé automatiquement (Entrées − Sorties)"
+        actions={<Btn variant="danger" onClick={printInventaire}>🖨️ Imprimer inventaire</Btn>} />
+      <div style={{display:'flex',gap:12,marginBottom:16,alignItems:'center'}}>
+        <select value={filterEtv} onChange={e=>setFilterEtv(e.target.value)}
+          style={{padding:'9px 12px',borderRadius:8,border:'1px solid #e2e8f0',fontSize:13,background:'white',minWidth:240}}>
+          <option value=''>Toutes les étuveuses</option>
+          {etuveuses.map(e=>{
+            const f=e.compta_fournisseurs
+            const nom=f?(f.type==='morale'?f.nom_societe:`${f.nom||''} ${f.prenom||''}`.trim()):''
+            return <option key={e.id} value={e.id}>{e.code_etuveuse} — {nom}</option>
+          })}
+        </select>
+      </div>
+
+      <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:12,marginBottom:16}}>
+        {[
+          {l:'Total Entrées', v:totalEntrees.toFixed(2)+' kg', c:'#2563eb', bg:'#eff6ff'},
+          {l:'Total Sorties', v:totalSorties.toFixed(2)+' kg', c:'#dc2626', bg:'#fef2f2'},
+          {l:'Stock Actuel', v:totalStock.toFixed(2)+' kg', c:'#16a34a', bg:'#f0fdf4'},
+        ].map(s=>(
+          <Card key={s.l} style={{background:s.bg}}>
+            <div style={{fontSize:12,color:'#64748b',marginBottom:4}}>{s.l}</div>
+            <div style={{fontSize:18,fontWeight:800,color:s.c}}>{s.v}</div>
+          </Card>
+        ))}
+      </div>
+
+      <div style={{background:'white',borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
+        {loading?<div style={{textAlign:'center',padding:32,color:'#64748b'}}>Chargement...</div>
+        :inventaire.length===0?<div style={{textAlign:'center',padding:'48px 24px',color:'#64748b'}}>📊 Aucune donnée d'inventaire</div>:(
+          <div style={{overflowX:'auto',WebkitOverflowScrolling:'touch'}}>
+          <table style={{width:'100%',borderCollapse:'collapse',minWidth:600}}>
+            <thead><tr>
+              <TH>Étuveuse</TH><TH>N° Lot</TH><TH>Variété</TH><TH>Année</TH>
+              <TH right>Entrées (kg)</TH><TH right>Sorties (kg)</TH><TH right>Stock (kg)</TH>
+            </tr></thead>
+            <tbody>
+              {inventaire.map((r,i)=>(
+                <TR key={i}>
+                  <TD sm>{getEtvName(r.etuveuse_id)}</TD>
+                  <TD bold>{r.numero_lot||'—'}</TD>
+                  <TD sm>{r.variete||'—'}</TD>
+                  <TD sm>{r.annee_production||'—'}</TD>
+                  <TD right color="#2563eb">{r.entrees.toFixed(2)}</TD>
+                  <TD right color="#dc2626">{r.sorties.toFixed(2)}</TD>
+                  <TD right bold color={r.stock>0?'#16a34a':'#dc2626'}>{r.stock.toFixed(2)}</TD>
+                </TR>
+              ))}
+            </tbody>
+          </table>
+          </div>
+        )}
+      </div>
     </div>
   )
 }
@@ -6058,6 +7492,9 @@ export default function ComptaPro() {
     commercial:'Documents commerciaux', 'commercial-view':'Détail document', lots:'Lots Production',
     etuvage:'Étuvage', decorticage:'Décorticage', calibrage:'Calibrage',
     tri_optique:'Tri Optique', conditionnement:'Conditionnement',
+    etv_repertoire:'Répertoire Étuveuses', etv_avances:'Avances sur Commande',
+    etv_bc:'Bons de Commande', etv_br:'Bons de Réception',
+    etv_entrees:'Entrées Magasin', etv_sorties:'Sorties Magasin', etv_inventaire:'Inventaire Étuveuses',
     achats:'Achats Semi-finis', lots_semi_finis:'Lots Semi-finis', epierrage:'Épierrage', reglements_clients:'Règlements Clients', reglements_fourn:'Règlements Fournisseurs', etuvage_paiements:'Paiements Étuvage',
     docs_admin:'Documents administratifs', parametres:'Paramètres',
     prestations:'Prestations', journal_caisse:'Journal Caisse', journal_banque:'Journal Banque',
@@ -6100,7 +7537,14 @@ export default function ComptaPro() {
       case 'commercial-view': return <CommercialViewPage docId={docId} setPage={setPage} toast={toast} />
       case 'lots':          return <LotsProductionPage {...sp} />
       case 'suivi_lot':     return <SuiviLotPage {...sp} />
-      case 'achats':        return <AchatsSemisPage {...sp} />
+      case 'etv_repertoire':  return <EtvRepertoirePage {...sp} />
+      case 'etv_avances':     return <EtvAvancesPage {...sp} />
+      case 'etv_bc':          return <EtvBCPage {...sp} />
+      case 'etv_br':          return <EtvBRPage {...sp} />
+      case 'etv_entrees':     return <EtvEntreesPage {...sp} />
+      case 'etv_sorties':     return <EtvSortiesPage {...sp} />
+      case 'etv_inventaire':  return <EtvInventairePage {...sp} />
+      case 'achats':          return <AchatsSemisPage {...sp} />
       case 'lots_semi_finis': return <LotsSemiFinisPage {...sp} />
       case 'epierrage':      return <EpierragePage {...sp} lots={lots} />
       case 'docs_admin':     return <DocsAdminPage {...sp} profile={profile} />
