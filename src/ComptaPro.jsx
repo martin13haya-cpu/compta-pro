@@ -3898,7 +3898,7 @@ function EtvRepertoirePage({ companies, companyId, toast, readOnly=false }) {
     }
     // Pas de order('nom') car nom peut être null pour personnes morales
     const { data }=await supabase.from('compta_fournisseurs')
-      .select('id,nom,prenom,nom_societe,type,tel')
+      .select('id,nom,prenom,nom_societe,type,tel,ifu')
       .eq('user_id', ownerUid)
     setFourn((data||[]).sort((a,b)=>{
       const na=(a.type==='morale'?a.nom_societe:`${a.nom||''} ${a.prenom||''}`).trim().toLowerCase()
