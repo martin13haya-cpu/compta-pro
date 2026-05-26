@@ -791,7 +791,7 @@ function printFilteredList({ title, subtitle='', headers, rows, companyName='', 
 
 // ── AUTH PAGES ──────────────────────────────────────────────────────────────
 function LoginPage({ onLogin }) {
-  const [mode, setMode]       = useState('login')
+  const [mode, setMode]       = useState('login') // 'login' | 'register' | 'forgot'
   const [form, setForm]       = useState({ email:'', password:'', nom:'', whatsapp:'' })
   const [loading, setLoading] = useState(false)
   const [error, setError]     = useState('')
@@ -804,6 +804,17 @@ function LoginPage({ onLogin }) {
     setLoading(false)
     if (err) { setError('Identifiants incorrects'); return }
     onLogin(data.user)
+  }
+
+  const submitForgot = async e => {
+    e.preventDefault(); setLoading(true); setError('')
+    const { error:err } = await supabase.auth.resetPasswordForEmail(form.email, {
+      redirectTo: window.location.origin
+    })
+    setLoading(false)
+    if (err) { setError(err.message); return }
+    setSuccess('Un lien de réinitialisation a été envoyé à ' + form.email + '. Vérifiez votre boîte mail.')
+    setMode('login')
   }
 
   const submitRegister = async e => {
@@ -865,14 +876,16 @@ function LoginPage({ onLogin }) {
         {window.innerWidth >= 640 && panel}
         <div style={{flex:1,background:'white',padding:'40px 32px',display:'flex',flexDirection:'column',justifyContent:'center'}}>
           <h3 style={{margin:'0 0 6px',fontSize:24,fontWeight:800,color:'#0f172a'}}>
-            {mode==='login'?'Connexion':'Créer un compte'}
+            {mode==='login'?'Connexion':mode==='register'?'Créer un compte':'Mot de passe oublié'}
           </h3>
           <p style={{margin:'0 0 20px',color:'#64748b',fontSize:13.5}}>
-            {mode==='login'?'Accédez à votre espace de gestion':'Votre compte sera activé par l\'administrateur'}
+            {mode==='login'?'Accédez à votre espace de gestion'
+             :mode==='register'?'Votre compte sera activé par l\'administrateur'
+             :'Entrez votre email pour recevoir un lien de réinitialisation'}
           </p>
           {error   && <div style={{background:'#fee2e2',color:'#dc2626',padding:'10px 14px',borderRadius:10,marginBottom:16,fontSize:13}}>{error}</div>}
           {success && <div style={{background:'#dcfce7',color:'#16a34a',padding:'10px 14px',borderRadius:10,marginBottom:16,fontSize:13}}>{success}</div>}
-          <form onSubmit={mode==='login'?submitLogin:submitRegister}>
+          <form onSubmit={mode==='login'?submitLogin:mode==='register'?submitRegister:submitForgot}>
             {mode==='register' && inp('Nom complet','nom','text','Votre nom complet',true)}
             {inp('Email','email','email','votre@email.bj',true)}
             {mode==='register' && (
@@ -888,17 +901,37 @@ function LoginPage({ onLogin }) {
                 </div>
               </div>
             )}
-            {inp('Mot de passe','password','password','••••••••',true,{minLength:6})}
+            {mode!=='forgot' && inp('Mot de passe','password','password','••••••••',true,{minLength:6})}
+            {mode==='login' && (
+              <div style={{textAlign:'right',marginTop:-8,marginBottom:14}}>
+                <span onClick={()=>{setMode('forgot');setError('');setSuccess('')}}
+                  style={{fontSize:12.5,color:ACCENT,cursor:'pointer',fontWeight:600}}>
+                  Mot de passe oublié ?
+                </span>
+              </div>
+            )}
             <button type="submit" disabled={loading}
               style={{width:'100%',background:ACCENT,color:'white',border:'none',borderRadius:10,padding:12,fontSize:15,fontWeight:700,cursor:'pointer',opacity:(loading?0.7:1)}}>
-              {loading?'Chargement...':mode==='login'?'→ Se connecter':'→ Créer mon compte'}
+              {loading?'Chargement...'
+                :mode==='login'?'→ Se connecter'
+                :mode==='register'?'→ Créer mon compte'
+                :'📧 Envoyer le lien de réinitialisation'}
             </button>
           </form>
           <div style={{marginTop:20,textAlign:'center',fontSize:13,color:'#64748b'}}>
-            {mode==='login' ? (
-              <span>Pas encore de compte ? <span onClick={()=>{setMode('register');setError('');setSuccess('')}} style={{color:ACCENT,cursor:'pointer',fontWeight:600}}>S'inscrire</span></span>
-            ) : (
-              <span>Déjà un compte ? <span onClick={()=>{setMode('login');setError('');setSuccess('')}} style={{color:ACCENT,cursor:'pointer',fontWeight:600}}>Se connecter</span></span>
+            {mode==='login' && (
+              <span>Pas encore de compte ? <span onClick={()=>{setMode('register');setError('');setSuccess('')}} style={{color:ACCENT,cursor:'pointer',fontWeight:600}}>{"S'inscrire"}</span></span>
+            )}
+            {mode==='register' && (
+              <span>{"Déjà un compte ?"} <span onClick={()=>{setMode('login');setError('');setSuccess('')}} style={{color:ACCENT,cursor:'pointer',fontWeight:600}}>Se connecter</span></span>
+            )}
+            {mode==='forgot' && (
+              <span>
+                <span onClick={()=>{setMode('login');setError('');setSuccess('')}}
+                  style={{color:ACCENT,cursor:'pointer',fontWeight:600}}>
+                  ← Retour à la connexion
+                </span>
+              </span>
             )}
           </div>
         </div>
