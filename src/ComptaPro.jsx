@@ -3891,9 +3891,17 @@ function EtvRepertoirePage({ companies, companyId, toast, readOnly=false }) {
     const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
     const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
     let q=supabase.from('compta_fournisseurs').select('id,nom,prenom,nom_societe,type,tel').order('nom',{ascending:true})
-    if(isAdmin&&companyId) q=q.eq('company_id',companyId)
-    else if(companyId) q=q.eq('user_id',uid).eq('company_id',companyId)
-    else q=q.eq('user_id',uid)
+    // Super admin : charger par company_id OU par user_id du propriétaire de la société
+    if(isAdmin&&companyId){
+      // Trouver le user_id propriétaire de cette société
+      const { data:comp }=await supabase.from('compta_companies').select('user_id').eq('id',companyId).single()
+      if(comp?.user_id) q=q.eq('user_id',comp.user_id)
+      else q=q.eq('company_id',companyId)
+    } else if(companyId){
+      q=q.eq('user_id',uid)
+    } else {
+      q=q.eq('user_id',uid)
+    }
     const { data }=await q; setFourn(data||[])
   },[companyId])
 
