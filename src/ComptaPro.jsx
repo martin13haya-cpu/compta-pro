@@ -3882,10 +3882,17 @@ function EtvRepertoirePage({ companies, companyId, toast, readOnly=false }) {
     const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
     const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
     let q=supabase.from('compta_etuveuses').select('*').order('created_at',{ascending:false})
-    if(isAdmin&&companyId) q=q.eq('company_id',companyId)
-    else if(isAdmin) {} // super admin sans filtre voit tout
-    else if(companyId) q=q.eq('user_id',uid).eq('company_id',companyId)
-    else q=q.eq('user_id',uid)
+    if(isAdmin&&companyId){
+      // Chercher par user_id du propriétaire de la société
+      const { data:comp }=await supabase.from('compta_companies').select('user_id').eq('id',companyId).single()
+      if(comp?.user_id) q=q.eq('user_id',comp.user_id)
+    } else if(isAdmin){
+      // Super admin sans société = voit tout (pas de filtre)
+    } else if(companyId){
+      q=q.eq('user_id',uid)
+    } else {
+      q=q.eq('user_id',uid)
+    }
     const { data }=await q; setItems(data||[])
   },[companyId])
 
@@ -4094,10 +4101,12 @@ function EtvAvancesPage({ companies, companyId, toast, readOnly=false }) {
     if(isAdmin&&companyId){
       const { data:comp }=await supabase.from('compta_companies').select('user_id').eq('id',companyId).single()
       if(comp?.user_id) q=q.eq('user_id',comp.user_id)
-    } else if(!isAdmin){
+      // else: pas de filtre possible
+    } else if(isAdmin){
+      // Super admin sans société = voit tout
+    } else {
       q=q.eq('user_id',uid)
     }
-    // super admin sans companyId = pas de filtre = voit tout
     const { data }=await q; setEtuveuses(data||[])
   },[companyId])
 
@@ -4105,10 +4114,16 @@ function EtvAvancesPage({ companies, companyId, toast, readOnly=false }) {
     const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
     const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
     let q=supabase.from('compta_avances_etuveuses').select('*,compta_etuveuses(code_etuveuse,fournisseur_id)').order('date_avance',{ascending:false})
-    if(isAdmin&&companyId) q=q.eq('company_id',companyId)
-    else if(isAdmin) {} // super admin sans filtre voit tout
-    else if(companyId) q=q.eq('user_id',uid).eq('company_id',companyId)
-    else q=q.eq('user_id',uid)
+    if(isAdmin&&companyId){
+      const { data:ownerComp }=await supabase.from('compta_companies').select('user_id').eq('id',companyId).single()
+      if(ownerComp?.user_id) q=q.eq('user_id',ownerComp.user_id)
+    } else if(isAdmin){
+      // Super admin sans société = pas de filtre = voit tout
+    } else if(companyId){
+      q=q.eq('user_id',uid)
+    } else {
+      q=q.eq('user_id',uid)
+    }
     const { data }=await q; setItems(data||[])
   },[companyId])
 
@@ -4302,10 +4317,12 @@ function EtvBCPage({ companies, companyId, toast, readOnly=false }) {
     if(isAdmin&&companyId){
       const { data:comp }=await supabase.from('compta_companies').select('user_id').eq('id',companyId).single()
       if(comp?.user_id) q=q.eq('user_id',comp.user_id)
-    } else if(!isAdmin){
+      // else: pas de filtre possible
+    } else if(isAdmin){
+      // Super admin sans société = voit tout
+    } else {
       q=q.eq('user_id',uid)
     }
-    // super admin sans companyId = pas de filtre = voit tout
     const { data }=await q; setEtuveuses(data||[])
   },[companyId])
 
@@ -4313,10 +4330,16 @@ function EtvBCPage({ companies, companyId, toast, readOnly=false }) {
     const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
     const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
     let q=supabase.from('compta_bc_etuveuses').select('*,compta_etuveuses(code_etuveuse,fournisseur_id)').order('date_bc',{ascending:false})
-    if(isAdmin&&companyId) q=q.eq('company_id',companyId)
-    else if(isAdmin) {} // super admin sans filtre voit tout
-    else if(companyId) q=q.eq('user_id',uid).eq('company_id',companyId)
-    else q=q.eq('user_id',uid)
+    if(isAdmin&&companyId){
+      const { data:ownerComp }=await supabase.from('compta_companies').select('user_id').eq('id',companyId).single()
+      if(ownerComp?.user_id) q=q.eq('user_id',ownerComp.user_id)
+    } else if(isAdmin){
+      // Super admin sans société = pas de filtre = voit tout
+    } else if(companyId){
+      q=q.eq('user_id',uid)
+    } else {
+      q=q.eq('user_id',uid)
+    }
     const { data }=await q; setItems(data||[])
   },[companyId])
 
@@ -4554,10 +4577,12 @@ function EtvBRPage({ companies, companyId, toast, readOnly=false }) {
     if(isAdmin&&companyId){
       const { data:comp }=await supabase.from('compta_companies').select('user_id').eq('id',companyId).single()
       if(comp?.user_id) q=q.eq('user_id',comp.user_id)
-    } else if(!isAdmin){
+      // else: pas de filtre possible
+    } else if(isAdmin){
+      // Super admin sans société = voit tout
+    } else {
       q=q.eq('user_id',uid)
     }
-    // super admin sans companyId = pas de filtre = voit tout
     const { data }=await q; setEtuveuses(data||[])
   },[companyId])
 
@@ -4840,10 +4865,12 @@ function EtvEntreesPage({ companies, companyId, toast, readOnly=false }) {
     if(isAdmin&&companyId){
       const { data:comp }=await supabase.from('compta_companies').select('user_id').eq('id',companyId).single()
       if(comp?.user_id) q=q.eq('user_id',comp.user_id)
-    } else if(!isAdmin){
+      // else: pas de filtre possible
+    } else if(isAdmin){
+      // Super admin sans société = voit tout
+    } else {
       q=q.eq('user_id',uid)
     }
-    // super admin sans companyId = pas de filtre = voit tout
     const { data }=await q; setEtuveuses(data||[])
   },[companyId])
 
@@ -4851,10 +4878,16 @@ function EtvEntreesPage({ companies, companyId, toast, readOnly=false }) {
     const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
     const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
     let q=supabase.from('compta_entrees_magasin').select('*,compta_etuveuses(code_etuveuse,fournisseur_id)').order('date_entree',{ascending:false})
-    if(isAdmin&&companyId) q=q.eq('company_id',companyId)
-    else if(isAdmin) {} // super admin sans filtre voit tout
-    else if(companyId) q=q.eq('user_id',uid).eq('company_id',companyId)
-    else q=q.eq('user_id',uid)
+    if(isAdmin&&companyId){
+      const { data:ownerComp }=await supabase.from('compta_companies').select('user_id').eq('id',companyId).single()
+      if(ownerComp?.user_id) q=q.eq('user_id',ownerComp.user_id)
+    } else if(isAdmin){
+      // Super admin sans société = pas de filtre = voit tout
+    } else if(companyId){
+      q=q.eq('user_id',uid)
+    } else {
+      q=q.eq('user_id',uid)
+    }
     if(dateFrom) q=q.gte('date_entree',dateFrom)
     if(dateTo) q=q.lte('date_entree',dateTo)
     const { data }=await q; setItems(data||[])
@@ -5040,10 +5073,12 @@ function EtvSortiesPage({ companies, companyId, toast, readOnly=false }) {
     if(isAdmin&&companyId){
       const { data:comp }=await supabase.from('compta_companies').select('user_id').eq('id',companyId).single()
       if(comp?.user_id) q=q.eq('user_id',comp.user_id)
-    } else if(!isAdmin){
+      // else: pas de filtre possible
+    } else if(isAdmin){
+      // Super admin sans société = voit tout
+    } else {
       q=q.eq('user_id',uid)
     }
-    // super admin sans companyId = pas de filtre = voit tout
     const { data }=await q; setEtuveuses(data||[])
   },[companyId])
 
@@ -5051,10 +5086,16 @@ function EtvSortiesPage({ companies, companyId, toast, readOnly=false }) {
     const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
     const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
     let q=supabase.from('compta_entrees_magasin').select('id,numero_lot,etuveuse_id,variete,annee_production,quantite_kg').order('date_entree',{ascending:false})
-    if(isAdmin&&companyId) q=q.eq('company_id',companyId)
-    else if(isAdmin) {} // super admin sans filtre voit tout
-    else if(companyId) q=q.eq('user_id',uid).eq('company_id',companyId)
-    else q=q.eq('user_id',uid)
+    if(isAdmin&&companyId){
+      const { data:ownerComp }=await supabase.from('compta_companies').select('user_id').eq('id',companyId).single()
+      if(ownerComp?.user_id) q=q.eq('user_id',ownerComp.user_id)
+    } else if(isAdmin){
+      // Super admin sans société = pas de filtre = voit tout
+    } else if(companyId){
+      q=q.eq('user_id',uid)
+    } else {
+      q=q.eq('user_id',uid)
+    }
     const { data }=await q; setLots(data||[])
   },[companyId])
 
@@ -5062,10 +5103,16 @@ function EtvSortiesPage({ companies, companyId, toast, readOnly=false }) {
     const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
     const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
     let q=supabase.from('compta_sorties_magasin').select('*,compta_etuveuses(code_etuveuse,fournisseur_id)').order('date_sortie',{ascending:false})
-    if(isAdmin&&companyId) q=q.eq('company_id',companyId)
-    else if(isAdmin) {} // super admin sans filtre voit tout
-    else if(companyId) q=q.eq('user_id',uid).eq('company_id',companyId)
-    else q=q.eq('user_id',uid)
+    if(isAdmin&&companyId){
+      const { data:ownerComp }=await supabase.from('compta_companies').select('user_id').eq('id',companyId).single()
+      if(ownerComp?.user_id) q=q.eq('user_id',ownerComp.user_id)
+    } else if(isAdmin){
+      // Super admin sans société = pas de filtre = voit tout
+    } else if(companyId){
+      q=q.eq('user_id',uid)
+    } else {
+      q=q.eq('user_id',uid)
+    }
     if(dateFrom) q=q.gte('date_sortie',dateFrom)
     if(dateTo) q=q.lte('date_sortie',dateTo)
     const { data }=await q; setItems(data||[])
@@ -5245,10 +5292,12 @@ function EtvInventairePage({ companies, companyId, toast }) {
     if(isAdmin&&companyId){
       const { data:comp }=await supabase.from('compta_companies').select('user_id').eq('id',companyId).single()
       if(comp?.user_id) q=q.eq('user_id',comp.user_id)
-    } else if(!isAdmin){
+      // else: pas de filtre possible
+    } else if(isAdmin){
+      // Super admin sans société = voit tout
+    } else {
       q=q.eq('user_id',uid)
     }
-    // super admin sans companyId = pas de filtre = voit tout
     const { data }=await q; setEtuveuses(data||[])
   },[companyId])
 
@@ -5260,10 +5309,16 @@ function EtvInventairePage({ companies, companyId, toast }) {
     let qE=supabase.from('compta_entrees_magasin').select('etuveuse_id,numero_lot,variete,annee_production,quantite_kg')
     let qS=supabase.from('compta_sorties_magasin').select('etuveuse_id,numero_lot,variete,annee_production,quantite_kg')
 
-    if(isAdmin&&companyId){ qE=qE.eq('company_id',companyId); qS=qS.eq('company_id',companyId) }
-    else if(isAdmin){} // super admin voit tout
-    else if(companyId){ qE=qE.eq('user_id',uid).eq('company_id',companyId); qS=qS.eq('user_id',uid).eq('company_id',companyId) }
-    else { qE=qE.eq('user_id',uid); qS=qS.eq('user_id',uid) }
+    if(isAdmin&&companyId){
+      const { data:ownerComp }=await supabase.from('compta_companies').select('user_id').eq('id',companyId).single()
+      if(ownerComp?.user_id){ qE=qE.eq('user_id',ownerComp.user_id); qS=qS.eq('user_id',ownerComp.user_id) }
+    } else if(isAdmin){
+      // Super admin sans société = voit tout
+    } else if(companyId){
+      qE=qE.eq('user_id',uid); qS=qS.eq('user_id',uid)
+    } else {
+      qE=qE.eq('user_id',uid); qS=qS.eq('user_id',uid)
+    }
 
     if(filterEtv){ qE=qE.eq('etuveuse_id',filterEtv); qS=qS.eq('etuveuse_id',filterEtv) }
 
@@ -5812,10 +5867,16 @@ function EpierragePage({ companies, companyId, toast, readOnly=false, lots=[] })
     const { data:ad }=await supabase.auth.getUser()
     const uid=ad?.user?.id; const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
     let q=supabase.from('compta_epierrage').select('*,compta_companies(raison_sociale)').order('date_epierrage',{ascending:false})
-    if(isAdmin&&companyId) q=q.eq('company_id',companyId)
-    else if(isAdmin) {} // super admin sans filtre voit tout
-    else if(companyId) q=q.eq('user_id',uid).eq('company_id',companyId)
-    else q=q.eq('user_id',uid)
+    if(isAdmin&&companyId){
+      const { data:ownerComp }=await supabase.from('compta_companies').select('user_id').eq('id',companyId).single()
+      if(ownerComp?.user_id) q=q.eq('user_id',ownerComp.user_id)
+    } else if(isAdmin){
+      // Super admin sans société = pas de filtre = voit tout
+    } else if(companyId){
+      q=q.eq('user_id',uid)
+    } else {
+      q=q.eq('user_id',uid)
+    }
     if(dateFrom) q=q.gte('date_epierrage',dateFrom)
     if(dateTo)   q=q.lte('date_epierrage',dateTo)
     const { data }=await q; setItems(data||[])
@@ -6019,10 +6080,16 @@ function BudgetPage({ companies, companyId, toast, readOnly=false }) {
     const { data:ad }=await supabase.auth.getUser()
     const uid=ad?.user?.id; const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
     let q=supabase.from('compta_budget').select('*').order('code',{ascending:true})
-    if(isAdmin&&companyId) q=q.eq('company_id',companyId)
-    else if(isAdmin) {} // super admin sans filtre voit tout
-    else if(companyId) q=q.eq('user_id',uid).eq('company_id',companyId)
-    else q=q.eq('user_id',uid)
+    if(isAdmin&&companyId){
+      const { data:ownerComp }=await supabase.from('compta_companies').select('user_id').eq('id',companyId).single()
+      if(ownerComp?.user_id) q=q.eq('user_id',ownerComp.user_id)
+    } else if(isAdmin){
+      // Super admin sans société = pas de filtre = voit tout
+    } else if(companyId){
+      q=q.eq('user_id',uid)
+    } else {
+      q=q.eq('user_id',uid)
+    }
     const { data }=await q; setItems(data||[])
   },[companyId])
 
@@ -6156,10 +6223,16 @@ function ExpressionBesoinPage({ companies, companyId, toast, readOnly=false, pro
     const { data:ad }=await supabase.auth.getUser()
     const uid=ad?.user?.id; const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
     let q=supabase.from('compta_budget').select('*').order('code',{ascending:true})
-    if(isAdmin&&companyId) q=q.eq('company_id',companyId)
-    else if(isAdmin) {} // super admin sans filtre voit tout
-    else if(companyId) q=q.eq('user_id',uid).eq('company_id',companyId)
-    else q=q.eq('user_id',uid)
+    if(isAdmin&&companyId){
+      const { data:ownerComp }=await supabase.from('compta_companies').select('user_id').eq('id',companyId).single()
+      if(ownerComp?.user_id) q=q.eq('user_id',ownerComp.user_id)
+    } else if(isAdmin){
+      // Super admin sans société = pas de filtre = voit tout
+    } else if(companyId){
+      q=q.eq('user_id',uid)
+    } else {
+      q=q.eq('user_id',uid)
+    }
     const { data }=await q; setBudgets(data||[])
   },[companyId])
 
@@ -6590,10 +6663,16 @@ function ReglementsPage({ companies, companyId, toast, readOnly=false, mode='cli
       .select('*,compta_companies(raison_sociale)')
       .eq('tiers_type', filterKey)
       .order('date_paiement',{ascending:false})
-    if(isAdmin&&companyId) q=q.eq('company_id',companyId)
-    else if(isAdmin) {} // super admin sans filtre voit tout
-    else if(companyId) q=q.eq('user_id',uid).eq('company_id',companyId)
-    else q=q.eq('user_id',uid)
+    if(isAdmin&&companyId){
+      const { data:ownerComp }=await supabase.from('compta_companies').select('user_id').eq('id',companyId).single()
+      if(ownerComp?.user_id) q=q.eq('user_id',ownerComp.user_id)
+    } else if(isAdmin){
+      // Super admin sans société = pas de filtre = voit tout
+    } else if(companyId){
+      q=q.eq('user_id',uid)
+    } else {
+      q=q.eq('user_id',uid)
+    }
     if(dateFrom) q=q.gte('date_paiement',dateFrom)
     if(dateTo)   q=q.lte('date_paiement',dateTo)
     const { data }=await q; setItems(data||[])
@@ -6607,10 +6686,16 @@ function ReglementsPage({ companies, companyId, toast, readOnly=false, mode='cli
     let q = supabase.from('compta_documents')
       .select('id,numero,type_doc,statut,montant_ttc,client_id,compta_clients(nom,prenom,nom_societe,type)')
       .order('created_at',{ascending:false})
-    if(isAdmin&&companyId) q=q.eq('company_id',companyId)
-    else if(isAdmin) {} // super admin sans filtre voit tout
-    else if(companyId) q=q.eq('user_id',uid).eq('company_id',companyId)
-    else q=q.eq('user_id',uid)
+    if(isAdmin&&companyId){
+      const { data:ownerComp }=await supabase.from('compta_companies').select('user_id').eq('id',companyId).single()
+      if(ownerComp?.user_id) q=q.eq('user_id',ownerComp.user_id)
+    } else if(isAdmin){
+      // Super admin sans société = pas de filtre = voit tout
+    } else if(companyId){
+      q=q.eq('user_id',uid)
+    } else {
+      q=q.eq('user_id',uid)
+    }
     const { data }=await q; setFactures(data||[])
   },[companyId,isClients])
 
