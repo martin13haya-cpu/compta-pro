@@ -3882,17 +3882,8 @@ function EtvRepertoirePage({ companies, companyId, toast, readOnly=false }) {
     const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
     const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
     let q=supabase.from('compta_etuveuses').select('*').order('created_at',{ascending:false})
-    if(isAdmin&&companyId){
-      // Chercher par user_id du propriétaire de la société
-      const { data:comp }=await supabase.from('compta_companies').select('user_id').eq('id',companyId).single()
-      if(comp?.user_id) q=q.eq('user_id',comp.user_id)
-    } else if(isAdmin){
-      // Super admin sans société = voit tout (pas de filtre)
-    } else if(companyId){
-      q=q.eq('user_id',uid)
-    } else {
-      q=q.eq('user_id',uid)
-    }
+    q = isAdmin&&companyId ? q.eq('company_id',companyId) : q.eq('user_id',uid)
+    if(companyId&&!isAdmin) q=q.eq('company_id',companyId)
     const { data }=await q; setItems(data||[])
   },[companyId])
 
@@ -3908,9 +3899,9 @@ function EtvRepertoirePage({ companies, companyId, toast, readOnly=false }) {
         const { data:comp }=await supabase.from('compta_companies').select('user_id').eq('id',companyId).single()
         if(comp?.user_id) ownerUid = comp.user_id
       }
-      let qFourn=supabase.from('compta_fournisseurs').select('id,nom,prenom,nom_societe,type,telephone,ifu')
-      if(ownerUid) qFourn=qFourn.eq('user_id',ownerUid)
-      const { data, error }=await qFourn
+      const { data, error }=await filterQuery(
+        supabase.from('compta_fournisseurs').select('id,nom,prenom,nom_societe,type,telephone,ifu')
+      )
       if(error){ console.error('loadFourn:', error.message); return }
       setFourn((data||[]).sort((a,b)=>{
         const na=(a.type==='morale'?a.nom_societe:`${a.nom||''} ${a.prenom||''}`).trim().toLowerCase()
@@ -3956,8 +3947,9 @@ function EtvRepertoirePage({ companies, companyId, toast, readOnly=false }) {
   const save=async e=>{
     e.preventDefault(); setSaving(true)
     const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
+    const cid = form.company_id||companyId||companies[0]?.id
     const { error }=await supabase.from('compta_etuveuses').insert({
-      company_id:form.company_id||companyId, user_id:uid,
+      company_id:cid, user_id:uid,
       ifu:form.ifu, nom_etuveuse:form.nom_etuveuse,
       code_etuveuse:form.code_etuveuse, date_contrat:form.date_contrat,
       capacite_kg:parseFloat(form.capacite_kg)||0,
@@ -4098,15 +4090,8 @@ function EtvAvancesPage({ companies, companyId, toast, readOnly=false }) {
     const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
     const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
     let q=supabase.from('compta_etuveuses').select('id,code_etuveuse,nom_etuveuse,ifu').order('code_etuveuse')
-    if(isAdmin&&companyId){
-      const { data:comp }=await supabase.from('compta_companies').select('user_id').eq('id',companyId).single()
-      if(comp?.user_id) q=q.eq('user_id',comp.user_id)
-      // else: pas de filtre possible
-    } else if(isAdmin){
-      // Super admin sans société = voit tout
-    } else {
-      q=q.eq('user_id',uid)
-    }
+    q = isAdmin&&companyId ? q.eq('company_id',companyId) : q.eq('user_id',uid)
+    if(companyId&&!isAdmin) q=q.eq('company_id',companyId)
     const { data }=await q; setEtuveuses(data||[])
   },[companyId])
 
@@ -4114,16 +4099,8 @@ function EtvAvancesPage({ companies, companyId, toast, readOnly=false }) {
     const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
     const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
     let q=supabase.from('compta_avances_etuveuses').select('*,compta_etuveuses(code_etuveuse,fournisseur_id)').order('date_avance',{ascending:false})
-    if(isAdmin&&companyId){
-      const { data:ownerComp }=await supabase.from('compta_companies').select('user_id').eq('id',companyId).single()
-      if(ownerComp?.user_id) q=q.eq('user_id',ownerComp.user_id)
-    } else if(isAdmin){
-      // Super admin sans société = pas de filtre = voit tout
-    } else if(companyId){
-      q=q.eq('user_id',uid)
-    } else {
-      q=q.eq('user_id',uid)
-    }
+    q = isAdmin&&companyId ? q.eq('company_id',companyId) : q.eq('user_id',uid)
+    if(companyId&&!isAdmin) q=q.eq('company_id',companyId)
     const { data }=await q; setItems(data||[])
   },[companyId])
 
@@ -4314,15 +4291,8 @@ function EtvBCPage({ companies, companyId, toast, readOnly=false }) {
     const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
     const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
     let q=supabase.from('compta_etuveuses').select('id,code_etuveuse,nom_etuveuse,ifu').order('code_etuveuse')
-    if(isAdmin&&companyId){
-      const { data:comp }=await supabase.from('compta_companies').select('user_id').eq('id',companyId).single()
-      if(comp?.user_id) q=q.eq('user_id',comp.user_id)
-      // else: pas de filtre possible
-    } else if(isAdmin){
-      // Super admin sans société = voit tout
-    } else {
-      q=q.eq('user_id',uid)
-    }
+    q = isAdmin&&companyId ? q.eq('company_id',companyId) : q.eq('user_id',uid)
+    if(companyId&&!isAdmin) q=q.eq('company_id',companyId)
     const { data }=await q; setEtuveuses(data||[])
   },[companyId])
 
@@ -4330,16 +4300,8 @@ function EtvBCPage({ companies, companyId, toast, readOnly=false }) {
     const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
     const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
     let q=supabase.from('compta_bc_etuveuses').select('*,compta_etuveuses(code_etuveuse,fournisseur_id)').order('date_bc',{ascending:false})
-    if(isAdmin&&companyId){
-      const { data:ownerComp }=await supabase.from('compta_companies').select('user_id').eq('id',companyId).single()
-      if(ownerComp?.user_id) q=q.eq('user_id',ownerComp.user_id)
-    } else if(isAdmin){
-      // Super admin sans société = pas de filtre = voit tout
-    } else if(companyId){
-      q=q.eq('user_id',uid)
-    } else {
-      q=q.eq('user_id',uid)
-    }
+    q = isAdmin&&companyId ? q.eq('company_id',companyId) : q.eq('user_id',uid)
+    if(companyId&&!isAdmin) q=q.eq('company_id',companyId)
     const { data }=await q; setItems(data||[])
   },[companyId])
 
@@ -4574,15 +4536,8 @@ function EtvBRPage({ companies, companyId, toast, readOnly=false }) {
     const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
     const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
     let q=supabase.from('compta_etuveuses').select('id,code_etuveuse,nom_etuveuse,ifu').order('code_etuveuse')
-    if(isAdmin&&companyId){
-      const { data:comp }=await supabase.from('compta_companies').select('user_id').eq('id',companyId).single()
-      if(comp?.user_id) q=q.eq('user_id',comp.user_id)
-      // else: pas de filtre possible
-    } else if(isAdmin){
-      // Super admin sans société = voit tout
-    } else {
-      q=q.eq('user_id',uid)
-    }
+    q = isAdmin&&companyId ? q.eq('company_id',companyId) : q.eq('user_id',uid)
+    if(companyId&&!isAdmin) q=q.eq('company_id',companyId)
     const { data }=await q; setEtuveuses(data||[])
   },[companyId])
 
@@ -4592,16 +4547,14 @@ function EtvBRPage({ companies, companyId, toast, readOnly=false }) {
       if(!sess.data?.session) return
       const uid=sess.data.session.user.id
       const isAdmin=sess.data.session.user.email===SUPER_ADMIN_EMAIL
-      let ownerUid=uid
-      if(isAdmin&&companyId){
-        const { data:comp }=await supabase.from('compta_companies').select('user_id').eq('id',companyId).single()
-        if(comp?.user_id) ownerUid=comp.user_id
-      } else if(isAdmin){
-        ownerUid=null // super admin sans filtre = toutes les données
+      // Use same pattern as Production section
+      const filterQuery = (q) => {
+        if(isAdmin&&companyId) return q.eq('company_id',companyId)
+        if(!isAdmin) return q.eq('user_id',uid)
+        return q // super admin sans société = tout voir
       }
-      const { data }=await supabase.from('compta_bc_etuveuses')
-        .select('id,numero,statut,etuveuse_id,lignes')
-        .eq('user_id',ownerUid)
+      const { data }=await filterQuery(supabase.from('compta_bc_etuveuses')
+        .select('id,numero,statut,etuveuse_id,lignes'))
         .order('date_bc',{ascending:false})
       setBcs(data||[])
     } catch(e){ console.error('loadBCs:', e) }
@@ -4613,16 +4566,14 @@ function EtvBRPage({ companies, companyId, toast, readOnly=false }) {
       if(!sess.data?.session) return
       const uid=sess.data.session.user.id
       const isAdmin=sess.data.session.user.email===SUPER_ADMIN_EMAIL
-      let ownerUid=uid
-      if(isAdmin&&companyId){
-        const { data:comp }=await supabase.from('compta_companies').select('user_id').eq('id',companyId).single()
-        if(comp?.user_id) ownerUid=comp.user_id
-      } else if(isAdmin){
-        ownerUid=null // super admin sans filtre = toutes les données
+      // Use same pattern as Production section
+      const filterQuery = (q) => {
+        if(isAdmin&&companyId) return q.eq('company_id',companyId)
+        if(!isAdmin) return q.eq('user_id',uid)
+        return q // super admin sans société = tout voir
       }
-      const { data }=await supabase.from('compta_br_etuveuses')
-        .select('*,compta_etuveuses(code_etuveuse,nom_etuveuse)')
-        .eq('user_id',ownerUid)
+      const { data }=await filterQuery(supabase.from('compta_br_etuveuses')
+        .select('*,compta_etuveuses(code_etuveuse,nom_etuveuse)'))
         .order('date_br',{ascending:false})
       setItems(data||[])
     } catch(e){ console.error('loadBR:', e) }
@@ -4862,15 +4813,8 @@ function EtvEntreesPage({ companies, companyId, toast, readOnly=false }) {
     const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
     const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
     let q=supabase.from('compta_etuveuses').select('id,code_etuveuse,nom_etuveuse,ifu').order('code_etuveuse')
-    if(isAdmin&&companyId){
-      const { data:comp }=await supabase.from('compta_companies').select('user_id').eq('id',companyId).single()
-      if(comp?.user_id) q=q.eq('user_id',comp.user_id)
-      // else: pas de filtre possible
-    } else if(isAdmin){
-      // Super admin sans société = voit tout
-    } else {
-      q=q.eq('user_id',uid)
-    }
+    q = isAdmin&&companyId ? q.eq('company_id',companyId) : q.eq('user_id',uid)
+    if(companyId&&!isAdmin) q=q.eq('company_id',companyId)
     const { data }=await q; setEtuveuses(data||[])
   },[companyId])
 
@@ -4878,16 +4822,8 @@ function EtvEntreesPage({ companies, companyId, toast, readOnly=false }) {
     const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
     const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
     let q=supabase.from('compta_entrees_magasin').select('*,compta_etuveuses(code_etuveuse,fournisseur_id)').order('date_entree',{ascending:false})
-    if(isAdmin&&companyId){
-      const { data:ownerComp }=await supabase.from('compta_companies').select('user_id').eq('id',companyId).single()
-      if(ownerComp?.user_id) q=q.eq('user_id',ownerComp.user_id)
-    } else if(isAdmin){
-      // Super admin sans société = pas de filtre = voit tout
-    } else if(companyId){
-      q=q.eq('user_id',uid)
-    } else {
-      q=q.eq('user_id',uid)
-    }
+    q = isAdmin&&companyId ? q.eq('company_id',companyId) : q.eq('user_id',uid)
+    if(companyId&&!isAdmin) q=q.eq('company_id',companyId)
     if(dateFrom) q=q.gte('date_entree',dateFrom)
     if(dateTo) q=q.lte('date_entree',dateTo)
     const { data }=await q; setItems(data||[])
@@ -5070,15 +5006,8 @@ function EtvSortiesPage({ companies, companyId, toast, readOnly=false }) {
     const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
     const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
     let q=supabase.from('compta_etuveuses').select('id,code_etuveuse,nom_etuveuse,ifu').order('code_etuveuse')
-    if(isAdmin&&companyId){
-      const { data:comp }=await supabase.from('compta_companies').select('user_id').eq('id',companyId).single()
-      if(comp?.user_id) q=q.eq('user_id',comp.user_id)
-      // else: pas de filtre possible
-    } else if(isAdmin){
-      // Super admin sans société = voit tout
-    } else {
-      q=q.eq('user_id',uid)
-    }
+    q = isAdmin&&companyId ? q.eq('company_id',companyId) : q.eq('user_id',uid)
+    if(companyId&&!isAdmin) q=q.eq('company_id',companyId)
     const { data }=await q; setEtuveuses(data||[])
   },[companyId])
 
@@ -5086,16 +5015,8 @@ function EtvSortiesPage({ companies, companyId, toast, readOnly=false }) {
     const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
     const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
     let q=supabase.from('compta_entrees_magasin').select('id,numero_lot,etuveuse_id,variete,annee_production,quantite_kg').order('date_entree',{ascending:false})
-    if(isAdmin&&companyId){
-      const { data:ownerComp }=await supabase.from('compta_companies').select('user_id').eq('id',companyId).single()
-      if(ownerComp?.user_id) q=q.eq('user_id',ownerComp.user_id)
-    } else if(isAdmin){
-      // Super admin sans société = pas de filtre = voit tout
-    } else if(companyId){
-      q=q.eq('user_id',uid)
-    } else {
-      q=q.eq('user_id',uid)
-    }
+    q = isAdmin&&companyId ? q.eq('company_id',companyId) : q.eq('user_id',uid)
+    if(companyId&&!isAdmin) q=q.eq('company_id',companyId)
     const { data }=await q; setLots(data||[])
   },[companyId])
 
@@ -5103,16 +5024,8 @@ function EtvSortiesPage({ companies, companyId, toast, readOnly=false }) {
     const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
     const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
     let q=supabase.from('compta_sorties_magasin').select('*,compta_etuveuses(code_etuveuse,fournisseur_id)').order('date_sortie',{ascending:false})
-    if(isAdmin&&companyId){
-      const { data:ownerComp }=await supabase.from('compta_companies').select('user_id').eq('id',companyId).single()
-      if(ownerComp?.user_id) q=q.eq('user_id',ownerComp.user_id)
-    } else if(isAdmin){
-      // Super admin sans société = pas de filtre = voit tout
-    } else if(companyId){
-      q=q.eq('user_id',uid)
-    } else {
-      q=q.eq('user_id',uid)
-    }
+    q = isAdmin&&companyId ? q.eq('company_id',companyId) : q.eq('user_id',uid)
+    if(companyId&&!isAdmin) q=q.eq('company_id',companyId)
     if(dateFrom) q=q.gte('date_sortie',dateFrom)
     if(dateTo) q=q.lte('date_sortie',dateTo)
     const { data }=await q; setItems(data||[])
@@ -5289,15 +5202,8 @@ function EtvInventairePage({ companies, companyId, toast }) {
     const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
     const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
     let q=supabase.from('compta_etuveuses').select('id,code_etuveuse,nom_etuveuse,ifu').order('code_etuveuse')
-    if(isAdmin&&companyId){
-      const { data:comp }=await supabase.from('compta_companies').select('user_id').eq('id',companyId).single()
-      if(comp?.user_id) q=q.eq('user_id',comp.user_id)
-      // else: pas de filtre possible
-    } else if(isAdmin){
-      // Super admin sans société = voit tout
-    } else {
-      q=q.eq('user_id',uid)
-    }
+    q = isAdmin&&companyId ? q.eq('company_id',companyId) : q.eq('user_id',uid)
+    if(companyId&&!isAdmin) q=q.eq('company_id',companyId)
     const { data }=await q; setEtuveuses(data||[])
   },[companyId])
 
@@ -5309,16 +5215,9 @@ function EtvInventairePage({ companies, companyId, toast }) {
     let qE=supabase.from('compta_entrees_magasin').select('etuveuse_id,numero_lot,variete,annee_production,quantite_kg')
     let qS=supabase.from('compta_sorties_magasin').select('etuveuse_id,numero_lot,variete,annee_production,quantite_kg')
 
-    if(isAdmin&&companyId){
-      const { data:ownerComp }=await supabase.from('compta_companies').select('user_id').eq('id',companyId).single()
-      if(ownerComp?.user_id){ qE=qE.eq('user_id',ownerComp.user_id); qS=qS.eq('user_id',ownerComp.user_id) }
-    } else if(isAdmin){
-      // Super admin sans société = voit tout
-    } else if(companyId){
-      qE=qE.eq('user_id',uid); qS=qS.eq('user_id',uid)
-    } else {
-      qE=qE.eq('user_id',uid); qS=qS.eq('user_id',uid)
-    }
+    qE = isAdmin&&companyId ? qE.eq('company_id',companyId) : qE.eq('user_id',uid)
+    qS = isAdmin&&companyId ? qS.eq('company_id',companyId) : qS.eq('user_id',uid)
+    if(companyId&&!isAdmin){ qE=qE.eq('company_id',companyId); qS=qS.eq('company_id',companyId) }
 
     if(filterEtv){ qE=qE.eq('etuveuse_id',filterEtv); qS=qS.eq('etuveuse_id',filterEtv) }
 
@@ -5465,13 +5364,13 @@ function EtvTresoreriePage({ companies, companyId, toast }) {
         if(comp?.user_id) ownerUid = comp.user_id
       }
 
-      // Super admin sans filtre = toutes les données
-      const applyFilter = (q) => ownerUid ? q.eq('user_id',ownerUid) : q
+      // Production pattern: isAdmin+companyId = filter by company_id, else by user_id
+      const af = (q) => isAdmin&&companyId ? q.eq('company_id',companyId) : !isAdmin ? q.eq('user_id',uid) : q
       const [resEtv, resAv, resEnt, resSor] = await Promise.all([
-        applyFilter(supabase.from('compta_etuveuses').select('id,code_etuveuse,nom_etuveuse,ifu')),
-        applyFilter(supabase.from('compta_avances_etuveuses').select('etuveuse_id,montant,montant_rembourse,date_avance,numero')),
-        applyFilter(supabase.from('compta_entrees_magasin').select('etuveuse_id,quantite_kg,prix_unitaire,montant,date_entree,numero_lot,variete')),
-        applyFilter(supabase.from('compta_sorties_magasin').select('etuveuse_id,quantite_kg,date_sortie,numero_lot')),
+        af(supabase.from('compta_etuveuses').select('id,code_etuveuse,nom_etuveuse,ifu')),
+        af(supabase.from('compta_avances_etuveuses').select('etuveuse_id,montant,montant_rembourse,date_avance,numero')),
+        af(supabase.from('compta_entrees_magasin').select('etuveuse_id,quantite_kg,prix_unitaire,montant,date_entree,numero_lot,variete')),
+        af(supabase.from('compta_sorties_magasin').select('etuveuse_id,quantite_kg,date_sortie,numero_lot')),
       ])
 
       setEtuveuses(resEtv.data||[])
@@ -5867,16 +5766,8 @@ function EpierragePage({ companies, companyId, toast, readOnly=false, lots=[] })
     const { data:ad }=await supabase.auth.getUser()
     const uid=ad?.user?.id; const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
     let q=supabase.from('compta_epierrage').select('*,compta_companies(raison_sociale)').order('date_epierrage',{ascending:false})
-    if(isAdmin&&companyId){
-      const { data:ownerComp }=await supabase.from('compta_companies').select('user_id').eq('id',companyId).single()
-      if(ownerComp?.user_id) q=q.eq('user_id',ownerComp.user_id)
-    } else if(isAdmin){
-      // Super admin sans société = pas de filtre = voit tout
-    } else if(companyId){
-      q=q.eq('user_id',uid)
-    } else {
-      q=q.eq('user_id',uid)
-    }
+    q = isAdmin&&companyId ? q.eq('company_id',companyId) : q.eq('user_id',uid)
+    if(companyId&&!isAdmin) q=q.eq('company_id',companyId)
     if(dateFrom) q=q.gte('date_epierrage',dateFrom)
     if(dateTo)   q=q.lte('date_epierrage',dateTo)
     const { data }=await q; setItems(data||[])
@@ -6080,16 +5971,8 @@ function BudgetPage({ companies, companyId, toast, readOnly=false }) {
     const { data:ad }=await supabase.auth.getUser()
     const uid=ad?.user?.id; const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
     let q=supabase.from('compta_budget').select('*').order('code',{ascending:true})
-    if(isAdmin&&companyId){
-      const { data:ownerComp }=await supabase.from('compta_companies').select('user_id').eq('id',companyId).single()
-      if(ownerComp?.user_id) q=q.eq('user_id',ownerComp.user_id)
-    } else if(isAdmin){
-      // Super admin sans société = pas de filtre = voit tout
-    } else if(companyId){
-      q=q.eq('user_id',uid)
-    } else {
-      q=q.eq('user_id',uid)
-    }
+    q = isAdmin&&companyId ? q.eq('company_id',companyId) : q.eq('user_id',uid)
+    if(companyId&&!isAdmin) q=q.eq('company_id',companyId)
     const { data }=await q; setItems(data||[])
   },[companyId])
 
@@ -6223,16 +6106,8 @@ function ExpressionBesoinPage({ companies, companyId, toast, readOnly=false, pro
     const { data:ad }=await supabase.auth.getUser()
     const uid=ad?.user?.id; const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
     let q=supabase.from('compta_budget').select('*').order('code',{ascending:true})
-    if(isAdmin&&companyId){
-      const { data:ownerComp }=await supabase.from('compta_companies').select('user_id').eq('id',companyId).single()
-      if(ownerComp?.user_id) q=q.eq('user_id',ownerComp.user_id)
-    } else if(isAdmin){
-      // Super admin sans société = pas de filtre = voit tout
-    } else if(companyId){
-      q=q.eq('user_id',uid)
-    } else {
-      q=q.eq('user_id',uid)
-    }
+    q = isAdmin&&companyId ? q.eq('company_id',companyId) : q.eq('user_id',uid)
+    if(companyId&&!isAdmin) q=q.eq('company_id',companyId)
     const { data }=await q; setBudgets(data||[])
   },[companyId])
 
@@ -6663,16 +6538,8 @@ function ReglementsPage({ companies, companyId, toast, readOnly=false, mode='cli
       .select('*,compta_companies(raison_sociale)')
       .eq('tiers_type', filterKey)
       .order('date_paiement',{ascending:false})
-    if(isAdmin&&companyId){
-      const { data:ownerComp }=await supabase.from('compta_companies').select('user_id').eq('id',companyId).single()
-      if(ownerComp?.user_id) q=q.eq('user_id',ownerComp.user_id)
-    } else if(isAdmin){
-      // Super admin sans société = pas de filtre = voit tout
-    } else if(companyId){
-      q=q.eq('user_id',uid)
-    } else {
-      q=q.eq('user_id',uid)
-    }
+    q = isAdmin&&companyId ? q.eq('company_id',companyId) : q.eq('user_id',uid)
+    if(companyId&&!isAdmin) q=q.eq('company_id',companyId)
     if(dateFrom) q=q.gte('date_paiement',dateFrom)
     if(dateTo)   q=q.lte('date_paiement',dateTo)
     const { data }=await q; setItems(data||[])
@@ -6686,16 +6553,8 @@ function ReglementsPage({ companies, companyId, toast, readOnly=false, mode='cli
     let q = supabase.from('compta_documents')
       .select('id,numero,type_doc,statut,montant_ttc,client_id,compta_clients(nom,prenom,nom_societe,type)')
       .order('created_at',{ascending:false})
-    if(isAdmin&&companyId){
-      const { data:ownerComp }=await supabase.from('compta_companies').select('user_id').eq('id',companyId).single()
-      if(ownerComp?.user_id) q=q.eq('user_id',ownerComp.user_id)
-    } else if(isAdmin){
-      // Super admin sans société = pas de filtre = voit tout
-    } else if(companyId){
-      q=q.eq('user_id',uid)
-    } else {
-      q=q.eq('user_id',uid)
-    }
+    q = isAdmin&&companyId ? q.eq('company_id',companyId) : q.eq('user_id',uid)
+    if(companyId&&!isAdmin) q=q.eq('company_id',companyId)
     const { data }=await q; setFactures(data||[])
   },[companyId,isClients])
 
