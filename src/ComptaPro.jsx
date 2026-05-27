@@ -3899,9 +3899,9 @@ function EtvRepertoirePage({ companies, companyId, toast, readOnly=false }) {
         const { data:comp }=await supabase.from('compta_companies').select('user_id').eq('id',companyId).single()
         if(comp?.user_id) ownerUid = comp.user_id
       }
-      const { data, error }=await filterQuery(
-        supabase.from('compta_fournisseurs').select('id,nom,prenom,nom_societe,type,telephone,ifu')
-      )
+      let qF=supabase.from('compta_fournisseurs').select('id,nom,prenom,nom_societe,type,telephone,ifu')
+      qF = isAdmin&&companyId ? qF.eq('company_id',companyId) : qF.eq('user_id',ownerUid||uid)
+      const { data, error }=await qF
       if(error){ console.error('loadFourn:', error.message); return }
       setFourn((data||[]).sort((a,b)=>{
         const na=(a.type==='morale'?a.nom_societe:`${a.nom||''} ${a.prenom||''}`).trim().toLowerCase()
