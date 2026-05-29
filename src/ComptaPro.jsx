@@ -105,6 +105,7 @@ const CSS_PRINT = `
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: 'Times New Roman', serif; font-size: 11pt; color: #1a1a1a; }
   .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; border-bottom: 2px solid #0f2044; padding-bottom: 12px; }
+  .company-logo { max-height:70px; max-width:120px; object-fit:contain; margin-bottom:4px; display:block; }
   .company-name { font-size: 16pt; font-weight: 800; color: #0f2044; }
   .company-info { font-size: 9.5pt; color: #555; line-height: 1.6; }
   .doc-title { text-align: right; }
@@ -154,6 +155,7 @@ function buildCommercialDocHtml(doc, lignes) {
     <button class="print-btn" onclick="window.print()">🖨️ Imprimer / PDF</button>
     <div class="header">
       <div>
+        ${comp?.logo_url?`<img src="${comp.logo_url}" class="company-logo" alt="logo" />`:''}
         <div class="company-name">${comp?.raison_sociale||''}</div>
         <div class="company-info">
           ${comp?.rccm ? `RCCM : ${comp.rccm}<br>` : ''}
@@ -378,6 +380,7 @@ function printExpressionBesoin(fiche, lignes, budgets, companyInfo, sigImg=null,
     <button class="print-btn" onclick="window.print()">🖨️ Imprimer / PDF</button>
     <div class="header">
       <div>
+        ${companyInfo?.logo_url?`<img src="${companyInfo.logo_url}" class="company-logo" alt="logo" />`:''}
         <div class="company-name">${companyInfo?.raison_sociale||'ComptaPro'}</div>
         <div class="company-info">
           ${companyInfo?.rccm?`RCCM : ${companyInfo.rccm}<br>`:''}
@@ -1499,7 +1502,7 @@ function CompaniesPage({ companies, refresh, toast, isSuperAdmin=false, currentU
       toast.error('Vous ne pouvez pas modifier la société d\'un autre utilisateur.')
       return
     }
-    setForm(c?{...c}:{raison_sociale:'',rccm:'',adresse:'',tel:'',email:''})
+    setForm(c?{...c}:{raison_sociale:'',rccm:'',adresse:'',tel:'',email:'',logo_url:''})
     setModal(c?'edit':'add')
   }
   const close = () => setModal(null)
@@ -1507,7 +1510,7 @@ function CompaniesPage({ companies, refresh, toast, isSuperAdmin=false, currentU
   const save = async e => {
     e.preventDefault(); setSaving(true)
     const uid = (await supabase.auth.getUser()).data?.user?.id
-    const pay = { raison_sociale:form.raison_sociale, rccm:form.rccm, adresse:form.adresse, tel:form.tel, email:form.email }
+    const pay = { raison_sociale:form.raison_sociale, rccm:form.rccm, adresse:form.adresse, tel:form.tel, email:form.email, logo_url:form.logo_url||null }
     const { error } = modal==='add'
       ? await supabase.from('compta_companies').insert({...pay,user_id:uid})
       : await supabase.from('compta_companies').update(pay).eq('id',form.id)
@@ -1539,7 +1542,9 @@ function CompaniesPage({ companies, refresh, toast, isSuperAdmin=false, currentU
           {companies.map(c=>(
             <Card key={c.id}>
               <div style={{ display:'flex', alignItems:'center', gap:12, marginBottom:16 }}>
-                <div style={{ width:48, height:48, background: isOwn(c)?'#dbeafe':'#f1f5f9', borderRadius:12, display:'flex', alignItems:'center', justifyContent:'center', color: isOwn(c)?ACCENT:'#94a3b8', fontWeight:800, fontSize:20 }}>{c.raison_sociale[0]}</div>
+                <div style={{ width:48, height:48, background: isOwn(c)?'#dbeafe':'#f1f5f9', borderRadius:12, display:'flex', alignItems:'center', justifyContent:'center', color: isOwn(c)?ACCENT:'#94a3b8', fontWeight:800, fontSize:20, overflow:'hidden' }}>
+                  {c.logo_url ? <img src={c.logo_url} alt="logo" style={{width:'100%',height:'100%',objectFit:'contain',borderRadius:12}} /> : c.raison_sociale[0]}
+                </div>
                 <div>
                   <div style={{fontWeight:700,fontSize:15}}>{c.raison_sociale}</div>
                   {c.rccm&&<div style={{fontSize:12,color:'#64748b'}}>{c.rccm}</div>}
@@ -1566,6 +1571,30 @@ function CompaniesPage({ companies, refresh, toast, isSuperAdmin=false, currentU
             <Input label="Téléphone" name="tel" value={form.tel} onChange={set} />
             <Span2><Input label="Adresse" name="adresse" value={form.adresse} onChange={set} /></Span2>
             <Input label="Email" name="email" type="email" value={form.email} onChange={set} />
+            <Span2>
+              <div style={{marginBottom:4}}>
+                <label style={{fontSize:12,fontWeight:600,color:'#374151',display:'block',marginBottom:6}}>Logo de l'entreprise</label>
+                <div style={{display:'flex',alignItems:'center',gap:12}}>
+                  {form.logo_url && <img src={form.logo_url} alt="logo" style={{width:60,height:60,objectFit:'contain',borderRadius:8,border:'1px solid #e2e8f0'}} />}
+                  <div>
+                    <input type="file" accept="image/*" id="logo-upload" style={{display:'none'}}
+                      onChange={e=>{
+                        const file=e.target.files[0]; if(!file) return
+                        if(file.size>500000){alert('Image trop lourde (max 500 Ko). Compressez-la d'abord.'); return}
+                        const reader=new FileReader()
+                        reader.onload=ev=>setForm(f=>({...f,logo_url:ev.target.result}))
+                        reader.readAsDataURL(file)
+                      }}
+                    />
+                    <label htmlFor="logo-upload" style={{cursor:'pointer',padding:'8px 16px',background:'#f1f5f9',border:'1px solid #e2e8f0',borderRadius:8,fontSize:13,fontWeight:500,display:'inline-block'}}>
+                      📷 {form.logo_url ? 'Changer le logo' : 'Importer un logo'}
+                    </label>
+                    {form.logo_url && <button type="button" onClick={()=>setForm(f=>({...f,logo_url:''}))} style={{marginLeft:8,background:'none',border:'none',color:'#ef4444',cursor:'pointer',fontSize:12}}>✕ Supprimer</button>}
+                    <div style={{fontSize:11,color:'#94a3b8',marginTop:4}}>PNG, JPG — max 500 Ko. Le logo apparaîtra sur tous les documents imprimés.</div>
+                  </div>
+                </div>
+              </div>
+            </Span2>
           </Grid>
           <Row><Btn variant="secondary" onClick={close}>Annuler</Btn><Btn type="submit" disabled={saving}>{saving?'...':'Enregistrer'}</Btn></Row>
         </form>
@@ -2704,7 +2733,7 @@ function LotsProductionPage({ companies, companyId, toast, readOnly=false }) {
               {lots.map(l=>{
                 const lotHtml = `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><title>Lot ${l.numero_lot}</title><style>${CSS_PRINT}</style></head><body>
                   <button class="print-btn" onclick="window.print()">🖨️ Imprimer</button>
-                  <div class="header"><div><div class="company-name">${companyName}</div><div class="company-info">Lot de Production</div></div>
+                  <div class="header"><div>${companyLogo?`<img src="${companyLogo}" class="company-logo" alt="logo" />`:''}<div class="company-name">${companyName}</div><div class="company-info">Lot de Production</div></div>
                   <div class="doc-title"><h1>LOT DE PRODUCTION</h1><div class="doc-numero">${l.numero_lot}</div><div class="doc-date">Début : ${l.date_debut||'—'}</div></div></div>
                   <table><thead><tr><th>Désignation</th><th class="r">Valeur</th></tr></thead><tbody>
                     <tr><td>N° Lot</td><td class="r">${l.numero_lot}</td></tr>
