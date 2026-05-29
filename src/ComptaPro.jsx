@@ -7,7 +7,26 @@ const SUPABASE_ANON_KEY  = 'sb_publishable_DqCGxDWGqJ5K0rnnzDv6Hg_gWG7wzfX'
 const SUPER_ADMIN_EMAIL    = 'martin13haya@gmail.com'
 const SUPER_ADMIN_WHATSAPP = '2290196078696' // ← Mettre ici votre vrai numéro WhatsApp (sans +, ex: 22997000000)
 const APP_VERSION        = 'v2.1.0' // force rebuild
+// Détecter le token recovery AVANT que Supabase le consomme
+const _hash = window.location.hash
+const _params = new URLSearchParams(_hash.replace('#',''))
+if (_params.get('type') === 'recovery') {
+  sessionStorage.setItem('sb_recovery', '1')
+}
+
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+
+// Helper : récupère le company_id effectif pour l'utilisateur courant
+async function getEffectiveCompanyId(companyId, companies) {
+  const uid = (await supabase.auth.getUser()).data?.user?.id
+  if (!uid) return null
+  if (companyId) return companyId
+  if (companies?.length > 0) return companies[0].id
+  const { data } = await supabase.from('compta_profiles').select('company_id').eq('id', uid).single()
+  return data?.company_id || null
+}
+
+
 
 // Helper : retourne un filtre uid ou company selon le rôle
 // Pour le super admin, utilise .or() pour matcher company_id OU user_id du propriétaire
@@ -804,6 +823,57 @@ function printFilteredList({ title, subtitle='', headers, rows, companyName='', 
 }
 
 // ── AUTH PAGES ──────────────────────────────────────────────────────────────
+
+// ── ÉCRAN CHANGEMENT MOT DE PASSE (après reset) ──────────────────────────────
+function PasswordChangePage({ onDone }) {
+  const [pwd, setPwd]       = useState('')
+  const [pwd2, setPwd2]     = useState('')
+  const [saving, setSaving] = useState(false)
+  const [error, setError]   = useState('')
+
+  const submit = async e => {
+    e.preventDefault()
+    setError('')
+    if (pwd.length < 6) return setError('Le mot de passe doit contenir au moins 6 caractères.')
+    if (pwd !== pwd2)   return setError('Les mots de passe ne correspondent pas.')
+    setSaving(true)
+    const err = await onDone(pwd)
+    if (err) setError(err)
+    setSaving(false)
+  }
+
+  return (
+    <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',background:'linear-gradient(135deg,#1e3a5f,#2d6a4f)'}}>
+      <div style={{background:'white',borderRadius:16,padding:'40px 36px',width:'100%',maxWidth:400,boxShadow:'0 20px 60px rgba(0,0,0,0.2)'}}>
+        <div style={{textAlign:'center',marginBottom:28}}>
+          <div style={{fontSize:40,marginBottom:8}}>🔐</div>
+          <h2 style={{margin:0,fontSize:22,fontWeight:700,color:'#1e293b'}}>Créer votre mot de passe</h2>
+          <p style={{margin:'8px 0 0',fontSize:13,color:'#64748b'}}>Définissez un nouveau mot de passe sécurisé pour votre compte.</p>
+        </div>
+        {error && <div style={{background:'#fef2f2',border:'1px solid #fecaca',borderRadius:8,padding:'10px 14px',marginBottom:16,color:'#dc2626',fontSize:13}}>{error}</div>}
+        <form onSubmit={submit}>
+          <div style={{marginBottom:16}}>
+            <label style={{display:'block',fontSize:13,fontWeight:600,color:'#374151',marginBottom:6}}>Nouveau mot de passe *</label>
+            <input type="password" value={pwd} onChange={e=>setPwd(e.target.value)} required minLength={6}
+              placeholder="Au moins 6 caractères"
+              style={{width:'100%',padding:'10px 14px',border:'1px solid #d1d5db',borderRadius:8,fontSize:14,boxSizing:'border-box'}} />
+          </div>
+          <div style={{marginBottom:24}}>
+            <label style={{display:'block',fontSize:13,fontWeight:600,color:'#374151',marginBottom:6}}>Confirmer le mot de passe *</label>
+            <input type="password" value={pwd2} onChange={e=>setPwd2(e.target.value)} required
+              placeholder="Retapez le mot de passe"
+              style={{width:'100%',padding:'10px 14px',border:'1px solid #d1d5db',borderRadius:8,fontSize:14,boxSizing:'border-box'}} />
+          </div>
+          <button type="submit" disabled={saving}
+            style={{width:'100%',padding:'12px',background:saving?'#94a3b8':'#2d6a4f',color:'white',border:'none',borderRadius:8,fontSize:15,fontWeight:600,cursor:saving?'not-allowed':'pointer'}}>
+            {saving ? 'Enregistrement...' : '✓ Enregistrer mon mot de passe'}
+          </button>
+        </form>
+      </div>
+    </div>
+  )
+}
+
 function LoginPage({ onLogin }) {
   const [mode, setMode]       = useState('login') // 'login' | 'register' | 'forgot'
   const [form, setForm]       = useState({ email:'', password:'', nom:'', whatsapp:'' })
@@ -1220,7 +1290,7 @@ function Sidebar({ page, setPage, user, profile, onLogout, open, onClose }) {
 
   // Filter NAV based on permissions for utilisateur_simple
   const filteredNAV = isUtilisateurSimple
-    ? NAV.filter(item => !item.id || (permissions[item.id] && permissions[item.id] !== 'none'))
+    ? NAV.filter(item => !item.id || (permissions[item.id] === 'read' || permissions[item.id] === 'write'))
     : NAV
 
   const navItems = isSuperAdmin
@@ -1554,7 +1624,8 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     const pay = {}; fields.forEach(k=>{ if(form[k]!==undefined) pay[k]=form[k] })
     // Fix: ensure company_id is a valid non-empty value
     if (!pay.company_id) {
-      const cid = companyId || companies[0]?.id
+      const prof = (await supabase.from('compta_profiles').select('company_id').eq('id', uid).single()).data
+      const cid = companyId || prof?.company_id || companies[0]?.id
       if (!cid) { toast.error('Veuillez sélectionner une société avant d\'enregistrer.'); setSaving(false); return }
       pay.company_id = cid
     }
@@ -2595,7 +2666,8 @@ function LotsProductionPage({ companies, companyId, toast, readOnly=false }) {
     e.preventDefault(); setSaving(true)
     const uid = (await supabase.auth.getUser()).data?.user?.id
     const { numero_lot,date_debut,date_fin,statut,qte_paddy_entree,notes } = form
-    const company_id = form.company_id || companyId || companies[0]?.id
+    let company_id = form.company_id || companyId || companies[0]?.id
+    if (!company_id) company_id = await getEffectiveCompanyId(companyId, companies)
     if (!company_id) { toast.error('Veuillez sélectionner une société.'); setSaving(false); return }
     const pay = { company_id,numero_lot,date_debut,date_fin:date_fin||null,statut,qte_paddy_entree:+qte_paddy_entree,notes }
     const { error } = modal==='add' ? await supabase.from('compta_lots_production').insert({...pay,user_id:uid}) : await supabase.from('compta_lots_production').update(pay).eq('id',form.id)
@@ -2874,8 +2946,8 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
     setForm(f => ({ ...f, [name]: value }))
   }
 
-  const openAdd = () => {
-    const cid = companyId||companies[0]?.id||''
+  const openAdd = async () => {
+    const cid = await getEffectiveCompanyId(companyId, companies)
     if (!cid) { toast.error('Veuillez sélectionner une société.'); return }
     const df = { company_id:cid, lot_id:'', date_etape:today() }
     fields.forEach(f => { df[f.name] = '' })
@@ -3481,7 +3553,8 @@ function LotsSemiFinisPage({ companies, companyId, toast, readOnly=false }) {
   const save=async e=>{
     e.preventDefault(); setSaving(true)
     const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
-    const company_id=form.company_id||companyId||companies[0]?.id
+    let company_id=form.company_id||companyId||companies[0]?.id
+    if(!company_id) company_id = await getEffectiveCompanyId(companyId, companies)
     if(!company_id){ toast.error('Veuillez sélectionner une société.'); setSaving(false); return }
     const pay={
       company_id, numero_lot:form.numero_lot, date_reception:form.date_reception,
@@ -3679,7 +3752,7 @@ function MesUtilisateursPage({ toast, companies, companyId, profile }) {
 
   useEffect(()=>{ load(); loadSigs() },[load,loadSigs])
 
-  const defaultPerms=()=>Object.fromEntries(ALL_SECTIONS.map(([id])=>[id,'read']))
+  const defaultPerms=()=>Object.fromEntries(ALL_SECTIONS.map(([id])=>[id,'none']))
 
   const openAdd=()=>{
     setEditItem(null)
@@ -3690,7 +3763,7 @@ function MesUtilisateursPage({ toast, companies, companyId, profile }) {
   const openEdit=(u)=>{
     setEditItem(u)
     setForm({nom:u.nom||'',email:u.email||'',whatsapp:u.whatsapp||'',mot_de_passe:'',signataire_id:u.signataire_id||''})
-    setPerms(u.permissions||defaultPerms()); setModal(true)
+    setPerms({...defaultPerms(),...(u.permissions||{})}); setModal(true)
   }
 
   const close=()=>setModal(false)
@@ -3729,27 +3802,55 @@ function MesUtilisateursPage({ toast, companies, companyId, profile }) {
     const {data:ad}=await supabase.auth.getUser(); const uid=ad?.user?.id
 
     if(!editItem){
-      const {data:authData,error:authErr}=await supabase.auth.signUp({
-        email:form.email, password:form.mot_de_passe,
-        options:{emailRedirectTo:window.location.origin}
+      // Créer via Edge Function sécurisée (service_role côté serveur)
+      const { data:{ session } } = await supabase.auth.getSession()
+      const res = await fetch(`${SUPABASE_URL}/functions/v1/create-user`, {
+        method:'POST',
+        headers:{
+          'Content-Type':'application/json',
+          'Authorization': `Bearer ${session?.access_token}`
+        },
+        body: JSON.stringify({
+          email: form.email,
+          password: form.mot_de_passe,
+          nom: form.nom,
+          whatsapp: form.whatsapp,
+          company_id: companyId,
+          permissions: perms,
+          signataire_id: form.signataire_id||null
+        })
       })
-      if(authErr){ toast.error(authErr.message); setSaving(false); return }
-      const newUid=authData?.user?.id
-      if(!newUid){ toast.error('Erreur création compte'); setSaving(false); return }
-      const {error:profErr}=await supabase.from('compta_profiles').upsert({
-        id:newUid, nom:form.nom, email:form.email, whatsapp:form.whatsapp,
-        role:'utilisateur_simple', statut:'active', company_id:companyId,
-        created_by:uid, permissions:perms, signataire_id:form.signataire_id||null,
-      })
-      if(profErr){ toast.error(profErr.message); setSaving(false); return }
-      toast.success('Utilisateur '+form.nom+' créé !')
+      const resData = await res.json()
+      if(!res.ok){ toast.error(resData.error||'Erreur création'); setSaving(false); return }
+      toast.success('Utilisateur '+form.nom+' créé ! Il peut se connecter avec son mot de passe.')
       if(form.whatsapp) sendWelcomeWA(form.nom,form.whatsapp,form.email,form.mot_de_passe)
     } else {
+      // Mettre à jour le profil
       await supabase.from('compta_profiles').update({
         nom:form.nom, whatsapp:form.whatsapp,
         permissions:perms, signataire_id:form.signataire_id||null,
       }).eq('id',editItem.id)
-      toast.success('Utilisateur mis à jour !')
+
+      // Mettre à jour le mot de passe si renseigné
+      if (form.mot_de_passe && form.mot_de_passe.trim().length >= 6) {
+        const { data:{ session } } = await supabase.auth.getSession()
+        const res = await fetch(`${SUPABASE_URL}/functions/v1/create-user`, {
+          method:'PATCH',
+          headers:{
+            'Content-Type':'application/json',
+            'Authorization': `Bearer ${session?.access_token}`
+          },
+          body: JSON.stringify({
+            user_id: editItem.id,
+            password: form.mot_de_passe
+          })
+        })
+        const resData = await res.json()
+        if(!res.ok) toast.error('Profil mis à jour mais erreur mot de passe : '+resData.error)
+        else toast.success('Utilisateur et mot de passe mis à jour !')
+      } else {
+        toast.success('Utilisateur mis à jour !')
+      }
     }
     setSaving(false); close(); load()
   }
@@ -6870,7 +6971,8 @@ function JournalPage({ table, title, icon, journalType='caisse', companies, comp
   const save = async e => {
     e.preventDefault(); setSaving(true)
     const { data:ad } = await supabase.auth.getUser(); const uid=ad?.user?.id
-    const cid = form.company_id || companyId || companies[0]?.id
+    let cid = form.company_id || companyId || companies[0]?.id
+    if (!cid) cid = await getEffectiveCompanyId(companyId, companies)
     if (!cid) { toast.error('Veuillez sélectionner une société.'); setSaving(false); return }
     const pay = {
       company_id: cid, date_operation:form.date_operation,
@@ -7651,6 +7753,7 @@ export default function ComptaPro() {
   const [docId,     setDocId]     = useState(null)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [adminViewCompany, setAdminViewCompany] = useState(null)
+  const [needsPasswordChange, setNeedsPasswordChange] = useState(false)
   const toast = useToast()
   const { isMobile, isTablet, isLandscape, isMobileLandscape } = useResponsive()
   // En paysage mobile : sidebar visible mais compacte, contenu plein écran
@@ -7668,11 +7771,47 @@ export default function ComptaPro() {
       setProfile(data || null)
       setLoading(false)
     }
+    // Détecter immédiatement un token recovery dans l'URL
+    const hash = window.location.hash
+    const params = new URLSearchParams(hash.replace('#',''))
+    const tokenType = params.get('type')
+    if (tokenType === 'recovery') {
+      // Extraire le token et établir la session
+      const accessToken = params.get('access_token')
+      const refreshToken = params.get('refresh_token')
+      if (accessToken) {
+        supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken||'' })
+          .then(({ data }) => {
+            setUser(data?.user ?? null)
+            setNeedsPasswordChange(true)
+            setLoading(false)
+            // Nettoyer l'URL
+            window.history.replaceState(null, '', window.location.pathname)
+          })
+        return
+      }
+    }
+
     supabase.auth.getSession().then(({data:{session}})=>{
+      // Vérifier si c'est un recovery depuis sessionStorage
+      const isRecovery = sessionStorage.getItem('sb_recovery') === '1'
+      if (isRecovery && session?.user) {
+        sessionStorage.removeItem('sb_recovery')
+        setUser(session.user)
+        setNeedsPasswordChange(true)
+        setLoading(false)
+        return
+      }
       setUser(session?.user??null)
       loadProfile(session?.user??null)
     })
-    const { data:{subscription} } = supabase.auth.onAuthStateChange((_,session)=>{
+    const { data:{subscription} } = supabase.auth.onAuthStateChange((event, session)=>{
+      if (event === 'PASSWORD_RECOVERY') {
+        // Forcer l'utilisateur à définir un nouveau mot de passe
+        setUser(session?.user??null)
+        setNeedsPasswordChange(true)
+        return
+      }
       setUser(session?.user??null)
       loadProfile(session?.user??null)
       // Enregistrer l'heure de connexion
@@ -7683,14 +7822,23 @@ export default function ComptaPro() {
     return ()=>subscription.unsubscribe()
   },[])
 
-  // Load companies — super admin voit toutes les sociétés
+  // Load companies — super admin voit toutes, admin_societe voit la sienne, utilisateur_simple via son profil
   const loadCompanies = useCallback(async()=>{
     const { data:authData } = await supabase.auth.getUser()
     const uid = authData?.user?.id
     if (!uid) return
     const isAdmin = authData?.user?.email === SUPER_ADMIN_EMAIL
     let q = supabase.from('compta_companies').select('*').order('raison_sociale')
-    if (!isAdmin) q = q.eq('user_id', uid)
+    if (!isAdmin) {
+      // Récupérer le profil pour savoir si utilisateur_simple
+      const { data:prof } = await supabase.from('compta_profiles').select('role,company_id').eq('id',uid).single()
+      if (prof?.role === 'utilisateur_simple' && prof?.company_id) {
+        // Charger uniquement la société rattachée au profil
+        q = q.eq('id', prof.company_id)
+      } else {
+        q = q.eq('user_id', uid)
+      }
+    }
     const { data } = await q
     setCompanies(data||[])
     if (!companyId && data?.length>0) setCompanyId(data[0].id)
@@ -7721,6 +7869,15 @@ export default function ComptaPro() {
     </div>
   )
   if (!user) return <LoginPage onLogin={setUser} />
+
+  // Écran de changement de mot de passe après réinitialisation
+  if (needsPasswordChange) return <PasswordChangePage onDone={async(newPwd)=>{
+    const { error } = await supabase.auth.updateUser({ password: newPwd })
+    if (error) return error.message
+    setNeedsPasswordChange(false)
+    loadProfile(user)
+    return null
+  }} />
   if (profile?.statut === 'pending') return <PendingPage onLogout={()=>{ supabase.auth.signOut(); setUser(null); setProfile(null) }} />
   if (profile?.statut === 'suspended') return (
     <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',background:'#f1f5f9'}}>
@@ -7741,6 +7898,10 @@ export default function ComptaPro() {
   // readOnly uniquement si super admin consulte la société d'un AUTRE utilisateur
   const isOwnCompany = adminViewCompany ? adminViewCompany.user_id === user?.id : true
   const readOnly = isSuperAdmin && !!adminViewCompany && !isOwnCompany
+  const readOnlyAdmin = readOnly
+  const isSimple = profile?.role === 'utilisateur_simple'
+  const pagePerms = profile?.permissions || {}
+  const getReadOnly = (pid) => readOnly || (isSimple && pagePerms[pid] === 'read')
 
   const sp = { companies, companyId: effectiveCompanyId, toast, readOnly, profile, userPermissions:profile?.permissions||{} }
 
@@ -7859,12 +8020,12 @@ export default function ComptaPro() {
       case 'commercial-view': return <CommercialViewPage docId={docId} setPage={setPage} toast={toast} />
       case 'lots':          return <LotsProductionPage {...sp} />
       case 'suivi_lot':     return <SuiviLotPage {...sp} />
-      case 'etv_repertoire':  return <EtvRepertoirePage {...sp} />
-      case 'etv_avances':     return <EtvAvancesPage {...sp} />
-      case 'etv_bc':          return <EtvBCPage {...sp} />
-      case 'etv_br':          return <EtvBRPage {...sp} />
-      case 'etv_entrees':     return <EtvEntreesPage {...sp} />
-      case 'etv_sorties':     return <EtvSortiesPage {...sp} />
+      case 'etv_repertoire':  return <EtvRepertoirePage {...sp} readOnly={getReadOnly('etv_repertoire')} />
+      case 'etv_avances':     return <EtvAvancesPage {...sp} readOnly={getReadOnly('etv_avances')} />
+      case 'etv_bc':          return <EtvBCPage {...sp} readOnly={getReadOnly('etv_bc')} />
+      case 'etv_br':          return <EtvBRPage {...sp} readOnly={getReadOnly('etv_br')} />
+      case 'etv_entrees':     return <EtvEntreesPage {...sp} readOnly={getReadOnly('etv_entrees')} />
+      case 'etv_sorties':     return <EtvSortiesPage {...sp} readOnly={getReadOnly('etv_sorties')} />
       case 'etv_inventaire':  return <EtvInventairePage {...sp} />
       case 'etv_tresorerie':  return <EtvTresoreriePage {...sp} />
       case 'achats':          return <AchatsSemisPage {...sp} />
