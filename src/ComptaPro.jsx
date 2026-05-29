@@ -1580,7 +1580,7 @@ function CompaniesPage({ companies, refresh, toast, isSuperAdmin=false, currentU
                     <input type="file" accept="image/*" id="logo-upload" style={{display:'none'}}
                       onChange={e=>{
                         const file=e.target.files[0]; if(!file) return
-                        if(file.size>500000){alert('Image trop lourde (max 500 Ko). Compressez-la d'abord.'); return}
+                        if(file.size>500000){alert("Image trop lourde. Max 500 Ko."); return}
                         const reader=new FileReader()
                         reader.onload=ev=>setForm(f=>({...f,logo_url:ev.target.result}))
                         reader.readAsDataURL(file)
