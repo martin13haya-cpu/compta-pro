@@ -59,22 +59,32 @@ function useResponsive() {
 
   useEffect(() => {
     const handler = () => setSize(getSize())
-    window.addEventListener('resize', handler)
-    window.addEventListener('orientationchange', () => {
+    const orientHandler = () => {
       // Délai pour laisser le navigateur finir la rotation
-      setTimeout(() => setSize(getSize()), 100)
-    })
+      setTimeout(() => {
+        setSize({
+          width: window.innerWidth,
+          height: window.innerHeight,
+          isLandscape: window.innerWidth > window.innerHeight
+        })
+      }, 300)
+    }
+    window.addEventListener('resize', handler)
+    window.addEventListener('orientationchange', orientHandler)
+    // Support moderne
+    screen.orientation?.addEventListener('change', orientHandler)
     return () => {
       window.removeEventListener('resize', handler)
-      window.removeEventListener('orientationchange', handler)
+      window.removeEventListener('orientationchange', orientHandler)
+      screen.orientation?.removeEventListener('change', orientHandler)
     }
   }, [])
 
   const { width, height, isLandscape } = size
   // En paysage sur mobile (ex: 667px large), traiter comme tablette
   const isMobile  = width < 768 && !isLandscape
-  const isMobileLandscape = width < 1024 && isLandscape && height < 500
-  const isTablet  = (width >= 768 && width < 1024) || isMobileLandscape
+  const isMobileLandscape = isLandscape && height < 500
+  const isTablet  = (width >= 768 && width < 1024) || (isMobileLandscape && width < 1024)
   const isDesktop = width >= 1024 && !isMobileLandscape
 
   return { isMobile, isTablet, isDesktop, isLandscape, isMobileLandscape, width, height }
@@ -1285,7 +1295,7 @@ const NAV_ADMIN_SOCIETE = [
 function Sidebar({ page, setPage, user, profile, onLogout, open, onClose }) {
   const { isMobile, isTablet, isLandscape, isMobileLandscape } = useResponsive()
   // En paysage sur mobile : sidebar visible en mode compact
-  const collapsed = isMobile && !isLandscape
+  const collapsed = isMobile || isMobileLandscape  // sidebar overlay en portrait ET paysage mobile
   const isSuperAdmin = profile?.role === 'super_admin' || user?.email === SUPER_ADMIN_EMAIL
   const isAdminSociete = profile?.role === 'admin_societe' || profile?.role === 'admin'
   const isUtilisateurSimple = profile?.role === 'utilisateur_simple'
@@ -7786,7 +7796,7 @@ export default function ComptaPro() {
   const toast = useToast()
   const { isMobile, isTablet, isLandscape, isMobileLandscape } = useResponsive()
   // En paysage mobile : sidebar visible mais compacte, contenu plein écran
-  const collapsed = isMobile && !isLandscape
+  const collapsed = isMobile || isMobileLandscape  // sidebar overlay en portrait ET paysage mobile
 
   const isSuperAdmin = user?.email === SUPER_ADMIN_EMAIL || profile?.role === 'super_admin'
   const isAdminSociete = profile?.role === 'admin_societe' || profile?.role === 'admin'
@@ -8082,16 +8092,19 @@ export default function ComptaPro() {
 
   const logout = async ()=>{ await supabase.auth.signOut(); setUser(null); setProfile(null) }
 
+  // En paysage mobile, sidebar overlay (collapsed=true) mais marginLeft=0
+  const sidebarCollapsed = isMobile || isMobileLandscape
+
   return (
     <div style={{ fontFamily:"'Segoe UI',system-ui,sans-serif", background:'#f1f5f9', color:'#1e293b', minHeight:'100vh' }}>
       <Toasts toasts={toast.toasts} />
       <Sidebar page={page} setPage={setPage} user={user} profile={profile} onLogout={logout}
         open={sidebarOpen} onClose={()=>setSidebarOpen(false)} />
-      <div style={{ marginLeft:collapsed ? 0 : 260, minHeight:'100vh', display:'flex', flexDirection:'column' }}>
+      <div style={{ marginLeft:sidebarCollapsed ? 0 : 260, minHeight:'100vh', display:'flex', flexDirection:'column', transition:'margin-left 0.2s ease' }}>
         {/* Topbar */}
         <div style={{ height:60, background:'white', borderBottom:'1px solid #e2e8f0', display:'flex', alignItems:'center', justifyContent:'space-between', padding:'0 16px', position:'sticky', top:0, zIndex:100 }}>
           <div style={{ display:'flex', alignItems:'center', gap:12 }}>
-            {collapsed && (
+            {sidebarCollapsed && (
               <button onClick={()=>setSidebarOpen(true)} style={{ background:'none', border:'none', cursor:'pointer', fontSize:22, padding:'4px 6px', color:'#374151', display:'flex', alignItems:'center' }}>
                 ☰
               </button>
