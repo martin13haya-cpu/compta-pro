@@ -145,7 +145,7 @@ const CSS_PRINT_LANDSCAPE = CSS_PRINT.replace('@page { size: A4;', '@page { size
 function buildCommercialDocHtml(doc, lignes) {
   const cli  = doc.compta_clients
   const comp = doc.compta_companies
-  const cliNom = cli ? (cli.type==='morale' ? cli.nom_societe : `${cli.nom||''} ${cli.prenom||''}`.trim()) : null
+  const cliNom = cli ? (cli.type==='morale' ? cli.nom_societe : (cli.nom||'').trim()) : null
 
   const lignesHtml = (lignes||[]).length > 0
     ? (lignes||[]).map((l,i) => `
@@ -1659,7 +1659,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
   const save = async e => {
     e.preventDefault(); setSaving(true)
     const uid = (await supabase.auth.getUser()).data?.user?.id
-    const fields = ['company_id','nom','prenom','telephone','provenance','cip','ifu','email','adresse', ...(extraFields?.names||[])]
+    const fields = ['company_id','nom','telephone','provenance','cip','ifu','email','adresse', ...(extraFields?.names||[])]
     const pay = {}; fields.forEach(k=>{ if(form[k]!==undefined) pay[k]=form[k] })
     // Fix: ensure company_id is a valid non-empty value
     if (!pay.company_id) {
@@ -1687,17 +1687,17 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
   }
 
   const displayName = it => (table==='compta_clients' || table==='compta_fournisseurs')
-    ? (it.type==='morale' ? it.nom_societe : `${it.nom||''} ${it.prenom||''}`.trim())
-    : `${it.nom||''} ${it.prenom||''}`.trim()
+    ? (it.type==='morale' ? it.nom_societe : (it.nom||''))
+    : (it.nom||'')
 
   // ── IMPORT / EXPORT CSV (fournisseurs & clients) ──────────────────────────
   const [importing, setImporting] = useState(false)
   const canImport = table==='compta_fournisseurs' || table==='compta_clients'
 
   const downloadTemplate = () => {
-    const headers = ['type','nom','prenom','nom_societe','telephone','provenance','cip','ifu','email','adresse']
-    const ex1 = ['physique','HAYA','Martin','','22997000000','Tanguiéta','','3202012190967','martin@exemple.com','BP 707']
-    const ex2 = ['morale','','','SARL EXEMPLE','22996000000','Natitingou','','3201998877665','contact@exemple.com','Cotonou']
+    const headers = ['type','nom','nom_societe','telephone','provenance','cip','ifu','email','adresse']
+    const ex1 = ['physique','HAYA Martin','','22997000000','Tanguiéta','','3202012190967','martin@exemple.com','BP 707']
+    const ex2 = ['morale','','SARL EXEMPLE','22996000000','Natitingou','','3201998877665','contact@exemple.com','Cotonou']
     const csv = [headers.join(';'), ex1.join(';'), ex2.join(';')].join('\n')
     const blob = new Blob(['\ufeff'+csv], {type:'text/csv;charset=utf-8;'})
     const url = URL.createObjectURL(blob)
@@ -1734,7 +1734,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
         rows.push({
           company_id: cid, user_id: uid,
           type: t==='morale'?'morale':'physique',
-          nom: obj.nom||null, prenom: obj.prenom||null,
+          nom: obj.nom||null,
           nom_societe: obj.nom_societe||null,
           telephone: obj.telephone||null, provenance: obj.provenance||null,
           cip: obj.cip||null, ifu: obj.ifu||null,
@@ -1854,12 +1854,10 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
             {(table==='compta_clients'||table==='compta_fournisseurs') && (form.type||'physique')==='morale' ? (
               <Span2><Input label="Raison sociale *" name="nom_societe" value={form.nom_societe||''} onChange={set} required /></Span2>
             ) : (
-              <><Input label="Nom *" name="nom" value={form.nom||''} onChange={set} required />
-              <Input label="Prénom" name="prenom" value={form.prenom||''} onChange={set} /></>
+              <Span2><Input label="Nom et Prénom(s) *" name="nom" value={form.nom||''} onChange={set} required /></Span2>
             )}
             {(table==='compta_fournisseurs') && (form.type||'physique')==='morale' && (
-              <><Input label="Nom du représentant" name="nom" value={form.nom||''} onChange={set} />
-              <Input label="Prénom du représentant" name="prenom" value={form.prenom||''} onChange={set} /></>
+              <Span2><Input label="Nom et Prénom(s) du représentant" name="nom" value={form.nom||''} onChange={set} /></Span2>
             )}
             <Input label="Téléphone" name="telephone" value={form.telephone} onChange={set} />
             <Input label="Provenance" name="provenance" value={form.provenance} onChange={set} />
@@ -2374,7 +2372,7 @@ function CommercialPage({ companies, companyId, setPage, setDocId, toast, readOn
 
   const ttc = docs.reduce((s,d)=>s+(d.montant_ttc||0),0)
   const pay = docs.reduce((s,d)=>s+(d.montant_paye||0),0)
-  const cliName = d => { const c=d.compta_clients; return c?(c.type==='morale'?c.nom_societe:`${c.nom||''} ${c.prenom||''}`):null }
+  const cliName = d => { const c=d.compta_clients; return c?(c.type==='morale'?c.nom_societe:(c.nom||'')):null }
   const companyName = companies.find(c=>c.id===companyId)?.raison_sociale||''
 
   const printFiltered = () => {
@@ -2532,7 +2530,7 @@ function CommercialNewPage({ companies, companyId, typeDoc, setPage, toast }) {
   }
 
   const { isMobile } = useResponsive()
-  const cliName = c => c.type==='morale'?c.nom_societe:`${c.nom||''} ${c.prenom||''}`
+  const cliName = c => c.type==='morale'?c.nom_societe:(c.nom||'')
 
   return (
     <div>
@@ -2659,7 +2657,7 @@ function CommercialViewPage({ docId, setPage, toast }) {
   if (!doc) return <div style={{padding:24}}>Document introuvable.</div>
 
   const cli = doc.compta_clients
-  const cliNom = cli?(cli.type==='morale'?cli.nom_societe:`${cli.nom||''} ${cli.prenom||''}`):null
+  const cliNom = cli?(cli.type==='morale'?cli.nom_societe:(cli.nom||'')):null
   const reste = (doc.montant_ttc||0)-(doc.montant_paye||0)
 
   return (
@@ -4165,8 +4163,8 @@ function EtvRepertoirePage({ companies, companyId, toast, readOnly=false }) {
       const { data, error }=await qF
       if(error){ console.error('loadFourn:', error.message); return }
       setFourn((data||[]).sort((a,b)=>{
-        const na=(a.type==='morale'?a.nom_societe:`${a.nom||''} ${a.prenom||''}`).trim().toLowerCase()
-        const nb=(b.type==='morale'?b.nom_societe:`${b.nom||''} ${b.prenom||''}`).trim().toLowerCase()
+        const na=(a.type==='morale'?a.nom_societe:(a.nom||'')).trim().toLowerCase()
+        const nb=(b.type==='morale'?b.nom_societe:(b.nom||'')).trim().toLowerCase()
         return na.localeCompare(nb)
       }))
     } catch(e){ console.error('loadFourn error:', e) }
@@ -4176,7 +4174,7 @@ function EtvRepertoirePage({ companies, companyId, toast, readOnly=false }) {
 
   const getFournName = (f) => {
     if(!f) return '—'
-    return f.type==='morale'?(f.nom_societe||'—'):`${f.nom||''} ${f.prenom||''}`.trim()||'—'
+    return f.type==='morale'?(f.nom_societe||'—'):(f.nom||'')||'—'
   }
 
   const set = e=>setForm(f=>({...f,[e.target.name]:e.target.value}))
@@ -4193,7 +4191,7 @@ function EtvRepertoirePage({ companies, companyId, toast, readOnly=false }) {
   // Sélection IFU → auto-remplir nom
   const onSelectIFU = (ifu) => {
     const f = fournisseurs.find(x=>x.ifu===ifu)
-    const nom = f ? (f.type==='morale'?(f.nom_societe||''):`${f.nom||''} ${f.prenom||''}`.trim()) : ''
+    const nom = f ? (f.type==='morale'?(f.nom_societe||''):(f.nom||'')) : ''
     setForm(fv=>({...fv, ifu, nom_etuveuse:nom}))
   }
   const close=()=>setModal(false)
@@ -4311,7 +4309,7 @@ function EtvRepertoirePage({ companies, companyId, toast, readOnly=false }) {
                 <option value=''>— Sélectionner par IFU —</option>
                 {fournisseurs.filter(f=>f.ifu).map(f=>(
                   <option key={f.id} value={f.ifu}>
-                    {f.ifu} — {f.type==='morale'?f.nom_societe:`${f.nom||''} ${f.prenom||''}`.trim()}
+                    {f.ifu} — {f.type==='morale'?f.nom_societe:(f.nom||'')}
                   </option>
                 ))}
               </select>
@@ -4368,7 +4366,7 @@ function EtvAvancesPage({ companies, companyId, toast, readOnly=false }) {
   const getEtvName = (e) => {
     if(!e) return '—'
     const f=e.compta_fournisseurs
-    const nom=f?(f.type==='morale'?f.nom_societe:`${f.nom||''} ${f.prenom||''}`.trim()):''
+    const nom=f?(f.type==='morale'?f.nom_societe:(f.nom||'')):''
     return `${e.code_etuveuse||''} — ${nom}`
   }
 
@@ -5484,7 +5482,7 @@ function EtvInventairePage({ companies, companyId, toast }) {
     const e=etuveuses.find(x=>x.id===etvId)
     if(!e) return etvId
     const f=e.compta_fournisseurs
-    const nom=f?(f.type==='morale'?f.nom_societe:`${f.nom||''} ${f.prenom||''}`.trim()):''
+    const nom=f?(f.type==='morale'?f.nom_societe:(f.nom||'')):''
     return `${e.code_etuveuse||''} — ${nom}`
   }
 
@@ -5528,7 +5526,7 @@ function EtvInventairePage({ companies, companyId, toast }) {
           <option value=''>Toutes les étuveuses</option>
           {etuveuses.map(e=>{
             const f=e.compta_fournisseurs
-            const nom=f?(f.type==='morale'?f.nom_societe:`${f.nom||''} ${f.prenom||''}`.trim()):''
+            const nom=f?(f.type==='morale'?f.nom_societe:(f.nom||'')):''
             return <option key={e.id} value={e.id}>{e.code_etuveuse} — {nom}</option>
           })}
         </select>
@@ -6914,7 +6912,7 @@ function ReglementsPage({ companies, companyId, toast, readOnly=false, mode='cli
   const getClientName = (fac) => {
     const c = fac.compta_clients
     if(!c) return ''
-    return c.type==='morale' ? (c.nom_societe||'') : `${c.nom||''} ${c.prenom||''}`.trim()
+    return c.type==='morale' ? (c.nom_societe||'') : (c.nom||'')
   }
 
   const onSelectFacture = (num) => {
@@ -7092,7 +7090,7 @@ function ReglementsPage({ companies, companyId, toast, readOnly=false, mode='cli
                     <option value=''>— Sélectionner une facture —</option>
                     {factures.map(f=>(
                       <option key={f.id} value={f.numero}>
-                        {f.numero} · {(f.type_doc||'').toUpperCase()} · {f.compta_clients?.type==='morale'?f.compta_clients?.nom_societe:`${f.compta_clients?.nom||''} ${f.compta_clients?.prenom||''}`.trim()||'?'}
+                        {f.numero} · {(f.type_doc||'').toUpperCase()} · {f.compta_clients?.type==='morale'?f.compta_clients?.nom_societe:(f.compta_clients?.nom||'')||'?'}
                       </option>
                     ))}
                   </select>
