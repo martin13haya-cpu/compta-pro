@@ -6098,21 +6098,126 @@ function EpierragePage({ companies, companyId, toast, readOnly=false, lots=[] })
 
 
 // ── DOCUMENTS ADMINISTRATIFS ──────────────────────────────────────────────────
+// ── DOCUMENTS VALIDÉS (vue Admin Société) ────────────────────────────────────
+function DocsValidesPage({ companies, companyId, toast, profile }) {
+  const [items, setItems] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [printModal, setPrintModal] = useState(null)
+  const [budgets, setBudgets] = useState([])
+
+  const load = useCallback(async()=>{
+    setLoading(true)
+    const { data:ad }=await supabase.auth.getUser()
+    const uid=ad?.user?.id
+    const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
+    let q=supabase.from('compta_expression_besoin')
+      .select('*,compta_companies(raison_sociale,rccm,adresse,tel,logo_url)')
+      .eq('statut_validation','traitee')
+      .order('date_validation',{ascending:false})
+    q = await buildQuery(q, uid, companyId, isAdmin)
+    const { data }=await q
+    setItems(data||[])
+    setLoading(false)
+    // Marquer comme vus
+    const nonVus=(data||[]).filter(d=>!d.vu_par_admin).map(d=>d.id)
+    if(nonVus.length>0){
+      await supabase.from('compta_expression_besoin').update({vu_par_admin:true}).in('id',nonVus)
+    }
+  },[companyId])
+
+  const loadBudgets=useCallback(async()=>{
+    const { data:ad }=await supabase.auth.getUser()
+    const uid=ad?.user?.id; const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
+    let q=supabase.from('compta_budget').select('*')
+    q = await buildQuery(q, uid, companyId, isAdmin)
+    const { data }=await q; setBudgets(data||[])
+  },[companyId])
+
+  useEffect(()=>{ load(); loadBudgets() },[load,loadBudgets])
+
+  if(loading) return <div style={{textAlign:'center',padding:40,color:'#94a3b8'}}>Chargement…</div>
+
+  return (
+    <div>
+      {items.length===0 ? (
+        <div style={{background:'white',borderRadius:12,border:'1px solid #e2e8f0',padding:48,textAlign:'center'}}>
+          <div style={{fontSize:48,marginBottom:12}}>📭</div>
+          <div style={{fontWeight:600,color:'#64748b'}}>Aucun document validé</div>
+          <div style={{fontSize:13,color:'#94a3b8',marginTop:6}}>Les autorisations de dépense validées par l'administration apparaîtront ici.</div>
+        </div>
+      ) : (
+        <div style={{display:'grid',gap:12}}>
+          {items.map(f=>(
+            <div key={f.id} style={{background:'white',borderRadius:12,border:'1px solid #e2e8f0',padding:'16px 20px',display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:12}}>
+              <div>
+                <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:4}}>
+                  <span style={{fontSize:15,fontWeight:700,color:'#0f2044'}}>{f.reference||f.numero||'Fiche'}</span>
+                  <span style={{background:'#f0fdf4',color:'#16a34a',border:'1px solid #bbf7d0',borderRadius:20,padding:'2px 10px',fontSize:11,fontWeight:700}}>✅ Validé</span>
+                </div>
+                <div style={{fontSize:13,color:'#64748b'}}>{f.expression||f.description||''}</div>
+                <div style={{fontSize:12,color:'#94a3b8',marginTop:4}}>
+                  Montant autorisé : <strong style={{color:'#16a34a'}}>{fcfa(f.total_autorise||0)}</strong>
+                  {f.date_validation && ` · Validé le ${new Date(f.date_validation).toLocaleDateString('fr-FR')}`}
+                </div>
+              </div>
+              <button onClick={()=>printExpressionBesoin(f, f.lignes||[], budgets, f.compta_companies, null, null)}
+                style={{background:ACCENT,border:'none',borderRadius:8,padding:'10px 18px',cursor:'pointer',color:'white',fontWeight:600,fontSize:13,display:'flex',alignItems:'center',gap:6}}>
+                📥 Télécharger PDF
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function DocsAdminPage({ companies, companyId, toast, readOnly=false, profile }) {
-  const [subPage, setSubPage] = useState('fiches') // 'fiches' | 'budgets'
+  const [subPage, setSubPage] = useState('fiches') // 'fiches' | 'budgets' | 'valides'
+  const [nbNonVus, setNbNonVus] = useState(0)
+  const isSuperAdmin = profile?.role === 'super_admin'
+  const isAdminSoc = profile?.role === 'admin_societe' || profile?.role === 'admin'
+
+  // Compter les documents validés non vus (pour le badge)
+  useEffect(()=>{
+    if(!isAdminSoc) return
+    const check=async()=>{
+      const { data:ad }=await supabase.auth.getUser()
+      const uid=ad?.user?.id; if(!uid) return
+      let q=supabase.from('compta_expression_besoin').select('id',{count:'exact',head:true})
+        .eq('statut_validation','traitee').eq('vu_par_admin',false)
+      const prof=(await supabase.from('compta_profiles').select('company_id').eq('id',uid).single()).data
+      if(prof?.company_id) q=q.eq('company_id',prof.company_id)
+      const { count }=await q
+      setNbNonVus(count||0)
+    }
+    check()
+  },[isAdminSoc, subPage])
+
+  const tabs=[
+    {id:'fiches',label:'📋 Expressions de besoin'},
+    {id:'budgets',label:'💼 Gestion Budget'},
+  ]
+  // Onglet Documents Validés visible pour admin société
+  if(isAdminSoc||isSuperAdmin) tabs.push({id:'valides',label:'✅ Documents Validés',badge:nbNonVus})
+
   return (
     <div>
       <PageHeader title="Documents administratifs" subtitle="Fiches & Budget" />
-      <div style={{display:'flex',gap:8,marginBottom:20}}>
-        {[{id:'fiches',label:'📋 Expressions de besoin'},{id:'budgets',label:'💼 Gestion Budget'}].map(t=>(
+      <div style={{display:'flex',gap:8,marginBottom:20,flexWrap:'wrap'}}>
+        {tabs.map(t=>(
           <button key={t.id} onClick={()=>setSubPage(t.id)} style={{
-            padding:'8px 18px',borderRadius:8,border:'none',fontWeight:600,fontSize:13,cursor:'pointer',
+            padding:'8px 18px',borderRadius:8,border:'none',fontWeight:600,fontSize:13,cursor:'pointer',position:'relative',
             background:subPage===t.id?ACCENT:'#f1f5f9',color:subPage===t.id?'white':'#475569'
-          }}>{t.label}</button>
+          }}>
+            {t.label}
+            {t.badge>0 && <span style={{position:'absolute',top:-6,right:-6,background:'#ef4444',color:'white',borderRadius:10,minWidth:18,height:18,fontSize:11,fontWeight:700,display:'flex',alignItems:'center',justifyContent:'center',padding:'0 5px'}}>{t.badge}</span>}
+          </button>
         ))}
       </div>
       {subPage==='fiches'    && <ExpressionBesoinPage companies={companies} companyId={companyId} toast={toast} readOnly={readOnly} profile={profile} />}
       {subPage==='budgets'   && <BudgetPage companies={companies} companyId={companyId} toast={toast} readOnly={readOnly} />}
+      {subPage==='valides'   && <DocsValidesPage companies={companies} companyId={companyId} toast={toast} profile={profile} />}
     </div>
   )
 }
@@ -6356,13 +6461,16 @@ function ExpressionBesoinPage({ companies, companyId, toast, readOnly=false, pro
     const totalAutorise=validLignes.reduce((s,l)=>
       l.validation==='approuve'?s+Math.round(parseFloat(l.montant_autorise)||0):s
     ,0)
+    const estTraitee = validLignes.every(l=>l.validation!=='en_attente')
     const { error }=await supabase.from('compta_expression_besoin').update({
       lignes:validLignes,
       total_autorise:totalAutorise,
-      statut_validation:validLignes.every(l=>l.validation!=='en_attente')?'traitee':'en_cours'
+      statut_validation:estTraitee?'traitee':'en_cours',
+      date_validation: estTraitee ? new Date().toISOString() : null,
+      vu_par_admin: estTraitee ? false : null
     }).eq('id',validModal.id)
     if(error){ toast.error(error.message); return }
-    toast.success('Validation enregistrée !'); setValidModal(null); load()
+    toast.success(estTraitee?'✅ Document validé et envoyé à l\'admin société !':'Validation enregistrée !'); setValidModal(null); load()
   }
 
   const getStatutBadge=(fiche)=>{
