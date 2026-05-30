@@ -1690,10 +1690,89 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     ? (it.type==='morale' ? it.nom_societe : `${it.nom||''} ${it.prenom||''}`.trim())
     : `${it.nom||''} ${it.prenom||''}`.trim()
 
+  // ── IMPORT / EXPORT CSV (fournisseurs & clients) ──────────────────────────
+  const [importing, setImporting] = useState(false)
+  const canImport = table==='compta_fournisseurs' || table==='compta_clients'
+
+  const downloadTemplate = () => {
+    const headers = ['type','nom','prenom','nom_societe','telephone','provenance','cip','ifu','email','adresse']
+    const ex1 = ['physique','HAYA','Martin','','22997000000','Tanguiéta','','3202012190967','martin@exemple.com','BP 707']
+    const ex2 = ['morale','','','SARL EXEMPLE','22996000000','Natitingou','','3201998877665','contact@exemple.com','Cotonou']
+    const csv = [headers.join(';'), ex1.join(';'), ex2.join(';')].join('\n')
+    const blob = new Blob(['\ufeff'+csv], {type:'text/csv;charset=utf-8;'})
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url; a.download = `modele_import_${titleSingle.toLowerCase()}s.csv`
+    a.click(); URL.revokeObjectURL(url)
+    toast.success('Modèle téléchargé !')
+  }
+
+  const handleImport = async (e) => {
+    const file = e.target.files[0]
+    if(!file) return
+    setImporting(true)
+    try {
+      const text = await file.text()
+      const lines = text.replace(/^\ufeff/,'').split(/\r?\n/).filter(l=>l.trim())
+      if(lines.length<2){ toast.error('Fichier vide ou sans données'); setImporting(false); return }
+      const delim = lines[0].includes(';') ? ';' : ','
+      const headers = lines[0].split(delim).map(h=>h.trim().toLowerCase())
+      const uid = (await supabase.auth.getUser()).data?.user?.id
+      const prof = (await supabase.from('compta_profiles').select('company_id').eq('id',uid).single()).data
+      const cid = companyId || prof?.company_id || companies[0]?.id
+      if(!cid){ toast.error('Aucune société active'); setImporting(false); return }
+
+      const rows = []
+      for(let i=1;i<lines.length;i++){
+        const vals = lines[i].split(delim).map(v=>v.trim())
+        const obj = {}
+        headers.forEach((h,idx)=>{ obj[h]=vals[idx]||'' })
+        // Validation minimale
+        const t = (obj.type||'physique').toLowerCase()
+        if(t==='morale' && !obj.nom_societe){ continue }
+        if(t!=='morale' && !obj.nom){ continue }
+        rows.push({
+          company_id: cid, user_id: uid,
+          type: t==='morale'?'morale':'physique',
+          nom: obj.nom||null, prenom: obj.prenom||null,
+          nom_societe: obj.nom_societe||null,
+          telephone: obj.telephone||null, provenance: obj.provenance||null,
+          cip: obj.cip||null, ifu: obj.ifu||null,
+          email: obj.email||null, adresse: obj.adresse||null,
+        })
+      }
+      if(rows.length===0){ toast.error('Aucune ligne valide trouvée'); setImporting(false); return }
+      const { error } = await supabase.from(table).insert(rows)
+      if(error){ toast.error('Erreur import : '+error.message); setImporting(false); return }
+      toast.success(`${rows.length} ${titleSingle.toLowerCase()}(s) importé(s) !`)
+      load()
+    } catch(err) {
+      toast.error('Erreur lecture fichier : '+err.message)
+    }
+    setImporting(false)
+    e.target.value = ''
+  }
+
   return (
     <div>
       <PageHeader title={title} subtitle={`${filtered.length} enregistrement(s)`}
-        actions={!readOnly && <Btn onClick={()=>open()}>+ Nouveau(elle)</Btn>} />
+        actions={!readOnly && (
+          <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+            {canImport && (
+              <>
+                <button onClick={downloadTemplate} title="Télécharger le modèle CSV"
+                  style={{padding:'9px 14px',background:'#f1f5f9',border:'1px solid #cbd5e1',borderRadius:8,cursor:'pointer',fontSize:13,fontWeight:600,color:'#475569',display:'flex',alignItems:'center',gap:6}}>
+                  📥 Modèle
+                </button>
+                <label style={{padding:'9px 14px',background:'#dcfce7',border:'1px solid #86efac',borderRadius:8,cursor:importing?'wait':'pointer',fontSize:13,fontWeight:600,color:'#15803d',display:'flex',alignItems:'center',gap:6}}>
+                  {importing?'⏳ Import…':'📤 Importer CSV'}
+                  <input type="file" accept=".csv" onChange={handleImport} disabled={importing} style={{display:'none'}} />
+                </label>
+              </>
+            )}
+            <Btn onClick={()=>open()}>+ Nouveau(elle)</Btn>
+          </div>
+        )} />
       <Card style={{marginBottom:16,padding:'12px 20px'}}>
         <div style={{display:'flex',gap:10,flexWrap:'wrap',alignItems:'center'}}>
           <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="🔍 Rechercher par nom..."
