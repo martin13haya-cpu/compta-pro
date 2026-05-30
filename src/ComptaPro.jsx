@@ -3948,7 +3948,36 @@ function MesUtilisateursPage({ toast, companies, companyId, profile }) {
             <Input label="Nom complet *" name="nom" value={form.nom||''} onChange={e=>setForm(f=>({...f,nom:e.target.value}))} required />
             <Input label="Email *" name="email" type="email" value={form.email||''} onChange={e=>setForm(f=>({...f,email:e.target.value}))} required={!editItem} disabled={!!editItem} />
             <Input label={editItem?'Nouveau mot de passe (laisser vide)':'Mot de passe temporaire *'} type="text" value={form.mot_de_passe||''} onChange={e=>setForm(f=>({...f,mot_de_passe:e.target.value}))} required={!editItem} placeholder="ex: MonPass123!" />
-            <Input label="WhatsApp (notification bienvenue)" value={form.whatsapp||''} onChange={e=>setForm(f=>({...f,whatsapp:e.target.value}))} placeholder="0196078696" />
+            <div>
+              <label style={{display:'block',fontSize:12.5,fontWeight:600,color:'#374151',marginBottom:5}}>WhatsApp (notification bienvenue)</label>
+              <div style={{display:'flex',gap:6}}>
+                <input type="tel" value={form.whatsapp||''} onChange={e=>setForm(f=>({...f,whatsapp:e.target.value}))} placeholder="0196078696"
+                  style={{flex:1,padding:'9px 12px',border:'1.5px solid #e2e8f0',borderRadius:8,fontSize:14,outline:'none'}} />
+                <button type="button" title="Importer depuis les contacts"
+                  onClick={async()=>{
+                    if(!('contacts' in navigator && 'ContactsManager' in window)){
+                      toast.error("Acc\u00e8s aux contacts non support\u00e9 sur cet appareil. Utilisez Chrome sur Android.")
+                      return
+                    }
+                    try{
+                      const contacts=await navigator.contacts.select(['name','tel'],{multiple:false})
+                      if(contacts && contacts.length>0){
+                        const c=contacts[0]
+                        const tel=(c.tel && c.tel[0])?c.tel[0].replace(/\s/g,''):''
+                        const nom=(c.name && c.name[0])?c.name[0]:''
+                        setForm(f=>({...f, whatsapp:tel||f.whatsapp, nom:f.nom||nom}))
+                        if(tel) toast.success('Contact import\u00e9 : '+tel)
+                      }
+                    }catch(err){
+                      toast.error("Import annul\u00e9 ou refus\u00e9")
+                    }
+                  }}
+                  style={{padding:'9px 14px',background:'#dcfce7',border:'1.5px solid #86efac',borderRadius:8,cursor:'pointer',fontSize:16,whiteSpace:'nowrap'}}>
+                  📇
+                </button>
+              </div>
+              <div style={{fontSize:11,color:'#94a3b8',marginTop:4}}>📇 = importer un numéro depuis vos contacts (Chrome Android)</div>
+            </div>
             <Sel label="Signataire assigné" value={form.signataire_id||''} onChange={e=>setForm(f=>({...f,signataire_id:e.target.value}))}
               options={[{value:'',label:'— Aucun signataire —'},...signataires.map(s=>({value:s.id,label:s.nom+' ('+(s.fonction||'—')+')'}) )]} />
           </Grid>
