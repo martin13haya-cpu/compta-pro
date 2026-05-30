@@ -1649,7 +1649,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
 
   const set = e => setForm(f=>({...f,[e.target.name]:e.target.value}))
 
-  const baseDefaults = { company_id:companyId||companies[0]?.id||'', nom:'', prenom:'', nom_societe:'', telephone:'', provenance:'', cip:'', ifu:'', email:'', adresse:'' }
+  const baseDefaults = { company_id:companyId||companies[0]?.id||'', nom:'', prenom:'', nom_societe:'', telephone:'', provenance:'', cip:'', ifu:'', email:'', adresse:'', mentor_nom:'', mentor_telephone:'', mentor_cip:'' }
   const open = (it=null) => {
     const defaults = extraFields ? extraFields.defaults : {}
     setForm(it?{...it}:{...baseDefaults,...defaults}); setModal(it?'edit':'add')
@@ -1659,7 +1659,9 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
   const save = async e => {
     e.preventDefault(); setSaving(true)
     const uid = (await supabase.auth.getUser()).data?.user?.id
-    const fields = ['company_id','nom','telephone','provenance','cip','ifu','email','adresse', ...(extraFields?.names||[])]
+    const isPhysique = (form.type||'physique')!=='morale'
+    const mentorFields = (table==='compta_fournisseurs'||table==='compta_clients') && isPhysique ? ['mentor_nom','mentor_telephone','mentor_cip'] : []
+    const fields = ['company_id','nom','telephone','provenance','cip','ifu','email','adresse', ...mentorFields, ...(extraFields?.names||[])]
     const pay = {}; fields.forEach(k=>{ if(form[k]!==undefined) pay[k]=form[k] })
     // Fix: ensure company_id is a valid non-empty value
     if (!pay.company_id) {
@@ -1695,9 +1697,9 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
   const canImport = table==='compta_fournisseurs' || table==='compta_clients'
 
   const downloadTemplate = () => {
-    const headers = ['type','nom','nom_societe','telephone','provenance','cip','ifu','email','adresse']
-    const ex1 = ['physique','HAYA Martin','','22997000000','Tanguiéta','','3202012190967','martin@exemple.com','BP 707']
-    const ex2 = ['morale','','SARL EXEMPLE','22996000000','Natitingou','','3201998877665','contact@exemple.com','Cotonou']
+    const headers = ['type','nom','nom_societe','telephone','provenance','cip','ifu','email','adresse','mentor_nom','mentor_telephone','mentor_cip']
+    const ex1 = ['physique','HAYA Martin','','22997000000','Tanguiéta','','3202012190967','martin@exemple.com','BP 707','KOUDORO Jean','22995000000','CIP9988']
+    const ex2 = ['morale','','SARL EXEMPLE','22996000000','Natitingou','','3201998877665','contact@exemple.com','Cotonou','','','']
     const csv = [headers.join(';'), ex1.join(';'), ex2.join(';')].join('\n')
     const blob = new Blob(['\ufeff'+csv], {type:'text/csv;charset=utf-8;'})
     const url = URL.createObjectURL(blob)
@@ -1739,6 +1741,9 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
           telephone: obj.telephone||null, provenance: obj.provenance||null,
           cip: obj.cip||null, ifu: obj.ifu||null,
           email: obj.email||null, adresse: obj.adresse||null,
+          mentor_nom: obj.mentor_nom||null,
+          mentor_telephone: obj.mentor_telephone||null,
+          mentor_cip: obj.mentor_cip||null,
         })
       }
       if(rows.length===0){ toast.error('Aucune ligne valide trouvée'); setImporting(false); return }
@@ -1868,6 +1873,14 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
             <Input label="N° CIP" name="cip" value={form.cip} onChange={set} />
             <Input label="Email" name="email" type="email" value={form.email} onChange={set} />
             <Input label="Adresse" name="adresse" value={form.adresse} onChange={set} />
+            {(table==='compta_clients'||table==='compta_fournisseurs') && (form.type||'physique')!=='morale' && (
+              <>
+                <Span2><div style={{borderTop:'1px solid #e2e8f0',paddingTop:10,marginTop:4,fontSize:12,fontWeight:700,color:'#64748b'}}>👤 INFORMATIONS DU MENTOR (facultatif)</div></Span2>
+                <Span2><Input label="Nom et Prénom(s) du mentor" name="mentor_nom" value={form.mentor_nom||''} onChange={set} /></Span2>
+                <Input label="Téléphone du mentor" name="mentor_telephone" value={form.mentor_telephone||''} onChange={set} />
+                <Input label="CIP du mentor" name="mentor_cip" value={form.mentor_cip||''} onChange={set} />
+              </>
+            )}
           </Grid>
           <Row><Btn variant="secondary" onClick={close}>Annuler</Btn><Btn type="submit" disabled={saving}>{saving?'...':'Enregistrer'}</Btn></Row>
         </form>
