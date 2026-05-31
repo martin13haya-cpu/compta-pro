@@ -93,8 +93,37 @@ function useResponsive() {
 // ── UTILITIES ───────────────────────────────────────────────────────────────
 const fcfa    = v => Math.round(v || 0).toLocaleString('fr-FR') + ' FCFA'
 const today   = () => new Date().toISOString().slice(0, 10)
-const ACCENT  = '#2563eb'
-const SIDEBAR = '#0f2044'
+const ACCENT  = '#25D366'
+const SIDEBAR = '#075E54'
+
+// Theme system
+const THEMES = {
+  light: { bg:'#f0f2f5', surface:'#ffffff', text:'#1e293b', textMuted:'#64748b', border:'#e2e8f0', sidebar:'#075E54' },
+  dark:  { bg:'#0b141a', surface:'#1f2c34', text:'#e9edef', textMuted:'#8696a0', border:'#2a3942', sidebar:'#1f2c34' }
+}
+function applyTheme(mode){
+  const t = THEMES[mode] || THEMES.light
+  const r = document.documentElement
+  r.setAttribute('data-theme', mode)
+  let s = document.getElementById('theme-css')
+  if(!s){ s=document.createElement('style'); s.id='theme-css'; document.head.appendChild(s) }
+  if(mode==='dark'){
+    s.textContent = `
+      html,body{background:${t.bg}!important;color:${t.text}!important}
+      [data-theme="dark"] div[style*="background:#f1f5f9"],
+      [data-theme="dark"] div[style*="background: #f1f5f9"]{background:${t.bg}!important}
+      [data-theme="dark"] div[style*="background:white"],
+      [data-theme="dark"] div[style*="background: white"],
+      [data-theme="dark"] div[style*="background:#fff"],
+      [data-theme="dark"] div[style*="background:#ffffff"]{background:${t.surface}!important;color:${t.text}!important}
+      [data-theme="dark"] table{color:${t.text}!important}
+      [data-theme="dark"] input,[data-theme="dark"] select,[data-theme="dark"] textarea{background:${t.surface}!important;color:${t.text}!important;border-color:${t.border}!important}
+      [data-theme="dark"] th{background:${t.bg}!important;color:${t.text}!important}
+    `
+  } else { s.textContent='' }
+}
+function getStoredTheme(){ try{return localStorage.getItem('comptapro_theme')||'light'}catch{return 'light'} }
+function setStoredTheme(m){ try{localStorage.setItem('comptapro_theme',m)}catch{}; applyTheme(m) }
 
 const CAT_LABELS = {
   riz_paddy:'Riz Paddy', riz_etuve:'Riz Étuvé', riz_blanc:'Riz Blanc',
@@ -5888,6 +5917,8 @@ const DOCUMENTS_TYPES = [
 
 function ParametresPage({ toast, companies, companyId }) {
   const [signataires, setSignataires] = useState([])
+  const [theme, setThemeLocal] = useState(getStoredTheme())
+  const switchTheme = (m) => { setThemeLocal(m); setStoredTheme(m) }
   const [modal,       setModal]       = useState(false)
   const [form,        setForm]        = useState({nom:'',fonction:'',documents:[]})
   const [saving,      setSaving]      = useState(false)
@@ -5931,7 +5962,26 @@ function ParametresPage({ toast, companies, companyId }) {
 
   return (
     <div>
-      <PageHeader title="Paramètres" subtitle="Gestion des signataires de documents" />
+      <PageHeader title="Paramètres" subtitle="Apparence & signataires de documents" />
+
+      {/* Carte Apparence */}
+      <div style={{background:'white',borderRadius:12,border:'1px solid #e2e8f0',padding:20,marginBottom:20}}>
+        <div style={{fontSize:14,fontWeight:700,color:'#0f2044',marginBottom:4}}>🎨 Apparence</div>
+        <div style={{fontSize:13,color:'#64748b',marginBottom:14}}>Choisissez le thème de l'application.</div>
+        <div style={{display:'flex',gap:12}}>
+          <button onClick={()=>switchTheme('light')} style={{flex:1,maxWidth:200,padding:'14px',borderRadius:10,cursor:'pointer',border:theme==='light'?'2px solid #25D366':'1px solid #e2e8f0',background:theme==='light'?'#f0fdf4':'white',display:'flex',flexDirection:'column',alignItems:'center',gap:8}}>
+            <span style={{fontSize:28}}>☀️</span>
+            <span style={{fontSize:13,fontWeight:600,color:'#1e293b'}}>Mode Clair</span>
+            {theme==='light' && <span style={{fontSize:11,color:'#16a34a',fontWeight:700}}>✓ Actif</span>}
+          </button>
+          <button onClick={()=>switchTheme('dark')} style={{flex:1,maxWidth:200,padding:'14px',borderRadius:10,cursor:'pointer',border:theme==='dark'?'2px solid #25D366':'1px solid #e2e8f0',background:theme==='dark'?'#1f2c34':'white',display:'flex',flexDirection:'column',alignItems:'center',gap:8}}>
+            <span style={{fontSize:28}}>🌙</span>
+            <span style={{fontSize:13,fontWeight:600,color:theme==='dark'?'#e9edef':'#1e293b'}}>Mode Sombre</span>
+            {theme==='dark' && <span style={{fontSize:11,color:'#25D366',fontWeight:700}}>✓ Actif</span>}
+          </button>
+        </div>
+      </div>
+
       <div style={{display:'flex',gap:8,marginBottom:20}}>
         <div style={{flex:1}}>
           <div style={{fontSize:14,fontWeight:700,color:'#0f2044',marginBottom:4}}>✍️ Signataires autorisés</div>
@@ -8035,6 +8085,9 @@ export default function ComptaPro() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [adminViewCompany, setAdminViewCompany] = useState(null)
   const [needsPasswordChange, setNeedsPasswordChange] = useState(false)
+  const [theme, setTheme] = useState(getStoredTheme())
+  useEffect(()=>{ applyTheme(theme) },[theme])
+  const toggleTheme = () => { const next = theme==='dark'?'light':'dark'; setTheme(next); setStoredTheme(next) }
   const toast = useToast()
   const { isMobile, isTablet, isLandscape, isMobileLandscape } = useResponsive()
   // En paysage mobile : sidebar visible mais compacte, contenu plein écran
@@ -8366,6 +8419,10 @@ export default function ComptaPro() {
                 }
               }} />}
             {!isMobile && <span style={{ fontSize:12, color:'#94a3b8' }}>{new Date().toLocaleDateString('fr-FR',{day:'2-digit',month:'short',year:'numeric'})}</span>}
+            <button onClick={toggleTheme} title={theme==='dark'?'Mode clair':'Mode sombre'}
+              style={{ background:theme==='dark'?'#2a3942':'#f0f2f5', border:'none', borderRadius:20, cursor:'pointer', fontSize:18, padding:'6px 12px', display:'flex', alignItems:'center' }}>
+              {theme==='dark'?'☀️':'🌙'}
+            </button>
           </div>
         </div>
         {/* Bandeau super admin — société consultée */}
