@@ -143,8 +143,10 @@ const CSS_PRINT = `
 const CSS_PRINT_LANDSCAPE = CSS_PRINT.replace('@page { size: A4;', '@page { size: A4 landscape;')
 
 function buildCommercialDocHtml(doc, lignes) {
-  const cli  = doc.compta_clients
+  const estBC = doc.type_doc==='bon_commande'
+  const cli  = estBC ? doc.compta_fournisseurs : doc.compta_clients
   const comp = doc.compta_companies
+  const partLabel = estBC ? 'Fournisseur' : 'Client'
   const cliNom = cli ? (cli.type==='morale' ? cli.nom_societe : (cli.nom||'').trim()) : null
 
   const lignesHtml = (lignes||[]).length > 0
@@ -178,7 +180,7 @@ function buildCommercialDocHtml(doc, lignes) {
         <div class="doc-date">Date : ${doc.date_doc}${doc.date_echeance?` &mdash; &Eacute;ch&eacute;ance : ${doc.date_echeance}`:''}</div>
       </div>
     </div>
-    ${cliNom ? `<div class="client-box"><strong>Client :</strong> ${cliNom}${cli?.telephone?` &mdash; T&eacute;l : ${cli.telephone}`:''}${cli?.ifu?` &mdash; IFU : ${cli.ifu}`:''}</div>` : ''}
+    ${cliNom ? `<div class="client-box"><strong>${partLabel} :</strong> ${cliNom}${cli?.telephone?` &mdash; T&eacute;l : ${cli.telephone}`:''}${cli?.ifu?` &mdash; IFU : ${cli.ifu}`:''}</div>` : ''}
     <table>
       <thead><tr>
         <th style="width:30px">#</th>
@@ -199,7 +201,7 @@ function buildCommercialDocHtml(doc, lignes) {
     ${doc.notes ? `<div class="notes"><strong>Notes :</strong> ${doc.notes}</div>` : ''}
     <div class="signatures">
       <div class="sig-box">Signature du vendeur</div>
-      <div class="sig-box">Signature du client${cliNom?`<br><small>${cliNom}</small>`:''}</div>
+      <div class="sig-box">Signature du ${partLabel.toLowerCase()}${cliNom?`<br><small>${cliNom}</small>`:''}</div>
     </div>
   </body></html>`
 }
@@ -2364,7 +2366,7 @@ function CommercialPage({ companies, companyId, setPage, setDocId, toast, readOn
   const load = useCallback(async()=>{
     const { data:ad } = await supabase.auth.getUser()
     const uid=ad?.user?.id; const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
-    let q = supabase.from('compta_documents').select('*,compta_clients(nom,prenom,nom_societe,type),compta_companies(raison_sociale)').order('date_doc',{ascending:false})
+    let q = supabase.from('compta_documents').select('*,compta_clients(nom,prenom,nom_societe,type),compta_fournisseurs(nom,nom_societe,type),compta_companies(raison_sociale)').order('date_doc',{ascending:false})
     q = isAdmin&&companyId ? q.eq('company_id',companyId) : q.eq('user_id',uid)
     if (companyId&&!isAdmin) q=q.eq('company_id',companyId)
     if (typeF)     q=q.eq('type_doc',typeF)
@@ -2385,7 +2387,7 @@ function CommercialPage({ companies, companyId, setPage, setDocId, toast, readOn
 
   const ttc = docs.reduce((s,d)=>s+(d.montant_ttc||0),0)
   const pay = docs.reduce((s,d)=>s+(d.montant_paye||0),0)
-  const cliName = d => { const c=d.compta_clients; return c?(c.type==='morale'?c.nom_societe:(c.nom||'')):null }
+  const cliName = d => { const c = d.type_doc==='bon_commande' ? d.compta_fournisseurs : d.compta_clients; return c?(c.type==='morale'?c.nom_societe:(c.nom||'')):null }
   const companyName = companies.find(c=>c.id===companyId)?.raison_sociale||''
 
   const printFiltered = () => {
@@ -2488,16 +2490,18 @@ function CommercialPage({ companies, companyId, setPage, setDocId, toast, readOn
 
 // ── COMMERCIAL — NOUVEAU DOCUMENT ─────────────────────────────────────────────
 function CommercialNewPage({ companies, companyId, typeDoc, setPage, toast }) {
-  const [form, setForm]     = useState({ company_id:companyId||'', type_doc:typeDoc||'facture', date_doc:today(), date_echeance:'', client_id:'', tva_pct:0, notes:'' })
+  const [form, setForm]     = useState({ company_id:companyId||'', type_doc:typeDoc||'facture', date_doc:today(), date_echeance:'', client_id:'', fournisseur_id:'', tva_pct:0, notes:'' })
   const [clients, setClients]   = useState([])
+  const [fournisseurs, setFournisseurs] = useState([])
   const [articles, setArticles] = useState([])
   const [lignes, setLignes]     = useState([{ designation:'', unite:'kg', quantite:0, prix_unitaire:0, montant_ligne:0 }])
   const [saving, setSaving]     = useState(false)
 
   const loadCli = useCallback(async cid=>{ if(!cid) return; const {data}=await supabase.from('compta_clients').select('*').eq('company_id',cid).eq('actif',true); setClients(data||[]) },[])
   const loadArt = useCallback(async cid=>{ if(!cid) return; const {data}=await supabase.from('compta_articles').select('*').eq('company_id',cid).eq('actif',true); setArticles(data||[]) },[])
+  const loadFourn = useCallback(async cid=>{ if(!cid) return; const {data}=await supabase.from('compta_fournisseurs').select('*').eq('company_id',cid); setFournisseurs(data||[]) },[])
 
-  useEffect(()=>{ if(form.company_id){ loadCli(form.company_id); loadArt(form.company_id) } },[form.company_id,loadCli,loadArt])
+  useEffect(()=>{ if(form.company_id){ loadCli(form.company_id); loadArt(form.company_id); loadFourn(form.company_id) } },[form.company_id,loadCli,loadArt,loadFourn])
 
   const setF = e => setForm(f=>({...f,[e.target.name]:e.target.value}))
 
@@ -2527,7 +2531,7 @@ function CommercialNewPage({ companies, companyId, typeDoc, setPage, toast }) {
     const { data:docData, error:docErr } = await supabase.from('compta_documents').insert({
       company_id:form.company_id, user_id:uid, type_doc:form.type_doc, numero,
       date_doc:form.date_doc, date_echeance:form.date_echeance||null,
-      client_id:form.client_id||null, statut:'brouillon',
+      client_id:form.client_id||null, fournisseur_id:form.fournisseur_id||null, statut:'brouillon',
       montant_ht:ht, tva_pct:parseFloat(form.tva_pct)||0, montant_tva:tva, montant_ttc:ttc,
       notes:form.notes,
     }).select().single()
@@ -2544,6 +2548,7 @@ function CommercialNewPage({ companies, companyId, typeDoc, setPage, toast }) {
 
   const { isMobile } = useResponsive()
   const cliName = c => c.type==='morale'?c.nom_societe:(c.nom||'')
+  const fourName = f => f.type==='morale'?f.nom_societe:(f.nom||'')
 
   return (
     <div>
@@ -2558,8 +2563,13 @@ function CommercialNewPage({ companies, companyId, typeDoc, setPage, toast }) {
                 <Sel label="Type *" name="type_doc" value={form.type_doc} onChange={setF}
                   options={Object.entries(TYPE_DOC_LABELS).map(([v,l])=>({value:v,label:l}))} />
                 <Input label="Date *" name="date_doc" type="date" value={form.date_doc} onChange={setF} required />
-                <Sel label="Client" name="client_id" value={form.client_id} onChange={setF}
-                  options={[{value:'',label:'— Aucun —'},...clients.map(c=>({value:c.id,label:cliName(c)}))]} />
+                {form.type_doc==='bon_commande' ? (
+                  <Sel label="Fournisseur" name="fournisseur_id" value={form.fournisseur_id} onChange={setF}
+                    options={[{value:'',label:'— Aucun —'},...fournisseurs.map(f=>({value:f.id,label:fourName(f)}))]} />
+                ) : (
+                  <Sel label="Client" name="client_id" value={form.client_id} onChange={setF}
+                    options={[{value:'',label:'— Aucun —'},...clients.map(c=>({value:c.id,label:cliName(c)}))]} />
+                )}
                 <Input label="Date échéance" name="date_echeance" type="date" value={form.date_echeance} onChange={setF} />
                 <Input label="TVA (%)" name="tva_pct" type="number" value={form.tva_pct} onChange={setF} min="0" max="100" step="0.01" />
                 <div style={{gridColumn:'1 / -1'}}>
@@ -2649,7 +2659,7 @@ function CommercialViewPage({ docId, setPage, toast }) {
   useEffect(()=>{
     const load = async ()=>{
       if (!docId) return
-      const { data:d } = await supabase.from('compta_documents').select('*,compta_clients(*),compta_companies(*)').eq('id',docId).single()
+      const { data:d } = await supabase.from('compta_documents').select('*,compta_clients(*),compta_fournisseurs(*),compta_companies(*)').eq('id',docId).single()
       const { data:l } = await supabase.from('compta_lignes_document').select('*').eq('document_id',docId)
       setDoc(d); setLignes(l||[]); setLoading(false)
     }
@@ -2670,7 +2680,12 @@ function CommercialViewPage({ docId, setPage, toast }) {
   if (!doc) return <div style={{padding:24}}>Document introuvable.</div>
 
   const cli = doc.compta_clients
-  const cliNom = cli?(cli.type==='morale'?cli.nom_societe:(cli.nom||'')):null
+  const four = doc.compta_fournisseurs
+  const estBC = doc.type_doc==='bon_commande'
+  const partenaire = estBC ? four : cli
+  const partenaireNom = partenaire ? (partenaire.type==='morale'?partenaire.nom_societe:(partenaire.nom||'')) : null
+  const partenaireLabel = estBC ? 'Fournisseur' : 'Client'
+  const cliNom = partenaireNom
   const reste = (doc.montant_ttc||0)-(doc.montant_paye||0)
 
   return (
@@ -2699,11 +2714,11 @@ function CommercialViewPage({ docId, setPage, toast }) {
               {doc.date_echeance && <div style={{fontSize:12,color:'#dc2626'}}>Échéance : {doc.date_echeance}</div>}
             </div>
           </div>
-          {cliNom && (
+          {partenaireNom && (
             <div style={{background:'#f8fafc',border:'1px solid #e2e8f0',borderRadius:8,padding:'10px 14px',marginBottom:16,fontSize:13}}>
-              <strong>Client :</strong> {cliNom}
-              {cli?.telephone && ` — Tél : ${cli.telephone}`}
-              {cli?.ifu       && ` — IFU : ${cli.ifu}`}
+              <strong>{partenaireLabel} :</strong> {partenaireNom}
+              {partenaire?.telephone && ` — Tél : ${partenaire.telephone}`}
+              {partenaire?.ifu       && ` — IFU : ${partenaire.ifu}`}
             </div>
           )}
           <div style={{overflowX:'auto'}}>
