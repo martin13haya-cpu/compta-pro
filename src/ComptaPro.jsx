@@ -149,6 +149,8 @@ function buildCommercialDocHtml(doc, lignes) {
   const partLabel = estBC ? 'Fournisseur' : 'Client'
   const cliNom = cli ? (cli.type==='morale' ? cli.nom_societe : (cli.nom||'').trim()) : null
 
+  const estBL = doc.type_doc==='bon_livraison'
+  const nbCols = estBL ? 4 : 6
   const lignesHtml = (lignes||[]).length > 0
     ? (lignes||[]).map((l,i) => `
     <tr>
@@ -156,10 +158,9 @@ function buildCommercialDocHtml(doc, lignes) {
       <td>${l.designation||''}</td>
       <td class="r">${l.unite||''}</td>
       <td class="r">${(+(l.quantite)||0).toFixed(3)}</td>
-      <td class="r">${Math.round(+(l.prix_unitaire)||0).toLocaleString('fr-FR')}</td>
-      <td class="r"><strong>${Math.round(+(l.montant_ligne)||0).toLocaleString('fr-FR')}</strong></td>
+      ${estBL ? '' : `<td class="r">${Math.round(+(l.prix_unitaire)||0).toLocaleString('fr-FR')}</td><td class="r"><strong>${Math.round(+(l.montant_ligne)||0).toLocaleString('fr-FR')}</strong></td>`}
     </tr>`).join('')
-    : `<tr><td colspan="6" style="text-align:center;color:#888;padding:16px">Aucune ligne enregistrée</td></tr>`
+    : `<tr><td colspan="${nbCols}" style="text-align:center;color:#888;padding:16px">Aucune ligne enregistrée</td></tr>`
 
   return `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">
     <title>${doc.numero}</title>
@@ -187,17 +188,16 @@ function buildCommercialDocHtml(doc, lignes) {
         <th>D&eacute;signation</th>
         <th class="r" style="width:55px">Unit&eacute;</th>
         <th class="r" style="width:80px">Quantit&eacute;</th>
-        <th class="r" style="width:110px">Prix U. (FCFA)</th>
-        <th class="r" style="width:120px">Montant (FCFA)</th>
+        ${estBL ? '' : `<th class="r" style="width:110px">Prix U. (FCFA)</th><th class="r" style="width:120px">Montant (FCFA)</th>`}
       </tr></thead>
       <tbody>${lignesHtml}</tbody>
     </table>
-    <div class="totals">
+    ${estBL ? '' : `<div class="totals">
       <div class="row"><span>Montant HT</span><span>${Math.round(doc.montant_ht||0).toLocaleString('fr-FR')} FCFA</span></div>
       ${(doc.tva_pct||0)>0 ? `<div class="row"><span>TVA (${doc.tva_pct}%)</span><span>${Math.round(doc.montant_tva||0).toLocaleString('fr-FR')} FCFA</span></div>` : ''}
       <div class="ttc"><span>TOTAL TTC</span><span>${Math.round(doc.montant_ttc||0).toLocaleString('fr-FR')} FCFA</span></div>
       ${(doc.montant_paye||0)>0 ? `<div class="row" style="margin-top:4px"><span>Pay&eacute;</span><span style="color:#16a34a">${Math.round(doc.montant_paye||0).toLocaleString('fr-FR')} FCFA</span></div>` : ''}
-    </div>
+    </div>`}
     ${doc.notes ? `<div class="notes"><strong>Notes :</strong> ${doc.notes}</div>` : ''}
     <div class="signatures">
       <div class="sig-box">Signature du vendeur</div>
