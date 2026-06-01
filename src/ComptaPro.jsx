@@ -688,13 +688,32 @@ function Btn({ onClick, variant='primary', sm, children, type='button', disabled
   )
 }
 
+// Transforme un texte en MAJUSCULES sans accents
+function toUpperNoAccent(str) {
+  return (str||'')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g,'') // retire les accents
+    .toUpperCase()
+}
+
 function Input({ label, name, value, onChange, type='text', required, placeholder, min, step, readOnly }) {
+  // Champs qui NE doivent PAS être transformés en majuscules
+  const noUpper = type==='email' || type==='password' || type==='number' || type==='date' || type==='tel' || name==='email' || name==='mot_de_passe'
+  const handleChange = (e) => {
+    if (!noUpper && (type==='text' || !type)) {
+      const transformed = toUpperNoAccent(e.target.value)
+      // Conserver la position du curseur
+      const pos = e.target.selectionStart
+      e.target.value = transformed
+      try { e.target.setSelectionRange(pos, pos) } catch {}
+    }
+    onChange(e)
+  }
   return (
     <div>
       {label && <label style={{ display:'block', fontSize:12.5, fontWeight:600, color:'#374151', marginBottom:5 }}>
         {label}{required&&' *'}
       </label>}
-      <input type={type} name={name} value={value||''} onChange={onChange}
+      <input type={type} name={name} value={value||''} onChange={handleChange}
         required={required} placeholder={placeholder} min={min} step={step} readOnly={readOnly}
         style={{ width:'100%', padding:'9px 12px', borderRadius:8, border:'1px solid #d1d5db',
           fontSize:13.5, boxSizing:'border-box', background:readOnly?'#f8fafc':'white' }} />
