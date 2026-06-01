@@ -1680,7 +1680,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
 
   const set = e => setForm(f=>({...f,[e.target.name]:e.target.value}))
 
-  const baseDefaults = { company_id:companyId||companies[0]?.id||'', nom:'', prenom:'', nom_societe:'', telephone:'', provenance:'', cip:'', ifu:'', email:'', adresse:'', mentor_nom:'', mentor_telephone:'', mentor_cip:'' }
+  const baseDefaults = { company_id:companyId||companies[0]?.id||'', nom:'', prenom:'', nom_societe:'', telephone:'', provenance:'', cip:'', ifu:'', email:'', adresse:'', mentor_nom:'', mentor_telephone:'', mentor_cip:'', departement:'', commune:'', arrondissement:'', village:'', nom_bas_fonds:'', superficie_bas_fonds:'' }
   const open = (it=null) => {
     const defaults = extraFields ? extraFields.defaults : {}
     setForm(it?{...it}:{...baseDefaults,...defaults}); setModal(it?'edit':'add')
@@ -1692,7 +1692,8 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     const uid = (await supabase.auth.getUser()).data?.user?.id
     const isPhysique = (form.type||'physique')!=='morale'
     const mentorFields = (table==='compta_fournisseurs'||table==='compta_clients') && isPhysique ? ['mentor_nom','mentor_telephone','mentor_cip'] : []
-    const fields = ['company_id','nom','telephone','provenance','cip','ifu','email','adresse', ...mentorFields, ...(extraFields?.names||[])]
+    const locFields = table==='compta_fournisseurs' ? ['departement','commune','arrondissement','village','nom_bas_fonds','superficie_bas_fonds'] : []
+    const fields = ['company_id','nom','telephone','provenance','cip','ifu','email','adresse', ...mentorFields, ...locFields, ...(extraFields?.names||[])]
     const pay = {}; fields.forEach(k=>{ if(form[k]!==undefined) pay[k]=form[k] })
     // Fix: ensure company_id is a valid non-empty value
     if (!pay.company_id) {
@@ -1728,9 +1729,9 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
   const canImport = table==='compta_fournisseurs' || table==='compta_clients'
 
   const downloadTemplate = () => {
-    const headers = ['type','nom','nom_societe','telephone','provenance','cip','ifu','email','adresse','mentor_nom','mentor_telephone','mentor_cip']
-    const ex1 = ['physique','HAYA Martin','','22997000000','Tanguiéta','','3202012190967','martin@exemple.com','BP 707','KOUDORO Jean','22995000000','CIP9988']
-    const ex2 = ['morale','','SARL EXEMPLE','22996000000','Natitingou','','3201998877665','contact@exemple.com','Cotonou','','','']
+    const headers = ['type','nom','nom_societe','telephone','provenance','cip','ifu','email','adresse','mentor_nom','mentor_telephone','mentor_cip','departement','commune','arrondissement','village','nom_bas_fonds','superficie_bas_fonds']
+    const ex1 = ['physique','HAYA Martin','','22997000000','Tanguiéta','','3202012190967','martin@exemple.com','BP 707','KOUDORO Jean','22995000000','CIP9988','Atacora','Tanguiéta','Cotiakou','Pingou','Bas-fonds Pingou','2.5']
+    const ex2 = ['morale','','SARL EXEMPLE','22996000000','Natitingou','','3201998877665','contact@exemple.com','Cotonou','','','','','','','','','']
     const csv = [headers.join(';'), ex1.join(';'), ex2.join(';')].join('\n')
     const blob = new Blob(['\ufeff'+csv], {type:'text/csv;charset=utf-8;'})
     const url = URL.createObjectURL(blob)
@@ -1775,6 +1776,14 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
           mentor_nom: obj.mentor_nom||null,
           mentor_telephone: obj.mentor_telephone||null,
           mentor_cip: obj.mentor_cip||null,
+          ...(table==='compta_fournisseurs' ? {
+            departement: obj.departement||null,
+            commune: obj.commune||null,
+            arrondissement: obj.arrondissement||null,
+            village: obj.village||null,
+            nom_bas_fonds: obj.nom_bas_fonds||null,
+            superficie_bas_fonds: obj.superficie_bas_fonds ? parseFloat(obj.superficie_bas_fonds.replace(',','.'))||null : null,
+          } : {})
         })
       }
       if(rows.length===0){ toast.error('Aucune ligne valide trouvée'); setImporting(false); return }
@@ -1910,6 +1919,17 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
                 <Span2><Input label="Nom et Prénom(s) du mentor" name="mentor_nom" value={form.mentor_nom||''} onChange={set} /></Span2>
                 <Input label="Téléphone du mentor" name="mentor_telephone" value={form.mentor_telephone||''} onChange={set} />
                 <Input label="CIP du mentor" name="mentor_cip" value={form.mentor_cip||''} onChange={set} />
+              </>
+            )}
+            {table==='compta_fournisseurs' && (
+              <>
+                <Span2><div style={{borderTop:'1px solid #e2e8f0',paddingTop:10,marginTop:4,fontSize:12,fontWeight:700,color:'#64748b'}}>📍 LOCALISATION & BAS-FONDS</div></Span2>
+                <Input label="Département" name="departement" value={form.departement||''} onChange={set} />
+                <Input label="Commune" name="commune" value={form.commune||''} onChange={set} />
+                <Input label="Arrondissement" name="arrondissement" value={form.arrondissement||''} onChange={set} />
+                <Input label="Village" name="village" value={form.village||''} onChange={set} />
+                <Input label="Nom du bas-fonds" name="nom_bas_fonds" value={form.nom_bas_fonds||''} onChange={set} />
+                <Input label="Superficie bas-fonds (ha)" name="superficie_bas_fonds" type="number" value={form.superficie_bas_fonds||''} onChange={set} />
               </>
             )}
           </Grid>
