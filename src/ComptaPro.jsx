@@ -2438,6 +2438,7 @@ function CommercialPage({ companies, companyId, setPage, setDocId, toast, readOn
   const pay = docs.reduce((s,d)=>s+(d.montant_paye||0),0)
   const cliName = d => { const c = d.type_doc==='bon_commande' ? d.compta_fournisseurs : d.compta_clients; return c?(c.type==='morale'?c.nom_societe:(c.nom||'')):null }
   const companyName = companies.find(c=>c.id===companyId)?.raison_sociale||''
+  const companyLogo = companies.find(c=>c.id===companyId)?.logo_url||''
 
   const printFiltered = () => {
     const headers = [{label:'N° Doc'},{label:'Type'},{label:'Client'},{label:'Date'},{label:'Statut'},{label:'Montant TTC',r:true},{label:'Payé',r:true},{label:'Reste dû',r:true}]
@@ -2870,6 +2871,7 @@ function LotsProductionPage({ companies, companyId, toast, readOnly=false }) {
   }
 
   const companyName = companies.find(c=>c.id===companyId)?.raison_sociale||''
+  const companyLogo = companies.find(c=>c.id===companyId)?.logo_url||''
 
   const printFiltered = () => {
     const headers = [{label:'N° Lot'},{label:'Date début'},{label:'Date fin'},{label:'Qté paddy (kg)',r:true},{label:'Statut'},{label:'Notes'}]
