@@ -93,6 +93,38 @@ function useResponsive() {
 // ── UTILITIES ───────────────────────────────────────────────────────────────
 const fcfa    = v => Math.round(v || 0).toLocaleString('fr-FR') + ' FCFA'
 const today   = () => new Date().toISOString().slice(0, 10)
+
+// Ouvre un document HTML pour impression/PDF — compatible Web ET Android (Capacitor)
+function openPrintWindow(html) {
+  // Tentative classique (navigateur web)
+  try {
+    const w = window.open('', '_blank')
+    if (w && w.document) {
+      w.document.write(html)
+      w.document.close()
+      return
+    }
+  } catch (e) { /* fallback ci-dessous */ }
+
+  // Fallback Android/Capacitor : créer un blob et l'ouvrir via un lien
+  try {
+    const blob = new Blob([html], { type: 'text/html' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.target = '_blank'
+    a.rel = 'noopener'
+    // Sur Android, ouvrir dans une nouvelle vue
+    const opened = window.open(url, '_blank')
+    if (!opened) {
+      // Dernier recours : navigation directe
+      a.click()
+    }
+    setTimeout(()=>URL.revokeObjectURL(url), 60000)
+  } catch (e) {
+    alert("Impossible d'ouvrir le document. Réessayez ou contactez le support.")
+  }
+}
 const ACCENT  = '#25D366'
 const SIDEBAR = '#075E54'
 
@@ -237,9 +269,7 @@ function buildCommercialDocHtml(doc, lignes) {
 
 function printCommercialDoc(doc, lignes) {
   const html = buildCommercialDocHtml(doc, lignes)
-  const w = window.open('', '_blank')
-  w.document.write(html)
-  w.document.close()
+  openPrintWindow(html)
 }
 
 function DocPreviewModal({ open, onClose, doc, lignes }) {
@@ -316,9 +346,7 @@ function printAchatSemiFini(row) {
       <div class="sig-box">Signature de l'acheteur<br><small>${row.nom_acheteur||''}</small></div>
     </div>
   </body></html>`
-  const w = window.open('', '_blank')
-  w.document.write(html)
-  w.document.close()
+  openPrintWindow(html)
 }
 
 
@@ -354,7 +382,7 @@ function printEpierrage(row, companyName='') {
       <div class="sig-box">Visa de la direction</div>
     </div>
   </body></html>`
-  const w = window.open('', '_blank'); w.document.write(html); w.document.close()
+  openPrintWindow(html)
 }
 
 function printExpressionBesoin(fiche, lignes, budgets, companyInfo, sigImg=null, cachetImg=null) {
@@ -484,7 +512,7 @@ function printExpressionBesoin(fiche, lignes, budgets, companyInfo, sigImg=null,
     </div>
     <div style="text-align:center;margin-top:30px;font-size:9pt;color:#888;font-style:italic">NOUS COMPTONS SUR VOTRE DISPONIBILITÉ !!!!</div>
   </body></html>`
-  const w = window.open('', '_blank'); w.document.write(html); w.document.close()
+  openPrintWindow(html)
 }
 
 function printPaiementEtuvage(row) {
@@ -525,9 +553,7 @@ function printPaiementEtuvage(row) {
     </div>
   </body></html>`
 
-  const w = window.open('', '_blank')
-  w.document.write(html)
-  w.document.close()
+  openPrintWindow(html)
 }
 
 function printReglement(row) {
@@ -564,9 +590,7 @@ function printReglement(row) {
     </div>
   </body></html>`
 
-  const w = window.open('', '_blank')
-  w.document.write(html)
-  w.document.close()
+  openPrintWindow(html)
 }
 
 function printProductionStage(items, title, fields, companyName) {
@@ -604,9 +628,7 @@ function printProductionStage(items, title, fields, companyName) {
     </table>
   </body></html>`
 
-  const w2 = window.open('', '_blank')
-  w2.document.write(html)
-  w2.document.close()
+  openPrintWindow(html)
 }
 
 function useToast() {
@@ -882,7 +904,7 @@ function printFilteredList({ title, subtitle='', headers, rows, companyName='', 
     </table>
     ${totals.length>0?`<div class="totals-wrap">${totalsHtml}</div>`:''}
   </body></html>`
-  const w = window.open('','_blank'); w.document.write(html); w.document.close()
+  openPrintWindow(html)
 }
 
 // ── AUTH PAGES ──────────────────────────────────────────────────────────────
@@ -2942,7 +2964,7 @@ function LotsProductionPage({ companies, companyId, toast, readOnly=false }) {
                   <TD>
                     <div style={{display:'flex',gap:4}}>
                       <Btn sm variant="info" onClick={()=>setRowPreview({html:lotHtml,label:l.numero_lot})}>👁️</Btn>
-                      <Btn sm variant="danger" onClick={()=>{ const w=window.open('','_blank'); w.document.write(lotHtml); w.document.close() }}>🖨️</Btn>
+                      <Btn sm variant="danger" onClick={()=>{ openPrintWindow(lotHtml) }}>🖨️</Btn>
                       {!readOnly && <Btn sm variant="secondary" onClick={()=>open(l)}>✏️</Btn>}
                     </div>
                   </TD>
@@ -2962,7 +2984,7 @@ function LotsProductionPage({ companies, companyId, toast, readOnly=false }) {
             <div style={{ padding:'12px 20px', background:'#0f2044', borderRadius:'12px 12px 0 0', display:'flex', alignItems:'center', justifyContent:'space-between' }}>
               <span style={{ color:'white', fontWeight:700 }}>👁️ Aperçu — {rowPreview.label}</span>
               <div style={{ display:'flex', gap:8 }}>
-                <button onClick={()=>{ const w=window.open('','_blank'); w.document.write(rowPreview.html); w.document.close() }}
+                <button onClick={()=>{ openPrintWindow(rowPreview.html) }}
                   style={{ background:'#2563eb', color:'white', border:'none', padding:'7px 18px', borderRadius:7, fontWeight:700, cursor:'pointer' }}>🖨️ Imprimer</button>
                 <button onClick={()=>setRowPreview(null)}
                   style={{ background:'rgba(255,255,255,.15)', color:'white', border:'none', padding:'7px 14px', borderRadius:7, fontWeight:700, cursor:'pointer' }}>✕</button>
@@ -3041,7 +3063,7 @@ function ProductionRowPreviewModal({ open, onClose, it, title, fields, companyNa
           alignItems:'center', justifyContent:'space-between', background:'#0f2044', borderRadius:'12px 12px 0 0' }}>
           <span style={{ color:'white', fontWeight:700, fontSize:15 }}>👁️ Aperçu — {title}</span>
           <div style={{ display:'flex', gap:8 }}>
-            <button onClick={()=>{ const w=window.open('','_blank'); w.document.write(html); w.document.close() }}
+            <button onClick={()=>{ openPrintWindow(html) }}
               style={{ background:'#2563eb', color:'white', border:'none', padding:'7px 18px', borderRadius:7, fontWeight:700, fontSize:13, cursor:'pointer' }}>
               🖨️ Imprimer / PDF
             </button>
@@ -3295,7 +3317,7 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
                   <TD>
                     <div style={{display:'flex',gap:4}}>
                       <Btn sm variant="info" onClick={()=>setRowPreview(it)}>👁️</Btn>
-                      <Btn sm variant="danger" onClick={()=>{ const html=buildProductionRowHtml(it,title,fields,companyName); const w=window.open('','_blank'); w.document.write(html); w.document.close() }}>🖨️</Btn>
+                      <Btn sm variant="danger" onClick={()=>{ const html=buildProductionRowHtml(it,title,fields,companyName); openPrintWindow(html) }}>🖨️</Btn>
                       {!readOnly && <Btn sm variant="secondary" onClick={()=>openEdit(it)}>✏️</Btn>}
                       {!readOnly && <Btn sm variant="danger" onClick={()=>del(it.id)}>🗑️</Btn>}
                     </div>
@@ -3402,7 +3424,7 @@ function PrestationPreviewModal({ open, onClose, row, companyName }) {
             👁️ Aperçu — {row.numero_facture||'Prestation'}
           </span>
           <div style={{ display:'flex', gap:8 }}>
-            <button onClick={()=>{ const w=window.open('','_blank'); w.document.write(html); w.document.close() }}
+            <button onClick={()=>{ openPrintWindow(html) }}
               style={{ background:'#2563eb', color:'white', border:'none', padding:'7px 18px',
                 borderRadius:7, fontWeight:700, fontSize:13, cursor:'pointer' }}>
               🖨️ Imprimer / PDF
@@ -3523,7 +3545,7 @@ function PrestationPage({ companies, companyId, toast, readOnly=false }) {
                   <TD>
                     <div style={{display:'flex',gap:6}}>
                       <Btn sm variant="info" onClick={()=>setPreview(r)}>👁️ Aperçu</Btn>
-                      <Btn sm variant="danger" onClick={()=>{ const html=buildPrestationHtml(r,companyName); const w=window.open('','_blank'); w.document.write(html); w.document.close() }}>🖨️ PDF</Btn>
+                      <Btn sm variant="danger" onClick={()=>{ const html=buildPrestationHtml(r,companyName); openPrintWindow(html) }}>🖨️ PDF</Btn>
                       <Btn sm variant="danger" onClick={()=>del(r.id)}>🗑️ Sup</Btn>
                     </div>
                   </TD>
@@ -3858,7 +3880,7 @@ function LotsSemiFinisPage({ companies, companyId, toast, readOnly=false }) {
                   <TD>
                     <div style={{display:'flex',gap:4}}>
                       <Btn sm variant="info"    onClick={()=>setRowPreview({html:buildHtml(l),label:l.numero_lot})}>👁️</Btn>
-                      <Btn sm variant="danger"  onClick={()=>{ const w=window.open('','_blank'); w.document.write(buildHtml(l)); w.document.close() }}>🖨️</Btn>
+                      <Btn sm variant="danger"  onClick={()=>{ openPrintWindow(buildHtml(l)) }}>🖨️</Btn>
                       {!readOnly&&<Btn sm variant="secondary" onClick={()=>open(l)}>✏️</Btn>}
                       {!readOnly&&<Btn sm variant="danger"    onClick={()=>deleteLot(l.id)}>🗑️</Btn>}
                     </div>
@@ -3880,7 +3902,7 @@ function LotsSemiFinisPage({ companies, companyId, toast, readOnly=false }) {
             <div style={{padding:'12px 20px',background:'#0f2044',borderRadius:'12px 12px 0 0',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
               <span style={{color:'white',fontWeight:700}}>👁️ Aperçu — {rowPreview.label}</span>
               <div style={{display:'flex',gap:8}}>
-                <button onClick={()=>{ const w=window.open('','_blank'); w.document.write(rowPreview.html); w.document.close() }}
+                <button onClick={()=>{ openPrintWindow(rowPreview.html) }}
                   style={{background:'#2563eb',color:'white',border:'none',padding:'7px 18px',borderRadius:7,fontWeight:700,cursor:'pointer'}}>🖨️ Imprimer</button>
                 <button onClick={()=>setRowPreview(null)}
                   style={{background:'rgba(255,255,255,.15)',color:'white',border:'none',padding:'7px 14px',borderRadius:7,fontWeight:700,cursor:'pointer'}}>✕</button>
@@ -4339,7 +4361,7 @@ function EtvRepertoirePage({ companies, companyId, toast, readOnly=false }) {
     </tbody></table>
     <div class="signatures"><div class="sig-box">Signature étuveuse</div><div class="sig-box">Visa direction</div></div>
     </body></html>`
-    const w=window.open('','_blank'); w.document.write(html); w.document.close()
+    openPrintWindow(html)
   }
 
   return (
@@ -4535,7 +4557,7 @@ function EtvAvancesPage({ companies, companyId, toast, readOnly=false }) {
     </div>
     <div class="signatures"><div class="sig-box">Signature étuveuse<br><small>${getEtvName(en)}</small></div><div class="sig-box">Visa direction</div></div>
     </body></html>`
-    const w=window.open('','_blank'); w.document.write(html); w.document.close()
+    openPrintWindow(html)
   }
 
   return (
@@ -4731,7 +4753,7 @@ function EtvBCPage({ companies, companyId, toast, readOnly=false }) {
     <div class="totals"><div class="ttc"><span>TOTAL</span><span>${Math.round(r.montant_total||0).toLocaleString('fr-FR')} FCFA</span></div></div>
     <div class="signatures"><div class="sig-box">Signature étuveuse<br><small>${getEtvName(r.compta_etuveuses)}</small></div><div class="sig-box">Validation société</div></div>
     </body></html>`
-    const w=window.open('','_blank'); w.document.write(html); w.document.close()
+    openPrintWindow(html)
   }
 
   return (
@@ -5003,7 +5025,7 @@ function EtvBRPage({ companies, companyId, toast, readOnly=false }) {
     </div>
     <div class="signatures"><div class="sig-box">Signature étuveuse<br><small>${getEtvName(r.compta_etuveuses)}</small></div><div class="sig-box">Approbation société</div></div>
     </body></html>`
-    const w=window.open('','_blank'); w.document.write(html); w.document.close()
+    openPrintWindow(html)
   }
 
   return (
@@ -5238,7 +5260,7 @@ function EtvEntreesPage({ companies, companyId, toast, readOnly=false }) {
     </div>
     <div class="signatures"><div class="sig-box">Responsable magasin</div><div class="sig-box">Signature étuveuse<br><small>${getEtvName(r.compta_etuveuses)}</small></div></div>
     </body></html>`
-    const w=window.open('','_blank'); w.document.write(html); w.document.close()
+    openPrintWindow(html)
   }
 
   return (
@@ -5432,7 +5454,7 @@ function EtvSortiesPage({ companies, companyId, toast, readOnly=false }) {
     </tbody></table>
     <div class="signatures"><div class="sig-box">Responsable magasin</div><div class="sig-box">Visa direction</div></div>
     </body></html>`
-    const w=window.open('','_blank'); w.document.write(html); w.document.close()
+    openPrintWindow(html)
   }
 
   return (
@@ -5615,7 +5637,7 @@ function EtvInventairePage({ companies, companyId, toast }) {
       </div>
     </div>
     </body></html>`
-    const w=window.open('','_blank'); w.document.write(html); w.document.close()
+    openPrintWindow(html)
   }
 
   return (
@@ -5795,7 +5817,7 @@ function EtvTresoreriePage({ companies, companyId, toast }) {
       <th class="r">Qté livrée</th><th class="r">Stock</th><th class="r">Solde dû</th><th>Situation</th>
     </tr></thead><tbody>${rows}</tbody></table>
     </body></html>`
-    const w=window.open('','_blank'); w.document.write(html); w.document.close()
+    openPrintWindow(html)
   }
 
   return (
@@ -6207,8 +6229,7 @@ function ControleBudgetairePage({ companies, companyId, toast, readOnly=false })
       </div>
       ${body}
     </body></html>`
-    const w = window.open('','_blank')
-    w.document.write(html); w.document.close()
+    openPrintWindow(html)
   }
 
   if(loading) return <div style={{textAlign:'center',padding:40,color:'#94a3b8'}}>Chargement…</div>
@@ -8537,7 +8558,7 @@ function SuiviLotPage({ companies, companyId, toast }) {
       </div>
       ${stagesHtml}
     </body></html>`
-    const w=window.open('','_blank'); w.document.write(html); w.document.close()
+    openPrintWindow(html)
   }
 
   return (
