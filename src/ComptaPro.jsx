@@ -94,30 +94,63 @@ function useResponsive() {
 const fcfa    = v => Math.round(v || 0).toLocaleString('fr-FR') + ' FCFA'
 const today   = () => new Date().toISOString().slice(0, 10)
 
+// Injecte une barre d'actions (Retour, Télécharger PDF, Imprimer) dans le HTML
+function buildPrintDocument(html, filename) {
+  const fname = (filename || 'document').replace(/[^a-zA-Z0-9_-]/g,'_')
+  // Barre de boutons fixée en haut + script html2pdf
+  const toolbar = `
+    <div id="__toolbar" style="position:sticky;top:0;left:0;right:0;z-index:99999;background:#075E54;padding:10px 14px;display:flex;gap:10px;align-items:center;box-shadow:0 2px 8px rgba(0,0,0,0.2)">
+      <button onclick="history.length>1?history.back():window.close()" style="background:white;color:#075E54;border:none;border-radius:8px;padding:9px 16px;font-size:14px;font-weight:700;cursor:pointer">← Retour</button>
+      <button id="__pdfbtn" style="background:#25D366;color:white;border:none;border-radius:8px;padding:9px 16px;font-size:14px;font-weight:700;cursor:pointer">📥 Télécharger PDF</button>
+      <button onclick="window.print()" style="background:#f0f2f5;color:#1e293b;border:none;border-radius:8px;padding:9px 16px;font-size:14px;font-weight:700;cursor:pointer">🖨️ Imprimer</button>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+    <script>
+      document.getElementById('__pdfbtn').addEventListener('click', function(){
+        var btn=this; btn.textContent='⏳ Génération...'; btn.disabled=true;
+        var tb=document.getElementById('__toolbar'); tb.style.display='none';
+        var opt={ margin:[8,8,8,8], filename:'${fname}.pdf', image:{type:'jpeg',quality:0.98}, html2canvas:{scale:2,useCORS:true}, jsPDF:{unit:'mm',format:'a4',orientation:'portrait'} };
+        html2pdf().set(opt).from(document.body).save().then(function(){
+          tb.style.display='flex'; btn.textContent='📥 Télécharger PDF'; btn.disabled=false;
+        }).catch(function(){
+          tb.style.display='flex'; btn.textContent='📥 Télécharger PDF'; btn.disabled=false;
+          alert('Erreur lors de la génération du PDF');
+        });
+      });
+      @media print { #__toolbar { display:none !important } }
+    <\/script>
+    <style>@media print { #__toolbar { display:none !important } }</style>
+  `
+  // Insérer la toolbar juste après <body>
+  if (html.includes('<body>')) {
+    return html.replace('<body>', '<body>' + toolbar)
+  } else if (html.includes('<body')) {
+    return html.replace(/(<body[^>]*>)/, '$1' + toolbar)
+  }
+  return toolbar + html
+}
+
 // Ouvre un document HTML pour impression/PDF — compatible Web ET Android (Capacitor)
-function openPrintWindow(html) {
+function openPrintWindow(html, filename) {
+  const fullHtml = buildPrintDocument(html, filename)
   // Tentative classique (navigateur web)
   try {
     const w = window.open('', '_blank')
     if (w && w.document) {
-      w.document.write(html)
+      w.document.write(fullHtml)
       w.document.close()
       return
     }
   } catch (e) { /* fallback ci-dessous */ }
 
-  // Fallback Android/Capacitor : créer un blob et l'ouvrir via un lien
+  // Fallback Android/Capacitor : créer un blob et l'ouvrir
   try {
-    const blob = new Blob([html], { type: 'text/html' })
+    const blob = new Blob([fullHtml], { type: 'text/html' })
     const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.target = '_blank'
-    a.rel = 'noopener'
-    // Sur Android, ouvrir dans une nouvelle vue
     const opened = window.open(url, '_blank')
     if (!opened) {
-      // Dernier recours : navigation directe
+      const a = document.createElement('a')
+      a.href = url; a.target = '_blank'; a.rel = 'noopener'
       a.click()
     }
     setTimeout(()=>URL.revokeObjectURL(url), 60000)
