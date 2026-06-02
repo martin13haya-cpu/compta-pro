@@ -6103,7 +6103,7 @@ function ChatPage({ profile, toast }) {
   const fmtTime = (ts) => new Date(ts).toLocaleString('fr-FR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})
 
   return (
-    <div style={{display:'flex',flexDirection:'column',height:'calc(100vh - 140px)',maxHeight:'calc(100vh - 140px)'}}>
+    <div style={{display:'flex',flexDirection:'column',height:'calc(100vh - 140px)',maxHeight:'calc(100vh - 140px)',width:'100%',maxWidth:'100%',boxSizing:'border-box',overflow:'hidden'}}>
       <PageHeader title="💬 Messagerie" subtitle="Discussion entre tous les utilisateurs" />
 
       {/* Zone messages */}
@@ -6141,19 +6141,19 @@ function ChatPage({ profile, toast }) {
       </div>
 
       {/* Zone saisie */}
-      <div style={{display:'flex',gap:8,alignItems:'center',background:'white',borderRadius:12,padding:8,border:'1px solid #e2e8f0'}}>
+      <div style={{display:'flex',gap:6,alignItems:'center',background:'white',borderRadius:12,padding:8,border:'1px solid #e2e8f0',width:'100%',maxWidth:'100%',boxSizing:'border-box',flexShrink:0}}>
         {recording ? (
           <>
             <button onClick={()=>stopRecording(true)} title="Annuler"
-              style={{background:'#fee2e2',border:'none',borderRadius:10,padding:'10px 12px',cursor:'pointer',fontSize:18,color:'#dc2626'}}>
+              style={{background:'#fee2e2',border:'none',borderRadius:10,padding:'10px 12px',cursor:'pointer',fontSize:18,color:'#dc2626',flexShrink:0}}>
               🗑️
             </button>
-            <div style={{flex:1,display:'flex',alignItems:'center',gap:10,padding:'11px 14px',color:'#dc2626',fontSize:14}}>
-              <span style={{width:10,height:10,borderRadius:'50%',background:'#dc2626',animation:'pulse 1s infinite'}}></span>
-              <span style={{fontWeight:600}}>Enregistrement… {fmtRecTime(recTime)}</span>
+            <div style={{flex:1,minWidth:0,display:'flex',alignItems:'center',gap:8,padding:'11px 10px',color:'#dc2626',fontSize:13,overflow:'hidden'}}>
+              <span style={{width:10,height:10,minWidth:10,borderRadius:'50%',background:'#dc2626',flexShrink:0}}></span>
+              <span style={{fontWeight:600,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>Enreg… {fmtRecTime(recTime)}</span>
             </div>
             <button onClick={()=>stopRecording(false)} title="Envoyer le vocal"
-              style={{background:'#25D366',border:'none',borderRadius:'50%',width:44,height:44,cursor:'pointer',fontSize:18,color:'white',display:'flex',alignItems:'center',justifyContent:'center'}}>
+              style={{background:'#25D366',border:'none',borderRadius:'50%',width:44,height:44,minWidth:44,cursor:'pointer',fontSize:18,color:'white',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
               ➤
             </button>
           </>
@@ -6161,21 +6161,21 @@ function ChatPage({ profile, toast }) {
           <>
             <input ref={fileRef} type="file" accept="image/*" onChange={sendImage} style={{display:'none'}} />
             <button onClick={()=>fileRef.current?.click()} disabled={uploading} title="Envoyer une image"
-              style={{background:'#f0f2f5',border:'none',borderRadius:10,padding:'10px 12px',cursor:uploading?'wait':'pointer',fontSize:18}}>
+              style={{background:'#f0f2f5',border:'none',borderRadius:10,padding:'10px 12px',cursor:uploading?'wait':'pointer',fontSize:18,flexShrink:0}}>
               {uploading?'⏳':'📷'}
             </button>
             <input value={text} onChange={e=>setText(e.target.value)}
               onKeyDown={e=>{ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); send() } }}
               placeholder="Écrivez un message…"
-              style={{flex:1,padding:'11px 14px',border:'1px solid #e2e8f0',borderRadius:20,fontSize:14,outline:'none'}} />
+              style={{flex:1,minWidth:0,padding:'11px 14px',border:'1px solid #e2e8f0',borderRadius:20,fontSize:14,outline:'none',boxSizing:'border-box'}} />
             {text.trim() ? (
               <button onClick={send} disabled={sending}
-                style={{background:'#25D366',border:'none',borderRadius:'50%',width:44,height:44,cursor:'pointer',fontSize:18,color:'white',display:'flex',alignItems:'center',justifyContent:'center'}}>
+                style={{background:'#25D366',border:'none',borderRadius:'50%',width:44,height:44,minWidth:44,cursor:'pointer',fontSize:18,color:'white',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
                 ➤
               </button>
             ) : (
               <button onClick={startRecording} disabled={uploading} title="Enregistrer un vocal"
-                style={{background:'#25D366',border:'none',borderRadius:'50%',width:44,height:44,cursor:'pointer',fontSize:20,color:'white',display:'flex',alignItems:'center',justifyContent:'center'}}>
+                style={{background:'#25D366',border:'none',borderRadius:'50%',width:44,height:44,minWidth:44,cursor:'pointer',fontSize:20,color:'white',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
                 🎤
               </button>
             )}
