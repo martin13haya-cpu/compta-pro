@@ -6067,6 +6067,9 @@ function ControleBudgetairePage({ companies, companyId, toast, readOnly=false })
   const addRevenu = () => setData(d=>({...d, revenus:[...d.revenus, { code:'P'+(d.revenus.length+1), label:'', qte:0, pu:0 }]}))
   const removeRevenu = (i) => setData(d=>({...d, revenus:d.revenus.filter((_,idx)=>idx!==i)}))
   const updateCharge = (i, val) => setData(d=>{ const c=[...d.charges]; c[i]={...c[i],montant:parseFloat(val)||0}; return {...d, charges:c} })
+  const updateChargeLabel = (i, val) => setData(d=>{ const c=[...d.charges]; c[i]={...c[i],label:val}; return {...d, charges:c} })
+  const addCharge = () => setData(d=>({...d, charges:[...d.charges, { code:'C'+(d.charges.length+1), label:'', montant:0, custom:true }]}))
+  const removeCharge = (i) => setData(d=>({...d, charges:d.charges.filter((_,idx)=>idx!==i)}))
   const updateImpot = (i, val) => setData(d=>{ const im=[...d.impots]; im[i]={...im[i],montant:parseFloat(val)||0}; return {...d, impots:im} })
 
   // ── Sauvegarde ──────────────────────────────────────────────────────────────
@@ -6291,12 +6294,17 @@ function ControleBudgetairePage({ companies, companyId, toast, readOnly=false })
             <tbody>
               {data.charges.flatMap((c,i)=>{
                 const rows=[]
-                if(c.groupe) rows.push(<tr key={'g'+i} style={{background:'#f8fafc'}}><td colSpan={3} style={{padding:'8px 6px 4px',fontSize:11,fontWeight:700,color:'#64748b'}}>{c.groupe}</td></tr>)
+                if(c.groupe) rows.push(<tr key={'g'+i} style={{background:'#f8fafc'}}><td colSpan={4} style={{padding:'8px 6px 4px',fontSize:11,fontWeight:700,color:'#64748b'}}>{c.groupe}</td></tr>)
                 rows.push(
                   <tr key={'c'+i} style={{borderTop:'1px solid #f1f5f9'}}>
                     <td style={{padding:6,width:50}}>{c.code}</td>
-                    <td style={{padding:6}}>{c.label}</td>
+                    <td style={{padding:6}}>
+                      {c.custom
+                        ? <input value={c.label} onChange={e=>updateChargeLabel(i,e.target.value)} disabled={readOnly} placeholder="Libellé de la charge" style={{width:'100%',minWidth:140,padding:'5px 8px',border:'1px solid #d1d5db',borderRadius:6,fontSize:13}} />
+                        : c.label}
+                    </td>
                     <td style={{padding:6,textAlign:'right',width:140}}>{inp(c.montant,v=>updateCharge(i,v),120)}</td>
+                    {!readOnly && <td style={{textAlign:'center',width:40}}>{c.custom && <button onClick={()=>removeCharge(i)} style={{background:'none',border:'none',color:'#ef4444',cursor:'pointer',fontSize:14}}>✕</button>}</td>}
                   </tr>
                 )
                 return rows
@@ -6304,6 +6312,7 @@ function ControleBudgetairePage({ companies, companyId, toast, readOnly=false })
             </tbody>
           </table>
           </div>
+          {!readOnly && <button onClick={addCharge} style={{padding:'6px 14px',background:'#fef2f2',color:'#dc2626',border:'1px dashed #fca5a5',borderRadius:8,fontSize:13,cursor:'pointer',marginBottom:12}}>+ Ajouter une ligne de charge</button>}
           <div style={{background:'#fef2f2',padding:'8px 12px',borderRadius:8,fontWeight:700,display:'flex',justifyContent:'space-between',marginBottom:8}}>
             <span>TOTAL CHARGES</span><span>{fmt(totaux.totalCharges)} FCFA</span>
           </div>
