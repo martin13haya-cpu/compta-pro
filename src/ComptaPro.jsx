@@ -6069,6 +6069,9 @@ function ControleBudgetairePage({ companies, companyId, toast, readOnly=false })
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [recordId, setRecordId] = useState(null)
+  const [budgetsList, setBudgetsList] = useState([])
+  const [titre, setTitre] = useState('')
+  const [dateBudget, setDateBudget] = useState(new Date().toISOString().slice(0,10))
   const fmt = n => Math.round(n||0).toLocaleString('fr-FR')
 
   // État : revenus (lignes éditables) + charges + impôts, pour prévision et réalisation
@@ -6083,20 +6086,37 @@ function ControleBudgetairePage({ companies, companyId, toast, readOnly=false })
   const [prev, setPrev] = useState({ revenus:emptyRevenus(), charges:emptyCharges(), impots:emptyImpots() })
   const [real, setReal] = useState({ revenus:emptyRevenus(), charges:emptyCharges(), impots:emptyImpots() })
 
-  // Chargement depuis Supabase
-  const load = useCallback(async()=>{
+  // Charger la liste des budgets de la société
+  const loadList = useCallback(async()=>{
     setLoading(true)
     const cid = companyId || companies[0]?.id
     if(!cid){ setLoading(false); return }
-    const { data } = await supabase.from('compta_budget_controle').select('*').eq('company_id',cid).maybeSingle()
-    if(data){
-      setRecordId(data.id)
-      if(data.prevision) setPrev(data.prevision)
-      if(data.realisation) setReal(data.realisation)
-    }
+    const { data } = await supabase.from('compta_budget_controle')
+      .select('id,titre,date_budget,created_at').eq('company_id',cid).order('date_budget',{ascending:false})
+    setBudgetsList(data||[])
     setLoading(false)
   },[companyId, companies])
-  useEffect(()=>{ load() },[load])
+  useEffect(()=>{ loadList() },[loadList])
+
+  // Charger un budget spécifique
+  const loadBudget = async(id)=>{
+    if(!id){ // Nouveau budget
+      setRecordId(null); setTitre(''); setDateBudget(new Date().toISOString().slice(0,10))
+      setPrev({ revenus:emptyRevenus(), charges:emptyCharges(), impots:emptyImpots() })
+      setReal({ revenus:emptyRevenus(), charges:emptyCharges(), impots:emptyImpots() })
+      return
+    }
+    setLoading(true)
+    const { data } = await supabase.from('compta_budget_controle').select('*').eq('id',id).single()
+    if(data){
+      setRecordId(data.id)
+      setTitre(data.titre||'')
+      setDateBudget(data.date_budget||new Date().toISOString().slice(0,10))
+      setPrev(data.prevision||{ revenus:emptyRevenus(), charges:emptyCharges(), impots:emptyImpots() })
+      setReal(data.realisation||{ revenus:emptyRevenus(), charges:emptyCharges(), impots:emptyImpots() })
+    }
+    setLoading(false)
+  }
 
   // ── Calculs ───────────────────────────────────────────────────────────────
   const calcTotaux = (data) => {
@@ -6143,18 +6163,26 @@ function ControleBudgetairePage({ companies, companyId, toast, readOnly=false })
 
   // ── Sauvegarde ──────────────────────────────────────────────────────────────
   const save = async()=>{
+    if(!titre.trim()){ toast.error('Donnez un titre au budget avant d\'enregistrer.'); return }
     setSaving(true)
     const cid = companyId || companies[0]?.id
     const uid = (await supabase.auth.getUser()).data?.user?.id
-    // Injecter CCIB calculé avant sauvegarde
     const prevToSave = {...prev, impots: tPrev.impotsAvecCcib}
     const realToSave = {...real, impots: tReal.impotsAvecCcib}
-    const payload = { company_id:cid, user_id:uid, prevision:prevToSave, realisation:realToSave }
+    const payload = { company_id:cid, user_id:uid, titre:titre.trim(), date_budget:dateBudget, prevision:prevToSave, realisation:realToSave }
     let error
     if(recordId){ ({error} = await supabase.from('compta_budget_controle').update(payload).eq('id',recordId)) }
     else { const r = await supabase.from('compta_budget_controle').insert(payload).select().single(); error=r.error; if(r.data) setRecordId(r.data.id) }
-    if(error) toast.error(error.message); else toast.success('Contrôle budgétaire enregistré !')
+    if(error) toast.error(error.message); else { toast.success('Budget enregistré !'); loadList() }
     setSaving(false)
+  }
+
+  const deleteBudget = async()=>{
+    if(!recordId) return
+    if(!confirm('Supprimer ce budget ?')) return
+    await supabase.from('compta_budget_controle').delete().eq('id',recordId)
+    toast.success('Budget supprimé')
+    loadBudget(null); loadList()
   }
 
   // ── Export Excel ─────────────────────────────────────────────────────────────
@@ -6273,6 +6301,32 @@ function ControleBudgetairePage({ companies, companyId, toast, readOnly=false })
   return (
     <div>
       <PageHeader title="📊 Contrôle Budgétaire" subtitle="Prévision · Réalisation · Écart" />
+
+      {/* Sélection / gestion des budgets */}
+      <div style={{background:'white',borderRadius:12,border:'1px solid #e2e8f0',padding:14,marginBottom:16,display:'flex',gap:12,alignItems:'flex-end',flexWrap:'wrap'}}>
+        <div style={{flex:'1 1 200px',minWidth:160}}>
+          <label style={{display:'block',fontSize:12,fontWeight:600,color:'#374151',marginBottom:4}}>Budget enregistré</label>
+          <select value={recordId||''} onChange={e=>loadBudget(e.target.value||null)}
+            style={{width:'100%',padding:'9px 12px',border:'1px solid #d1d5db',borderRadius:8,fontSize:13}}>
+            <option value="">— Nouveau budget —</option>
+            {budgetsList.map(b=>(
+              <option key={b.id} value={b.id}>{b.titre} ({b.date_budget})</option>
+            ))}
+          </select>
+        </div>
+        <div style={{flex:'1 1 200px',minWidth:160}}>
+          <label style={{display:'block',fontSize:12,fontWeight:600,color:'#374151',marginBottom:4}}>Titre du budget *</label>
+          <input value={titre} onChange={e=>setTitre(e.target.value)} disabled={readOnly} placeholder="Ex: Campagne 2026"
+            style={{width:'100%',padding:'9px 12px',border:'1px solid #d1d5db',borderRadius:8,fontSize:13,boxSizing:'border-box'}} />
+        </div>
+        <div style={{flex:'0 1 150px',minWidth:130}}>
+          <label style={{display:'block',fontSize:12,fontWeight:600,color:'#374151',marginBottom:4}}>Date</label>
+          <input type="date" value={dateBudget} onChange={e=>setDateBudget(e.target.value)} disabled={readOnly}
+            style={{width:'100%',padding:'9px 12px',border:'1px solid #d1d5db',borderRadius:8,fontSize:13,boxSizing:'border-box'}} />
+        </div>
+        {!readOnly && <button onClick={()=>loadBudget(null)} style={{padding:'9px 14px',background:'#eff6ff',color:'#1d4ed8',border:'1px solid #bfdbfe',borderRadius:8,fontWeight:600,fontSize:13,cursor:'pointer'}}>+ Nouveau</button>}
+        {!readOnly && recordId && <button onClick={deleteBudget} style={{padding:'9px 14px',background:'#fef2f2',color:'#dc2626',border:'1px solid #fca5a5',borderRadius:8,fontWeight:600,fontSize:13,cursor:'pointer'}}>🗑️ Supprimer</button>}
+      </div>
 
       {/* Onglets */}
       <div style={{display:'flex',gap:8,marginBottom:16,flexWrap:'wrap'}}>
