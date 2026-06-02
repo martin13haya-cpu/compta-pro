@@ -8730,7 +8730,8 @@ export default function ComptaPro() {
         </div>
       </div>
 
-      {/* ── Bouton Messagerie flottant ──────────────────────────────────── */}
+      {/* ── Bouton Messagerie flottant (masqué sur la page chat) ─────────── */}
+      {page!=='chat' && (
       <button
         onClick={()=>setPage('chat')}
         title="Ouvrir la messagerie"
@@ -8748,6 +8749,7 @@ export default function ComptaPro() {
       >
         <span style={{fontSize:26}}>💬</span>
       </button>
+      )}
     </div>
   )
 }

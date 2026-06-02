@@ -1,0 +1,9 @@
+{
+  "appId": "com.comptapro.app",
+  "appName": "Compta Pro",
+  "webDir": "dist",
+  "server": {
+    "url": "https://compta-pro-azure.vercel.app",
+    "cleartext": false
+  }
+}
