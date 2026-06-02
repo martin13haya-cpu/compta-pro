@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js'
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 
 // ── CONFIG ─────────────────────────────────────────────────────────────────
 const SUPABASE_URL       ='https://proehigsikgqdrxjltmq.supabase.co'
@@ -1286,6 +1286,7 @@ function UsersManagementPage({ toast }) {
 const NAV = [
   { section:'Principal' },
   { id:'dashboard',          icon:'🏠', label:'Tableau de bord' },
+  { id:'chat',               icon:'💬', label:'Messagerie' },
   { section:'Référentiel' },
   { id:'companies',          icon:'🏢', label:'Sociétés' },
   { id:'clients',            icon:'👥', label:'Clients' },
@@ -1353,7 +1354,7 @@ function Sidebar({ page, setPage, user, profile, onLogout, open, onClose }) {
 
   // Filter NAV based on permissions for utilisateur_simple
   const filteredNAV = isUtilisateurSimple
-    ? NAV.filter(item => !item.id || (permissions[item.id] === 'read' || permissions[item.id] === 'write'))
+    ? NAV.filter(item => !item.id || item.id==='chat' || item.id==='dashboard' || (permissions[item.id] === 'read' || permissions[item.id] === 'write'))
     : NAV
 
   const navItems = isSuperAdmin
@@ -5956,6 +5957,149 @@ const DOCUMENTS_TYPES = [
   'Lot de production','Lot semi-fini','Bon livraison','Règlement'
 ]
 
+// ── CHAT GLOBAL (temps réel) ─────────────────────────────────────────────────
+function ChatPage({ profile, toast }) {
+  const [messages, setMessages] = useState([])
+  const [text, setText] = useState('')
+  const [sending, setSending] = useState(false)
+  const [uploading, setUploading] = useState(false)
+  const [myUid, setMyUid] = useState(null)
+  const endRef = useRef(null)
+  const fileRef = useRef(null)
+
+  const scrollBottom = () => { setTimeout(()=>endRef.current?.scrollIntoView({behavior:'smooth'}), 50) }
+
+  const load = useCallback(async()=>{
+    const { data:ad } = await supabase.auth.getUser()
+    setMyUid(ad?.user?.id)
+    const { data } = await supabase.from('compta_chat_messages')
+      .select('*').order('created_at',{ascending:true}).limit(200)
+    setMessages(data||[])
+    scrollBottom()
+  },[])
+
+  useEffect(()=>{
+    load()
+    // Abonnement temps réel
+    const channel = supabase.channel('chat-global')
+      .on('postgres_changes', { event:'INSERT', schema:'public', table:'compta_chat_messages' },
+        payload => { setMessages(m=>[...m, payload.new]); scrollBottom() })
+      .on('postgres_changes', { event:'DELETE', schema:'public', table:'compta_chat_messages' },
+        payload => { setMessages(m=>m.filter(x=>x.id!==payload.old.id)) })
+      .subscribe()
+    return ()=>{ supabase.removeChannel(channel) }
+  },[load])
+
+  const send = async()=>{
+    if(!text.trim() || sending) return
+    setSending(true)
+    const { data:ad } = await supabase.auth.getUser()
+    const uid = ad?.user?.id
+    const { error } = await supabase.from('compta_chat_messages').insert({
+      user_id: uid,
+      auteur_nom: profile?.nom || ad?.user?.email || 'Utilisateur',
+      auteur_role: profile?.role || 'utilisateur_simple',
+      message: text.trim(),
+    })
+    if(error) toast.error(error.message)
+    else setText('')
+    setSending(false)
+  }
+
+  const sendImage = async(e)=>{
+    const file = e.target.files[0]
+    if(!file) return
+    if(file.size > 3000000){ toast.error("Image trop lourde. Max 3 Mo."); return }
+    setUploading(true)
+    try {
+      const { data:ad } = await supabase.auth.getUser()
+      const uid = ad?.user?.id
+      const ext = file.name.split('.').pop()
+      const path = `${uid}/${Date.now()}.${ext}`
+      const { error:upErr } = await supabase.storage.from('chat-images').upload(path, file)
+      if(upErr){ toast.error("Erreur upload : "+upErr.message); setUploading(false); return }
+      const { data:urlData } = supabase.storage.from('chat-images').getPublicUrl(path)
+      await supabase.from('compta_chat_messages').insert({
+        user_id: uid,
+        auteur_nom: profile?.nom || ad?.user?.email || 'Utilisateur',
+        auteur_role: profile?.role || 'utilisateur_simple',
+        image_url: urlData.publicUrl,
+      })
+    } catch(err) { toast.error("Erreur : "+err.message) }
+    setUploading(false)
+    e.target.value = ''
+  }
+
+  const deleteMsg = async(id)=>{
+    if(!confirm("Supprimer ce message ?")) return
+    await supabase.from('compta_chat_messages').delete().eq('id', id)
+  }
+
+  const roleBadge = (role) => {
+    if(role==='super_admin') return { label:'Super Admin', color:'#f59e0b' }
+    if(role==='admin_societe'||role==='admin') return { label:'Admin', color:'#3b82f6' }
+    return { label:'', color:'#94a3b8' }
+  }
+
+  const fmtTime = (ts) => new Date(ts).toLocaleString('fr-FR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})
+
+  return (
+    <div style={{display:'flex',flexDirection:'column',height:'calc(100vh - 140px)',maxHeight:'calc(100vh - 140px)'}}>
+      <PageHeader title="💬 Messagerie" subtitle="Discussion entre tous les utilisateurs" />
+
+      {/* Zone messages */}
+      <div style={{flex:1,overflowY:'auto',background:'#e5ddd5',borderRadius:12,padding:16,marginBottom:12,backgroundImage:'linear-gradient(rgba(229,221,213,0.6),rgba(229,221,213,0.6))'}}>
+        {messages.length===0 ? (
+          <div style={{textAlign:'center',color:'#64748b',padding:40}}>
+            <div style={{fontSize:48,marginBottom:12}}>💬</div>
+            Aucun message. Lancez la discussion !
+          </div>
+        ) : messages.map(m=>{
+          const mine = m.user_id===myUid
+          const badge = roleBadge(m.auteur_role)
+          return (
+            <div key={m.id} style={{display:'flex',justifyContent:mine?'flex-end':'flex-start',marginBottom:10}}>
+              <div style={{maxWidth:'75%',background:mine?'#dcf8c6':'white',borderRadius:10,padding:'8px 12px',boxShadow:'0 1px 1px rgba(0,0,0,0.1)',position:'relative'}}>
+                {!mine && (
+                  <div style={{fontSize:12,fontWeight:700,color:'#075E54',marginBottom:2,display:'flex',alignItems:'center',gap:6}}>
+                    {m.auteur_nom}
+                    {badge.label && <span style={{fontSize:10,background:badge.color,color:'white',borderRadius:8,padding:'1px 6px'}}>{badge.label}</span>}
+                  </div>
+                )}
+                {m.image_url && <img src={m.image_url} alt="img" style={{maxWidth:'100%',borderRadius:8,marginBottom:m.message?6:0,cursor:'pointer'}} onClick={()=>window.open(m.image_url,'_blank')} />}
+                {m.message && <div style={{fontSize:14,color:'#1e293b',whiteSpace:'pre-wrap',wordBreak:'break-word'}}>{m.message}</div>}
+                <div style={{fontSize:10,color:'#94a3b8',textAlign:'right',marginTop:2}}>{fmtTime(m.created_at)}</div>
+                {(mine || profile?.role==='super_admin') && (
+                  <button onClick={()=>deleteMsg(m.id)} title="Supprimer"
+                    style={{position:'absolute',top:2,right:2,background:'none',border:'none',cursor:'pointer',fontSize:11,opacity:0.5,color:'#ef4444'}}>✕</button>
+                )}
+              </div>
+            </div>
+          )
+        })}
+        <div ref={endRef} />
+      </div>
+
+      {/* Zone saisie */}
+      <div style={{display:'flex',gap:8,alignItems:'center',background:'white',borderRadius:12,padding:8,border:'1px solid #e2e8f0'}}>
+        <input ref={fileRef} type="file" accept="image/*" onChange={sendImage} style={{display:'none'}} />
+        <button onClick={()=>fileRef.current?.click()} disabled={uploading} title="Envoyer une image"
+          style={{background:'#f0f2f5',border:'none',borderRadius:10,padding:'10px 12px',cursor:uploading?'wait':'pointer',fontSize:18}}>
+          {uploading?'⏳':'📷'}
+        </button>
+        <input value={text} onChange={e=>setText(e.target.value)}
+          onKeyDown={e=>{ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); send() } }}
+          placeholder="Écrivez un message…"
+          style={{flex:1,padding:'11px 14px',border:'1px solid #e2e8f0',borderRadius:20,fontSize:14,outline:'none'}} />
+        <button onClick={send} disabled={sending||!text.trim()}
+          style={{background:'#25D366',border:'none',borderRadius:'50%',width:44,height:44,cursor:'pointer',fontSize:18,color:'white',display:'flex',alignItems:'center',justifyContent:'center'}}>
+          ➤
+        </button>
+      </div>
+    </div>
+  )
+}
+
 function ParametresPage({ toast, companies, companyId }) {
   const [signataires, setSignataires] = useState([])
   const [theme, setThemeLocal] = useState(getStoredTheme())
@@ -8344,6 +8488,7 @@ export default function ComptaPro() {
   }
 
   const PAGE_TITLES = {
+    chat:'Messagerie',
     users:'Gestion des utilisateurs',
     fournisseurs:'Fournisseurs', stock:'Articles & Stock', 'stock-entree':'Entrée de stock',
     'stock-sortie':'Sortie de stock', mouvements:'Mouvements de stock', inventaire:'Inventaire',
@@ -8415,6 +8560,7 @@ export default function ComptaPro() {
       case 'journal_banque':    return <JournalPage table="compta_journal_banque" title="Journal Banque" icon="🏛️" journalType="banque" {...sp} />
       case 'journal_mobile':    return <JournalPage table="compta_journal_mobile" title="Journal Mobile Money" icon="📱" journalType="mobile" {...sp} />
       case 'users':          return isSuperAdmin ? <UsersManagementPage toast={toast} /> : <Dashboard {...sp} setPage={setPage} />
+      case 'chat':           return <ChatPage profile={profile} toast={toast} />
       case 'parametres':     return (isSuperAdmin||profile?.role==='admin_societe'||profile?.role==='admin') ? <ParametresPage toast={toast} companies={companies} companyId={companyId} /> : <Dashboard {...sp} setPage={setPage} />
       case 'mes_utilisateurs': return (profile?.role==='admin_societe'||profile?.role==='admin'||isSuperAdmin) ? <MesUtilisateursPage toast={toast} companies={companies} companyId={companyId} profile={profile} /> : <Dashboard {...sp} setPage={setPage} />
     }
