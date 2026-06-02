@@ -1328,6 +1328,7 @@ const NAV = [
   { id:'journal_caisse',     icon:'🏦', label:'Journal Caisse' },
   { id:'journal_banque',     icon:'🏛️',  label:'Journal Banque' },
   { id:'journal_mobile',     icon:'📱', label:'Journal Mobile Money' },
+  { id:'controle_budget',    icon:'📊', label:'Contrôle Budgétaire' },
 ]
 
 const NAV_ADMIN = [
@@ -5957,6 +5958,389 @@ const DOCUMENTS_TYPES = [
   'Lot de production','Lot semi-fini','Bon livraison','Règlement'
 ]
 
+// ── CONTRÔLE BUDGÉTAIRE ──────────────────────────────────────────────────────
+// Table des tranches CCIB (chiffre d'affaires → cotisation annuelle)
+const CCIB_TRANCHES = [
+  { min:0,          max:5000000,    montant:20000 },
+  { min:5000001,    max:10000000,   montant:30000 },
+  { min:10000001,   max:25000000,   montant:50000 },
+  { min:25000001,   max:50000000,   montant:150000 },
+  { min:50000001,   max:100000000,  montant:250000 },
+  { min:100000001,  max:300000000,  montant:300000 },
+  { min:300000001,  max:500000000,  montant:400000 },
+  { min:500000001,  max:700000000,  montant:500000 },
+  { min:700000001,  max:800000000,  montant:600000 },
+  { min:800000001,  max:1000000000, montant:800000 },
+  { min:1000000001, max:2000000000, montant:1200000 },
+  { min:2000000001, max:4000000000, montant:1600000 },
+  { min:4000000001, max:Infinity,   montant:2000000 },
+]
+function calcCCIB(ca) {
+  const t = CCIB_TRANCHES.find(t => ca >= t.min && ca <= t.max)
+  return t ? t.montant : 0
+}
+
+// Lignes de charges (fixes, communes aux 2 formulaires)
+const BUDGET_CHARGES = [
+  { code:'C1',  label:'ACHAT DU RIZ USINE', groupe:"Charge d'approvisionnement" },
+  { code:'C2',  label:'Emballages 100kg+ fil' },
+  { code:'C3',  label:'Prestation pour coudre' },
+  { code:'C4',  label:'CDL' },
+  { code:'C5',  label:'Commissionnaire' },
+  { code:'C6',  label:'ENERGIE' },
+  { code:'C7',  label:'Transport et manutention' },
+  { code:'C8',  label:"transport divers et voyage d'affaire" },
+  { code:'C9',  label:'charges salariales et missions diverses', groupe:'Charge de personnel' },
+  { code:'C10', label:'Contrôles et conseils' },
+  { code:'C11', label:'Volet social et environnement' },
+  { code:'C12', label:'bureautiques' },
+  { code:'C13', label:'Assurance + prime de motivation + PUB' },
+  { code:'C14', label:'Provision aux Amortissements et imprévus', groupe:'Autres charges' },
+  { code:'C15', label:'Interêt sur emprunt' },
+]
+// Impôts (après marge brute) — CCIB est auto-calculé
+const BUDGET_IMPOTS = [
+  { code:'C16', label:'Impôt sur les sociétés' },
+  { code:'C17', label:'TEO' },
+  { code:'C18', label:'CCIB', auto:true },
+  { code:'C19', label:'Patente' },
+  { code:'C20', label:'ORTB' },
+]
+
+function ControleBudgetairePage({ companies, companyId, toast, readOnly=false }) {
+  const [tab, setTab] = useState('prevision') // 'prevision' | 'realisation' | 'ecart'
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [recordId, setRecordId] = useState(null)
+  const fmt = n => Math.round(n||0).toLocaleString('fr-FR')
+
+  // État : revenus (lignes éditables) + charges + impôts, pour prévision et réalisation
+  const emptyRevenus = () => ([
+    { code:'P1', label:'Prix du riz usiné traité', qte:0, pu:0 },
+    { code:'P2', label:'Hors normes', qte:0, pu:0 },
+    { code:'P3', label:'BIOCHAR', qte:0, pu:0 },
+  ])
+  const emptyCharges = () => BUDGET_CHARGES.map(c=>({...c, montant:0}))
+  const emptyImpots  = () => BUDGET_IMPOTS.map(c=>({...c, montant:0}))
+
+  const [prev, setPrev] = useState({ revenus:emptyRevenus(), charges:emptyCharges(), impots:emptyImpots() })
+  const [real, setReal] = useState({ revenus:emptyRevenus(), charges:emptyCharges(), impots:emptyImpots() })
+
+  // Chargement depuis Supabase
+  const load = useCallback(async()=>{
+    setLoading(true)
+    const cid = companyId || companies[0]?.id
+    if(!cid){ setLoading(false); return }
+    const { data } = await supabase.from('compta_budget_controle').select('*').eq('company_id',cid).maybeSingle()
+    if(data){
+      setRecordId(data.id)
+      if(data.prevision) setPrev(data.prevision)
+      if(data.realisation) setReal(data.realisation)
+    }
+    setLoading(false)
+  },[companyId, companies])
+  useEffect(()=>{ load() },[load])
+
+  // ── Calculs ───────────────────────────────────────────────────────────────
+  const calcTotaux = (data) => {
+    const totalRevenus = data.revenus.reduce((s,r)=>s+(r.qte||0)*(r.pu||0), 0)
+    const totalCharges = data.charges.reduce((s,c)=>s+(c.montant||0), 0)
+    const margeBrute = totalRevenus - totalCharges
+    // CCIB auto selon le total revenus (chiffre d'affaires)
+    const ccib = calcCCIB(totalRevenus)
+    const impotsAvecCcib = data.impots.map(i=> i.auto ? {...i, montant:ccib} : i)
+    const totalImpots = impotsAvecCcib.reduce((s,i)=>s+(i.montant||0), 0)
+    const resultat = margeBrute - totalImpots
+    return { totalRevenus, totalCharges, margeBrute, ccib, totalImpots, resultat, impotsAvecCcib }
+  }
+  const tPrev = calcTotaux(prev)
+  const tReal = calcTotaux(real)
+
+  // ── Modificateurs ──────────────────────────────────────────────────────────
+  const setData = tab==='prevision' ? setPrev : setReal
+  const data = tab==='prevision' ? prev : real
+  const totaux = tab==='prevision' ? tPrev : tReal
+
+  const updateRevenu = (i, field, val) => {
+    setData(d=>{ const r=[...d.revenus]; r[i]={...r[i],[field]:field==='label'?val:(parseFloat(val)||0)}; return {...d, revenus:r} })
+  }
+  const addRevenu = () => setData(d=>({...d, revenus:[...d.revenus, { code:'P'+(d.revenus.length+1), label:'', qte:0, pu:0 }]}))
+  const removeRevenu = (i) => setData(d=>({...d, revenus:d.revenus.filter((_,idx)=>idx!==i)}))
+  const updateCharge = (i, val) => setData(d=>{ const c=[...d.charges]; c[i]={...c[i],montant:parseFloat(val)||0}; return {...d, charges:c} })
+  const updateImpot = (i, val) => setData(d=>{ const im=[...d.impots]; im[i]={...im[i],montant:parseFloat(val)||0}; return {...d, impots:im} })
+
+  // ── Sauvegarde ──────────────────────────────────────────────────────────────
+  const save = async()=>{
+    setSaving(true)
+    const cid = companyId || companies[0]?.id
+    const uid = (await supabase.auth.getUser()).data?.user?.id
+    // Injecter CCIB calculé avant sauvegarde
+    const prevToSave = {...prev, impots: tPrev.impotsAvecCcib}
+    const realToSave = {...real, impots: tReal.impotsAvecCcib}
+    const payload = { company_id:cid, user_id:uid, prevision:prevToSave, realisation:realToSave }
+    let error
+    if(recordId){ ({error} = await supabase.from('compta_budget_controle').update(payload).eq('id',recordId)) }
+    else { const r = await supabase.from('compta_budget_controle').insert(payload).select().single(); error=r.error; if(r.data) setRecordId(r.data.id) }
+    if(error) toast.error(error.message); else toast.success('Contrôle budgétaire enregistré !')
+    setSaving(false)
+  }
+
+  // ── Export Excel ─────────────────────────────────────────────────────────────
+  const exportExcel = async()=>{
+    const XLSX = await import('https://cdn.sheetjs.com/xlsx-0.20.0/package/xlsx.mjs')
+    const wb = XLSX.utils.book_new()
+    const company = companies.find(c=>c.id===(companyId||companies[0]?.id))
+    const buildSheet = (data, totaux, titre) => {
+      const rows = [
+        [company?.raison_sociale||'', '', '', titre],
+        [],
+        ['N°','Libellé','Quantité','Prix Unitaire','Montant'],
+      ]
+      data.revenus.forEach(r=> rows.push([r.code, r.label, r.qte, r.pu, (r.qte||0)*(r.pu||0)]))
+      rows.push(['','TOTAL REVENUS','','', totaux.totalRevenus])
+      rows.push([])
+      rows.push(['','CHARGES','','',''])
+      data.charges.forEach(c=> rows.push([c.code, c.label, '','', c.montant]))
+      rows.push(['','TOTAL CHARGES','','', totaux.totalCharges])
+      rows.push(['','MARGE BRUTE','','', totaux.margeBrute])
+      rows.push([])
+      totaux.impotsAvecCcib.forEach(i=> rows.push([i.code, i.label + (i.auto?' (auto)':''), '','', i.montant]))
+      rows.push(['','RÉSULTAT APRÈS IMPÔT','','', totaux.resultat])
+      const ws = XLSX.utils.aoa_to_sheet(rows)
+      ws['!cols'] = [{wch:6},{wch:40},{wch:12},{wch:14},{wch:16}]
+      return ws
+    }
+    XLSX.utils.book_append_sheet(wb, buildSheet(prev, tPrev, 'PRÉVISION'), 'PREVISION')
+    XLSX.utils.book_append_sheet(wb, buildSheet(real, tReal, 'RÉALISATION'), 'REALISATION')
+    // Feuille écart
+    const ecartRows = [
+      [company?.raison_sociale||'','','ÉCART BUDGÉTAIRE'],[],
+      ['Libellé','Prévision','Réalisation','Écart'],
+      ['Total Revenus', tPrev.totalRevenus, tReal.totalRevenus, tReal.totalRevenus-tPrev.totalRevenus],
+      ['Total Charges', tPrev.totalCharges, tReal.totalCharges, tReal.totalCharges-tPrev.totalCharges],
+      ['Marge Brute', tPrev.margeBrute, tReal.margeBrute, tReal.margeBrute-tPrev.margeBrute],
+      ['CCIB', tPrev.ccib, tReal.ccib, tReal.ccib-tPrev.ccib],
+      ['Total Impôts', tPrev.totalImpots, tReal.totalImpots, tReal.totalImpots-tPrev.totalImpots],
+      ['Résultat après impôt', tPrev.resultat, tReal.resultat, tReal.resultat-tPrev.resultat],
+    ]
+    const wsEcart = XLSX.utils.aoa_to_sheet(ecartRows)
+    wsEcart['!cols'] = [{wch:28},{wch:16},{wch:16},{wch:16}]
+    XLSX.utils.book_append_sheet(wb, wsEcart, 'ECART BUDGETAIRE')
+    XLSX.writeFile(wb, `controle_budgetaire_${company?.raison_sociale||'societe'}.xlsx`)
+    toast.success('Fichier Excel téléchargé !')
+  }
+
+  // ── Impression PDF ───────────────────────────────────────────────────────────
+  const printPdf = (which) => {
+    const company = companies.find(c=>c.id===(companyId||companies[0]?.id))
+    const sets = which==='ecart'
+      ? [{ titre:'ÉCART BUDGÉTAIRE', ecart:true }]
+      : which==='realisation'
+      ? [{ titre:'RÉALISATION', data:real, totaux:tReal }]
+      : [{ titre:'PRÉVISION', data:prev, totaux:tPrev }]
+
+    let body = ''
+    sets.forEach(s=>{
+      if(s.ecart){
+        const eRow = (lbl,p,r)=>`<tr><td>${lbl}</td><td class="r">${fmt(p)}</td><td class="r">${fmt(r)}</td><td class="r"><strong>${fmt(r-p)}</strong></td></tr>`
+        body += `<h3>${s.titre}</h3><table><thead><tr><th>Libellé</th><th class="r">Prévision</th><th class="r">Réalisation</th><th class="r">Écart</th></tr></thead><tbody>
+          ${eRow('Total Revenus', tPrev.totalRevenus, tReal.totalRevenus)}
+          ${eRow('Total Charges', tPrev.totalCharges, tReal.totalCharges)}
+          ${eRow('Marge Brute', tPrev.margeBrute, tReal.margeBrute)}
+          ${eRow('CCIB', tPrev.ccib, tReal.ccib)}
+          ${eRow('Total Impôts', tPrev.totalImpots, tReal.totalImpots)}
+          ${eRow('Résultat après impôt', tPrev.resultat, tReal.resultat)}
+        </tbody></table>`
+      } else {
+        const revRows = s.data.revenus.map(r=>`<tr><td>${r.code}</td><td>${r.label}</td><td class="r">${fmt(r.qte)}</td><td class="r">${fmt(r.pu)}</td><td class="r">${fmt((r.qte||0)*(r.pu||0))}</td></tr>`).join('')
+        const chRows = s.data.charges.map(c=>`<tr><td>${c.code}</td><td>${c.label}</td><td colspan="2"></td><td class="r">${fmt(c.montant)}</td></tr>`).join('')
+        const imRows = s.totaux.impotsAvecCcib.map(i=>`<tr><td>${i.code}</td><td>${i.label}${i.auto?' (auto)':''}</td><td colspan="2"></td><td class="r">${fmt(i.montant)}</td></tr>`).join('')
+        body += `<h3>${s.titre}</h3><table><thead><tr><th>N°</th><th>Libellé</th><th class="r">Qté</th><th class="r">P.U.</th><th class="r">Montant</th></tr></thead><tbody>
+          ${revRows}
+          <tr class="sub"><td colspan="4">TOTAL REVENUS</td><td class="r">${fmt(s.totaux.totalRevenus)}</td></tr>
+          ${chRows}
+          <tr class="sub"><td colspan="4">TOTAL CHARGES</td><td class="r">${fmt(s.totaux.totalCharges)}</td></tr>
+          <tr class="sub"><td colspan="4">MARGE BRUTE</td><td class="r">${fmt(s.totaux.margeBrute)}</td></tr>
+          ${imRows}
+          <tr class="total"><td colspan="4">RÉSULTAT APRÈS IMPÔT</td><td class="r">${fmt(s.totaux.resultat)}</td></tr>
+        </tbody></table>`
+      }
+    })
+
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+      @page{size:A4;margin:12mm}
+      body{font-family:Arial,sans-serif;font-size:11px;color:#1a1a1a}
+      .head{text-align:center;margin-bottom:14px}
+      .cname{font-size:16px;font-weight:800;color:#075E54}
+      h3{background:#075E54;color:white;padding:6px 10px;border-radius:4px;font-size:13px}
+      table{width:100%;border-collapse:collapse;margin-bottom:18px}
+      th,td{border:1px solid #ccc;padding:5px 8px}
+      th{background:#e8f5ee;font-size:10px}
+      .r{text-align:right}
+      .sub{background:#f0f9f4;font-weight:700}
+      .total{background:#d6f5e0;font-weight:800}
+      .print-btn{margin:10px;padding:8px 16px;background:#25D366;color:white;border:none;border-radius:6px;cursor:pointer}
+      @media print{.print-btn{display:none}}
+    </style></head><body>
+      <button class="print-btn" onclick="window.print()">🖨️ Imprimer</button>
+      <div class="head">
+        ${company?.logo_url?`<img src="${company.logo_url}" style="max-height:60px"><br>`:''}
+        <div class="cname">${company?.raison_sociale||''}</div>
+        <div>Contrôle Budgétaire — ${new Date().toLocaleDateString('fr-FR')}</div>
+      </div>
+      ${body}
+    </body></html>`
+    const w = window.open('','_blank')
+    w.document.write(html); w.document.close()
+  }
+
+  if(loading) return <div style={{textAlign:'center',padding:40,color:'#94a3b8'}}>Chargement…</div>
+
+  const inp = (val, onCh, w=90) => <input type="number" value={val||''} onChange={e=>onCh(e.target.value)} disabled={readOnly}
+    style={{width:w,padding:'5px 8px',border:'1px solid #d1d5db',borderRadius:6,fontSize:13,textAlign:'right'}} />
+
+  return (
+    <div>
+      <PageHeader title="📊 Contrôle Budgétaire" subtitle="Prévision · Réalisation · Écart" />
+
+      {/* Onglets */}
+      <div style={{display:'flex',gap:8,marginBottom:16,flexWrap:'wrap'}}>
+        {[{id:'prevision',l:'📋 Prévision'},{id:'realisation',l:'✅ Réalisation'},{id:'ecart',l:'📈 Écart Budgétaire'}].map(t=>(
+          <button key={t.id} onClick={()=>setTab(t.id)} style={{padding:'8px 18px',borderRadius:8,border:'none',fontWeight:600,fontSize:13,cursor:'pointer',
+            background:tab===t.id?ACCENT:'#f1f5f9',color:tab===t.id?'white':'#475569'}}>{t.l}</button>
+        ))}
+      </div>
+
+      {/* Boutons d'action */}
+      <div style={{display:'flex',gap:8,marginBottom:16,flexWrap:'wrap'}}>
+        {!readOnly && <button onClick={save} disabled={saving} style={{padding:'9px 16px',background:ACCENT,color:'white',border:'none',borderRadius:8,fontWeight:600,fontSize:13,cursor:'pointer'}}>{saving?'...':'💾 Enregistrer'}</button>}
+        <button onClick={()=>printPdf(tab)} style={{padding:'9px 16px',background:'#f1f5f9',color:'#475569',border:'1px solid #cbd5e1',borderRadius:8,fontWeight:600,fontSize:13,cursor:'pointer'}}>🖨️ Imprimer PDF</button>
+        <button onClick={exportExcel} style={{padding:'9px 16px',background:'#dcfce7',color:'#15803d',border:'1px solid #86efac',borderRadius:8,fontWeight:600,fontSize:13,cursor:'pointer'}}>📊 Télécharger Excel</button>
+      </div>
+
+      {tab==='ecart' ? (
+        // ── ÉCART BUDGÉTAIRE (auto) ──────────────────────────────────────────
+        <div style={{background:'white',borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
+          <table style={{width:'100%',borderCollapse:'collapse',fontSize:13}}>
+            <thead><tr style={{background:'#075E54',color:'white'}}>
+              <th style={{padding:10,textAlign:'left'}}>Libellé</th>
+              <th style={{padding:10,textAlign:'right'}}>Prévision</th>
+              <th style={{padding:10,textAlign:'right'}}>Réalisation</th>
+              <th style={{padding:10,textAlign:'right'}}>Écart</th>
+            </tr></thead>
+            <tbody>
+              {[
+                ['Total Revenus', tPrev.totalRevenus, tReal.totalRevenus],
+                ['Total Charges', tPrev.totalCharges, tReal.totalCharges],
+                ['Marge Brute', tPrev.margeBrute, tReal.margeBrute],
+                ['CCIB', tPrev.ccib, tReal.ccib],
+                ['Total Impôts', tPrev.totalImpots, tReal.totalImpots],
+                ['Résultat après impôt', tPrev.resultat, tReal.resultat],
+              ].map(([lbl,p,r],i)=>{
+                const ecart = r-p
+                return (
+                  <tr key={i} style={{borderTop:'1px solid #e2e8f0',background:i%2?'#f8fafc':'white'}}>
+                    <td style={{padding:10,fontWeight:i>=2?700:400}}>{lbl}</td>
+                    <td style={{padding:10,textAlign:'right'}}>{fmt(p)}</td>
+                    <td style={{padding:10,textAlign:'right'}}>{fmt(r)}</td>
+                    <td style={{padding:10,textAlign:'right',fontWeight:700,color:ecart>=0?'#16a34a':'#dc2626'}}>{ecart>=0?'+':''}{fmt(ecart)}</td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        // ── FORMULAIRE PRÉVISION / RÉALISATION ───────────────────────────────
+        <div style={{background:'white',borderRadius:12,border:'1px solid #e2e8f0',padding:16}}>
+          {/* Revenus */}
+          <div style={{fontWeight:700,color:'#075E54',marginBottom:8,fontSize:14}}>💰 REVENUS</div>
+          <div style={{overflowX:'auto'}}>
+          <table style={{width:'100%',borderCollapse:'collapse',fontSize:13,marginBottom:8}}>
+            <thead><tr style={{background:'#e8f5ee'}}>
+              <th style={{padding:8,textAlign:'left',minWidth:60}}>N°</th>
+              <th style={{padding:8,textAlign:'left',minWidth:160}}>Libellé</th>
+              <th style={{padding:8,textAlign:'right'}}>Quantité</th>
+              <th style={{padding:8,textAlign:'right'}}>Prix Unitaire</th>
+              <th style={{padding:8,textAlign:'right'}}>Montant</th>
+              {!readOnly && <th style={{width:40}}></th>}
+            </tr></thead>
+            <tbody>
+              {data.revenus.map((r,i)=>(
+                <tr key={i} style={{borderTop:'1px solid #e2e8f0'}}>
+                  <td style={{padding:6}}>{r.code}</td>
+                  <td style={{padding:6}}><input value={r.label} onChange={e=>updateRevenu(i,'label',e.target.value)} disabled={readOnly} style={{width:'100%',minWidth:140,padding:'5px 8px',border:'1px solid #d1d5db',borderRadius:6,fontSize:13}} /></td>
+                  <td style={{padding:6,textAlign:'right'}}>{inp(r.qte,v=>updateRevenu(i,'qte',v))}</td>
+                  <td style={{padding:6,textAlign:'right'}}>{inp(r.pu,v=>updateRevenu(i,'pu',v),110)}</td>
+                  <td style={{padding:6,textAlign:'right',fontWeight:600}}>{fmt((r.qte||0)*(r.pu||0))}</td>
+                  {!readOnly && <td style={{textAlign:'center'}}>{i>=3 && <button onClick={()=>removeRevenu(i)} style={{background:'none',border:'none',color:'#ef4444',cursor:'pointer',fontSize:14}}>✕</button>}</td>}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          </div>
+          {!readOnly && <button onClick={addRevenu} style={{padding:'6px 14px',background:'#f0fdf4',color:'#15803d',border:'1px dashed #86efac',borderRadius:8,fontSize:13,cursor:'pointer',marginBottom:12}}>+ Ajouter une ligne de revenu</button>}
+          <div style={{background:'#d6f5e0',padding:'8px 12px',borderRadius:8,fontWeight:700,display:'flex',justifyContent:'space-between',marginBottom:20}}>
+            <span>TOTAL REVENUS (Chiffre d'affaires)</span><span>{fmt(totaux.totalRevenus)} FCFA</span>
+          </div>
+
+          {/* Charges */}
+          <div style={{fontWeight:700,color:'#075E54',marginBottom:8,fontSize:14}}>📉 CHARGES</div>
+          <div style={{overflowX:'auto'}}>
+          <table style={{width:'100%',borderCollapse:'collapse',fontSize:13,marginBottom:8}}>
+            <tbody>
+              {data.charges.flatMap((c,i)=>{
+                const rows=[]
+                if(c.groupe) rows.push(<tr key={'g'+i} style={{background:'#f8fafc'}}><td colSpan={3} style={{padding:'8px 6px 4px',fontSize:11,fontWeight:700,color:'#64748b'}}>{c.groupe}</td></tr>)
+                rows.push(
+                  <tr key={'c'+i} style={{borderTop:'1px solid #f1f5f9'}}>
+                    <td style={{padding:6,width:50}}>{c.code}</td>
+                    <td style={{padding:6}}>{c.label}</td>
+                    <td style={{padding:6,textAlign:'right',width:140}}>{inp(c.montant,v=>updateCharge(i,v),120)}</td>
+                  </tr>
+                )
+                return rows
+              })}
+            </tbody>
+          </table>
+          </div>
+          <div style={{background:'#fef2f2',padding:'8px 12px',borderRadius:8,fontWeight:700,display:'flex',justifyContent:'space-between',marginBottom:8}}>
+            <span>TOTAL CHARGES</span><span>{fmt(totaux.totalCharges)} FCFA</span>
+          </div>
+          <div style={{background:'#eff6ff',padding:'8px 12px',borderRadius:8,fontWeight:700,display:'flex',justifyContent:'space-between',marginBottom:20}}>
+            <span>MARGE BRUTE</span><span>{fmt(totaux.margeBrute)} FCFA</span>
+          </div>
+
+          {/* Impôts */}
+          <div style={{fontWeight:700,color:'#075E54',marginBottom:8,fontSize:14}}>🏛️ IMPÔTS & TAXES</div>
+          <div style={{overflowX:'auto'}}>
+          <table style={{width:'100%',borderCollapse:'collapse',fontSize:13,marginBottom:8}}>
+            <tbody>
+              {totaux.impotsAvecCcib.map((im,i)=>(
+                <tr key={i} style={{borderTop:'1px solid #f1f5f9'}}>
+                  <td style={{padding:6,width:50}}>{im.code}</td>
+                  <td style={{padding:6}}>{im.label}{im.auto && <span style={{marginLeft:8,fontSize:11,background:'#dbeafe',color:'#1d4ed8',borderRadius:6,padding:'1px 8px'}}>auto</span>}</td>
+                  <td style={{padding:6,textAlign:'right',width:140}}>
+                    {im.auto ? <span style={{fontWeight:700,color:'#1d4ed8'}}>{fmt(im.montant)}</span> : inp(data.impots[i]?.montant,v=>updateImpot(i,v),120)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          </div>
+          <div style={{background:'#075E54',color:'white',padding:'10px 12px',borderRadius:8,fontWeight:800,display:'flex',justifyContent:'space-between',fontSize:15}}>
+            <span>RÉSULTAT APRÈS IMPÔT</span><span>{fmt(totaux.resultat)} FCFA</span>
+          </div>
+          <div style={{marginTop:10,fontSize:12,color:'#64748b',fontStyle:'italic'}}>
+            💡 La CCIB est calculée automatiquement selon la tranche du chiffre d'affaires ({fmt(totaux.totalRevenus)} FCFA → {fmt(totaux.ccib)} FCFA)
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+
 // ── CHAT GLOBAL (temps réel) ─────────────────────────────────────────────────
 function ChatPage({ profile, toast }) {
   const [messages, setMessages] = useState([])
@@ -8575,6 +8959,7 @@ export default function ComptaPro() {
 
   const PAGE_TITLES = {
     chat:'Messagerie',
+    controle_budget:'Contrôle Budgétaire',
     users:'Gestion des utilisateurs',
     fournisseurs:'Fournisseurs', stock:'Articles & Stock', 'stock-entree':'Entrée de stock',
     'stock-sortie':'Sortie de stock', mouvements:'Mouvements de stock', inventaire:'Inventaire',
@@ -8646,6 +9031,7 @@ export default function ComptaPro() {
       case 'journal_banque':    return <JournalPage table="compta_journal_banque" title="Journal Banque" icon="🏛️" journalType="banque" {...sp} />
       case 'journal_mobile':    return <JournalPage table="compta_journal_mobile" title="Journal Mobile Money" icon="📱" journalType="mobile" {...sp} />
       case 'users':          return isSuperAdmin ? <UsersManagementPage toast={toast} /> : <Dashboard {...sp} setPage={setPage} />
+      case 'controle_budget': return <ControleBudgetairePage {...sp} readOnly={getReadOnly('controle_budget')} />
       case 'chat':           return <ChatPage profile={profile} toast={toast} />
       case 'parametres':     return (isSuperAdmin||profile?.role==='admin_societe'||profile?.role==='admin') ? <ParametresPage toast={toast} companies={companies} companyId={companyId} /> : <Dashboard {...sp} setPage={setPage} />
       case 'mes_utilisateurs': return (profile?.role==='admin_societe'||profile?.role==='admin'||isSuperAdmin) ? <MesUtilisateursPage toast={toast} companies={companies} companyId={companyId} profile={profile} /> : <Dashboard {...sp} setPage={setPage} />
