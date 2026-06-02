@@ -6022,7 +6022,7 @@ function ControleBudgetairePage({ companies, companyId, toast, readOnly=false })
     { code:'P2', label:'Hors normes', qte:0, pu:0 },
     { code:'P3', label:'BIOCHAR', qte:0, pu:0 },
   ])
-  const emptyCharges = () => BUDGET_CHARGES.map(c=>({...c, montant:0}))
+  const emptyCharges = () => BUDGET_CHARGES.map(c=>({...c, qte:0, pu:0, montant:0}))
   const emptyImpots  = () => BUDGET_IMPOTS.map(c=>({...c, montant:0}))
 
   const [prev, setPrev] = useState({ revenus:emptyRevenus(), charges:emptyCharges(), impots:emptyImpots() })
@@ -6046,7 +6046,7 @@ function ControleBudgetairePage({ companies, companyId, toast, readOnly=false })
   // ── Calculs ───────────────────────────────────────────────────────────────
   const calcTotaux = (data) => {
     const totalRevenus = data.revenus.reduce((s,r)=>s+(r.qte||0)*(r.pu||0), 0)
-    const totalCharges = data.charges.reduce((s,c)=>s+(c.montant||0), 0)
+    const totalCharges = data.charges.reduce((s,c)=>s+((c.qte||0)*(c.pu||0) || c.montant||0), 0)
     const margeBrute = totalRevenus - totalCharges
     // CCIB auto selon le total revenus (chiffre d'affaires)
     const ccib = calcCCIB(totalRevenus)
@@ -6080,9 +6080,9 @@ function ControleBudgetairePage({ companies, companyId, toast, readOnly=false })
   }
   const addRevenu = () => setData(d=>({...d, revenus:[...d.revenus, { code:'P'+(d.revenus.length+1), label:'', qte:0, pu:0 }]}))
   const removeRevenu = (i) => setData(d=>({...d, revenus:d.revenus.filter((_,idx)=>idx!==i)}))
-  const updateCharge = (i, val) => setData(d=>{ const c=[...d.charges]; c[i]={...c[i],montant:parseFloat(val)||0}; return {...d, charges:c} })
-  const updateChargeLabel = (i, val) => setData(d=>{ const c=[...d.charges]; c[i]={...c[i],label:val}; return {...d, charges:c} })
-  const addCharge = () => setData(d=>({...d, charges:[...d.charges, { code:'C'+(d.charges.length+1), label:'', montant:0, custom:true }]}))
+  const updateChargeField = (i, field, val) => setData(d=>{ const c=[...d.charges]; c[i]={...c[i],[field]:field==='label'?val:(parseFloat(val)||0)}; return {...d, charges:c} })
+  const updateChargeLabel = (i, val) => updateChargeField(i,'label',val)
+  const addCharge = () => setData(d=>({...d, charges:[...d.charges, { code:'C'+(d.charges.length+1), label:'', qte:0, pu:0, montant:0, custom:true }]}))
   const removeCharge = (i) => setData(d=>({...d, charges:d.charges.filter((_,idx)=>idx!==i)}))
   const updateImpot = (i, val) => setData(d=>{ const im=[...d.impots]; im[i]={...im[i],montant:parseFloat(val)||0}; return {...d, impots:im} })
 
@@ -6117,7 +6117,7 @@ function ControleBudgetairePage({ companies, companyId, toast, readOnly=false })
       rows.push(['','TOTAL REVENUS','','', totaux.totalRevenus])
       rows.push([])
       rows.push(['','CHARGES','','',''])
-      data.charges.forEach(c=> rows.push([c.code, c.label, '','', c.montant]))
+      data.charges.forEach(c=> rows.push([c.code, c.label, c.qte||'', c.pu||'', (c.qte||0)*(c.pu||0)||c.montant||0]))
       rows.push(['','TOTAL CHARGES','','', totaux.totalCharges])
       rows.push(['','MARGE BRUTE','','', totaux.margeBrute])
       rows.push([])
@@ -6170,7 +6170,7 @@ function ControleBudgetairePage({ companies, companyId, toast, readOnly=false })
         </tbody></table>`
       } else {
         const revRows = s.data.revenus.map(r=>`<tr><td>${r.code}</td><td>${r.label}</td><td class="r">${fmt(r.qte)}</td><td class="r">${fmt(r.pu)}</td><td class="r">${fmt((r.qte||0)*(r.pu||0))}</td></tr>`).join('')
-        const chRows = s.data.charges.map(c=>`<tr><td>${c.code}</td><td>${c.label}</td><td colspan="2"></td><td class="r">${fmt(c.montant)}</td></tr>`).join('')
+        const chRows = s.data.charges.map(c=>`<tr><td>${c.code}</td><td>${c.label}</td><td class="r">${fmt(c.qte)}</td><td class="r">${fmt(c.pu)}</td><td class="r">${fmt((c.qte||0)*(c.pu||0)||c.montant||0)}</td></tr>`).join('')
         const imRows = s.totaux.impotsAvecCcib.map(i=>`<tr><td>${i.code}</td><td>${i.label}${i.auto?' (auto)':''}</td><td colspan="2"></td><td class="r">${fmt(i.montant)}</td></tr>`).join('')
         body += `<h3>${s.titre}</h3><table><thead><tr><th>N°</th><th>Libellé</th><th class="r">Qté</th><th class="r">P.U.</th><th class="r">Montant</th></tr></thead><tbody>
           ${revRows}
@@ -6305,19 +6305,28 @@ function ControleBudgetairePage({ companies, companyId, toast, readOnly=false })
           <div style={{fontWeight:700,color:'#075E54',marginBottom:8,fontSize:14}}>📉 CHARGES</div>
           <div style={{overflowX:'auto'}}>
           <table style={{width:'100%',borderCollapse:'collapse',fontSize:13,marginBottom:8}}>
+            <thead><tr style={{background:'#fef2f2'}}>
+              <th style={{padding:8,textAlign:'left',minWidth:50}}>N°</th>
+              <th style={{padding:8,textAlign:'left',minWidth:160}}>Libellé</th>
+              <th style={{padding:8,textAlign:'right'}}>Quantité</th>
+              <th style={{padding:8,textAlign:'right'}}>Prix Unitaire</th>
+              <th style={{padding:8,textAlign:'right'}}>Montant</th>
+              {!readOnly && <th style={{width:40}}></th>}
+            </tr></thead>
             <tbody>
               {data.charges.flatMap((c,i)=>{
                 const rows=[]
-                if(c.groupe) rows.push(<tr key={'g'+i} style={{background:'#f8fafc'}}><td colSpan={4} style={{padding:'8px 6px 4px',fontSize:11,fontWeight:700,color:'#64748b'}}>{c.groupe}</td></tr>)
+                const montantLigne = (c.qte||0)*(c.pu||0) || c.montant||0
+                if(c.groupe) rows.push(<tr key={'g'+i} style={{background:'#f8fafc'}}><td colSpan={6} style={{padding:'8px 6px 4px',fontSize:11,fontWeight:700,color:'#64748b'}}>{c.groupe}</td></tr>)
                 rows.push(
                   <tr key={'c'+i} style={{borderTop:'1px solid #f1f5f9'}}>
                     <td style={{padding:6,width:50}}>{c.code}</td>
                     <td style={{padding:6}}>
-                      {c.custom
-                        ? <input value={c.label} onChange={e=>updateChargeLabel(i,e.target.value)} disabled={readOnly} placeholder="Libellé de la charge" style={{width:'100%',minWidth:140,padding:'5px 8px',border:'1px solid #d1d5db',borderRadius:6,fontSize:13}} />
-                        : c.label}
+                      <input value={c.label} onChange={e=>updateChargeLabel(i,e.target.value)} disabled={readOnly} placeholder="Libellé de la charge" style={{width:'100%',minWidth:140,padding:'5px 8px',border:'1px solid #d1d5db',borderRadius:6,fontSize:13}} />
                     </td>
-                    <td style={{padding:6,textAlign:'right',width:140}}>{inp(c.montant,v=>updateCharge(i,v),120)}</td>
+                    <td style={{padding:6,textAlign:'right'}}>{inp(c.qte,v=>updateChargeField(i,'qte',v))}</td>
+                    <td style={{padding:6,textAlign:'right'}}>{inp(c.pu,v=>updateChargeField(i,'pu',v),110)}</td>
+                    <td style={{padding:6,textAlign:'right',fontWeight:600}}>{fmt(montantLigne)}</td>
                     {!readOnly && <td style={{textAlign:'center',width:40}}>{c.custom && <button onClick={()=>removeCharge(i)} style={{background:'none',border:'none',color:'#ef4444',cursor:'pointer',fontSize:14}}>✕</button>}</td>}
                   </tr>
                 )
