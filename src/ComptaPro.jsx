@@ -5964,8 +5964,13 @@ function ChatPage({ profile, toast }) {
   const [sending, setSending] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [myUid, setMyUid] = useState(null)
+  const [recording, setRecording] = useState(false)
+  const [recTime, setRecTime] = useState(0)
   const endRef = useRef(null)
   const fileRef = useRef(null)
+  const mediaRecorderRef = useRef(null)
+  const chunksRef = useRef([])
+  const recTimerRef = useRef(null)
 
   const scrollBottom = () => { setTimeout(()=>endRef.current?.scrollIntoView({behavior:'smooth'}), 50) }
 
@@ -6035,6 +6040,60 @@ function ChatPage({ profile, toast }) {
     await supabase.from('compta_chat_messages').delete().eq('id', id)
   }
 
+  // ── Enregistrement vocal ──────────────────────────────────────────────
+  const startRecording = async()=>{
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio:true })
+      const mr = new MediaRecorder(stream)
+      mediaRecorderRef.current = mr
+      chunksRef.current = []
+      mr.ondataavailable = e=>{ if(e.data.size>0) chunksRef.current.push(e.data) }
+      mr.onstop = async()=>{
+        stream.getTracks().forEach(t=>t.stop())
+        const blob = new Blob(chunksRef.current, { type:'audio/webm' })
+        await uploadAudio(blob)
+      }
+      mr.start()
+      setRecording(true)
+      setRecTime(0)
+      recTimerRef.current = setInterval(()=>setRecTime(t=>t+1), 1000)
+    } catch(err) {
+      toast.error("Micro non accessible. Autorisez l'accès au microphone.")
+    }
+  }
+
+  const stopRecording = (cancel=false)=>{
+    if(recTimerRef.current) clearInterval(recTimerRef.current)
+    setRecording(false)
+    setRecTime(0)
+    if(mediaRecorderRef.current && mediaRecorderRef.current.state!=='inactive'){
+      if(cancel) chunksRef.current = []
+      mediaRecorderRef.current.stop()
+    }
+  }
+
+  const uploadAudio = async(blob)=>{
+    if(!blob || blob.size===0) return
+    setUploading(true)
+    try {
+      const { data:ad } = await supabase.auth.getUser()
+      const uid = ad?.user?.id
+      const path = `${uid}/${Date.now()}.webm`
+      const { error:upErr } = await supabase.storage.from('chat-audios').upload(path, blob, { contentType:'audio/webm' })
+      if(upErr){ toast.error("Erreur upload audio : "+upErr.message); setUploading(false); return }
+      const { data:urlData } = supabase.storage.from('chat-audios').getPublicUrl(path)
+      await supabase.from('compta_chat_messages').insert({
+        user_id: uid,
+        auteur_nom: profile?.nom || ad?.user?.email || 'Utilisateur',
+        auteur_role: profile?.role || 'utilisateur_simple',
+        audio_url: urlData.publicUrl,
+      })
+    } catch(err) { toast.error("Erreur : "+err.message) }
+    setUploading(false)
+  }
+
+  const fmtRecTime = (s)=> `${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`
+
   const roleBadge = (role) => {
     if(role==='super_admin') return { label:'Super Admin', color:'#f59e0b' }
     if(role==='admin_societe'||role==='admin') return { label:'Admin', color:'#3b82f6' }
@@ -6067,6 +6126,7 @@ function ChatPage({ profile, toast }) {
                   </div>
                 )}
                 {m.image_url && <img src={m.image_url} alt="img" style={{maxWidth:'100%',borderRadius:8,marginBottom:m.message?6:0,cursor:'pointer'}} onClick={()=>window.open(m.image_url,'_blank')} />}
+                {m.audio_url && <audio controls src={m.audio_url} style={{maxWidth:'220px',height:40,marginBottom:m.message?6:0}} />}
                 {m.message && <div style={{fontSize:14,color:'#1e293b',whiteSpace:'pre-wrap',wordBreak:'break-word'}}>{m.message}</div>}
                 <div style={{fontSize:10,color:'#94a3b8',textAlign:'right',marginTop:2}}>{fmtTime(m.created_at)}</div>
                 {(mine || profile?.role==='super_admin') && (
@@ -6082,19 +6142,45 @@ function ChatPage({ profile, toast }) {
 
       {/* Zone saisie */}
       <div style={{display:'flex',gap:8,alignItems:'center',background:'white',borderRadius:12,padding:8,border:'1px solid #e2e8f0'}}>
-        <input ref={fileRef} type="file" accept="image/*" onChange={sendImage} style={{display:'none'}} />
-        <button onClick={()=>fileRef.current?.click()} disabled={uploading} title="Envoyer une image"
-          style={{background:'#f0f2f5',border:'none',borderRadius:10,padding:'10px 12px',cursor:uploading?'wait':'pointer',fontSize:18}}>
-          {uploading?'⏳':'📷'}
-        </button>
-        <input value={text} onChange={e=>setText(e.target.value)}
-          onKeyDown={e=>{ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); send() } }}
-          placeholder="Écrivez un message…"
-          style={{flex:1,padding:'11px 14px',border:'1px solid #e2e8f0',borderRadius:20,fontSize:14,outline:'none'}} />
-        <button onClick={send} disabled={sending||!text.trim()}
-          style={{background:'#25D366',border:'none',borderRadius:'50%',width:44,height:44,cursor:'pointer',fontSize:18,color:'white',display:'flex',alignItems:'center',justifyContent:'center'}}>
-          ➤
-        </button>
+        {recording ? (
+          <>
+            <button onClick={()=>stopRecording(true)} title="Annuler"
+              style={{background:'#fee2e2',border:'none',borderRadius:10,padding:'10px 12px',cursor:'pointer',fontSize:18,color:'#dc2626'}}>
+              🗑️
+            </button>
+            <div style={{flex:1,display:'flex',alignItems:'center',gap:10,padding:'11px 14px',color:'#dc2626',fontSize:14}}>
+              <span style={{width:10,height:10,borderRadius:'50%',background:'#dc2626',animation:'pulse 1s infinite'}}></span>
+              <span style={{fontWeight:600}}>Enregistrement… {fmtRecTime(recTime)}</span>
+            </div>
+            <button onClick={()=>stopRecording(false)} title="Envoyer le vocal"
+              style={{background:'#25D366',border:'none',borderRadius:'50%',width:44,height:44,cursor:'pointer',fontSize:18,color:'white',display:'flex',alignItems:'center',justifyContent:'center'}}>
+              ➤
+            </button>
+          </>
+        ) : (
+          <>
+            <input ref={fileRef} type="file" accept="image/*" onChange={sendImage} style={{display:'none'}} />
+            <button onClick={()=>fileRef.current?.click()} disabled={uploading} title="Envoyer une image"
+              style={{background:'#f0f2f5',border:'none',borderRadius:10,padding:'10px 12px',cursor:uploading?'wait':'pointer',fontSize:18}}>
+              {uploading?'⏳':'📷'}
+            </button>
+            <input value={text} onChange={e=>setText(e.target.value)}
+              onKeyDown={e=>{ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); send() } }}
+              placeholder="Écrivez un message…"
+              style={{flex:1,padding:'11px 14px',border:'1px solid #e2e8f0',borderRadius:20,fontSize:14,outline:'none'}} />
+            {text.trim() ? (
+              <button onClick={send} disabled={sending}
+                style={{background:'#25D366',border:'none',borderRadius:'50%',width:44,height:44,cursor:'pointer',fontSize:18,color:'white',display:'flex',alignItems:'center',justifyContent:'center'}}>
+                ➤
+              </button>
+            ) : (
+              <button onClick={startRecording} disabled={uploading} title="Enregistrer un vocal"
+                style={{background:'#25D366',border:'none',borderRadius:'50%',width:44,height:44,cursor:'pointer',fontSize:20,color:'white',display:'flex',alignItems:'center',justifyContent:'center'}}>
+                🎤
+              </button>
+            )}
+          </>
+        )}
       </div>
     </div>
   )
@@ -8644,29 +8730,24 @@ export default function ComptaPro() {
         </div>
       </div>
 
-      {/* ── Bouton WhatsApp flottant ─────────────────────────────────────── */}
-      <a
-        href={`https://wa.me/${SUPER_ADMIN_WHATSAPP}`}
-        target="_blank"
-        rel="noopener noreferrer"
-        title="Contacter l'administrateur sur WhatsApp"
+      {/* ── Bouton Messagerie flottant ──────────────────────────────────── */}
+      <button
+        onClick={()=>setPage('chat')}
+        title="Ouvrir la messagerie"
         style={{
           position:'fixed', bottom:24, right:24, zIndex:9999,
           width:56, height:56, borderRadius:'50%',
-          background:'#25d366',
+          background:'#25D366', border:'none',
           boxShadow:'0 4px 24px rgba(37,211,102,0.55)',
           display:'flex', alignItems:'center', justifyContent:'center',
-          textDecoration:'none', cursor:'pointer',
+          cursor:'pointer',
           transition:'transform 0.18s, box-shadow 0.18s',
         }}
         onMouseEnter={e=>{ e.currentTarget.style.transform='scale(1.12)'; e.currentTarget.style.boxShadow='0 6px 32px rgba(37,211,102,0.7)' }}
         onMouseLeave={e=>{ e.currentTarget.style.transform='scale(1)'; e.currentTarget.style.boxShadow='0 4px 24px rgba(37,211,102,0.55)' }}
       >
-        <svg width="30" height="30" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <path d="M16 3C8.832 3 3 8.832 3 16c0 2.29.614 4.437 1.682 6.29L3 29l6.9-1.655A12.93 12.93 0 0 0 16 29c7.168 0 13-5.832 13-13S23.168 3 16 3Z" fill="white"/>
-          <path d="M21.75 19.25c-.32-.16-1.89-.93-2.18-1.04-.29-.1-.5-.16-.71.16-.21.32-.82 1.04-.99 1.25-.17.21-.35.24-.65.08-.32-.16-1.33-.49-2.53-1.56-.94-.83-1.57-1.86-1.75-2.18-.18-.32-.02-.49.13-.65.14-.14.32-.37.48-.55.16-.18.21-.32.32-.53.1-.21.05-.39-.03-.55-.08-.16-.71-1.71-.97-2.34-.26-.62-.52-.53-.71-.54h-.61c-.21 0-.55.08-.84.39-.29.32-1.1 1.07-1.1 2.62s1.13 3.04 1.29 3.25c.16.21 2.22 3.38 5.38 4.74.75.32 1.34.52 1.8.66.76.24 1.45.21 2 .13.61-.09 1.89-.77 2.16-1.52.26-.75.26-1.39.18-1.52-.08-.13-.29-.21-.61-.37Z" fill="#25d366"/>
-        </svg>
-      </a>
+        <span style={{fontSize:26}}>💬</span>
+      </button>
     </div>
   )
 }
