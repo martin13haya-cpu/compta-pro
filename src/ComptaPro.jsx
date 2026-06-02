@@ -1564,7 +1564,7 @@ function CompaniesPage({ companies, refresh, toast, isSuperAdmin=false, currentU
       toast.error('Vous ne pouvez pas modifier la société d\'un autre utilisateur.')
       return
     }
-    setForm(c?{...c}:{raison_sociale:'',rccm:'',adresse:'',tel:'',email:'',logo_url:''})
+    setForm(c?{...c}:{raison_sociale:'',rccm:'',adresse:'',tel:'',email:'',logo_url:'',type_activite:'industrielle'})
     setModal(c?'edit':'add')
   }
   const close = () => setModal(null)
@@ -1572,7 +1572,7 @@ function CompaniesPage({ companies, refresh, toast, isSuperAdmin=false, currentU
   const save = async e => {
     e.preventDefault(); setSaving(true)
     const uid = (await supabase.auth.getUser()).data?.user?.id
-    const pay = { raison_sociale:form.raison_sociale, rccm:form.rccm, adresse:form.adresse, tel:form.tel, email:form.email, logo_url:form.logo_url||null }
+    const pay = { raison_sociale:form.raison_sociale, rccm:form.rccm, adresse:form.adresse, tel:form.tel, email:form.email, logo_url:form.logo_url||null, type_activite:form.type_activite||'industrielle' }
     const { error } = modal==='add'
       ? await supabase.from('compta_companies').insert({...pay,user_id:uid})
       : await supabase.from('compta_companies').update(pay).eq('id',form.id)
@@ -1633,6 +1633,8 @@ function CompaniesPage({ companies, refresh, toast, isSuperAdmin=false, currentU
             <Input label="Téléphone" name="tel" value={form.tel} onChange={set} />
             <Span2><Input label="Adresse" name="adresse" value={form.adresse} onChange={set} /></Span2>
             <Input label="Email" name="email" type="email" value={form.email} onChange={set} />
+            <Sel label="Type d'activité (pour l'IS)" name="type_activite" value={form.type_activite||'industrielle'} onChange={set}
+              options={[{value:'industrielle',label:'Industrielle (IS 25%)'},{value:'commerciale',label:'Commerciale (IS 30%)'}]} />
             <Span2>
               <div style={{marginBottom:4}}>
                 <label style={{fontSize:12,fontWeight:600,color:'#374151',display:'block',marginBottom:6}}>Logo de l'entreprise</label>
@@ -6000,7 +6002,7 @@ const BUDGET_CHARGES = [
 ]
 // Impôts (après marge brute) — CCIB est auto-calculé
 const BUDGET_IMPOTS = [
-  { code:'C16', label:'Impôt sur les sociétés' },
+  { code:'C16', label:'Impôt sur les sociétés', autoIS:true },
   { code:'C17', label:'TEO' },
   { code:'C18', label:'CCIB', auto:true },
   { code:'C19', label:'Patente' },
@@ -6048,10 +6050,22 @@ function ControleBudgetairePage({ companies, companyId, toast, readOnly=false })
     const margeBrute = totalRevenus - totalCharges
     // CCIB auto selon le total revenus (chiffre d'affaires)
     const ccib = calcCCIB(totalRevenus)
-    const impotsAvecCcib = data.impots.map(i=> i.auto ? {...i, montant:ccib} : i)
+    // IS auto : 25% (industrielle) ou 30% (commerciale) sur la marge brute,
+    // minimum 1% du total revenus si supérieur
+    const company = companies.find(c=>c.id===(companyId||companies[0]?.id))
+    const tauxIS = company?.type_activite==='commerciale' ? 0.30 : 0.25
+    const isParTaux = Math.max(0, margeBrute) * tauxIS
+    const isMinimum = totalRevenus * 0.01
+    const impotSocietes = Math.round(Math.max(isParTaux, isMinimum))
+    // Injecter IS (C16) et CCIB (C18) automatiquement
+    const impotsAvecCcib = data.impots.map(i=>{
+      if(i.autoIS) return {...i, montant:impotSocietes}
+      if(i.auto) return {...i, montant:ccib}
+      return i
+    })
     const totalImpots = impotsAvecCcib.reduce((s,i)=>s+(i.montant||0), 0)
     const resultat = margeBrute - totalImpots
-    return { totalRevenus, totalCharges, margeBrute, ccib, totalImpots, resultat, impotsAvecCcib }
+    return { totalRevenus, totalCharges, margeBrute, ccib, impotSocietes, tauxIS, totalImpots, resultat, impotsAvecCcib }
   }
   const tPrev = calcTotaux(prev)
   const tReal = calcTotaux(real)
@@ -6325,15 +6339,17 @@ function ControleBudgetairePage({ companies, companyId, toast, readOnly=false })
           <div style={{overflowX:'auto'}}>
           <table style={{width:'100%',borderCollapse:'collapse',fontSize:13,marginBottom:8}}>
             <tbody>
-              {totaux.impotsAvecCcib.map((im,i)=>(
+              {totaux.impotsAvecCcib.map((im,i)=>{
+                const isAuto = im.auto || im.autoIS
+                return (
                 <tr key={i} style={{borderTop:'1px solid #f1f5f9'}}>
                   <td style={{padding:6,width:50}}>{im.code}</td>
-                  <td style={{padding:6}}>{im.label}{im.auto && <span style={{marginLeft:8,fontSize:11,background:'#dbeafe',color:'#1d4ed8',borderRadius:6,padding:'1px 8px'}}>auto</span>}</td>
+                  <td style={{padding:6}}>{im.label}{isAuto && <span style={{marginLeft:8,fontSize:11,background:'#dbeafe',color:'#1d4ed8',borderRadius:6,padding:'1px 8px'}}>auto</span>}</td>
                   <td style={{padding:6,textAlign:'right',width:140}}>
-                    {im.auto ? <span style={{fontWeight:700,color:'#1d4ed8'}}>{fmt(im.montant)}</span> : inp(data.impots[i]?.montant,v=>updateImpot(i,v),120)}
+                    {isAuto ? <span style={{fontWeight:700,color:'#1d4ed8'}}>{fmt(im.montant)}</span> : inp(data.impots[i]?.montant,v=>updateImpot(i,v),120)}
                   </td>
                 </tr>
-              ))}
+              )})}
             </tbody>
           </table>
           </div>
@@ -6341,7 +6357,8 @@ function ControleBudgetairePage({ companies, companyId, toast, readOnly=false })
             <span>RÉSULTAT APRÈS IMPÔT</span><span>{fmt(totaux.resultat)} FCFA</span>
           </div>
           <div style={{marginTop:10,fontSize:12,color:'#64748b',fontStyle:'italic'}}>
-            💡 La CCIB est calculée automatiquement selon la tranche du chiffre d'affaires ({fmt(totaux.totalRevenus)} FCFA → {fmt(totaux.ccib)} FCFA)
+            💡 CCIB auto selon la tranche du CA ({fmt(totaux.totalRevenus)} → {fmt(totaux.ccib)} FCFA)<br/>
+            💡 IS auto : {(totaux.tauxIS*100)}% de la marge brute, minimum 1% du CA → {fmt(totaux.impotSocietes)} FCFA
           </div>
         </div>
       )}
