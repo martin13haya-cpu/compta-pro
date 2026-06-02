@@ -101,7 +101,7 @@ function buildPrintDocument(html, filename) {
   const pdfScript = '<scr'+'ipt>' + `
     function __downloadPDF(){
       var btn=document.getElementById('__pdfbtn');
-      if(typeof html2pdf==='undefined'){ alert('La librairie PDF n\'est pas encore chargée. Vérifiez votre connexion internet et réessayez.'); return; }
+      if(typeof html2pdf==="undefined"){ alert("La librairie PDF nest pas encore chargee. Verifiez votre connexion internet et reessayez."); return; }
       btn.textContent='⏳ Génération...'; btn.disabled=true;
       var tb=document.getElementById('__toolbar'); tb.style.display='none';
       var opt={ margin:[8,8,8,8], filename:'${fname}.pdf', image:{type:'jpeg',quality:0.98}, html2canvas:{scale:2,useCORS:true,logging:false}, jsPDF:{unit:'mm',format:'a4',orientation:'portrait'} };
@@ -138,31 +138,24 @@ function buildPrintDocument(html, filename) {
 }
 
 // Ouvre un document HTML pour impression/PDF — compatible Web ET Android (Capacitor)
+// Utilise un blob (URL.createObjectURL) car document.write bloque les scripts externes (html2pdf)
 function openPrintWindow(html, filename) {
   const fullHtml = buildPrintDocument(html, filename)
-  // Tentative classique (navigateur web)
-  try {
-    const w = window.open('', '_blank')
-    if (w && w.document) {
-      w.document.write(fullHtml)
-      w.document.close()
-      return
-    }
-  } catch (e) { /* fallback ci-dessous */ }
-
-  // Fallback Android/Capacitor : créer un blob et l'ouvrir
   try {
     const blob = new Blob([fullHtml], { type: 'text/html' })
     const url = URL.createObjectURL(blob)
     const opened = window.open(url, '_blank')
     if (!opened) {
+      // Fallback : navigation directe (Android sans popup)
       const a = document.createElement('a')
       a.href = url; a.target = '_blank'; a.rel = 'noopener'
+      document.body.appendChild(a)
       a.click()
+      document.body.removeChild(a)
     }
-    setTimeout(()=>URL.revokeObjectURL(url), 60000)
+    setTimeout(()=>URL.revokeObjectURL(url), 120000)
   } catch (e) {
-    alert("Impossible d'ouvrir le document. Réessayez ou contactez le support.")
+    alert("Impossible d'ouvrir le document : " + e.message)
   }
 }
 const ACCENT  = '#25D366'
