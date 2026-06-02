@@ -97,37 +97,44 @@ const today   = () => new Date().toISOString().slice(0, 10)
 // Injecte une barre d'actions (Retour, Télécharger PDF, Imprimer) dans le HTML
 function buildPrintDocument(html, filename) {
   const fname = (filename || 'document').replace(/[^a-zA-Z0-9_-]/g,'_')
-  // Barre de boutons fixée en haut + script html2pdf
+  const scriptTag = '<scr'+'ipt src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></scr'+'ipt>'
+  const pdfScript = '<scr'+'ipt>' + `
+    function __downloadPDF(){
+      var btn=document.getElementById('__pdfbtn');
+      if(typeof html2pdf==='undefined'){ alert('La librairie PDF n\'est pas encore chargée. Vérifiez votre connexion internet et réessayez.'); return; }
+      btn.textContent='⏳ Génération...'; btn.disabled=true;
+      var tb=document.getElementById('__toolbar'); tb.style.display='none';
+      var opt={ margin:[8,8,8,8], filename:'${fname}.pdf', image:{type:'jpeg',quality:0.98}, html2canvas:{scale:2,useCORS:true,logging:false}, jsPDF:{unit:'mm',format:'a4',orientation:'portrait'} };
+      var content=document.getElementById('__content')||document.body;
+      html2pdf().set(opt).from(content).save().then(function(){
+        tb.style.display='flex'; btn.textContent='📥 Télécharger PDF'; btn.disabled=false;
+      }).catch(function(err){
+        tb.style.display='flex'; btn.textContent='📥 Télécharger PDF'; btn.disabled=false;
+        alert('Erreur PDF : '+(err&&err.message?err.message:'inconnue'));
+      });
+    }
+  ` + '</scr'+'ipt>'
+
   const toolbar = `
     <div id="__toolbar" style="position:sticky;top:0;left:0;right:0;z-index:99999;background:#075E54;padding:10px 14px;display:flex;gap:10px;align-items:center;box-shadow:0 2px 8px rgba(0,0,0,0.2)">
       <button onclick="history.length>1?history.back():window.close()" style="background:white;color:#075E54;border:none;border-radius:8px;padding:9px 16px;font-size:14px;font-weight:700;cursor:pointer">← Retour</button>
-      <button id="__pdfbtn" style="background:#25D366;color:white;border:none;border-radius:8px;padding:9px 16px;font-size:14px;font-weight:700;cursor:pointer">📥 Télécharger PDF</button>
+      <button id="__pdfbtn" onclick="__downloadPDF()" style="background:#25D366;color:white;border:none;border-radius:8px;padding:9px 16px;font-size:14px;font-weight:700;cursor:pointer">📥 Télécharger PDF</button>
       <button onclick="window.print()" style="background:#f0f2f5;color:#1e293b;border:none;border-radius:8px;padding:9px 16px;font-size:14px;font-weight:700;cursor:pointer">🖨️ Imprimer</button>
     </div>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
-    <script>
-      document.getElementById('__pdfbtn').addEventListener('click', function(){
-        var btn=this; btn.textContent='⏳ Génération...'; btn.disabled=true;
-        var tb=document.getElementById('__toolbar'); tb.style.display='none';
-        var opt={ margin:[8,8,8,8], filename:'${fname}.pdf', image:{type:'jpeg',quality:0.98}, html2canvas:{scale:2,useCORS:true}, jsPDF:{unit:'mm',format:'a4',orientation:'portrait'} };
-        html2pdf().set(opt).from(document.body).save().then(function(){
-          tb.style.display='flex'; btn.textContent='📥 Télécharger PDF'; btn.disabled=false;
-        }).catch(function(){
-          tb.style.display='flex'; btn.textContent='📥 Télécharger PDF'; btn.disabled=false;
-          alert('Erreur lors de la génération du PDF');
-        });
-      });
-      @media print { #__toolbar { display:none !important } }
-    <\/script>
     <style>@media print { #__toolbar { display:none !important } }</style>
   `
-  // Insérer la toolbar juste après <body>
+  // Envelopper le contenu original dans une div #__content (pour le PDF)
+  // et insérer toolbar + scripts
   if (html.includes('<body>')) {
-    return html.replace('<body>', '<body>' + toolbar)
+    return html
+      .replace('<body>', '<body>' + scriptTag + pdfScript + toolbar + '<div id="__content">')
+      .replace('</body>', '</div></body>')
   } else if (html.includes('<body')) {
-    return html.replace(/(<body[^>]*>)/, '$1' + toolbar)
+    return html
+      .replace(/(<body[^>]*>)/, '$1' + scriptTag + pdfScript + toolbar + '<div id="__content">')
+      .replace('</body>', '</div></body>')
   }
-  return toolbar + html
+  return scriptTag + pdfScript + toolbar + '<div id="__content">' + html + '</div>'
 }
 
 // Ouvre un document HTML pour impression/PDF — compatible Web ET Android (Capacitor)
