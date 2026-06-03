@@ -1777,7 +1777,7 @@ function printFicheTiers(it, kind='fournisseur') {
     <h3 style="margin:18px 0 6px;font-size:11pt;color:#075E54">🗂️ Autres informations</h3>
     <table><tbody>${rows(autres)}</tbody></table>` : ''
 
-  const mentorBloc = !isMorale ? `
+  const mentorBloc = (isFourn && !isMorale) ? `
     <h3 style="margin:18px 0 6px;font-size:11pt;color:#075E54">👤 Informations du mentor</h3>
     <table><tbody>${rows([
       ['Nom et prénom(s)', it.mentor_nom],
@@ -1895,7 +1895,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     e.preventDefault(); setSaving(true)
     const uid = (await supabase.auth.getUser()).data?.user?.id
     const isPhysique = (form.type||'physique')!=='morale'
-    const mentorFields = (table==='compta_fournisseurs'||table==='compta_clients') && isPhysique ? ['mentor_nom','mentor_telephone','mentor_cip'] : []
+    const mentorFields = table==='compta_fournisseurs' && isPhysique ? ['mentor_nom','mentor_telephone','mentor_cip'] : []
     const locFields = table==='compta_fournisseurs' ? ['departement','commune','arrondissement','village','nom_bas_fonds','superficie_bas_fonds','cooperative_affiliee','numero_contrat'] : []
     const fields = ['company_id','nom','telephone','provenance','cip','ifu','email','adresse', ...mentorFields, ...locFields, ...(extraFields?.names||[])]
     const pay = {}; fields.forEach(k=>{ if(form[k]!==undefined) pay[k]=form[k] })
@@ -2203,7 +2203,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
             <Input label="N° CIP" name="cip" value={form.cip} onChange={set} />
             <Input label="Email" name="email" type="email" value={form.email} onChange={set} />
             <Input label="Adresse" name="adresse" value={form.adresse} onChange={set} />
-            {(table==='compta_clients'||table==='compta_fournisseurs') && (form.type||'physique')!=='morale' && (
+            {table==='compta_fournisseurs' && (form.type||'physique')!=='morale' && (
               <>
                 <Span2><div style={{borderTop:'1px solid #e2e8f0',paddingTop:10,marginTop:4,fontSize:12,fontWeight:700,color:'#64748b'}}>👤 INFORMATIONS DU MENTOR (facultatif)</div></Span2>
                 <Span2><Input label="Nom et Prénom(s) du mentor" name="mentor_nom" value={form.mentor_nom||''} onChange={set} /></Span2>
@@ -2838,6 +2838,8 @@ function CommercialNewPage({ companies, companyId, typeDoc, setPage, toast }) {
   const [saving, setSaving]     = useState(false)
   const [fournType, setFournType] = useState('physique')   // Bon de commande : recherche par CIP (physique) ou IFU (morale)
   const [fournNum, setFournNum]   = useState('')            // Numéro CIP/IFU saisi
+  const [cliType, setCliType]     = useState('physique')   // Proforma : recherche client par CIP (physique) ou IFU (morale)
+  const [cliNum, setCliNum]       = useState('')           // Numéro CIP/IFU client saisi
 
   const loadCli = useCallback(async cid=>{ if(!cid) return; const {data}=await supabase.from('compta_clients').select('*').eq('company_id',cid).eq('actif',true); setClients(data||[]) },[])
   const loadArt = useCallback(async cid=>{ if(!cid) return; const {data}=await supabase.from('compta_articles').select('*').eq('company_id',cid).eq('actif',true); setArticles(data||[]) },[])
@@ -2870,6 +2872,12 @@ function CommercialNewPage({ companies, companyId, typeDoc, setPage, toast }) {
     ? (fournisseurs.find(f => (f.type||'physique')===fournType && normNum(f[fournNumField])===normNum(fournNum)) || null)
     : null
 
+  // ── Proforma : recherche du client par CIP (physique) / IFU (morale) ──
+  const cliNumField = cliType==='morale' ? 'ifu' : 'cip'
+  const matchedCli = normNum(cliNum)
+    ? (clients.find(c => (c.type||'physique')===cliType && normNum(c[cliNumField])===normNum(cliNum)) || null)
+    : null
+
   const save = async e=>{
     e.preventDefault(); setSaving(true)
     const uid = (await supabase.auth.getUser()).data?.user?.id
@@ -2880,7 +2888,7 @@ function CommercialNewPage({ companies, companyId, typeDoc, setPage, toast }) {
     const { data:docData, error:docErr } = await supabase.from('compta_documents').insert({
       company_id:form.company_id, user_id:uid, type_doc:form.type_doc, numero,
       date_doc:form.date_doc, date_echeance:form.date_echeance||null,
-      client_id:form.client_id||null, fournisseur_id:(form.type_doc==='bon_commande' ? (matchedFourn?.id||null) : (form.fournisseur_id||null)), statut:'brouillon',
+      client_id:(form.type_doc==='proforma' ? (matchedCli?.id||null) : (form.client_id||null)), fournisseur_id:(form.type_doc==='bon_commande' ? (matchedFourn?.id||null) : (form.fournisseur_id||null)), statut:'brouillon',
       montant_ht:ht, tva_pct:parseFloat(form.tva_pct)||0, montant_tva:tva, montant_ttc:ttc,
       notes:form.notes,
     }).select().single()
@@ -2942,6 +2950,40 @@ function CommercialNewPage({ companies, companyId, typeDoc, setPage, toast }) {
                           ? <span style={{fontWeight:600,color:'#0f2044'}}>{fourName(matchedFourn)}</span>
                           : normNum(fournNum)
                             ? <span style={{color:'#dc2626',fontWeight:600}}>⚠️ Fournisseur introuvable</span>
+                            : <span style={{color:'#94a3b8'}}>—</span>}
+                      </div>
+                    </div>
+                  </>
+                ) : form.type_doc==='proforma' ? (
+                  <>
+                    <Sel label="Type client" name="__cliType" value={cliType}
+                      onChange={e=>{ setCliType(e.target.value); setCliNum('') }}
+                      options={[{value:'physique',label:'Personne physique'},{value:'morale',label:'Personne morale'}]} />
+                    <div>
+                      <label style={{ display:'block', fontSize:12.5, fontWeight:600, color:'#374151', marginBottom:5 }}>
+                        {cliType==='morale' ? 'N° IFU' : 'N° CIP'}
+                      </label>
+                      <input list="cli-num-list" value={cliNum}
+                        onChange={e=>setCliNum(toUpperNoAccent(e.target.value))}
+                        placeholder={cliType==='morale' ? 'Saisir / choisir un IFU' : 'Saisir / choisir un CIP'}
+                        style={{ width:'100%', padding:'9px 12px', borderRadius:8, border:'1px solid #d1d5db',
+                          fontSize:13.5, boxSizing:'border-box', background:'white' }} />
+                      <datalist id="cli-num-list">
+                        {clients
+                          .filter(c => (c.type||'physique')===cliType && normNum(c[cliNumField])!=='')
+                          .map(c => <option key={c.id} value={c[cliNumField]}>{cliName(c)}</option>)}
+                      </datalist>
+                    </div>
+                    <div>
+                      <label style={{ display:'block', fontSize:12.5, fontWeight:600, color:'#374151', marginBottom:5 }}>
+                        Client
+                      </label>
+                      <div style={{ width:'100%', padding:'9px 12px', borderRadius:8, border:'1px solid #d1d5db',
+                        fontSize:13.5, boxSizing:'border-box', background:'#f8fafc', minHeight:38, display:'flex', alignItems:'center' }}>
+                        {matchedCli
+                          ? <span style={{fontWeight:600,color:'#0f2044'}}>{cliName(matchedCli)}</span>
+                          : normNum(cliNum)
+                            ? <span style={{color:'#dc2626',fontWeight:600}}>⚠️ Client introuvable</span>
                             : <span style={{color:'#94a3b8'}}>—</span>}
                       </div>
                     </div>
