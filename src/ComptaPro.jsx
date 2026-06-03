@@ -3915,6 +3915,19 @@ function AchatsSemisPage({ companies, companyId, toast, readOnly=false }) {
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo,   setDateTo]   = useState('')
   const [viewItem, setViewItem] = useState(null)
+  const [fournsRaw, setFournsRaw] = useState([])
+
+  const loadFourns = useCallback(async()=>{
+    const { data:ad }=await supabase.auth.getUser()
+    const uid=ad?.user?.id; const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
+    let q = supabase.from('compta_fournisseurs').select('id,type,nom,nom_societe')
+    q = isAdmin&&companyId ? q.eq('company_id',companyId) : q.eq('user_id',uid)
+    if(companyId&&!isAdmin) q=q.eq('company_id',companyId)
+    const { data }=await q; setFournsRaw(data||[])
+  },[companyId])
+  useEffect(()=>{ loadFourns() },[loadFourns])
+
+  const fournsNames = [...new Set((fournsRaw||[]).map(f=> f.type==='morale' ? (f.nom_societe||'') : (f.nom||'')).filter(n=>n.trim()!==''))].sort((a,b)=>a.localeCompare(b))
 
   const load = useCallback(async()=>{
     const uid = (await supabase.auth.getUser()).data?.user?.id
@@ -3936,25 +3949,58 @@ function AchatsSemisPage({ companies, companyId, toast, readOnly=false }) {
       return nf
     })
   }
-  const openAdd = ()=>{ setForm({company_id:companyId||companies[0]?.id||'',numero_fact:'',date_achat:today(),entite:'',nom_fournisseur:'',provenance:'',nom_acheteur:'',id_produit:'',nature_produit:'',quantite:0,prix_unitaire:0,montant:0,statut:'en_cours'}); setModal(true) }
+  const openAdd = ()=>{ setForm({company_id:companyId||companies[0]?.id||'',numero_fact:'',date_achat:today(),entite:'',nom_fournisseur:'',provenance:'',nom_acheteur:'',id_produit:'',nature_produit:'',quantite:0,prix_unitaire:0,montant:0,statut:'en_cours',compte_paiement:'caisse'}); setModal(true) }
   const close = ()=>setModal(false)
+
+  // Ajout rapide d'un fournisseur (avec sécurité anti-doublon)
+  const addFournisseur = async () => {
+    const nom = (form.nom_fournisseur||'').trim()
+    if (!nom) { toast.error('Saisissez d\u2019abord le nom du fournisseur.'); return }
+    if (fournsNames.some(n=>n.toLowerCase()===nom.toLowerCase())) { toast.error('Ce fournisseur existe déjà.'); return }
+    const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
+    const cid = form.company_id||companyId||companies[0]?.id
+    if (!cid) { toast.error('Veuillez sélectionner une société.'); return }
+    const { error } = await supabase.from('compta_fournisseurs').insert({ company_id:cid, user_id:uid, type:'physique', nom })
+    if (error) { toast.error(error.message); return }
+    toast.success(`Fournisseur « ${nom} » ajouté.`); loadFourns()
+  }
 
   const deleteAchat = async (id) => {
     if (!window.confirm('Supprimer cet achat ?')) return
     const { error } = await supabase.from('compta_achats_semi_finis').delete().eq('id', id)
     if (error) { toast.error(error.message); return }
+    await supprimerSortiesJournal('achat_semi_fini', id)
     toast.success('Achat supprimé !'); load()
   }
 
   const save = async e=>{
-    e.preventDefault(); setSaving(true)
+    e.preventDefault()
     const uid = (await supabase.auth.getUser()).data?.user?.id
-    const { company_id,numero_fact,date_achat,entite,nom_fournisseur,provenance,nom_acheteur,id_produit,nature_produit,quantite,prix_unitaire,statut } = form
+    const { company_id,numero_fact,date_achat,entite,nom_fournisseur,provenance,nom_acheteur,id_produit,nature_produit,quantite,prix_unitaire,statut,compte_paiement } = form
+    const compte = compte_paiement
+    if (!JOURNAL_TABLE[compte]) { toast.error('Veuillez choisir un compte de paiement.'); return }
     const montant = Math.round((parseFloat(quantite)||0)*(parseFloat(prix_unitaire)||0))
-    const { error } = await supabase.from('compta_achats_semi_finis').insert({ company_id,user_id:uid,numero_fact,date_achat,entite,nom_fournisseur,provenance,nom_acheteur,id_produit,nature_produit,quantite:+quantite,prix_unitaire:+prix_unitaire,montant,statut })
+    if (montant <= 0) { toast.error('Le montant de l\u2019achat doit être supérieur à 0.'); return }
+    const cid = company_id||companyId||companies[0]?.id
+    setSaving(true)
+    const soldeCompte = await getSoldeCompte(compte, cid)
+    if (montant > soldeCompte) {
+      setSaving(false)
+      toast.error(`Vous ne pouvez pas régler par ce compte : solde insuffisant (${JOURNAL_LABEL[compte]} : ${fcfa(soldeCompte)}).`)
+      return
+    }
+    const { data:ins, error } = await supabase.from('compta_achats_semi_finis').insert({ company_id:cid,user_id:uid,numero_fact,date_achat,entite,nom_fournisseur,provenance,nom_acheteur,id_produit,nature_produit,quantite:+quantite,prix_unitaire:+prix_unitaire,montant,statut,compte_paiement:compte }).select('id').single()
+    if (error) { setSaving(false); toast.error(error.message); return }
+    const { error:errJ } = await creerSortieJournal({
+      compte, cid, uid, date:date_achat, montant,
+      libelle:`Achat semi-fini ${nom_fournisseur||''}${numero_fact?(' — '+numero_fact):''}`.trim(),
+      tiers:nom_fournisseur, reference:numero_fact,
+      sourceType:'achat_semi_fini', sourceId:ins.id,
+    })
     setSaving(false)
-    if (error) { toast.error(error.message); return }
-    toast.success('Achat enregistré !'); close(); load()
+    if (errJ) toast.error('Achat enregistré, mais erreur sur le journal : '+errJ.message)
+    else toast.success(`Achat enregistré — sortie ${JOURNAL_LABEL[compte]} : ${fcfa(montant)}`)
+    close(); load()
   }
 
   const companyNameA = companies.find(c=>c.id===companyId)?.raison_sociale||''
@@ -4046,7 +4092,21 @@ function AchatsSemisPage({ companies, companyId, toast, readOnly=false }) {
             <Input label="N° Facture" name="numero_fact" value={form.numero_fact} onChange={set} />
             <Input label="Date *" name="date_achat" type="date" value={form.date_achat} onChange={set} required />
             <Input label="Entité" name="entite" value={form.entite} onChange={set} />
-            <Input label="Nom fournisseur" name="nom_fournisseur" value={form.nom_fournisseur} onChange={set} />
+            <div>
+              <label style={{display:'block',fontSize:12.5,fontWeight:600,color:'#374151',marginBottom:5}}>Nom fournisseur</label>
+              <input name="nom_fournisseur" value={form.nom_fournisseur||''} onChange={set} list="achat-fourn-list"
+                placeholder="Saisir / choisir un fournisseur"
+                style={{width:'100%',padding:'9px 12px',borderRadius:8,border:'1px solid #d1d5db',fontSize:13.5,boxSizing:'border-box',background:'white'}} />
+              <datalist id="achat-fourn-list">
+                {fournsNames.map((n,i)=><option key={i} value={n} />)}
+              </datalist>
+              {(form.nom_fournisseur||'').trim()!=='' && !fournsNames.some(n=>n.toLowerCase()===(form.nom_fournisseur||'').trim().toLowerCase()) && (
+                <button type="button" onClick={addFournisseur}
+                  style={{marginTop:6,padding:'6px 10px',background:'#ecfdf5',border:'1px solid #86efac',borderRadius:8,cursor:'pointer',fontSize:12.5,fontWeight:600,color:'#16a34a'}}>
+                  ➕ Ce fournisseur n'existe pas — l'ajouter
+                </button>
+              )}
+            </div>
             <Input label="Provenance" name="provenance" value={form.provenance} onChange={set} />
             <Input label="Nom acheteur" name="nom_acheteur" value={form.nom_acheteur} onChange={set} />
             <Input label="ID Produit" name="id_produit" value={form.id_produit} onChange={set} />
@@ -4057,6 +4117,7 @@ function AchatsSemisPage({ companies, companyId, toast, readOnly=false }) {
               <label style={{display:'block',fontSize:12.5,fontWeight:600,color:'#374151',marginBottom:5}}>Montant calculé</label>
               <div style={{padding:'9px 12px',background:'#eff6ff',borderRadius:8,border:'1px solid #bfdbfe',fontSize:14,fontWeight:700,color:ACCENT}}>{fcfa(form.montant||0)}</div>
             </div>
+            <Sel label="Compte de paiement *" name="compte_paiement" value={form.compte_paiement||'caisse'} onChange={set} options={COMPTE_OPTIONS} />
           </Grid>
           <Row><Btn variant="secondary" onClick={close}>Annuler</Btn><Btn type="submit" disabled={saving}>{saving?'...':'Enregistrer'}</Btn></Row>
         </form>
