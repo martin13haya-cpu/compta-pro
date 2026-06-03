@@ -99,46 +99,29 @@ function buildPrintDocument(html, filename) {
   const fname = (filename || 'document').replace(/[^a-zA-Z0-9_-]/g,'_')
   const scriptTag = '<scr'+'ipt src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></scr'+'ipt>'
   const pdfScript = '<scr'+'ipt>' + `
-    // Dans l'app Android : rediriger window.print() vers l'impression native (bouton Imprimer)
-    if(window.AndroidPrint && typeof window.AndroidPrint.printPage==='function'){
-      window.print = function(){ try{ AndroidPrint.printPage(); }catch(e){} };
-    }
-    // Détecte si on est dans une WebView Android (Capacitor)
+    // Détecte si on est dans une WebView Android (Capacitor) — le téléchargement de blob y échoue
     function __isAndroidWebView(){
       var ua=navigator.userAgent||'';
       var isAndroid=ua.indexOf('Android')>-1;
       var isWebView=ua.indexOf('; wv')>-1 || ua.indexOf('Capacitor')>-1;
       return isAndroid && isWebView;
     }
-    // Pont natif Android disponible ? (pour enregistrer un vrai PDF directement)
-    function __hasAndroidSave(){
-      return !!(window.AndroidPrint && typeof window.AndroidPrint.savePdf === 'function');
-    }
     function __downloadPDF(){
+      // Sur Android WebView, le téléchargement de blob ne marche pas : on utilise l'impression native
+      if(__isAndroidWebView()){
+        window.print();
+        return;
+      }
       var btn=document.getElementById('__pdfbtn');
-      if(typeof html2pdf==="undefined"){ alert("La librairie PDF n'est pas encore chargee. Verifiez votre connexion internet et reessayez."); return; }
+      if(typeof html2pdf==="undefined"){ alert("La librairie PDF nest pas encore chargee. Verifiez votre connexion internet et reessayez."); return; }
       btn.textContent='⏳ Génération...'; btn.disabled=true;
       var tb=document.getElementById('__toolbar'); tb.style.display='none';
       var opt={ margin:[8,8,8,8], filename:'${fname}.pdf', image:{type:'jpeg',quality:0.98}, html2canvas:{scale:2,useCORS:true,logging:false}, jsPDF:{unit:'mm',format:'a4',orientation:'portrait'} };
       var content=document.getElementById('__content')||document.body;
-      function __resetBtn(){ tb.style.display='flex'; btn.textContent='📥 PDF'; btn.disabled=false; }
-      // Dans l'app Android : générer le PDF puis l'enregistrer automatiquement via le pont natif
-      if(__hasAndroidSave()){
-        html2pdf().set(opt).from(content).outputPdf('datauristring').then(function(datauri){
-          var base64 = (datauri && datauri.indexOf(',')>-1) ? datauri.split(',')[1] : datauri;
-          try { window.AndroidPrint.savePdf(base64, '${fname}.pdf'); } catch(e){ alert('Erreur enregistrement : '+e); }
-          __resetBtn();
-        }).catch(function(err){
-          __resetBtn();
-          alert('Erreur PDF : '+(err&&err.message?err.message:'inconnue'));
-        });
-        return;
-      }
-      // Navigateur web : téléchargement direct classique
       html2pdf().set(opt).from(content).save().then(function(){
-        __resetBtn();
+        tb.style.display='flex'; btn.textContent='📥 Télécharger PDF'; btn.disabled=false;
       }).catch(function(err){
-        __resetBtn();
+        tb.style.display='flex'; btn.textContent='📥 Télécharger PDF'; btn.disabled=false;
         alert('Erreur PDF : '+(err&&err.message?err.message:'inconnue'));
       });
     }
@@ -148,8 +131,9 @@ function buildPrintDocument(html, filename) {
     <div id="__toolbar" style="position:sticky;top:0;left:0;right:0;z-index:99999;background:#075E54;padding:8px 10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;box-shadow:0 2px 8px rgba(0,0,0,0.2)">
       <button onclick="history.length>1?history.back():window.close()" style="background:white;color:#075E54;border:none;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap">← Retour</button>
       <button id="__pdfbtn" onclick="__downloadPDF()" style="background:#25D366;color:white;border:none;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap">📥 PDF</button>
-      <button onclick="window.print()" style="background:#f0f2f5;color:#1e293b;border:none;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap">🖨️ Imprimer</button>
+      <button onclick="window.print()" style="background:#f0f2f5;color:#1e293b;border:none;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap">🖨️ Imprimer / PDF</button>
     </div>
+    <div style="background:#fffbe6;padding:8px 14px;font-size:12px;color:#92400e;border-bottom:1px solid #fde68a;line-height:1.4">💡 Sur mobile : touchez « 🖨️ Imprimer / PDF » puis choisissez « Enregistrer au format PDF » dans la liste des imprimantes.</div>
     <style>@media print { #__toolbar { display:none !important } }</style>
   `
   // Envelopper le contenu original dans une div #__content (pour le PDF)
@@ -1773,6 +1757,18 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
 
   useEffect(()=>{ load() },[load])
 
+  // Supprimer toute la liste (fournisseurs uniquement)
+  const deleteAll = async()=>{
+    const cid = companyId || companies[0]?.id
+    if(!cid){ toast.error('Aucune société sélectionnée.'); return }
+    if(items.length===0){ toast.error('La liste est déjà vide.'); return }
+    if(!confirm(`⚠️ Supprimer DÉFINITIVEMENT les ${items.length} fournisseur(s) de la liste ? Cette action est irréversible.`)) return
+    if(!confirm('Confirmez-vous une dernière fois la suppression totale ?')) return
+    const { error } = await supabase.from(table).delete().eq('company_id', cid)
+    if(error){ toast.error(error.message); return }
+    toast.success('Liste supprimée.'); load()
+  }
+
   const provenances = [...new Set(items.map(i=>i.provenance).filter(Boolean))]
 
   const filtered = items.filter(it => {
@@ -1787,7 +1783,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
 
   const set = e => setForm(f=>({...f,[e.target.name]:e.target.value}))
 
-  const baseDefaults = { company_id:companyId||companies[0]?.id||'', nom:'', prenom:'', nom_societe:'', telephone:'', provenance:'', cip:'', ifu:'', email:'', adresse:'', mentor_nom:'', mentor_telephone:'', mentor_cip:'', departement:'', commune:'', arrondissement:'', village:'', nom_bas_fonds:'', superficie_bas_fonds:'' }
+  const baseDefaults = { company_id:companyId||companies[0]?.id||'', nom:'', prenom:'', nom_societe:'', telephone:'', provenance:'', cip:'', ifu:'', email:'', adresse:'', mentor_nom:'', mentor_telephone:'', mentor_cip:'', departement:'', commune:'', arrondissement:'', village:'', nom_bas_fonds:'', superficie_bas_fonds:'', cooperative_affiliee:'' }
   const open = (it=null) => {
     const defaults = extraFields ? extraFields.defaults : {}
     setForm(it?{...it}:{...baseDefaults,...defaults}); setModal(it?'edit':'add')
@@ -1799,7 +1795,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     const uid = (await supabase.auth.getUser()).data?.user?.id
     const isPhysique = (form.type||'physique')!=='morale'
     const mentorFields = (table==='compta_fournisseurs'||table==='compta_clients') && isPhysique ? ['mentor_nom','mentor_telephone','mentor_cip'] : []
-    const locFields = table==='compta_fournisseurs' ? ['departement','commune','arrondissement','village','nom_bas_fonds','superficie_bas_fonds'] : []
+    const locFields = table==='compta_fournisseurs' ? ['departement','commune','arrondissement','village','nom_bas_fonds','superficie_bas_fonds','cooperative_affiliee'] : []
     const fields = ['company_id','nom','telephone','provenance','cip','ifu','email','adresse', ...mentorFields, ...locFields, ...(extraFields?.names||[])]
     const pay = {}; fields.forEach(k=>{ if(form[k]!==undefined) pay[k]=form[k] })
     // Fix: ensure company_id is a valid non-empty value
@@ -1836,9 +1832,9 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
   const canImport = table==='compta_fournisseurs' || table==='compta_clients'
 
   const downloadTemplate = () => {
-    const headers = ['type','nom','nom_societe','telephone','provenance','cip','ifu','email','adresse','mentor_nom','mentor_telephone','mentor_cip','departement','commune','arrondissement','village','nom_bas_fonds','superficie_bas_fonds']
-    const ex1 = ['physique','HAYA Martin','','22997000000','Tanguiéta','','3202012190967','martin@exemple.com','BP 707','KOUDORO Jean','22995000000','CIP9988','Atacora','Tanguiéta','Cotiakou','Pingou','Bas-fonds Pingou','2.5']
-    const ex2 = ['morale','','SARL EXEMPLE','22996000000','Natitingou','','3201998877665','contact@exemple.com','Cotonou','','','','','','','','','']
+    const headers = ['type','nom','nom_societe','telephone','provenance','cooperative_affiliee','cip','ifu','email','adresse','mentor_nom','mentor_telephone','mentor_cip','departement','commune','arrondissement','village','nom_bas_fonds','superficie_bas_fonds']
+    const ex1 = ['physique','HAYA Martin','','22997000000','Tanguiéta','Coop PINGOU','','3202012190967','martin@exemple.com','BP 707','KOUDORO Jean','22995000000','CIP9988','Atacora','Tanguiéta','Cotiakou','Pingou','Bas-fonds Pingou','2.5']
+    const ex2 = ['morale','','SARL EXEMPLE','22996000000','Natitingou','','','3201998877665','contact@exemple.com','Cotonou','','','','','','','','','']
     const csv = [headers.join(';'), ex1.join(';'), ex2.join(';')].join('\n')
     const blob = new Blob(['\ufeff'+csv], {type:'text/csv;charset=utf-8;'})
     const url = URL.createObjectURL(blob)
@@ -1884,6 +1880,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
           mentor_telephone: obj.mentor_telephone||null,
           mentor_cip: obj.mentor_cip||null,
           ...(table==='compta_fournisseurs' ? {
+            cooperative_affiliee: obj.cooperative_affiliee||null,
             departement: obj.departement||null,
             commune: obj.commune||null,
             arrondissement: obj.arrondissement||null,
@@ -1921,6 +1918,12 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
                   <input type="file" accept=".csv" onChange={handleImport} disabled={importing} style={{display:'none'}} />
                 </label>
               </>
+            )}
+            {table==='compta_fournisseurs' && items.length>0 && (
+              <button onClick={deleteAll} title="Supprimer toute la liste"
+                style={{padding:'9px 14px',background:'#fef2f2',border:'1px solid #fca5a5',borderRadius:8,cursor:'pointer',fontSize:13,fontWeight:600,color:'#dc2626',display:'flex',alignItems:'center',gap:6}}>
+                🗑️ Vider la liste
+              </button>
             )}
             <Btn onClick={()=>open()}>+ Nouveau(elle)</Btn>
           </div>
@@ -2013,6 +2016,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
             )}
             <Input label="Téléphone" name="telephone" value={form.telephone} onChange={set} />
             <Input label="Provenance" name="provenance" value={form.provenance} onChange={set} />
+            {table==='compta_fournisseurs' && <Input label="Coopérative affiliée" name="cooperative_affiliee" value={form.cooperative_affiliee||''} onChange={set} />}
             {extraFields?.fields?.map(f=>(
               <Input key={f.name} label={f.label} name={f.name} value={form[f.name]} onChange={set} />
             ))}
