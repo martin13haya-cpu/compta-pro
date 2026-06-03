@@ -1747,6 +1747,33 @@ function printFicheFournisseur(it) {
 
   const rows = arr => arr.map(([k,val])=>`<tr><td style="font-weight:600;width:42%">${k}</td><td class="r" style="text-align:left">${v(val)}</td></tr>`).join('')
 
+  // Libellés lisibles pour les colonnes connues
+  const LABELS = {
+    type:'Type de personne', nom:'Nom et prénom(s)', prenom:'Prénom', nom_societe:'Raison sociale',
+    telephone:'Téléphone', email:'Email', adresse:'Adresse', provenance:'Provenance',
+    cooperative_affiliee:'Coopérative affiliée', numero_contrat:'N° Contrat', ifu:'N° IFU', cip:'N° CIP',
+    mentor_nom:'Mentor — Nom', mentor_telephone:'Mentor — Téléphone', mentor_cip:'Mentor — CIP',
+    departement:'Département', commune:'Commune', arrondissement:'Arrondissement', village:'Village',
+    nom_bas_fonds:'Nom du bas-fonds', superficie_bas_fonds:'Superficie (ha)',
+  }
+  // Colonnes déjà affichées dans les sections ci-dessus + colonnes techniques à ne pas montrer
+  const SKIP = new Set([
+    'id','user_id','company_id','actif','archive','created_at','updated_at','compta_companies',
+    'type','nom','prenom','nom_societe','telephone','email','adresse','provenance',
+    'cooperative_affiliee','numero_contrat','ifu','cip',
+    'mentor_nom','mentor_telephone','mentor_cip',
+    'departement','commune','arrondissement','village','nom_bas_fonds','superficie_bas_fonds',
+  ])
+  const prettify = k => (LABELS[k] || k.replace(/_/g,' ').replace(/^./,c=>c.toUpperCase()))
+
+  // Bloc dynamique : toute autre colonne de la table non listée ci-dessus
+  const autres = Object.keys(it)
+    .filter(k => !SKIP.has(k))
+    .map(k => [prettify(k), typeof it[k]==='object' ? JSON.stringify(it[k]) : it[k]])
+  const autresBloc = autres.length ? `
+    <h3 style="margin:18px 0 6px;font-size:11pt;color:#075E54">🗂️ Autres informations</h3>
+    <table><tbody>${rows(autres)}</tbody></table>` : ''
+
   const mentorBloc = !isMorale ? `
     <h3 style="margin:18px 0 6px;font-size:11pt;color:#075E54">👤 Informations du mentor</h3>
     <table><tbody>${rows([
@@ -1779,6 +1806,7 @@ function printFicheFournisseur(it) {
       ['Adresse', it.adresse],
       ['Provenance', it.provenance],
       ['Coopérative affiliée', it.cooperative_affiliee],
+      ['N° Contrat', it.numero_contrat],
       ['N° IFU', it.ifu],
       ['N° CIP', it.cip],
     ])}</tbody></table>
@@ -1794,6 +1822,8 @@ function printFicheFournisseur(it) {
       ['Nom du bas-fonds', it.nom_bas_fonds],
       ['Superficie', superficie],
     ])}</tbody></table>
+
+    ${autresBloc}
 
     <div class="signatures" style="margin-top:50px">
       <div class="sig-box">Signature du fournisseur</div>
@@ -1851,7 +1881,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
 
   const set = e => setForm(f=>({...f,[e.target.name]:e.target.value}))
 
-  const baseDefaults = { company_id:companyId||companies[0]?.id||'', nom:'', prenom:'', nom_societe:'', telephone:'', provenance:'', cip:'', ifu:'', email:'', adresse:'', mentor_nom:'', mentor_telephone:'', mentor_cip:'', departement:'', commune:'', arrondissement:'', village:'', nom_bas_fonds:'', superficie_bas_fonds:'', cooperative_affiliee:'' }
+  const baseDefaults = { company_id:companyId||companies[0]?.id||'', nom:'', prenom:'', nom_societe:'', telephone:'', provenance:'', cip:'', ifu:'', email:'', adresse:'', mentor_nom:'', mentor_telephone:'', mentor_cip:'', departement:'', commune:'', arrondissement:'', village:'', nom_bas_fonds:'', superficie_bas_fonds:'', cooperative_affiliee:'', numero_contrat:'' }
   const open = (it=null) => {
     const defaults = extraFields ? extraFields.defaults : {}
     setForm(it?{...it}:{...baseDefaults,...defaults}); setModal(it?'edit':'add')
@@ -1863,7 +1893,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     const uid = (await supabase.auth.getUser()).data?.user?.id
     const isPhysique = (form.type||'physique')!=='morale'
     const mentorFields = (table==='compta_fournisseurs'||table==='compta_clients') && isPhysique ? ['mentor_nom','mentor_telephone','mentor_cip'] : []
-    const locFields = table==='compta_fournisseurs' ? ['departement','commune','arrondissement','village','nom_bas_fonds','superficie_bas_fonds','cooperative_affiliee'] : []
+    const locFields = table==='compta_fournisseurs' ? ['departement','commune','arrondissement','village','nom_bas_fonds','superficie_bas_fonds','cooperative_affiliee','numero_contrat'] : []
     const fields = ['company_id','nom','telephone','provenance','cip','ifu','email','adresse', ...mentorFields, ...locFields, ...(extraFields?.names||[])]
     const pay = {}; fields.forEach(k=>{ if(form[k]!==undefined) pay[k]=form[k] })
     // Fix: ensure company_id is a valid non-empty value
@@ -1900,9 +1930,9 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
   const canImport = table==='compta_fournisseurs' || table==='compta_clients'
 
   const downloadTemplate = () => {
-    const headers = ['type','nom','nom_societe','telephone','provenance','cooperative_affiliee','cip','ifu','email','adresse','mentor_nom','mentor_telephone','mentor_cip','departement','commune','arrondissement','village','nom_bas_fonds','superficie_bas_fonds']
-    const ex1 = ['physique','HAYA Martin','','22997000000','Tanguiéta','Coop PINGOU','','3202012190967','martin@exemple.com','BP 707','KOUDORO Jean','22995000000','CIP9988','Atacora','Tanguiéta','Cotiakou','Pingou','Bas-fonds Pingou','2.5']
-    const ex2 = ['morale','','SARL EXEMPLE','22996000000','Natitingou','','','3201998877665','contact@exemple.com','Cotonou','','','','','','','','','']
+    const headers = ['type','nom','nom_societe','telephone','provenance','cooperative_affiliee','numero_contrat','cip','ifu','email','adresse','mentor_nom','mentor_telephone','mentor_cip','departement','commune','arrondissement','village','nom_bas_fonds','superficie_bas_fonds']
+    const ex1 = ['physique','HAYA Martin','','22997000000','Tanguiéta','Coop PINGOU','CTR-2026-001','','3202012190967','martin@exemple.com','BP 707','KOUDORO Jean','22995000000','CIP9988','Atacora','Tanguiéta','Cotiakou','Pingou','Bas-fonds Pingou','2.5']
+    const ex2 = ['morale','','SARL EXEMPLE','22996000000','Natitingou','','','','3201998877665','contact@exemple.com','Cotonou','','','','','','','','','']
     const csv = [headers.join(';'), ex1.join(';'), ex2.join(';')].join('\n')
     const blob = new Blob(['\ufeff'+csv], {type:'text/csv;charset=utf-8;'})
     const url = URL.createObjectURL(blob)
@@ -1949,6 +1979,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
           mentor_cip: obj.mentor_cip||null,
           ...(table==='compta_fournisseurs' ? {
             cooperative_affiliee: obj.cooperative_affiliee||null,
+            numero_contrat: obj.numero_contrat||null,
             departement: obj.departement||null,
             commune: obj.commune||null,
             arrondissement: obj.arrondissement||null,
@@ -2086,6 +2117,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
             <Input label="Téléphone" name="telephone" value={form.telephone} onChange={set} />
             <Input label="Provenance" name="provenance" value={form.provenance} onChange={set} />
             {table==='compta_fournisseurs' && <Input label="Coopérative affiliée" name="cooperative_affiliee" value={form.cooperative_affiliee||''} onChange={set} />}
+            {table==='compta_fournisseurs' && <Input label="N° Contrat" name="numero_contrat" value={form.numero_contrat||''} onChange={set} />}
             {extraFields?.fields?.map(f=>(
               <Input key={f.name} label={f.label} name={f.name} value={form[f.name]} onChange={set} />
             ))}
