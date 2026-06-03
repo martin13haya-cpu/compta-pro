@@ -1736,6 +1736,74 @@ function CompaniesPage({ companies, refresh, toast, isSuperAdmin=false, currentU
 }
 
 // ── TIERS GENERIQUE (Clients + Fournisseurs partagent la même logique) ───────
+// ── FICHE FOURNISSEUR (PDF) ──────────────────────────────────────────────────
+function printFicheFournisseur(it) {
+  const v = x => (x===null || x===undefined || x==='') ? '—' : x
+  const isMorale = it.type==='morale'
+  const nomAffiche = isMorale ? (it.nom_societe||'—') : (it.nom||'—')
+  const societe = it.compta_companies?.raison_sociale || 'Compta Pro'
+  const superficie = it.superficie_bas_fonds ? `${it.superficie_bas_fonds} ha` : '—'
+  const fname = `fiche_fournisseur_${(nomAffiche||'').replace(/\s+/g,'_')}`
+
+  const rows = arr => arr.map(([k,val])=>`<tr><td style="font-weight:600;width:42%">${k}</td><td class="r" style="text-align:left">${v(val)}</td></tr>`).join('')
+
+  const mentorBloc = !isMorale ? `
+    <h3 style="margin:18px 0 6px;font-size:11pt;color:#075E54">👤 Informations du mentor</h3>
+    <table><tbody>${rows([
+      ['Nom et prénom(s)', it.mentor_nom],
+      ['Téléphone', it.mentor_telephone],
+      ['N° CIP', it.mentor_cip],
+    ])}</tbody></table>` : ''
+
+  const html = `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">
+    <title>${fname}</title>
+    <style>${CSS_PRINT}</style></head><body>
+    <button class="print-btn" onclick="window.print()">🖨️ Imprimer / PDF</button>
+    <div class="header">
+      <div>
+        <div class="company-name">FICHE FOURNISSEUR</div>
+        <div class="doc-numero" style="margin-top:4px">${societe}</div>
+      </div>
+      <div class="doc-title">
+        <div class="doc-date">Édité le : ${today()}</div>
+      </div>
+    </div>
+
+    <h3 style="margin:6px 0 6px;font-size:11pt;color:#075E54">🚚 Identité</h3>
+    <table><tbody>${rows([
+      ['Type de personne', isMorale ? 'Personne morale' : 'Personne physique'],
+      [isMorale ? 'Raison sociale' : 'Nom et prénom(s)', nomAffiche],
+      ...(isMorale ? [['Représentant', it.nom]] : []),
+      ['Téléphone', it.telephone],
+      ['Email', it.email],
+      ['Adresse', it.adresse],
+      ['Provenance', it.provenance],
+      ['Coopérative affiliée', it.cooperative_affiliee],
+      ['N° IFU', it.ifu],
+      ['N° CIP', it.cip],
+    ])}</tbody></table>
+
+    ${mentorBloc}
+
+    <h3 style="margin:18px 0 6px;font-size:11pt;color:#075E54">📍 Localisation & bas-fonds</h3>
+    <table><tbody>${rows([
+      ['Département', it.departement],
+      ['Commune', it.commune],
+      ['Arrondissement', it.arrondissement],
+      ['Village', it.village],
+      ['Nom du bas-fonds', it.nom_bas_fonds],
+      ['Superficie', superficie],
+    ])}</tbody></table>
+
+    <div class="signatures" style="margin-top:50px">
+      <div class="sig-box">Signature du fournisseur</div>
+      <div class="sig-box">Cachet & visa<br><small>${societe}</small></div>
+    </div>
+  </body></html>`
+
+  openPrintWindow(html, fname)
+}
+
 function TiersPage({ table, title, titleSingle, icon, companies, companyId, toast, extraFields, readOnly=false }) {
   const [items,      setItems]     = useState([])
   const [modal,      setModal]     = useState(null)
@@ -1987,6 +2055,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
                   <TD>
                     <div style={{display:'flex',gap:6}}>
                       <Btn sm variant="secondary" onClick={()=>open(it)}>Edit</Btn>
+                      {table==='compta_fournisseurs' && <Btn sm variant="info" onClick={()=>printFicheFournisseur(it)}>📥 PDF</Btn>}
                       <Btn sm variant="danger" onClick={()=>archive(it.id)}>🗑️</Btn>
                     </div>
                   </TD>
@@ -9177,7 +9246,7 @@ export default function ComptaPro() {
       case 'clients':       return <TiersPage table="compta_clients" title="Clients" titleSingle="Client" icon="👥" {...sp}
                               extraFields={{ names:[], headers:[], fields:[], defaults:{type:'physique',nom_societe:''} }} />
       case 'fournisseurs':  return <TiersPage table="compta_fournisseurs" title="Fournisseurs" titleSingle="Fournisseur" icon="🚚" {...sp}
-                              extraFields={{ names:['cooperation'], headers:['Coopérative'], fields:[{name:'cooperation',label:'Coopérative affiliée'}], defaults:{type:'physique',nom_societe:''} }} />
+                              extraFields={{ names:['cooperative_affiliee'], headers:['Coopérative'], fields:[], defaults:{type:'physique',nom_societe:''} }} />
       case 'stock':         return <StockPage {...sp} setPage={setPage} />
       case 'stock-entree':  return <StockEntreePage {...sp} setPage={setPage} />
       case 'stock-sortie':  return <StockSortiePage {...sp} setPage={setPage} />
