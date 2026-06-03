@@ -3916,6 +3916,9 @@ function AchatsSemisPage({ companies, companyId, toast, readOnly=false }) {
   const [dateTo,   setDateTo]   = useState('')
   const [viewItem, setViewItem] = useState(null)
   const [fournsRaw, setFournsRaw] = useState([])
+  const [fournModal, setFournModal] = useState(false)
+  const [fournForm, setFournForm]   = useState({})
+  const [fournSaving, setFournSaving] = useState(false)
 
   const loadFourns = useCallback(async()=>{
     const { data:ad }=await supabase.auth.getUser()
@@ -3952,17 +3955,39 @@ function AchatsSemisPage({ companies, companyId, toast, readOnly=false }) {
   const openAdd = ()=>{ setForm({company_id:companyId||companies[0]?.id||'',numero_fact:'',date_achat:today(),entite:'',nom_fournisseur:'',provenance:'',nom_acheteur:'',id_produit:'',nature_produit:'',quantite:0,prix_unitaire:0,montant:0,statut:'en_cours',compte_paiement:'caisse'}); setModal(true) }
   const close = ()=>setModal(false)
 
-  // Ajout rapide d'un fournisseur (avec sécurité anti-doublon)
-  const addFournisseur = async () => {
+  // Ouvre le formulaire d'ajout fournisseur (pré-rempli avec le nom tapé)
+  const openFournModal = () => {
     const nom = (form.nom_fournisseur||'').trim()
-    if (!nom) { toast.error('Saisissez d\u2019abord le nom du fournisseur.'); return }
-    if (fournsNames.some(n=>n.toLowerCase()===nom.toLowerCase())) { toast.error('Ce fournisseur existe déjà.'); return }
+    if (nom && fournsNames.some(n=>n.toLowerCase()===nom.toLowerCase())) { toast.error('Ce fournisseur existe déjà.'); return }
+    setFournForm({ type:'physique', nom, nom_societe:'', telephone:'', provenance:form.provenance||'', cooperative_affiliee:'', numero_contrat:'', cip:'', ifu:'', email:'', adresse:'' })
+    setFournModal(true)
+  }
+  const setFourn = e => setFournForm(f=>({...f,[e.target.name]:e.target.value}))
+
+  // Enregistre le fournisseur dans la table (avec sécurité anti-doublon)
+  const saveFourn = async e => {
+    e.preventDefault()
+    const isMorale = fournForm.type==='morale'
+    const nomAff = (isMorale ? fournForm.nom_societe : fournForm.nom || '').trim()
+    if (!nomAff) { toast.error(isMorale?'Saisissez la raison sociale.':'Saisissez le nom du fournisseur.'); return }
+    if (fournsNames.some(n=>n.toLowerCase()===nomAff.toLowerCase())) { toast.error('Ce fournisseur existe déjà.'); return }
     const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
     const cid = form.company_id||companyId||companies[0]?.id
     if (!cid) { toast.error('Veuillez sélectionner une société.'); return }
-    const { error } = await supabase.from('compta_fournisseurs').insert({ company_id:cid, user_id:uid, type:'physique', nom })
+    setFournSaving(true)
+    const { error } = await supabase.from('compta_fournisseurs').insert({
+      company_id:cid, user_id:uid, type:fournForm.type,
+      nom: isMorale ? '' : nomAff, nom_societe: isMorale ? nomAff : '',
+      telephone:fournForm.telephone||null, provenance:fournForm.provenance||null,
+      cooperative_affiliee:fournForm.cooperative_affiliee||null, numero_contrat:fournForm.numero_contrat||null,
+      cip:fournForm.cip||null, ifu:fournForm.ifu||null, email:fournForm.email||null, adresse:fournForm.adresse||null,
+    })
+    setFournSaving(false)
     if (error) { toast.error(error.message); return }
-    toast.success(`Fournisseur « ${nom} » ajouté.`); loadFourns()
+    toast.success(`Fournisseur « ${nomAff} » enregistré.`)
+    setFournModal(false)
+    setForm(f=>({...f, nom_fournisseur:nomAff}))
+    loadFourns()
   }
 
   const deleteAchat = async (id) => {
@@ -4101,7 +4126,7 @@ function AchatsSemisPage({ companies, companyId, toast, readOnly=false }) {
                 {fournsNames.map((n,i)=><option key={i} value={n} />)}
               </datalist>
               {(form.nom_fournisseur||'').trim()!=='' && !fournsNames.some(n=>n.toLowerCase()===(form.nom_fournisseur||'').trim().toLowerCase()) && (
-                <button type="button" onClick={addFournisseur}
+                <button type="button" onClick={openFournModal}
                   style={{marginTop:6,padding:'6px 10px',background:'#ecfdf5',border:'1px solid #86efac',borderRadius:8,cursor:'pointer',fontSize:12.5,fontWeight:600,color:'#16a34a'}}>
                   ➕ Ce fournisseur n'existe pas — l'ajouter
                 </button>
@@ -4120,6 +4145,27 @@ function AchatsSemisPage({ companies, companyId, toast, readOnly=false }) {
             <Sel label="Compte de paiement *" name="compte_paiement" value={form.compte_paiement||'caisse'} onChange={set} options={COMPTE_OPTIONS} />
           </Grid>
           <Row><Btn variant="secondary" onClick={close}>Annuler</Btn><Btn type="submit" disabled={saving}>{saving?'...':'Enregistrer'}</Btn></Row>
+        </form>
+      </Modal>
+
+      <Modal open={fournModal} onClose={()=>setFournModal(false)} title="Nouveau Fournisseur" size="lg">
+        <form onSubmit={saveFourn}>
+          <Grid cols={2} gap={14} style={{marginBottom:16}}>
+            <Sel label="Type de personne" name="type" value={fournForm.type||'physique'} onChange={setFourn}
+              options={[{value:'physique',label:'Personne physique'},{value:'morale',label:'Personne morale'}]} />
+            {fournForm.type==='morale'
+              ? <Input label="Raison sociale *" name="nom_societe" value={fournForm.nom_societe||''} onChange={setFourn} required />
+              : <Input label="Nom et prénom(s) *" name="nom" value={fournForm.nom||''} onChange={setFourn} required />}
+            <Input label="Téléphone" name="telephone" value={fournForm.telephone||''} onChange={setFourn} />
+            <Input label="Provenance" name="provenance" value={fournForm.provenance||''} onChange={setFourn} />
+            <Input label="Coopérative affiliée" name="cooperative_affiliee" value={fournForm.cooperative_affiliee||''} onChange={setFourn} />
+            <Input label="N° Contrat" name="numero_contrat" value={fournForm.numero_contrat||''} onChange={setFourn} />
+            <Input label="N° CIP" name="cip" value={fournForm.cip||''} onChange={setFourn} />
+            <Input label="N° IFU" name="ifu" value={fournForm.ifu||''} onChange={setFourn} />
+            <Input label="Email" name="email" value={fournForm.email||''} onChange={setFourn} />
+            <Input label="Adresse" name="adresse" value={fournForm.adresse||''} onChange={setFourn} />
+          </Grid>
+          <Row><Btn variant="secondary" onClick={()=>setFournModal(false)}>Annuler</Btn><Btn type="submit" disabled={fournSaving}>{fournSaving?'...':'Enregistrer le fournisseur'}</Btn></Row>
         </form>
       </Modal>
     </div>
