@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js'
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, Fragment } from 'react'
 
 // ── CONFIG ─────────────────────────────────────────────────────────────────
 const SUPABASE_URL       ='https://proehigsikgqdrxjltmq.supabase.co'
@@ -1397,6 +1397,7 @@ const NAV = [
   { id:'journal_banque',     icon:'🏛️',  label:'Journal Banque' },
   { id:'journal_mobile',     icon:'📱', label:'Journal Mobile Money' },
   { id:'plan_comptable',     icon:'📒', label:'Plan Comptable' },
+  { id:'grand_livre',        icon:'📚', label:'Grand-Livre' },
   { id:'controle_budget',    icon:'📊', label:'Contrôle Budgétaire' },
 ]
 
@@ -4470,7 +4471,7 @@ const ALL_SECTIONS = [
   ['epierrage','Épierrage'],['etuvage_paiements','Paiements étuvage'],
   ['docs_admin','Documents administratifs'],
   ['journal_caisse','Journal Caisse'],['journal_banque','Journal Banque'],
-  ['journal_mobile','Journal Mobile Money'],['plan_comptable','Plan Comptable'],
+  ['journal_mobile','Journal Mobile Money'],['plan_comptable','Plan Comptable'],['grand_livre','Grand-Livre'],
 ]
 
 const SECTION_GROUPS = [
@@ -4481,7 +4482,7 @@ const SECTION_GROUPS = [
   {group:'Étuveuses', ids:['etv_repertoire','etv_avances','etv_bc','etv_br','etv_entrees','etv_sorties','etv_inventaire','etv_tresorerie']},
   {group:'Achats', ids:['achats','lots_semi_finis','epierrage','etuvage_paiements']},
   {group:'Documents', ids:['docs_admin']},
-  {group:'Comptabilité', ids:['journal_caisse','journal_banque','journal_mobile','plan_comptable']},
+  {group:'Comptabilité', ids:['journal_caisse','journal_banque','journal_mobile','plan_comptable','grand_livre']},
 ]
 
 // ── MES UTILISATEURS (Admin Société) ─────────────────────────────────────────
@@ -6550,6 +6551,169 @@ const BUDGET_IMPOTS = [
   { code:'C19', label:'Patente' },
   { code:'C20', label:'ORTB' },
 ]
+
+// ── GRAND-LIVRE ───────────────────────────────────────────────────────────────
+function GrandLivrePage({ companies, companyId, toast, readOnly=false }) {
+  const [comptes, setComptes]   = useState([])
+  const [fourns, setFourns]     = useState([])
+  const [clis, setClis]         = useState([])
+  const [achats, setAchats]     = useState([])
+  const [regls, setRegls]       = useState([])
+  const [factures, setFactures] = useState([])
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo]     = useState('')
+  const [loading, setLoading]   = useState(true)
+
+  const norm = s => String(s||'').trim().toLowerCase()
+  const companyNameGL = companies.find(c=>c.id===companyId)?.raison_sociale||''
+
+  const load = useCallback(async()=>{
+    setLoading(true)
+    const { data:ad } = await supabase.auth.getUser()
+    const uid=ad?.user?.id; const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
+    const scope = (q) => { if (isAdmin) { if(companyId) q=q.eq('company_id',companyId) } else { q=q.eq('user_id',uid); if(companyId) q=q.eq('company_id',companyId) } return q }
+    const [pc, fo, cl, ac, rg, fa] = await Promise.all([
+      scope(supabase.from('compta_plan_comptable').select('numero,libelle,est_collectif')),
+      scope(supabase.from('compta_fournisseurs').select('id,type,nom,nom_societe,numero_compte')),
+      scope(supabase.from('compta_clients').select('id,type,nom,nom_societe,numero_compte')),
+      scope(supabase.from('compta_achats_semi_finis').select('date_achat,nom_fournisseur,numero_fact,montant')),
+      scope(supabase.from('compta_reglements').select('date_paiement,tiers_type,tiers_nom,montant_paye,numero_facture')),
+      scope(supabase.from('compta_documents').select('date_doc,client_id,montant_ttc,numero,type_doc').eq('type_doc','facture')),
+    ])
+    setComptes((pc.data||[]).sort((a,b)=>String(a.numero).localeCompare(String(b.numero),undefined,{numeric:true})))
+    setFourns(fo.data||[]); setClis(cl.data||[]); setAchats(ac.data||[]); setRegls(rg.data||[]); setFactures(fa.data||[])
+    setLoading(false)
+  },[companyId])
+  useEffect(()=>{ load() },[load])
+
+  const inPeriode = d => (!dateFrom || (d||'')>=dateFrom) && (!dateTo || (d||'')<=dateTo)
+  const nomTiers = t => t.type==='morale' ? (t.nom_societe||'') : (t.nom||'')
+
+  // Construit les lignes (débit/crédit) d'un compte donné
+  const lignesPourCompte = (numero) => {
+    const lignes = []
+    const fourn = fourns.find(f=>f.numero_compte===numero)
+    const cli   = clis.find(c=>c.numero_compte===numero)
+    const isCollFourn = numero===COLLECTIF_FOURNISSEUR
+    const isCollCli   = numero===COLLECTIF_CLIENT
+
+    // FOURNISSEUR : achat = crédit, règlement = débit
+    const ajoutFourn = (filtreNom) => {
+      achats.filter(a=>inPeriode(a.date_achat) && (filtreNom?norm(a.nom_fournisseur)===filtreNom:true))
+        .forEach(a=>lignes.push({ date:a.date_achat, libelle:`Achat${a.numero_fact?(' '+a.numero_fact):''}${a.nom_fournisseur?(' — '+a.nom_fournisseur):''}`, debit:0, credit:a.montant||0 }))
+      regls.filter(r=>r.tiers_type==='fournisseur' && inPeriode(r.date_paiement) && (filtreNom?norm(r.tiers_nom)===filtreNom:true))
+        .forEach(r=>lignes.push({ date:r.date_paiement, libelle:`Règlement${r.numero_facture?(' '+r.numero_facture):''}${r.tiers_nom?(' — '+r.tiers_nom):''}`, debit:r.montant_paye||0, credit:0 }))
+    }
+    // CLIENT : facture = débit, règlement = crédit
+    const ajoutCli = (filtreNom, filtreId) => {
+      factures.filter(f=>inPeriode(f.date_doc) && (filtreId?f.client_id===filtreId:true))
+        .forEach(f=>lignes.push({ date:f.date_doc, libelle:`Facture${f.numero?(' '+f.numero):''}`, debit:f.montant_ttc||0, credit:0 }))
+      regls.filter(r=>r.tiers_type==='client' && inPeriode(r.date_paiement) && (filtreNom?norm(r.tiers_nom)===filtreNom:true))
+        .forEach(r=>lignes.push({ date:r.date_paiement, libelle:`Règlement${r.numero_facture?(' '+r.numero_facture):''}${r.tiers_nom?(' — '+r.tiers_nom):''}`, debit:0, credit:r.montant_paye||0 }))
+    }
+
+    if (isCollFourn) ajoutFourn(null)
+    else if (isCollCli) ajoutCli(null, null)
+    else if (fourn) ajoutFourn(norm(nomTiers(fourn)))
+    else if (cli) ajoutCli(norm(nomTiers(cli)), cli.id)
+
+    lignes.sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')))
+    return lignes
+  }
+
+  // Grand-livre = comptes ayant au moins un mouvement
+  const grandLivre = comptes.map(c=>{
+    const lignes = lignesPourCompte(c.numero)
+    const totalDebit = lignes.reduce((s,l)=>s+(l.debit||0),0)
+    const totalCredit = lignes.reduce((s,l)=>s+(l.credit||0),0)
+    return { ...c, lignes, totalDebit, totalCredit }
+  }).filter(c=>c.lignes.length>0)
+
+  const grandTotalDebit  = grandLivre.reduce((s,c)=>s+c.totalDebit,0)
+  const grandTotalCredit = grandLivre.reduce((s,c)=>s+c.totalCredit,0)
+
+  const soldeDebit  = c => Math.max(0, c.totalDebit - c.totalCredit)
+  const soldeCredit = c => Math.max(0, c.totalCredit - c.totalDebit)
+
+  const telechargerPDF = () => {
+    if (grandLivre.length===0) { toast.error('Aucun mouvement à afficher.'); return }
+    const periode = (dateFrom||dateTo) ? `du ${dateFrom||'…'} au ${dateTo||'…'}` : `au ${today()}`
+    const sections = grandLivre.map(c=>{
+      const corps = c.lignes.map(l=>`<tr>
+        <td>${l.date||'—'}</td><td>${l.libelle||'—'}</td>
+        <td class="r">${l.debit?Math.round(l.debit).toLocaleString('fr-FR'):''}</td>
+        <td class="r">${l.credit?Math.round(l.credit).toLocaleString('fr-FR'):''}</td></tr>`).join('')
+      return `
+        <tr><td colspan="4" style="background:#e8eef7;font-weight:700;text-align:center">Compte ${c.numero} ${c.libelle||''}${c.est_collectif?' (collectif)':''}</td></tr>
+        ${corps}
+        <tr style="font-weight:700"><td>${today()}</td><td>Total</td><td class="r">${Math.round(c.totalDebit).toLocaleString('fr-FR')}</td><td class="r">${Math.round(c.totalCredit).toLocaleString('fr-FR')}</td></tr>
+        <tr style="font-weight:700"><td>${today()}</td><td>Solde</td><td class="r">${soldeDebit(c)?Math.round(soldeDebit(c)).toLocaleString('fr-FR'):'0'}</td><td class="r">${soldeCredit(c)?Math.round(soldeCredit(c)).toLocaleString('fr-FR'):'0'}</td></tr>`
+    }).join('')
+    const html = `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><title>grand_livre</title>
+      <style>${CSS_PRINT}
+        table{width:100%;border-collapse:collapse;font-size:9.5pt}
+        th,td{border:1px solid #94a3b8;padding:4px 8px}
+        th{background:#0f2044;color:white}
+        td.r{text-align:right}
+      </style></head><body>
+      <button class="print-btn" onclick="window.print()">🖨️ Imprimer / PDF</button>
+      <div class="header"><div><div class="company-name">GRAND-LIVRE GÉNÉRAL ${periode}</div><div class="doc-numero" style="margin-top:4px">${companyNameGL}</div></div></div>
+      <table>
+        <thead><tr><th style="width:14%">Date</th><th>Libellé</th><th class="r" style="width:16%">Débit</th><th class="r" style="width:16%">Crédit</th></tr></thead>
+        <tbody>
+          ${sections}
+          <tr style="font-weight:800;background:#fff7ed"><td colspan="2" style="text-align:right">TOTAL GRAND-LIVRE</td><td class="r">${Math.round(grandTotalDebit).toLocaleString('fr-FR')}</td><td class="r">${Math.round(grandTotalCredit).toLocaleString('fr-FR')}</td></tr>
+        </tbody>
+      </table>
+    </body></html>`
+    openPrintWindow(html, 'grand_livre')
+  }
+
+  return (
+    <div>
+      <PageHeader title="📚 Grand-Livre" subtitle="Mouvements par compte (dérivés des achats, factures et règlements)"
+        actions={<Btn variant="info" onClick={telechargerPDF}>📥 Télécharger PDF</Btn>} />
+
+      <div style={{display:'flex',gap:10,flexWrap:'wrap',alignItems:'flex-end',marginBottom:14}}>
+        <div><label style={{display:'block',fontSize:12,color:'#64748b',marginBottom:4}}>Du</label>
+          <input type="date" value={dateFrom} onChange={e=>setDateFrom(e.target.value)} style={{padding:'8px 10px',borderRadius:8,border:'1px solid #d1d5db'}} /></div>
+        <div><label style={{display:'block',fontSize:12,color:'#64748b',marginBottom:4}}>Au</label>
+          <input type="date" value={dateTo} onChange={e=>setDateTo(e.target.value)} style={{padding:'8px 10px',borderRadius:8,border:'1px solid #d1d5db'}} /></div>
+        {(dateFrom||dateTo) && <Btn sm variant="secondary" onClick={()=>{setDateFrom('');setDateTo('')}}>Réinitialiser</Btn>}
+      </div>
+
+      {loading ? (
+        <Card><div style={{textAlign:'center',padding:24,color:'#64748b'}}>Chargement…</div></Card>
+      ) : grandLivre.length===0 ? (
+        <Card><div style={{textAlign:'center',padding:'48px 24px',color:'#64748b'}}>📚 Aucun mouvement sur la période. Les comptes s'alimentent à partir des achats, factures et règlements.</div></Card>
+      ) : (
+        <div style={{background:'white',borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
+          <div style={{overflowX:'auto'}}>
+            <table style={{width:'100%',borderCollapse:'collapse',minWidth:640,fontSize:13}}>
+              <thead><tr><TH>Date</TH><TH>Libellé</TH><TH right>Débit</TH><TH right>Crédit</TH></tr></thead>
+              <tbody>
+                {grandLivre.map(c=>(
+                  <Fragment key={c.numero}>
+                    <tr><td colSpan={4} style={{background:'#e8eef7',fontWeight:700,textAlign:'center',padding:'8px'}}>Compte {c.numero} {c.libelle||''}{c.est_collectif?' (collectif)':''}</td></tr>
+                    {c.lignes.map((l,i)=>(
+                      <TR key={i}>
+                        <TD sm>{l.date||'—'}</TD><TD>{l.libelle||'—'}</TD>
+                        <TD right>{l.debit?fcfa(l.debit):''}</TD><TD right>{l.credit?fcfa(l.credit):''}</TD>
+                      </TR>
+                    ))}
+                    <tr style={{fontWeight:700,background:'#f8fafc'}}><td style={{padding:'6px 10px'}}>{today()}</td><td>Total</td><td style={{textAlign:'right',padding:'6px 10px'}}>{fcfa(c.totalDebit)}</td><td style={{textAlign:'right',padding:'6px 10px'}}>{fcfa(c.totalCredit)}</td></tr>
+                    <tr style={{fontWeight:700}}><td style={{padding:'6px 10px'}}>{today()}</td><td>Solde</td><td style={{textAlign:'right',padding:'6px 10px',color:'#dc2626'}}>{fcfa(soldeDebit(c))}</td><td style={{textAlign:'right',padding:'6px 10px',color:'#dc2626'}}>{fcfa(soldeCredit(c))}</td></tr>
+                  </Fragment>
+                ))}
+                <tr style={{fontWeight:800,background:'#fff7ed'}}><td colSpan={2} style={{textAlign:'right',padding:'10px'}}>TOTAL GRAND-LIVRE</td><td style={{textAlign:'right',padding:'10px'}}>{fcfa(grandTotalDebit)}</td><td style={{textAlign:'right',padding:'10px'}}>{fcfa(grandTotalCredit)}</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
 
 // ── PLAN COMPTABLE (page) ─────────────────────────────────────────────────────
 function PlanComptablePage({ companies, companyId, toast, readOnly=false }) {
@@ -9891,7 +10055,7 @@ export default function ComptaPro() {
     achats:'Achats Semi-finis', lots_semi_finis:'Lots Semi-finis', epierrage:'Épierrage', reglements_clients:'Règlements Clients', reglements_fourn:'Règlements Fournisseurs', etuvage_paiements:'Paiements Étuvage',
     docs_admin:'Documents administratifs', parametres:'Paramètres',
     prestations:'Prestations', journal_caisse:'Journal Caisse', journal_banque:'Journal Banque',
-    suivi_lot:'Suivi de Lot', journal_mobile:'Journal Mobile Money', plan_comptable:'Plan Comptable',
+    suivi_lot:'Suivi de Lot', journal_mobile:'Journal Mobile Money', plan_comptable:'Plan Comptable', grand_livre:'Grand-Livre',
   }
 
   const renderPage = () => {
@@ -9950,6 +10114,7 @@ export default function ComptaPro() {
       case 'journal_banque':    return <JournalPage table="compta_journal_banque" title="Journal Banque" icon="🏛️" journalType="banque" {...sp} />
       case 'journal_mobile':    return <JournalPage table="compta_journal_mobile" title="Journal Mobile Money" icon="📱" journalType="mobile" {...sp} />
       case 'plan_comptable':    return <PlanComptablePage {...sp} readOnly={getReadOnly('plan_comptable')} />
+      case 'grand_livre':       return <GrandLivrePage {...sp} readOnly={getReadOnly('grand_livre')} />
       case 'users':          return isSuperAdmin ? <UsersManagementPage toast={toast} /> : <Dashboard {...sp} setPage={setPage} />
       case 'controle_budget': return <ControleBudgetairePage {...sp} readOnly={getReadOnly('controle_budget')} />
       case 'chat':           return <ChatPage profile={profile} toast={toast} />
