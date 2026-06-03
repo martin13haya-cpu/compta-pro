@@ -99,6 +99,9 @@ function buildPrintDocument(html, filename) {
   const fname = (filename || 'document').replace(/[^a-zA-Z0-9_-]/g,'_')
   const scriptTag = '<scr'+'ipt src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></scr'+'ipt>'
   const pdfScript = '<scr'+'ipt>' + `
+  if(window.AndroidPrint && typeof window.AndroidPrint.printPage==='function'){
+      window.print = function(){ try{ AndroidPrint.printPage(); }catch(e){} };
+    }
     // Détecte si on est dans une WebView Android (Capacitor) — le téléchargement de blob y échoue
     function __isAndroidWebView(){
       var ua=navigator.userAgent||'';
