@@ -6626,14 +6626,22 @@ function PlanComptablePage({ companies, companyId, toast, readOnly=false }) {
         let q = supabase.from(conf.tableTiers).select('id,type,nom,nom_societe,numero_compte')
         if (isAdmin) { if (cid) q=q.eq('company_id',cid) } else { q=q.eq('user_id',uid); if (cid) q=q.eq('company_id',cid) }
         const { data:tiers } = await q
-        const sansCompte = (tiers||[]).filter(t=>!t.numero_compte)
+        const libOf = t => t.type==='morale' ? (t.nom_societe||'') : (t.nom||'')
         let nums = await numerosSousCompte(conf.collectif, cid)
-        for (const t of sansCompte) {
+        const numSet = new Set(nums)
+        // 1) Réconcilier les fiches qui ont DÉJÀ un numéro mais absent du plan comptable
+        for (const t of (tiers||[]).filter(t=>t.numero_compte && String(t.numero_compte).startsWith(conf.collectif))) {
+          if (!numSet.has(t.numero_compte)) {
+            await supabase.from('compta_plan_comptable').insert({ company_id:cid, user_id:uid, numero:t.numero_compte, libelle:libOf(t), est_collectif:false })
+            numSet.add(t.numero_compte); nums.push(t.numero_compte); total++
+          }
+        }
+        // 2) Générer pour les fiches SANS numéro
+        for (const t of (tiers||[]).filter(t=>!t.numero_compte)) {
           const numero = prochainSousCompte(conf.collectif, nums)
-          const lib = t.type==='morale' ? (t.nom_societe||'') : (t.nom||'')
-          await supabase.from('compta_plan_comptable').insert({ company_id:cid, user_id:uid, numero, libelle:lib, est_collectif:false })
+          await supabase.from('compta_plan_comptable').insert({ company_id:cid, user_id:uid, numero, libelle:libOf(t), est_collectif:false })
           await supabase.from(conf.tableTiers).update({ numero_compte:numero }).eq('id', t.id)
-          nums.push(numero); total++
+          numSet.add(numero); nums.push(numero); total++
         }
       }
       toast.success(total>0 ? `${total} compte(s) généré(s).` : 'Aucun compte manquant — tout est à jour.')
