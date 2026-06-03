@@ -2836,6 +2836,8 @@ function CommercialNewPage({ companies, companyId, typeDoc, setPage, toast }) {
   const [articles, setArticles] = useState([])
   const [lignes, setLignes]     = useState([{ designation:'', unite:'kg', quantite:0, prix_unitaire:0, montant_ligne:0 }])
   const [saving, setSaving]     = useState(false)
+  const [fournType, setFournType] = useState('physique')   // Bon de commande : recherche par CIP (physique) ou IFU (morale)
+  const [fournNum, setFournNum]   = useState('')            // Numéro CIP/IFU saisi
 
   const loadCli = useCallback(async cid=>{ if(!cid) return; const {data}=await supabase.from('compta_clients').select('*').eq('company_id',cid).eq('actif',true); setClients(data||[]) },[])
   const loadArt = useCallback(async cid=>{ if(!cid) return; const {data}=await supabase.from('compta_articles').select('*').eq('company_id',cid).eq('actif',true); setArticles(data||[]) },[])
@@ -2861,6 +2863,13 @@ function CommercialNewPage({ companies, companyId, typeDoc, setPage, toast }) {
   const tva = Math.round(ht*(parseFloat(form.tva_pct)||0)/100)
   const ttc = ht+tva
 
+  // ── Bon de commande : recherche du fournisseur par CIP (physique) / IFU (morale) ──
+  const fournNumField = fournType==='morale' ? 'ifu' : 'cip'
+  const normNum = s => String(s||'').trim().toUpperCase()
+  const matchedFourn = normNum(fournNum)
+    ? (fournisseurs.find(f => (f.type||'physique')===fournType && normNum(f[fournNumField])===normNum(fournNum)) || null)
+    : null
+
   const save = async e=>{
     e.preventDefault(); setSaving(true)
     const uid = (await supabase.auth.getUser()).data?.user?.id
@@ -2871,7 +2880,7 @@ function CommercialNewPage({ companies, companyId, typeDoc, setPage, toast }) {
     const { data:docData, error:docErr } = await supabase.from('compta_documents').insert({
       company_id:form.company_id, user_id:uid, type_doc:form.type_doc, numero,
       date_doc:form.date_doc, date_echeance:form.date_echeance||null,
-      client_id:form.client_id||null, fournisseur_id:form.fournisseur_id||null, statut:'brouillon',
+      client_id:form.client_id||null, fournisseur_id:(form.type_doc==='bon_commande' ? (matchedFourn?.id||null) : (form.fournisseur_id||null)), statut:'brouillon',
       montant_ht:ht, tva_pct:parseFloat(form.tva_pct)||0, montant_tva:tva, montant_ttc:ttc,
       notes:form.notes,
     }).select().single()
@@ -2904,8 +2913,39 @@ function CommercialNewPage({ companies, companyId, typeDoc, setPage, toast }) {
                   options={Object.entries(TYPE_DOC_LABELS).map(([v,l])=>({value:v,label:l}))} />
                 <Input label="Date *" name="date_doc" type="date" value={form.date_doc} onChange={setF} required />
                 {form.type_doc==='bon_commande' ? (
-                  <Sel label="Fournisseur" name="fournisseur_id" value={form.fournisseur_id} onChange={setF}
-                    options={[{value:'',label:'— Aucun —'},...fournisseurs.map(f=>({value:f.id,label:fourName(f)}))]} />
+                  <>
+                    <Sel label="Type fournisseur" name="__fournType" value={fournType}
+                      onChange={e=>{ setFournType(e.target.value); setFournNum('') }}
+                      options={[{value:'physique',label:'Personne physique'},{value:'morale',label:'Personne morale'}]} />
+                    <div>
+                      <label style={{ display:'block', fontSize:12.5, fontWeight:600, color:'#374151', marginBottom:5 }}>
+                        {fournType==='morale' ? 'N° IFU' : 'N° CIP'}
+                      </label>
+                      <input list="fourn-num-list" value={fournNum}
+                        onChange={e=>setFournNum(toUpperNoAccent(e.target.value))}
+                        placeholder={fournType==='morale' ? 'Saisir / choisir un IFU' : 'Saisir / choisir un CIP'}
+                        style={{ width:'100%', padding:'9px 12px', borderRadius:8, border:'1px solid #d1d5db',
+                          fontSize:13.5, boxSizing:'border-box', background:'white' }} />
+                      <datalist id="fourn-num-list">
+                        {fournisseurs
+                          .filter(f => (f.type||'physique')===fournType && normNum(f[fournNumField])!=='')
+                          .map(f => <option key={f.id} value={f[fournNumField]}>{fourName(f)}</option>)}
+                      </datalist>
+                    </div>
+                    <div>
+                      <label style={{ display:'block', fontSize:12.5, fontWeight:600, color:'#374151', marginBottom:5 }}>
+                        Fournisseur
+                      </label>
+                      <div style={{ width:'100%', padding:'9px 12px', borderRadius:8, border:'1px solid #d1d5db',
+                        fontSize:13.5, boxSizing:'border-box', background:'#f8fafc', minHeight:38, display:'flex', alignItems:'center' }}>
+                        {matchedFourn
+                          ? <span style={{fontWeight:600,color:'#0f2044'}}>{fourName(matchedFourn)}</span>
+                          : normNum(fournNum)
+                            ? <span style={{color:'#dc2626',fontWeight:600}}>⚠️ Fournisseur introuvable</span>
+                            : <span style={{color:'#94a3b8'}}>—</span>}
+                      </div>
+                    </div>
+                  </>
                 ) : (
                   <Sel label="Client" name="client_id" value={form.client_id} onChange={setF}
                     options={[{value:'',label:'— Aucun —'},...clients.map(c=>({value:c.id,label:cliName(c)}))]} />
