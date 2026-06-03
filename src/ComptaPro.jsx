@@ -1737,13 +1737,16 @@ function CompaniesPage({ companies, refresh, toast, isSuperAdmin=false, currentU
 
 // ── TIERS GENERIQUE (Clients + Fournisseurs partagent la même logique) ───────
 // ── FICHE FOURNISSEUR (PDF) ──────────────────────────────────────────────────
-function printFicheFournisseur(it) {
+function printFicheTiers(it, kind='fournisseur') {
+  const isFourn = kind==='fournisseur'
+  const titreFiche = isFourn ? 'FICHE FOURNISSEUR' : 'FICHE CLIENT'
+  const labelTiers = isFourn ? 'fournisseur' : 'client'
   const v = x => (x===null || x===undefined || x==='') ? '—' : x
   const isMorale = it.type==='morale'
   const nomAffiche = isMorale ? (it.nom_societe||'—') : (it.nom||'—')
   const societe = it.compta_companies?.raison_sociale || 'Compta Pro'
   const superficie = it.superficie_bas_fonds ? `${it.superficie_bas_fonds} ha` : '—'
-  const fname = `fiche_fournisseur_${(nomAffiche||'').replace(/\s+/g,'_')}`
+  const fname = `fiche_${labelTiers}_${(nomAffiche||'').replace(/\s+/g,'_')}`
 
   const rows = arr => arr.map(([k,val])=>`<tr><td style="font-weight:600;width:42%">${k}</td><td class="r" style="text-align:left">${v(val)}</td></tr>`).join('')
 
@@ -1788,7 +1791,7 @@ function printFicheFournisseur(it) {
     <button class="print-btn" onclick="window.print()">🖨️ Imprimer / PDF</button>
     <div class="header">
       <div>
-        <div class="company-name">FICHE FOURNISSEUR</div>
+        <div class="company-name">${titreFiche}</div>
         <div class="doc-numero" style="margin-top:4px">${societe}</div>
       </div>
       <div class="doc-title">
@@ -1796,7 +1799,7 @@ function printFicheFournisseur(it) {
       </div>
     </div>
 
-    <h3 style="margin:6px 0 6px;font-size:11pt;color:#075E54">🚚 Identité</h3>
+    <h3 style="margin:6px 0 6px;font-size:11pt;color:#075E54">${isFourn?'🚚':'👥'} Identité</h3>
     <table><tbody>${rows([
       ['Type de personne', isMorale ? 'Personne morale' : 'Personne physique'],
       [isMorale ? 'Raison sociale' : 'Nom et prénom(s)', nomAffiche],
@@ -1805,14 +1808,14 @@ function printFicheFournisseur(it) {
       ['Email', it.email],
       ['Adresse', it.adresse],
       ['Provenance', it.provenance],
-      ['Coopérative affiliée', it.cooperative_affiliee],
-      ['N° Contrat', it.numero_contrat],
+      ...(isFourn ? [['Coopérative affiliée', it.cooperative_affiliee], ['N° Contrat', it.numero_contrat]] : []),
       ['N° IFU', it.ifu],
       ['N° CIP', it.cip],
     ])}</tbody></table>
 
     ${mentorBloc}
 
+    ${isFourn ? `
     <h3 style="margin:18px 0 6px;font-size:11pt;color:#075E54">📍 Localisation & bas-fonds</h3>
     <table><tbody>${rows([
       ['Département', it.departement],
@@ -1821,12 +1824,12 @@ function printFicheFournisseur(it) {
       ['Village', it.village],
       ['Nom du bas-fonds', it.nom_bas_fonds],
       ['Superficie', superficie],
-    ])}</tbody></table>
+    ])}</tbody></table>` : ''}
 
     ${autresBloc}
 
     <div class="signatures" style="margin-top:50px">
-      <div class="sig-box">Signature du fournisseur</div>
+      <div class="sig-box">Signature du ${labelTiers}</div>
       <div class="sig-box">Cachet & visa<br><small>${societe}</small></div>
     </div>
   </body></html>`
@@ -2001,11 +2004,86 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     e.target.value = ''
   }
 
+  // Export Excel + PDF de la liste (clients & fournisseurs) — dispo aussi en lecture seule (super admin)
+  const companyName = companies.find(c=>c.id===companyId)?.raison_sociale || ''
+  const isFourn = table==='compta_fournisseurs'
+
+  const tiersVal = (it,c) => ({
+    'Type': it.type==='morale'?'Société':'Physique',
+    'Nom': displayName(it),
+    'Téléphone': it.telephone||'',
+    'Provenance': it.provenance||'',
+    'Coopérative': it.cooperative_affiliee||'',
+    'N° Contrat': it.numero_contrat||'',
+    'N° IFU': it.ifu||'',
+    'N° CIP': it.cip||'',
+    'Email': it.email||'',
+    'Adresse': it.adresse||'',
+    'Département': it.departement||'',
+    'Commune': it.commune||'',
+    'Arrondissement': it.arrondissement||'',
+    'Village': it.village||'',
+    'Bas-fonds': it.nom_bas_fonds||'',
+    'Superficie (ha)': it.superficie_bas_fonds||'',
+  }[c] ?? '')
+
+  const exportExcelTiers = () => {
+    const cols = [
+      'Type','Nom','Téléphone','Provenance',
+      ...(isFourn?['Coopérative','N° Contrat']:[]),
+      'N° IFU','N° CIP','Email','Adresse',
+      ...(isFourn?['Département','Commune','Arrondissement','Village','Bas-fonds','Superficie (ha)']:[]),
+    ]
+    const thead = cols.map(c=>`<th style="background:#0f2044;color:white;padding:6px 10px;white-space:nowrap">${c}</th>`).join('')
+    const tbody = filtered.map((it,i)=>`<tr style="background:${i%2===0?'#f8fafc':'white'}">${cols.map(c=>`<td>${tiersVal(it,c)}</td>`).join('')}</tr>`).join('')
+    const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+      <head><meta charset="UTF-8"><style>
+        table{border-collapse:collapse;width:100%}
+        th,td{border:1px solid #d1d5db;padding:5px 8px;font-size:10pt}
+        h2{font-family:Arial;color:#0f2044}p{font-family:Arial;font-size:9pt;color:#555}
+      </style></head><body>
+      <h2>${title}</h2>
+      <p>${companyName} — ${filtered.length} enregistrement(s) — Exporté le ${new Date().toLocaleDateString('fr-FR')}</p>
+      <table><thead><tr>${thead}</tr></thead><tbody>${tbody}</tbody></table>
+      </body></html>`
+    const blob = new Blob(['\uFEFF'+html], {type:'application/vnd.ms-excel;charset=utf-8'})
+    const url  = URL.createObjectURL(blob)
+    const a    = document.createElement('a')
+    a.href=url; a.download=`${title.toLowerCase().replace(/\s/g,'_')}.xls`; a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const printListeTiers = () => {
+    const headers = [
+      {label:'Type'},{label:'Nom'},{label:'Téléphone'},{label:'Provenance'},
+      ...(isFourn?[{label:'Coopérative'},{label:'N° Contrat'}]:[]),
+      {label:'IFU'},{label:'CIP'},
+    ]
+    const rows = filtered.map(it=>[
+      it.type==='morale'?'Société':'Physique',
+      displayName(it),
+      it.telephone||'—',
+      it.provenance||'—',
+      ...(isFourn?[it.cooperative_affiliee||'—', it.numero_contrat||'—']:[]),
+      it.ifu||'—',
+      it.cip||'—',
+    ])
+    printFilteredList({ title, companyName, headers, rows })
+  }
+
   return (
     <div>
       <PageHeader title={title} subtitle={`${filtered.length} enregistrement(s)`}
-        actions={!readOnly && (
+        actions={(
           <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+            {items.length>0 && (
+              <>
+                <Btn sm variant="info" onClick={printListeTiers}>🖨️ PDF liste</Btn>
+                <Btn sm variant="success" onClick={exportExcelTiers}>📊 Excel</Btn>
+              </>
+            )}
+            {!readOnly && (
+              <>
             {canImport && (
               <>
                 <button onClick={downloadTemplate} title="Télécharger le modèle CSV"
@@ -2025,6 +2103,8 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
               </button>
             )}
             <Btn onClick={()=>open()}>+ Nouveau(elle)</Btn>
+              </>
+            )}
           </div>
         )} />
       <Card style={{marginBottom:16,padding:'12px 20px'}}>
@@ -2070,7 +2150,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
               {(table==='compta_clients'||table==='compta_fournisseurs') && <TH>Type</TH>}
               <TH>Nom</TH><TH>Téléphone</TH><TH>Provenance</TH>
               {extraFields?.headers?.map((h,i)=><TH key={i}>{h}</TH>)}
-              <TH>IFU</TH><TH>CIP</TH>{!readOnly && <TH>Actions</TH>}
+              <TH>IFU</TH><TH>CIP</TH><TH>Actions</TH>
             </tr></thead>
             <tbody>
               {filtered.map(it=>(
@@ -2082,15 +2162,13 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
                   {extraFields?.names?.map(k=><TD key={k}>{it[k]||'—'}</TD>)}
                   <TD sm>{it.ifu||'—'}</TD>
                   <TD sm>{it.cip||'—'}</TD>
-                  {!readOnly && (
                   <TD>
                     <div style={{display:'flex',gap:6}}>
-                      <Btn sm variant="secondary" onClick={()=>open(it)}>Edit</Btn>
-                      {table==='compta_fournisseurs' && <Btn sm variant="info" onClick={()=>printFicheFournisseur(it)}>📥 PDF</Btn>}
-                      <Btn sm variant="danger" onClick={()=>archive(it.id)}>🗑️</Btn>
+                      <Btn sm variant="info" onClick={()=>printFicheTiers(it, isFourn?'fournisseur':'client')}>📥 PDF</Btn>
+                      {!readOnly && <Btn sm variant="secondary" onClick={()=>open(it)}>Edit</Btn>}
+                      {!readOnly && <Btn sm variant="danger" onClick={()=>archive(it.id)}>🗑️</Btn>}
                     </div>
                   </TD>
-                  )}
                 </TR>
               ))}
             </tbody>
