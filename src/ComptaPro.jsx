@@ -1396,6 +1396,7 @@ const NAV = [
   { id:'journal_caisse',     icon:'🏦', label:'Journal Caisse' },
   { id:'journal_banque',     icon:'🏛️',  label:'Journal Banque' },
   { id:'journal_mobile',     icon:'📱', label:'Journal Mobile Money' },
+  { id:'plan_comptable',     icon:'📒', label:'Plan Comptable' },
   { id:'controle_budget',    icon:'📊', label:'Contrôle Budgétaire' },
 ]
 
@@ -1837,6 +1838,51 @@ function printFicheTiers(it, kind='fournisseur') {
   openPrintWindow(html, fname)
 }
 
+// ── PLAN COMPTABLE ───────────────────────────────────────────────────────────
+const COLLECTIF_FOURNISSEUR = '4011'
+const COLLECTIF_CLIENT      = '4111'
+
+// Numéros déjà présents sous un compte collectif (depuis le plan comptable)
+async function numerosSousCompte(collectif, cid) {
+  const { data:ad } = await supabase.auth.getUser()
+  const uid = ad?.user?.id; const isAdmin = ad?.user?.email===SUPER_ADMIN_EMAIL
+  let q = supabase.from('compta_plan_comptable').select('numero').like('numero', collectif+'%')
+  if (isAdmin) { if (cid) q = q.eq('company_id', cid) }
+  else { q = q.eq('user_id', uid); if (cid) q = q.eq('company_id', cid) }
+  const { data } = await q
+  return (data||[]).map(r=>String(r.numero))
+}
+
+// Prochain sous-compte = collectif + (plus grande séquence existante + 1)
+function prochainSousCompte(collectif, numeros) {
+  const seqs = (numeros||[])
+    .filter(n => n.startsWith(collectif) && n.length > collectif.length)
+    .map(n => parseInt(n.slice(collectif.length),10))
+    .filter(n => !isNaN(n))
+  const max = seqs.length ? Math.max(...seqs) : 0
+  return collectif + (max + 1)
+}
+
+// S'assure que le compte collectif existe dans le plan comptable
+async function assurerCollectif(collectif, libelle, cid, uid) {
+  let q = supabase.from('compta_plan_comptable').select('id').eq('numero', collectif)
+  if (cid) q = q.eq('company_id', cid)
+  const { data } = await q
+  if (!data || data.length===0)
+    await supabase.from('compta_plan_comptable').insert({ company_id:cid, user_id:uid, numero:collectif, libelle, est_collectif:true })
+}
+
+// Attribue un sous-compte à un tiers : crée le collectif au besoin, génère le numéro,
+// l'inscrit au plan comptable, le pose sur la fiche, et le renvoie.
+async function attribuerCompteTiers({ tableTiers, tiersId, collectif, libelleCollectif, libelleCompte, cid, uid }) {
+  await assurerCollectif(collectif, libelleCollectif, cid, uid)
+  const nums = await numerosSousCompte(collectif, cid)
+  const numero = prochainSousCompte(collectif, nums)
+  await supabase.from('compta_plan_comptable').insert({ company_id:cid, user_id:uid, numero, libelle:libelleCompte||'', est_collectif:false })
+  if (tableTiers && tiersId) await supabase.from(tableTiers).update({ numero_compte:numero }).eq('id', tiersId)
+  return numero
+}
+
 function TiersPage({ table, title, titleSingle, icon, companies, companyId, toast, extraFields, readOnly=false }) {
   const [items,      setItems]     = useState([])
   const [modal,      setModal]     = useState(null)
@@ -1910,9 +1956,26 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
       pay.type = form.type||'physique'
       if (form.type==='morale') pay.nom_societe = form.nom_societe||''
     }
-    const { error } = modal==='add'
-      ? await supabase.from(table).insert({...pay,user_id:uid})
-      : await supabase.from(table).update(pay).eq('id',form.id)
+    if (modal==='add') {
+      const { data:ins, error } = await supabase.from(table).insert({...pay,user_id:uid}).select('id').single()
+      if (error) { setSaving(false); toast.error(error.message); return }
+      // Attribution automatique du numéro de compte (fournisseur 4011… / client 4111…)
+      if (table==='compta_fournisseurs' || table==='compta_clients') {
+        const isFourn = table==='compta_fournisseurs'
+        const libelleCompte = form.type==='morale' ? (form.nom_societe||'') : (form.nom||'')
+        try {
+          await attribuerCompteTiers({
+            tableTiers:table, tiersId:ins.id,
+            collectif: isFourn?COLLECTIF_FOURNISSEUR:COLLECTIF_CLIENT,
+            libelleCollectif: isFourn?'Fournisseurs':'Clients',
+            libelleCompte, cid:pay.company_id, uid,
+          })
+        } catch(_) {}
+      }
+      setSaving(false)
+      toast.success(`${titleSingle} enregistré(e) !`); close(); load(); return
+    }
+    const { error } = await supabase.from(table).update(pay).eq('id',form.id)
     setSaving(false)
     if (error) { toast.error(error.message); return }
     toast.success(`${titleSingle} enregistré(e) !`); close(); load()
@@ -1993,8 +2056,22 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
         })
       }
       if(rows.length===0){ toast.error('Aucune ligne valide trouvée'); setImporting(false); return }
-      const { error } = await supabase.from(table).insert(rows)
+      const { data:insRows, error } = await supabase.from(table).insert(rows).select('id,type,nom,nom_societe')
       if(error){ toast.error('Erreur import : '+error.message); setImporting(false); return }
+      // Attribution automatique des numéros de compte (séquentiel)
+      if (table==='compta_fournisseurs' || table==='compta_clients') {
+        const isFourn = table==='compta_fournisseurs'
+        const collectif = isFourn?COLLECTIF_FOURNISSEUR:COLLECTIF_CLIENT
+        await assurerCollectif(collectif, isFourn?'Fournisseurs':'Clients', cid, uid)
+        let nums = await numerosSousCompte(collectif, cid)
+        for (const r of (insRows||[])) {
+          const numero = prochainSousCompte(collectif, nums)
+          const lib = r.type==='morale' ? (r.nom_societe||'') : (r.nom||'')
+          await supabase.from('compta_plan_comptable').insert({ company_id:cid, user_id:uid, numero, libelle:lib, est_collectif:false })
+          await supabase.from(table).update({ numero_compte:numero }).eq('id', r.id)
+          nums.push(numero)
+        }
+      }
       toast.success(`${rows.length} ${titleSingle.toLowerCase()}(s) importé(s) !`)
       load()
     } catch(err) {
@@ -2201,6 +2278,14 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
             ))}
             <Input label="N° IFU" name="ifu" value={form.ifu} onChange={set} />
             <Input label="N° CIP" name="cip" value={form.cip} onChange={set} />
+            {(table==='compta_clients'||table==='compta_fournisseurs') && (
+              <div>
+                <label style={{display:'block',fontSize:12.5,fontWeight:600,color:'#374151',marginBottom:5}}>N° Compte</label>
+                <div style={{padding:'9px 12px',background:'#f8fafc',borderRadius:8,border:'1px solid #d1d5db',fontSize:13.5,minHeight:38,display:'flex',alignItems:'center',color:form.numero_compte?'#0f2044':'#94a3b8',fontWeight:form.numero_compte?700:400}}>
+                  {form.numero_compte || 'Attribué automatiquement à l\u2019enregistrement'}
+                </div>
+              </div>
+            )}
             <Input label="Email" name="email" type="email" value={form.email} onChange={set} />
             <Input label="Adresse" name="adresse" value={form.adresse} onChange={set} />
             {table==='compta_fournisseurs' && (form.type||'physique')!=='morale' && (
@@ -3975,15 +4060,19 @@ function AchatsSemisPage({ companies, companyId, toast, readOnly=false }) {
     const cid = form.company_id||companyId||companies[0]?.id
     if (!cid) { toast.error('Veuillez sélectionner une société.'); return }
     setFournSaving(true)
-    const { error } = await supabase.from('compta_fournisseurs').insert({
+    const { data:ins, error } = await supabase.from('compta_fournisseurs').insert({
       company_id:cid, user_id:uid, type:fournForm.type,
       nom: isMorale ? '' : nomAff, nom_societe: isMorale ? nomAff : '',
       telephone:fournForm.telephone||null, provenance:fournForm.provenance||null,
       cooperative_affiliee:fournForm.cooperative_affiliee||null, numero_contrat:fournForm.numero_contrat||null,
       cip:fournForm.cip||null, ifu:fournForm.ifu||null, email:fournForm.email||null, adresse:fournForm.adresse||null,
-    })
+    }).select('id').single()
+    if (error) { setFournSaving(false); toast.error(error.message); return }
+    try {
+      await attribuerCompteTiers({ tableTiers:'compta_fournisseurs', tiersId:ins.id,
+        collectif:COLLECTIF_FOURNISSEUR, libelleCollectif:'Fournisseurs', libelleCompte:nomAff, cid, uid })
+    } catch(_) {}
     setFournSaving(false)
-    if (error) { toast.error(error.message); return }
     toast.success(`Fournisseur « ${nomAff} » enregistré.`)
     setFournModal(false)
     setForm(f=>({...f, nom_fournisseur:nomAff}))
@@ -4381,7 +4470,7 @@ const ALL_SECTIONS = [
   ['epierrage','Épierrage'],['etuvage_paiements','Paiements étuvage'],
   ['docs_admin','Documents administratifs'],
   ['journal_caisse','Journal Caisse'],['journal_banque','Journal Banque'],
-  ['journal_mobile','Journal Mobile Money'],
+  ['journal_mobile','Journal Mobile Money'],['plan_comptable','Plan Comptable'],
 ]
 
 const SECTION_GROUPS = [
@@ -4392,7 +4481,7 @@ const SECTION_GROUPS = [
   {group:'Étuveuses', ids:['etv_repertoire','etv_avances','etv_bc','etv_br','etv_entrees','etv_sorties','etv_inventaire','etv_tresorerie']},
   {group:'Achats', ids:['achats','lots_semi_finis','epierrage','etuvage_paiements']},
   {group:'Documents', ids:['docs_admin']},
-  {group:'Comptabilité', ids:['journal_caisse','journal_banque','journal_mobile']},
+  {group:'Comptabilité', ids:['journal_caisse','journal_banque','journal_mobile','plan_comptable']},
 ]
 
 // ── MES UTILISATEURS (Admin Société) ─────────────────────────────────────────
@@ -6461,6 +6550,165 @@ const BUDGET_IMPOTS = [
   { code:'C19', label:'Patente' },
   { code:'C20', label:'ORTB' },
 ]
+
+// ── PLAN COMPTABLE (page) ─────────────────────────────────────────────────────
+function PlanComptablePage({ companies, companyId, toast, readOnly=false }) {
+  const [items, setItems]   = useState([])
+  const [modal, setModal]   = useState(false)
+  const [editItem, setEditItem] = useState(null)
+  const [form, setForm]     = useState({})
+  const [saving, setSaving] = useState(false)
+  const [generating, setGenerating] = useState(false)
+  const [search, setSearch] = useState('')
+
+  const load = useCallback(async()=>{
+    const { data:ad } = await supabase.auth.getUser()
+    const uid=ad?.user?.id; const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
+    let q = supabase.from('compta_plan_comptable').select('*')
+    if (isAdmin) { if (companyId) q=q.eq('company_id',companyId) }
+    else { q=q.eq('user_id',uid); if (companyId) q=q.eq('company_id',companyId) }
+    const { data } = await q
+    const sorted = (data||[]).sort((a,b)=>String(a.numero).localeCompare(String(b.numero),undefined,{numeric:true}))
+    setItems(sorted)
+  },[companyId])
+  useEffect(()=>{ load() },[load])
+
+  const companyNamePC = companies.find(c=>c.id===companyId)?.raison_sociale||''
+  const set = e => setForm(f=>({...f,[e.target.name]:e.target.type==='checkbox'?e.target.checked:e.target.value}))
+
+  const filtered = items.filter(it=>{
+    const s=search.trim().toLowerCase(); if(!s) return true
+    return String(it.numero).toLowerCase().includes(s) || (it.libelle||'').toLowerCase().includes(s)
+  })
+
+  const openAdd = ()=>{ setEditItem(null); setForm({numero:'',libelle:'',est_collectif:false}); setModal(true) }
+  const openEdit = it=>{ setEditItem(it); setForm({numero:it.numero||'',libelle:it.libelle||'',est_collectif:!!it.est_collectif}); setModal(true) }
+  const close = ()=>{ setModal(false); setEditItem(null) }
+
+  const save = async e=>{
+    e.preventDefault()
+    const numero = (form.numero||'').trim()
+    if (!numero) { toast.error('Saisissez un numéro de compte.'); return }
+    const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
+    const cid = companyId || companies[0]?.id
+    // Anti-doublon de numéro (dans la société)
+    if (items.some(it=>String(it.numero)===numero && it.id!==editItem?.id)) { toast.error('Ce numéro de compte existe déjà.'); return }
+    setSaving(true)
+    const pay = { numero, libelle:form.libelle||'', est_collectif:!!form.est_collectif }
+    const { error } = editItem
+      ? await supabase.from('compta_plan_comptable').update(pay).eq('id', editItem.id)
+      : await supabase.from('compta_plan_comptable').insert({...pay, company_id:cid, user_id:uid})
+    setSaving(false)
+    if (error) { toast.error(error.message); return }
+    toast.success(editItem?'Compte mis à jour !':'Compte ajouté !'); close(); load()
+  }
+
+  const del = async id=>{
+    if (!window.confirm('Supprimer ce compte du plan comptable ?')) return
+    const { error } = await supabase.from('compta_plan_comptable').delete().eq('id',id)
+    if (error) { toast.error(error.message); return }
+    toast.success('Compte supprimé.'); load()
+  }
+
+  // Génère les sous-comptes manquants pour fournisseurs (4011…) et clients (4111…)
+  const genererManquants = async ()=>{
+    if (!window.confirm('Générer les sous-comptes manquants pour tous les fournisseurs (4011…) et clients (4111…) ?')) return
+    setGenerating(true)
+    try {
+      const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id; const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
+      const cid = companyId || companies[0]?.id
+      let total = 0
+      for (const conf of [
+        { tableTiers:'compta_fournisseurs', collectif:COLLECTIF_FOURNISSEUR, lib:'Fournisseurs' },
+        { tableTiers:'compta_clients',      collectif:COLLECTIF_CLIENT,      lib:'Clients' },
+      ]) {
+        await assurerCollectif(conf.collectif, conf.lib, cid, uid)
+        let q = supabase.from(conf.tableTiers).select('id,type,nom,nom_societe,numero_compte')
+        if (isAdmin) { if (cid) q=q.eq('company_id',cid) } else { q=q.eq('user_id',uid); if (cid) q=q.eq('company_id',cid) }
+        const { data:tiers } = await q
+        const sansCompte = (tiers||[]).filter(t=>!t.numero_compte)
+        let nums = await numerosSousCompte(conf.collectif, cid)
+        for (const t of sansCompte) {
+          const numero = prochainSousCompte(conf.collectif, nums)
+          const lib = t.type==='morale' ? (t.nom_societe||'') : (t.nom||'')
+          await supabase.from('compta_plan_comptable').insert({ company_id:cid, user_id:uid, numero, libelle:lib, est_collectif:false })
+          await supabase.from(conf.tableTiers).update({ numero_compte:numero }).eq('id', t.id)
+          nums.push(numero); total++
+        }
+      }
+      toast.success(total>0 ? `${total} compte(s) généré(s).` : 'Aucun compte manquant — tout est à jour.')
+      load()
+    } catch(err) { toast.error('Erreur génération : '+(err.message||err)) }
+    setGenerating(false)
+  }
+
+  const printPC = ()=>{
+    const headers=[{label:'N° Compte'},{label:'Libellé'},{label:'Type'}]
+    const rows=filtered.map(it=>[it.numero, it.libelle||'—', it.est_collectif?'Collectif':'Sous-compte'])
+    printFilteredList({ title:'Plan Comptable', companyName:companyNamePC, headers, rows })
+  }
+
+  return (
+    <div>
+      <PageHeader title="📒 Plan Comptable" subtitle={`${items.length} compte(s)`}
+        actions={!readOnly ? (
+          <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+            <Btn sm variant="info" onClick={printPC}>🖨️ Imprimer</Btn>
+            <Btn sm variant="secondary" onClick={genererManquants} disabled={generating}>{generating?'Génération…':'⚙️ Générer les comptes manquants'}</Btn>
+            <Btn onClick={openAdd}>+ Nouveau compte</Btn>
+          </div>
+        ) : null} />
+
+      <div style={{marginBottom:12}}>
+        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="🔍 Rechercher par numéro ou libellé…"
+          style={{width:'100%',maxWidth:360,padding:'9px 12px',borderRadius:8,border:'1px solid #d1d5db',fontSize:13.5,boxSizing:'border-box'}} />
+      </div>
+
+      <div style={{background:'white',borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
+        {filtered.length===0 ? (
+          <div style={{textAlign:'center',padding:'48px 24px',color:'#64748b'}}>📒 Aucun compte. Cliquez sur « Générer les comptes manquants » ou ajoutez-en un.</div>
+        ) : (
+          <div style={{overflowX:'auto'}}>
+            <table style={{width:'100%',borderCollapse:'collapse',minWidth:520}}>
+              <thead><tr><TH>N° Compte</TH><TH>Libellé</TH><TH>Type</TH>{!readOnly && <TH>Actions</TH>}</tr></thead>
+              <tbody>
+                {filtered.map(it=>(
+                  <TR key={it.id}>
+                    <TD bold sm style={it.est_collectif?{}:{paddingLeft:24}}>{it.numero}</TD>
+                    <TD>{it.libelle||'—'}</TD>
+                    <TD sm>{it.est_collectif ? <Badge type="info">Collectif</Badge> : <Badge type="secondary">Sous-compte</Badge>}</TD>
+                    {!readOnly && (
+                      <TD>
+                        <div style={{display:'flex',gap:6}}>
+                          <Btn sm variant="secondary" onClick={()=>openEdit(it)}>Edit</Btn>
+                          <Btn sm variant="danger" onClick={()=>del(it.id)}>🗑️</Btn>
+                        </div>
+                      </TD>
+                    )}
+                  </TR>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <Modal open={modal} onClose={close} title={editItem?'Modifier le compte':'Nouveau compte'} size="md">
+        <form onSubmit={save}>
+          <Grid cols={2} gap={14} style={{marginBottom:16}}>
+            <Input label="N° de compte *" name="numero" value={form.numero||''} onChange={set} required />
+            <Input label="Libellé" name="libelle" value={form.libelle||''} onChange={set} />
+          </Grid>
+          <label style={{display:'flex',alignItems:'center',gap:8,marginBottom:16,fontSize:13.5,color:'#374151',cursor:'pointer'}}>
+            <input type="checkbox" name="est_collectif" checked={!!form.est_collectif} onChange={set} />
+            Compte collectif (ses sous-comptes commenceront par ce numéro)
+          </label>
+          <Row><Btn variant="secondary" onClick={close}>Annuler</Btn><Btn type="submit" disabled={saving}>{saving?'...':'Enregistrer'}</Btn></Row>
+        </form>
+      </Modal>
+    </div>
+  )
+}
 
 function ControleBudgetairePage({ companies, companyId, toast, readOnly=false }) {
   const [tab, setTab] = useState('prevision') // 'prevision' | 'realisation' | 'ecart'
@@ -9635,7 +9883,7 @@ export default function ComptaPro() {
     achats:'Achats Semi-finis', lots_semi_finis:'Lots Semi-finis', epierrage:'Épierrage', reglements_clients:'Règlements Clients', reglements_fourn:'Règlements Fournisseurs', etuvage_paiements:'Paiements Étuvage',
     docs_admin:'Documents administratifs', parametres:'Paramètres',
     prestations:'Prestations', journal_caisse:'Journal Caisse', journal_banque:'Journal Banque',
-    suivi_lot:'Suivi de Lot', journal_mobile:'Journal Mobile Money',
+    suivi_lot:'Suivi de Lot', journal_mobile:'Journal Mobile Money', plan_comptable:'Plan Comptable',
   }
 
   const renderPage = () => {
@@ -9693,6 +9941,7 @@ export default function ComptaPro() {
       case 'journal_caisse':    return <JournalPage table="compta_journal_caisse" title="Journal Caisse" icon="🏦" journalType="caisse" {...sp} />
       case 'journal_banque':    return <JournalPage table="compta_journal_banque" title="Journal Banque" icon="🏛️" journalType="banque" {...sp} />
       case 'journal_mobile':    return <JournalPage table="compta_journal_mobile" title="Journal Mobile Money" icon="📱" journalType="mobile" {...sp} />
+      case 'plan_comptable':    return <PlanComptablePage {...sp} readOnly={getReadOnly('plan_comptable')} />
       case 'users':          return isSuperAdmin ? <UsersManagementPage toast={toast} /> : <Dashboard {...sp} setPage={setPage} />
       case 'controle_budget': return <ControleBudgetairePage {...sp} readOnly={getReadOnly('controle_budget')} />
       case 'chat':           return <ChatPage profile={profile} toast={toast} />
