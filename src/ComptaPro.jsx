@@ -107,47 +107,33 @@ function buildPrintDocument(html, filename) {
       return isAndroid && isWebView;
     }
     function __downloadPDF(){
+      // Sur Android WebView, le téléchargement de blob ne marche pas : on utilise l'impression native
+      if(__isAndroidWebView()){
+        window.print();
+        return;
+      }
       var btn=document.getElementById('__pdfbtn');
       if(typeof html2pdf==="undefined"){ alert("La librairie PDF nest pas encore chargee. Verifiez votre connexion internet et reessayez."); return; }
       btn.textContent='⏳ Génération...'; btn.disabled=true;
       var tb=document.getElementById('__toolbar'); tb.style.display='none';
       var opt={ margin:[8,8,8,8], filename:'${fname}.pdf', image:{type:'jpeg',quality:0.98}, html2canvas:{scale:2,useCORS:true,logging:false}, jsPDF:{unit:'mm',format:'a4',orientation:'portrait'} };
       var content=document.getElementById('__content')||document.body;
-      var worker=html2pdf().set(opt).from(content);
-      if(__isAndroidWebView()){
-        // Android WebView : afficher le PDF en plein écran (l'utilisateur peut alors le partager/enregistrer)
-        worker.toPdf().get('pdf').then(function(pdf){
-          try{
-            var blobUrl=pdf.output('bloburl');
-            window.location.href=blobUrl;
-          }catch(e){
-            // Dernier recours : remplacer le contenu par une iframe affichant le PDF
-            var dataUri=pdf.output('datauristring');
-            document.body.innerHTML='<iframe width="100%" height="100%" style="border:0;position:fixed;top:0;left:0;right:0;bottom:0" src="'+dataUri+'"></iframe>';
-          }
-        }).catch(function(err){
-          tb.style.display='flex'; btn.textContent='📥 Télécharger PDF'; btn.disabled=false;
-          alert('Erreur PDF : '+(err&&err.message?err.message:'inconnue'));
-        });
-      } else {
-        // Navigateur classique : téléchargement direct
-        worker.save().then(function(){
-          tb.style.display='flex'; btn.textContent='📥 Télécharger PDF'; btn.disabled=false;
-        }).catch(function(err){
-          tb.style.display='flex'; btn.textContent='📥 Télécharger PDF'; btn.disabled=false;
-          alert('Erreur PDF : '+(err&&err.message?err.message:'inconnue'));
-        });
-      }
+      html2pdf().set(opt).from(content).save().then(function(){
+        tb.style.display='flex'; btn.textContent='📥 Télécharger PDF'; btn.disabled=false;
+      }).catch(function(err){
+        tb.style.display='flex'; btn.textContent='📥 Télécharger PDF'; btn.disabled=false;
+        alert('Erreur PDF : '+(err&&err.message?err.message:'inconnue'));
+      });
     }
   ` + '</scr'+'ipt>'
 
   const toolbar = `
-    <div id="__toolbar" style="position:sticky;top:0;left:0;right:0;z-index:99999;background:#075E54;padding:10px 14px;display:flex;gap:10px;align-items:center;box-shadow:0 2px 8px rgba(0,0,0,0.2)">
-      <button onclick="history.length>1?history.back():window.close()" style="background:white;color:#075E54;border:none;border-radius:8px;padding:9px 16px;font-size:14px;font-weight:700;cursor:pointer">← Retour</button>
-      <button id="__pdfbtn" onclick="__downloadPDF()" style="background:#25D366;color:white;border:none;border-radius:8px;padding:9px 16px;font-size:14px;font-weight:700;cursor:pointer">📥 Télécharger PDF</button>
-      <button onclick="window.print()" style="background:#f0f2f5;color:#1e293b;border:none;border-radius:8px;padding:9px 16px;font-size:14px;font-weight:700;cursor:pointer">🖨️ Imprimer / PDF</button>
+    <div id="__toolbar" style="position:sticky;top:0;left:0;right:0;z-index:99999;background:#075E54;padding:8px 10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;box-shadow:0 2px 8px rgba(0,0,0,0.2)">
+      <button onclick="history.length>1?history.back():window.close()" style="background:white;color:#075E54;border:none;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap">← Retour</button>
+      <button id="__pdfbtn" onclick="__downloadPDF()" style="background:#25D366;color:white;border:none;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap">📥 PDF</button>
+      <button onclick="window.print()" style="background:#f0f2f5;color:#1e293b;border:none;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap">🖨️ Imprimer / PDF</button>
     </div>
-    <div style="background:#fffbe6;padding:6px 14px;font-size:12px;color:#92400e;border-bottom:1px solid #fde68a">💡 Sur mobile : utilisez « 🖨️ Imprimer / PDF » puis choisissez « Enregistrer au format PDF »</div>
+    <div style="background:#fffbe6;padding:8px 14px;font-size:12px;color:#92400e;border-bottom:1px solid #fde68a;line-height:1.4">💡 Sur mobile : touchez « 🖨️ Imprimer / PDF » puis choisissez « Enregistrer au format PDF » dans la liste des imprimantes.</div>
     <style>@media print { #__toolbar { display:none !important } }</style>
   `
   // Envelopper le contenu original dans une div #__content (pour le PDF)
