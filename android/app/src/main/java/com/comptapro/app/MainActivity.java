@@ -1,23 +1,32 @@
 package com.comptapro.app;
 
 import android.app.Activity;
+import android.content.ContentResolver;
+import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Build;
+import android.os.Environment;
 import android.print.PrintAttributes;
 import android.print.PrintDocumentAdapter;
 import android.print.PrintManager;
+import android.provider.MediaStore;
+import android.util.Base64;
 import android.webkit.JavascriptInterface;
 import android.webkit.PermissionRequest;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.webkit.WebView;
+import android.widget.Toast;
 import androidx.activity.result.ActivityResult;
 import androidx.activity.result.ActivityResultCallback;
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import com.getcapacitor.BridgeActivity;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.OutputStream;
 
 public class MainActivity extends BridgeActivity {
 
@@ -84,6 +93,45 @@ public class MainActivity extends BridgeActivity {
                     PrintDocumentAdapter adapter = webView.createPrintDocumentAdapter(jobName);
                     pm.print(jobName, adapter, new PrintAttributes.Builder().build());
                 } catch (Exception e) {}
+            });
+        }
+
+        @JavascriptInterface
+        public void savePdf(String base64Data, String filename) {
+            runOnUiThread(() -> {
+                try {
+                    byte[] bytes = Base64.decode(base64Data, Base64.DEFAULT);
+                    String name = (filename == null || filename.isEmpty()) ? "document.pdf" : filename;
+                    if (!name.toLowerCase().endsWith(".pdf")) name = name + ".pdf";
+
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        ContentValues values = new ContentValues();
+                        values.put(MediaStore.Downloads.DISPLAY_NAME, name);
+                        values.put(MediaStore.Downloads.MIME_TYPE, "application/pdf");
+                        values.put(MediaStore.Downloads.IS_PENDING, 1);
+                        ContentResolver resolver = getContentResolver();
+                        Uri item = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
+                        if (item != null) {
+                            OutputStream os = resolver.openOutputStream(item);
+                            os.write(bytes);
+                            os.close();
+                            values.clear();
+                            values.put(MediaStore.Downloads.IS_PENDING, 0);
+                            resolver.update(item, values, null, null);
+                            Toast.makeText(MainActivity.this, "PDF enregistré dans Téléchargements", Toast.LENGTH_LONG).show();
+                        }
+                    } else {
+                        File dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
+                        if (!dir.exists()) dir.mkdirs();
+                        File file = new File(dir, name);
+                        FileOutputStream fos = new FileOutputStream(file);
+                        fos.write(bytes);
+                        fos.close();
+                        Toast.makeText(MainActivity.this, "PDF enregistré dans Téléchargements", Toast.LENGTH_LONG).show();
+                    }
+                } catch (Exception e) {
+                    Toast.makeText(MainActivity.this, "Erreur enregistrement PDF", Toast.LENGTH_LONG).show();
+                }
             });
         }
     }
