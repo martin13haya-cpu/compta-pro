@@ -2888,7 +2888,7 @@ function CommercialNewPage({ companies, companyId, typeDoc, setPage, toast }) {
     const { data:docData, error:docErr } = await supabase.from('compta_documents').insert({
       company_id:form.company_id, user_id:uid, type_doc:form.type_doc, numero,
       date_doc:form.date_doc, date_echeance:form.date_echeance||null,
-      client_id:(form.type_doc==='proforma' ? (matchedCli?.id||null) : (form.client_id||null)), fournisseur_id:(form.type_doc==='bon_commande' ? (matchedFourn?.id||null) : (form.fournisseur_id||null)), statut:'brouillon',
+      client_id:(form.type_doc!=='bon_commande' ? (matchedCli?.id||null) : (form.client_id||null)), fournisseur_id:(form.type_doc==='bon_commande' ? (matchedFourn?.id||null) : (form.fournisseur_id||null)), statut:'brouillon',
       montant_ht:ht, tva_pct:parseFloat(form.tva_pct)||0, montant_tva:tva, montant_ttc:ttc,
       notes:form.notes,
     }).select().single()
@@ -2954,7 +2954,7 @@ function CommercialNewPage({ companies, companyId, typeDoc, setPage, toast }) {
                       </div>
                     </div>
                   </>
-                ) : form.type_doc==='proforma' ? (
+                ) : (
                   <>
                     <Sel label="Type client" name="__cliType" value={cliType}
                       onChange={e=>{ setCliType(e.target.value); setCliNum('') }}
@@ -2988,9 +2988,6 @@ function CommercialNewPage({ companies, companyId, typeDoc, setPage, toast }) {
                       </div>
                     </div>
                   </>
-                ) : (
-                  <Sel label="Client" name="client_id" value={form.client_id} onChange={setF}
-                    options={[{value:'',label:'— Aucun —'},...clients.map(c=>({value:c.id,label:cliName(c)}))]} />
                 )}
                 <Input label="Date échéance" name="date_echeance" type="date" value={form.date_echeance} onChange={setF} />
                 <Input label="TVA (%)" name="tva_pct" type="number" value={form.tva_pct} onChange={setF} min="0" max="100" step="0.01" />
