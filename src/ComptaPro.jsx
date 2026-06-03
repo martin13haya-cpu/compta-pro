@@ -6562,6 +6562,7 @@ function GrandLivrePage({ companies, companyId, toast, readOnly=false }) {
   const [factures, setFactures] = useState([])
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo]     = useState('')
+  const [compteFiltre, setCompteFiltre] = useState('')
   const [loading, setLoading]   = useState(true)
 
   const norm = s => String(s||'').trim().toLowerCase()
@@ -6621,13 +6622,16 @@ function GrandLivrePage({ companies, companyId, toast, readOnly=false }) {
     return lignes
   }
 
-  // Grand-livre = comptes ayant au moins un mouvement
-  const grandLivre = comptes.map(c=>{
-    const lignes = lignesPourCompte(c.numero)
-    const totalDebit = lignes.reduce((s,l)=>s+(l.debit||0),0)
-    const totalCredit = lignes.reduce((s,l)=>s+(l.credit||0),0)
-    return { ...c, lignes, totalDebit, totalCredit }
-  }).filter(c=>c.lignes.length>0)
+  // Grand-livre = comptes ayant au moins un mouvement (ou le compte choisi, même vide)
+  const grandLivreAll = comptes
+    .filter(c=> !compteFiltre || c.numero===compteFiltre)
+    .map(c=>{
+      const lignes = lignesPourCompte(c.numero)
+      const totalDebit = lignes.reduce((s,l)=>s+(l.debit||0),0)
+      const totalCredit = lignes.reduce((s,l)=>s+(l.credit||0),0)
+      return { ...c, lignes, totalDebit, totalCredit }
+    })
+  const grandLivre = compteFiltre ? grandLivreAll : grandLivreAll.filter(c=>c.lignes.length>0)
 
   const grandTotalDebit  = grandLivre.reduce((s,c)=>s+c.totalDebit,0)
   const grandTotalCredit = grandLivre.reduce((s,c)=>s+c.totalCredit,0)
@@ -6675,11 +6679,19 @@ function GrandLivrePage({ companies, companyId, toast, readOnly=false }) {
         actions={<Btn variant="info" onClick={telechargerPDF}>📥 Télécharger PDF</Btn>} />
 
       <div style={{display:'flex',gap:10,flexWrap:'wrap',alignItems:'flex-end',marginBottom:14}}>
+        <div style={{minWidth:240}}>
+          <label style={{display:'block',fontSize:12,color:'#64748b',marginBottom:4}}>Compte</label>
+          <select value={compteFiltre} onChange={e=>setCompteFiltre(e.target.value)}
+            style={{width:'100%',padding:'8px 10px',borderRadius:8,border:'1px solid #d1d5db',fontSize:13.5,background:'white'}}>
+            <option value="">Tous les comptes</option>
+            {comptes.map(c=><option key={c.numero} value={c.numero}>{c.numero} — {c.libelle||''}{c.est_collectif?' (collectif)':''}</option>)}
+          </select>
+        </div>
         <div><label style={{display:'block',fontSize:12,color:'#64748b',marginBottom:4}}>Du</label>
           <input type="date" value={dateFrom} onChange={e=>setDateFrom(e.target.value)} style={{padding:'8px 10px',borderRadius:8,border:'1px solid #d1d5db'}} /></div>
         <div><label style={{display:'block',fontSize:12,color:'#64748b',marginBottom:4}}>Au</label>
           <input type="date" value={dateTo} onChange={e=>setDateTo(e.target.value)} style={{padding:'8px 10px',borderRadius:8,border:'1px solid #d1d5db'}} /></div>
-        {(dateFrom||dateTo) && <Btn sm variant="secondary" onClick={()=>{setDateFrom('');setDateTo('')}}>Réinitialiser</Btn>}
+        {(dateFrom||dateTo||compteFiltre) && <Btn sm variant="secondary" onClick={()=>{setDateFrom('');setDateTo('');setCompteFiltre('')}}>Réinitialiser</Btn>}
       </div>
 
       {loading ? (
