@@ -102,7 +102,9 @@ function buildPrintDocument(html, filename) {
     // Détecte si on est dans une WebView Android (Capacitor) — le téléchargement de blob y échoue
     function __isAndroidWebView(){
       var ua=navigator.userAgent||'';
-      return /Android/.test(ua) && (/wv/.test(ua) || /Capacitor/.test(ua) || !/Chrome\/[.0-9]* Mobile/.test(ua));
+      var isAndroid=ua.indexOf('Android')>-1;
+      var isWebView=ua.indexOf('; wv')>-1 || ua.indexOf('Capacitor')>-1;
+      return isAndroid && isWebView;
     }
     function __downloadPDF(){
       var btn=document.getElementById('__pdfbtn');
