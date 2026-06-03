@@ -8027,6 +8027,45 @@ function ExpressionBesoinPage({ companies, companyId, toast, readOnly=false, pro
 }
 
 // ── GESTION BUDGET ────────────────────────────────────────────────────────────
+// ── TRÉSORERIE : comptes / journaux (Caisse, Banque, Mobile Money) ───────────
+const JOURNAL_TABLE = { caisse:'compta_journal_caisse', banque:'compta_journal_banque', mobile:'compta_journal_mobile' }
+const JOURNAL_LABEL = { caisse:'Journal Caisse', banque:'Journal Banque', mobile:'Journal Mobile Money' }
+const COMPTE_OPTIONS = [
+  { value:'caisse', label:'🏦 Journal Caisse' },
+  { value:'banque', label:'🏛️ Journal Banque' },
+  { value:'mobile', label:'📱 Journal Mobile Money' },
+]
+
+// Solde courant d'un compte (entrées − sorties) pour une société
+async function getSoldeCompte(compte, cid) {
+  const table = JOURNAL_TABLE[compte]; if (!table || !cid) return 0
+  const { data:ad } = await supabase.auth.getUser()
+  const uid = ad?.user?.id; const isAdmin = ad?.user?.email===SUPER_ADMIN_EMAIL
+  let q = supabase.from(table).select('type_operation,montant')
+  if (isAdmin) q = q.eq('company_id', cid)
+  else q = q.eq('user_id', uid).eq('company_id', cid)
+  const { data } = await q
+  return (data||[]).reduce((s,r)=> s + (r.type_operation==='entree' ? (r.montant||0) : -(r.montant||0)), 0)
+}
+
+// Crée une écriture "sortie" dans le journal du compte, liée à sa source
+async function creerSortieJournal({ compte, cid, uid, date, montant, libelle, tiers, reference, sourceType, sourceId }) {
+  const table = JOURNAL_TABLE[compte]; if (!table) return { error:{ message:'Compte invalide' } }
+  return await supabase.from(table).insert({
+    company_id: cid, user_id: uid, date_operation: date || today(),
+    numero_piece:'', libelle: libelle||'', tiers: tiers||'',
+    type_operation:'sortie', montant: Math.round(montant||0),
+    reference: reference||'', source_type: sourceType, source_id: sourceId,
+  })
+}
+
+// Supprime la sortie liée (quel que soit le journal) quand la source est supprimée
+async function supprimerSortiesJournal(sourceType, sourceId) {
+  for (const t of Object.values(JOURNAL_TABLE)) {
+    await supabase.from(t).delete().eq('source_type', sourceType).eq('source_id', sourceId)
+  }
+}
+
 function ReglementsPage({ companies, companyId, toast, readOnly=false, mode='clients' }) {
   const isClients = mode==='clients'
   const title     = isClients ? 'Règlements Clients' : 'Règlements Fournisseurs'
@@ -8111,13 +8150,14 @@ function ReglementsPage({ companies, companyId, toast, readOnly=false, mode='cli
     tiers_type: filterKey, tiers_nom:'', provenance:'',
     acheteur_vendeur:'', nature_produit:'',
     montant_paye:0, solde:0,
-    mode_paiement:'espèce', reference_paiement:'', notes:''
+    mode_paiement: isClients?'espèce':'caisse', reference_paiement:'', notes:''
   }
 
   const deleteRegl = async(id)=>{
     if(!window.confirm('Supprimer ce règlement ?')) return
     const { error }=await supabase.from('compta_reglements').delete().eq('id',id)
     if(error){ toast.error(error.message); return }
+    if(!isClients) await supprimerSortiesJournal('reglement_fournisseur', id)
     toast.success('Règlement supprimé !'); load()
   }
 
@@ -8125,11 +8165,46 @@ function ReglementsPage({ companies, companyId, toast, readOnly=false, mode='cli
   const close   = ()=>setModal(false)
 
   const save = async e=>{
-    e.preventDefault(); setSaving(true)
+    e.preventDefault()
     const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
-    const { company_id,numero_facture,date_paiement,tiers_type,tiers_nom,provenance,acheteur_vendeur,nature_produit,montant_paye,solde,mode_paiement,reference_paiement,notes } = form
+    const { company_id,numero_facture,date_paiement,tiers_nom,provenance,acheteur_vendeur,nature_produit,montant_paye,solde,mode_paiement,reference_paiement,notes } = form
+    const cid = company_id || companyId || companies[0]?.id
+
+    // Règlements fournisseurs : mode_paiement = compte (caisse/banque/mobile) → sortie de trésorerie
+    if (!isClients) {
+      const compte = mode_paiement
+      if (!JOURNAL_TABLE[compte]) { toast.error('Veuillez choisir un compte de règlement.'); return }
+      const montant = +montant_paye || 0
+      if (montant <= 0) { toast.error('Le montant payé doit être supérieur à 0.'); return }
+      setSaving(true)
+      const soldeCompte = await getSoldeCompte(compte, cid)
+      if (montant > soldeCompte) {
+        setSaving(false)
+        toast.error(`Vous ne pouvez pas régler par ce compte : solde insuffisant (${JOURNAL_LABEL[compte]} : ${fcfa(soldeCompte)}).`)
+        return
+      }
+      const { data:ins, error } = await supabase.from('compta_reglements').insert({
+        company_id:cid,user_id:uid,numero_facture,date_paiement,
+        tiers_type:filterKey, tiers_nom,provenance,acheteur_vendeur,nature_produit,
+        montant_paye:montant,solde:+solde,mode_paiement,reference_paiement,notes
+      }).select('id').single()
+      if (error) { setSaving(false); toast.error(error.message); return }
+      const { error:errJ } = await creerSortieJournal({
+        compte, cid, uid, date:date_paiement, montant,
+        libelle:`Règlement fournisseur ${tiers_nom||''}${numero_facture?(' — '+numero_facture):''}`.trim(),
+        tiers:tiers_nom, reference:reference_paiement,
+        sourceType:'reglement_fournisseur', sourceId:ins.id,
+      })
+      setSaving(false)
+      if (errJ) toast.error('Règlement enregistré, mais erreur sur le journal : '+errJ.message)
+      else toast.success(`Règlement enregistré — sortie ${JOURNAL_LABEL[compte]} : ${fcfa(montant)}`)
+      close(); load(); return
+    }
+
+    // Règlements clients : inchangé
+    setSaving(true)
     const { error }=await supabase.from('compta_reglements').insert({
-      company_id,user_id:uid,numero_facture,date_paiement,
+      company_id:cid,user_id:uid,numero_facture,date_paiement,
       tiers_type:filterKey, tiers_nom,provenance,acheteur_vendeur,nature_produit,
       montant_paye:+montant_paye,solde:+solde,mode_paiement,reference_paiement,notes
     })
@@ -8323,8 +8398,13 @@ function ReglementsPage({ companies, companyId, toast, readOnly=false, mode='cli
                 {fcfa(form.solde||0)}
               </div>
             </div>
-            <Sel label="Mode de paiement" name="mode_paiement" value={form.mode_paiement||'espèce'} onChange={set}
-              options={['espèce','virement','mobile_money','chèque','autre'].map(m=>({value:m,label:m.charAt(0).toUpperCase()+m.slice(1)}))} />
+            {isClients ? (
+              <Sel label="Mode de paiement" name="mode_paiement" value={form.mode_paiement||'espèce'} onChange={set}
+                options={['espèce','virement','mobile_money','chèque','autre'].map(m=>({value:m,label:m.charAt(0).toUpperCase()+m.slice(1)}))} />
+            ) : (
+              <Sel label="Compte de règlement *" name="mode_paiement" value={form.mode_paiement||'caisse'} onChange={set}
+                options={COMPTE_OPTIONS} />
+            )}
             <Input label="Référence de paiement" name="reference_paiement" value={form.reference_paiement||''} onChange={set} />
             <Span2><Input label="Notes" name="notes" value={form.notes||''} onChange={set} /></Span2>
           </Grid>
@@ -8670,36 +8750,56 @@ function PaiementsEtuvagePage({ companies, companyId, lots, toast, readOnly=fals
     })
   }
 
-  const openAdd = ()=>{ setForm({company_id:companyId||companies[0]?.id||'',lot_id:'',date_paiement:today(),numero_lot:'',etuveuse_cooperative:'',qte_etuvee_kg:0,prix_unitaire:0,montant_brut:0,taux_aib:'0.03',statut_paiement:'en_attente',mode_paiement:'espèce',reference_paiement:''}); setModal(true) }
+  const openAdd = ()=>{ setForm({company_id:companyId||companies[0]?.id||'',lot_id:'',date_paiement:today(),numero_lot:'',etuveuse_cooperative:'',qte_etuvee_kg:0,prix_unitaire:0,montant_brut:0,taux_aib:'0.03',statut_paiement:'en_attente',mode_paiement:'caisse',reference_paiement:''}); setModal(true) }
   const close = ()=>setModal(false)
 
   const deleteEtuvage = async (id) => {
     if (!window.confirm('Supprimer ce paiement ?')) return
     const { error } = await supabase.from('compta_paiements_etuvage').delete().eq('id', id)
     if (error) { toast.error(error.message); return }
+    await supprimerSortiesJournal('paiement_etuvage', id)
     toast.success('Paiement supprimé !'); load()
   }
 
   const save = async e=>{
-    e.preventDefault(); setSaving(true)
+    e.preventDefault()
     const uid = (await supabase.auth.getUser()).data?.user?.id
+    const compte = form.mode_paiement
+    if (!JOURNAL_TABLE[compte]) { toast.error('Veuillez choisir un compte de règlement.'); return }
     const { ret, net } = calcAib(form.montant_brut, form.taux_aib)
+    if (net <= 0) { toast.error('Le net à payer doit être supérieur à 0.'); return }
+    const cid = form.company_id||companyId||companies[0]?.id
+    setSaving(true)
+    const soldeCompte = await getSoldeCompte(compte, cid)
+    if (net > soldeCompte) {
+      setSaving(false)
+      toast.error(`Vous ne pouvez pas régler par ce compte : solde insuffisant (${JOURNAL_LABEL[compte]} : ${fcfa(soldeCompte)}).`)
+      return
+    }
     const year = new Date().getFullYear()
     const { count } = await supabase.from('compta_paiements_etuvage').select('id',{count:'exact',head:true}).eq('user_id',uid)
     const numero = `PE-${year}-${String((count||0)+1).padStart(4,'0')}`
-    const { error } = await supabase.from('compta_paiements_etuvage').insert({
-      company_id:form.company_id||companyId, user_id:uid, numero,
+    const { data:ins, error } = await supabase.from('compta_paiements_etuvage').insert({
+      company_id:cid, user_id:uid, numero,
       date_paiement:form.date_paiement,
       numero_lot:form.numero_lot, etuveuse_cooperative:form.etuveuse_cooperative,
       qte_etuvee_kg:+form.qte_etuvee_kg, prix_unitaire:+form.prix_unitaire,
       montant_brut:+form.montant_brut, taux_aib:+form.taux_aib,
       retenue_aib:ret, net_a_payer:net,
-      statut_paiement:form.statut_paiement, mode_paiement:form.mode_paiement,
+      statut_paiement:form.statut_paiement, mode_paiement:compte,
       reference_paiement:form.reference_paiement,
+    }).select('id').single()
+    if (error) { setSaving(false); toast.error(error.message); return }
+    const { error:errJ } = await creerSortieJournal({
+      compte, cid, uid, date:form.date_paiement, montant:net,
+      libelle:`Paiement étuvage ${numero} — ${form.etuveuse_cooperative||''}${form.numero_lot?(' (lot '+form.numero_lot+')'):''}`.trim(),
+      tiers:form.etuveuse_cooperative, reference:form.reference_paiement,
+      sourceType:'paiement_etuvage', sourceId:ins.id,
     })
     setSaving(false)
-    if (error) { toast.error(error.message); return }
-    toast.success(`Paiement ${numero} enregistré. Net : ${fcfa(net)}`); close(); load()
+    if (errJ) toast.error('Paiement enregistré, mais erreur sur le journal : '+errJ.message)
+    else toast.success(`Paiement ${numero} enregistré — sortie ${JOURNAL_LABEL[compte]} : ${fcfa(net)}`)
+    close(); load()
   }
 
   const { ret:prvRet, net:prvNet } = calcAib(form.montant_brut, form.taux_aib)
@@ -8810,8 +8910,8 @@ function PaiementsEtuvagePage({ companies, companyId, lots, toast, readOnly=fals
             </div>
             <Sel label="Statut paiement" name="statut_paiement" value={form.statut_paiement||'en_attente'} onChange={set}
               options={['en_attente','paye','annule'].map(s=>({value:s,label:s.replace('_',' ')}))} />
-            <Sel label="Mode de paiement" name="mode_paiement" value={form.mode_paiement||'espèce'} onChange={set}
-              options={['espèce','mobile_money','virement','chèque'].map(m=>({value:m,label:m}))} />
+            <Sel label="Compte de règlement *" name="mode_paiement" value={form.mode_paiement||'caisse'} onChange={set}
+              options={COMPTE_OPTIONS} />
             <Input label="Référence paiement" name="reference_paiement" value={form.reference_paiement||''} onChange={set} />
           </Grid>
           <Row><Btn variant="secondary" onClick={close}>Annuler</Btn><Btn type="submit" disabled={saving}>{saving?'...':'Enregistrer'}</Btn></Row>
