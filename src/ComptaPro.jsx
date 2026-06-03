@@ -133,7 +133,6 @@ function buildPrintDocument(html, filename) {
       <button id="__pdfbtn" onclick="__downloadPDF()" style="background:#25D366;color:white;border:none;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap">📥 PDF</button>
       <button onclick="window.print()" style="background:#f0f2f5;color:#1e293b;border:none;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap">🖨️ Imprimer / PDF</button>
     </div>
-    <div style="background:#fffbe6;padding:8px 14px;font-size:12px;color:#92400e;border-bottom:1px solid #fde68a;line-height:1.4">💡 Sur mobile : touchez « 🖨️ Imprimer / PDF » puis choisissez « Enregistrer au format PDF » dans la liste des imprimantes.</div>
     <style>@media print { #__toolbar { display:none !important } }</style>
   `
   // Envelopper le contenu original dans une div #__content (pour le PDF)
