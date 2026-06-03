@@ -8078,6 +8078,7 @@ function ReglementsPage({ companies, companyId, toast, readOnly=false, mode='cli
   const [dateFrom, setDateFrom]= useState('')
   const [dateTo,   setDateTo]  = useState('')
   const [factures, setFactures]= useState([])
+  const [fournsList, setFournsList] = useState([])
   const [viewItem, setViewItem]= useState(null)
 
   const load = useCallback(async()=>{
@@ -8109,6 +8110,20 @@ function ReglementsPage({ companies, companyId, toast, readOnly=false, mode='cli
 
   useEffect(()=>{ load() },[load])
   useEffect(()=>{ loadFactures() },[loadFactures])
+
+  // Charger les fournisseurs (pour l'autocomplétion du nom) — règlements fournisseurs uniquement
+  const loadFourns = useCallback(async()=>{
+    if(isClients) return
+    const { data:ad }=await supabase.auth.getUser()
+    const uid=ad?.user?.id; const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
+    let q = supabase.from('compta_fournisseurs').select('id,type,nom,nom_societe')
+    q = isAdmin&&companyId ? q.eq('company_id',companyId) : q.eq('user_id',uid)
+    if(companyId&&!isAdmin) q=q.eq('company_id',companyId)
+    const { data }=await q
+    const noms = (data||[]).map(f=> f.type==='morale' ? (f.nom_societe||'') : (f.nom||'')).filter(n=>n.trim()!=='')
+    setFournsList([...new Set(noms)].sort((a,b)=>a.localeCompare(b)))
+  },[companyId,isClients])
+  useEffect(()=>{ loadFourns() },[loadFourns])
 
   const total = items.reduce((s,r)=>s+(r.montant_paye||0),0)
   const set = e=>setForm(f=>({...f,[e.target.name]:e.target.value}))
@@ -8354,7 +8369,14 @@ function ReglementsPage({ companies, companyId, toast, readOnly=false, mode='cli
                 {isClients?'Nom du client':'Nom du fournisseur'} *
                 {autoFilled('tiers_nom')&&<span style={{marginLeft:6,fontSize:10,color:'#16a34a',fontWeight:700}}>✅ auto</span>}
               </label>
-              <input name="tiers_nom" value={form.tiers_nom||''} onChange={set} required style={autoStyle('tiers_nom')} />
+              <input name="tiers_nom" value={form.tiers_nom||''} onChange={set} required style={autoStyle('tiers_nom')}
+                list={isClients?undefined:'fourn-nom-list'}
+                placeholder={isClients?'':'Saisir / choisir un fournisseur'} />
+              {!isClients && (
+                <datalist id="fourn-nom-list">
+                  {fournsList.map((n,i)=><option key={i} value={n} />)}
+                </datalist>
+              )}
             </div>
 
             {/* Provenance */}
