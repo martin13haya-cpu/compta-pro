@@ -1842,6 +1842,164 @@ function printFicheTiers(it, kind='fournisseur') {
 const COLLECTIF_FOURNISSEUR = '4011'
 const COLLECTIF_CLIENT      = '4111'
 
+// Nature d'un compte selon sa classe (1er chiffre) — SYSCOHADA
+const NATURE_CLASSE = {
+  '1':'Bilan — Ressources durables (capitaux)',
+  '2':'Bilan — Actif immobilisé',
+  '3':'Bilan — Stocks',
+  '4':'Bilan — Comptes de tiers',
+  '5':'Bilan — Trésorerie',
+  '6':'Résultat — Charges',
+  '7':'Résultat — Produits',
+  '8':'Résultat — Autres charges & produits',
+  '9':'Analytique / Engagements hors bilan',
+}
+const natureCompte = (numero) => NATURE_CLASSE[String(numero||'').charAt(0)] || '—'
+
+const SYSCOHADA_SOCLE = [
+  ["10","CAPITAL"],
+  ["11","RÉSERVES"],
+  ["12","REPORT À NOUVEAU"],
+  ["13","RÉSULTAT NET DE L'EXERCICE"],
+  ["14","SUBVENTIONS D'INVESTISSEMENT"],
+  ["15","PROVISIONS RÉGLEMENTÉES ET FONDS ASSIMILÉS"],
+  ["16","EMPRUNTS ET DETTES ASSIMILÉES"],
+  ["17","DETTES DE LOCATION ACQUISITION"],
+  ["18","DETTES LIÉES À DES PARTICIPATIONS ET COMPTES DE LIAISON DES"],
+  ["19","PROVISIONS POUR RISQUES ET CHARGES"],
+  ["21","IMMOBILISATIONS INCORPORELLES"],
+  ["22","TERRAINS"],
+  ["23","BÂTIMENTS, INSTALLATIONS TECHNIQUES ET AGENCEMENTS"],
+  ["24","MATÉRIEL, MOBILIER ET ACTIFS BIOLOGIQUES"],
+  ["25","AVANCES ET ACOMPTES VERSÉS SUR IMMOBILISATIONS"],
+  ["26","TITRES DE PARTICIPATION"],
+  ["27","AUTRES IMMOBILISATIONS FINANCIÈRES"],
+  ["28","AMORTISSEMENTS"],
+  ["29","DÉPRÉCIATIONS DES IMMOBILISATIONS"],
+  ["31","MARCHANDISES"],
+  ["32","MATIÈRES PREMIERES ET FOURNITURES LIÉES"],
+  ["33","AUTRES APPROVISIONNEMENTS"],
+  ["34","PRODUITS EN COURS"],
+  ["35","SERVICES EN COURS"],
+  ["36","PRODUITS FINIS"],
+  ["37","PRODUITS INTERMÉDIAIRES ET RÉSIDUELS"],
+  ["38","STOCKS EN COURS DE ROUTE, EN CONSIGNATION OU EN DÉPÔT"],
+  ["39","DÉPRÉCIATIONS DES STOCKS ET ENCOURS DE PRODUCTION"],
+  ["40","FOURNISSEURS ET COMPTES RATTACHÉS"],
+  ["401","FOURNISSEURS, DETTES EN COMPTE"],
+  ["4011","Fournisseurs"],
+  ["41","CLIENTS ET COMPTES RATTACHÉS"],
+  ["411","CLIENTS"],
+  ["4111","Clients"],
+  ["42","PERSONNEL"],
+  ["43","ORGANISMES SOCIAUX"],
+  ["44","ÉTAT ET COLLECTIVITÉS PUBLIQUES"],
+  ["4431","T.V.A. facturée sur ventes"],
+  ["4434","T.V.A. facturée sur production livrée à soi-même"],
+  ["4452","T.V.A. récupérable sur achats"],
+  ["4453","T.V.A. récupérable sur transport"],
+  ["4454","T.V.A. récupérable sur services extérieurs et autres charges"],
+  ["4455","T.V.A. récupérable sur factures non parvenues"],
+  ["4456","T.V.A. transférée par d'autres entités"],
+  ["45","ORGANISMES INTERNATIONAUX"],
+  ["46","APPORTEURS ASSOCIÉS ET GROUPE"],
+  ["47","DÉBITEURS ET CRÉDITEURS DIVERS"],
+  ["48","CRÉANCES ET DETTES HORS ACTIVITÉS ORDINAIRES (H.A.O.)"],
+  ["49","DÉPRÉCIATIONS ET PROVISIONS POUR RISQUES A COURT TERME (Tiers)"],
+  ["50","TITRES DE PLACEMENT"],
+  ["51","VALEURS À ENCAISSER"],
+  ["512","EFFETS À L'ENCAISSEMENT"],
+  ["52","BANQUES"],
+  ["521","BANQUES LOCALES"],
+  ["53","ÉTABLISSEMENTS FINANCIERS ET ASSIMILÉS"],
+  ["531","CHÈQUES POSTAUX"],
+  ["54","INSTRUMENTS DE TRÉSORERIE"],
+  ["55","INSTRUMENTS DE MONNAIE ELECTRONIQUE"],
+  ["56","BANQUES, CRÉDITS DE TRÉSORERIE ET D'ESCOMPTE"],
+  ["57","CAISSE"],
+  ["571","CAISSE SIÈGE SOCIAL"],
+  ["58","RÉGIES D'AVANCES, ACCRÉDITIFS ET VIREMENTS INTERNES"],
+  ["585","VIREMENTS DE FONDS"],
+  ["59","DÉPRÉCIATIONS ET PROVISIONS POUR RISQUES A COURT TERME"],
+  ["60","ACHATS ET VARIATIONS DE STOCKS"],
+  ["601","ACHATS DE MARCHANDISES"],
+  ["602","ACHATS DE MATIÈRES PREMIÈRES ET FOURNITURES LIÉES"],
+  ["603","VARIATIONS DES STOCKS DE BIENS ACHETÉS"],
+  ["604","ACHATS STOCKÉS DE MATIÈRES ET FOURNITURES CONSOMMABLES"],
+  ["605","AUTRES ACHATS"],
+  ["608","ACHATS D'EMBALLAGES"],
+  ["61","TRANSPORTS"],
+  ["612","TRANSPORTS SUR VENTES"],
+  ["613","TRANSPORTS POUR LE COMPTE DE TIERS"],
+  ["614","TRANSPORTS DU PERSONNEL"],
+  ["616","TRANSPORTS DE PLIS"],
+  ["618","AUTRES FRAIS DE TRANSPORT"],
+  ["62","SERVICES EXTÉRIEURS"],
+  ["622","LOCATIONS, CHARGES LOCATIVES"],
+  ["623","REDEVANCES DE LOCATION ACQUISITION"],
+  ["624","ENTRETIEN, RÉPARATIONS, REMISE EN ETAT ET MAINTENANCE"],
+  ["625","PRIMES D'ASSURANCE"],
+  ["626","ÉTUDES, RECHERCHES ET DOCUMENTATION"],
+  ["627","PUBLICITÉ, PUBLICATIONS, RELATIONS PUBLIQUES"],
+  ["628","FRAIS DE TÉLÉCOMMUNICATIONS"],
+  ["63","AUTRES SERVICES EXTÉRIEURS"],
+  ["631","FRAIS BANCAIRES"],
+  ["632","RÉMUNÉRATIONS D'INTERMÉDIAIRES ET DE CONSEILS"],
+  ["633","FRAIS DE FORMATION DU PERSONNEL"],
+  ["64","IMPÔTS ET TAXES"],
+  ["641","IMPÔTS ET TAXES DIRECTS"],
+  ["646","DROITS D'ENREGISTREMENT"],
+  ["647","PENALITES, AMENDES FISCALES"],
+  ["648","AUTRES IMPÔTS ET TAXES"],
+  ["65","AUTRES CHARGES"],
+  ["66","CHARGES DE PERSONNEL"],
+  ["661","RÉMUNÉRATIONS DIRECTES VERSÉES AU PERSONNEL NATIONAL"],
+  ["663","INDEMNITÉS FORFAITAIRES VERSÉES AU PERSONNEL"],
+  ["664","CHARGES SOCIALES"],
+  ["667","RÉMUNÉRATION TRANSFÉRÉE DE PERSONNEL EXTÉRIEUR"],
+  ["67","FRAIS FINANCIERS ET CHARGES ASSIMILÉES"],
+  ["68","DOTATIONS AUX AMORTISSEMENTS"],
+  ["681","DOTATIONS AUX AMORTISSEMENTS D'EXPLOITATION"],
+  ["69","DOTATIONS AUX PROVISIONS ET AUX DÉPRÉCIATIONS ("],
+  ["70","VENTES"],
+  ["701","VENTES DE MARCHANDISES"],
+  ["702","VENTES DE PRODUITS FINIS"],
+  ["703","VENTES DE PRODUITS INTERMÉDIAIRES"],
+  ["704","VENTES DE PRODUITS RÉSIDUELS"],
+  ["706","SERVICES VENDUS"],
+  ["707","PRODUITS ACCESSOIRES"],
+  ["71","SUBVENTIONS D'EXPLOITATION"],
+  ["72","PRODUCTION IMMOBILISÉE"],
+  ["73","VARIATIONS DE STOCKS DE BIENS ET DE SERVICES PRODUITS"],
+  ["75","AUTRES PRODUITS"],
+  ["752","PROFITS SUR CREANCES CLIENTS ET AUTRES DEBITEURS QUOTE-PART DE RÉSULTAT SUR"],
+  ["754","PRODUITS DES CESSIONS COURANTES D’IMMOBILISATIONS"],
+  ["77","REVENUS FINANCIERS ET ASSIMILÉS"],
+  ["771","INTÉRÊTS DE PRÊTS ET CREANCES DIVERSES"],
+  ["78","TRANSFERTS DE CHARGES"],
+  ["781","TRANSFERTS DE CHARGES D'EXPLOITATION"],
+  ["79","REPRISES DE PROVISIONS, DE DEPRECIATIONS ET AUTRES"],
+  ["81","VALEURS COMPTABLES DES CESSIONS D'IMMOBILISATIONS"],
+  ["82","PRODUITS DES CESSIONS D'IMMOBILISATIONS"],
+  ["83","CHARGES HORS ACTIVITÉS ORDINAIRES"],
+  ["84","PRODUITS HORS ACTIVITÉS ORDINAIRES"],
+  ["85","DOTATIONS HORS ACTIVITÉS ORDINAIRES"],
+  ["86","REPRISES HORS ACTIVITÉS ORDINAIRES"],
+  ["87","PARTICIPATION DES TRAVAILLEURS"],
+  ["88","SUBVENTIONS D'ÉQUILIBRE"],
+  ["89","IMPÔTS SUR LE RÉSULTAT"],
+  ["90","ENGAGEMENTS OBTENUS ET ENGAGEMENTS ACCORDES"],
+  ["91","CONTREPARTIES DES ENGAGEMENTS"],
+  ["92","COMPTES REFLECHIS"],
+  ["93","COMPTES DE RECLASSEMENTS"],
+  ["94","COMPTES DE COÛTS"],
+  ["95","COMPTES DE STOCKS"],
+  ["96","COMPTES D'ECARTS SUR COUTS PREETABLIS"],
+  ["97","COMPTES DE DIFFERENCES DE TRAITEMENT COMPTABLE"],
+  ["98","COMPTES DE RESULTATS"],
+  ["99","COMPTES DE LIAISONS INTERNES"],
+]
+
 // Numéros déjà présents sous un compte collectif (depuis le plan comptable)
 async function numerosSousCompte(collectif, cid) {
   const { data:ad } = await supabase.auth.getUser()
@@ -6925,6 +7083,28 @@ function PlanComptablePage({ companies, companyId, toast, readOnly=false }) {
     setGenerating(false)
   }
 
+  const importerSyscohada = async () => {
+    if (!window.confirm(`Importer le socle du plan SYSCOHADA révisé (${SYSCOHADA_SOCLE.length} comptes) ? Les comptes déjà présents seront ignorés.`)) return
+    setGenerating(true)
+    try {
+      const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
+      const cid = companyId || companies[0]?.id
+      if(!cid){ toast.error('Veuillez sélectionner une société.'); setGenerating(false); return }
+      const { data:existing } = await supabase.from('compta_plan_comptable').select('numero').eq('company_id',cid)
+      const have = new Set((existing||[]).map(r=>String(r.numero)))
+      const toInsert = SYSCOHADA_SOCLE.filter(([n])=>!have.has(String(n)))
+        .map(([numero,libelle])=>({ company_id:cid, user_id:uid, numero:String(numero), libelle, est_collectif:false }))
+      if (toInsert.length===0){ toast.success('Tous les comptes du socle sont déjà présents.'); setGenerating(false); return }
+      for (let i=0;i<toInsert.length;i+=100){
+        const { error } = await supabase.from('compta_plan_comptable').insert(toInsert.slice(i,i+100))
+        if (error) throw error
+      }
+      toast.success(`${toInsert.length} compte(s) SYSCOHADA importé(s).`)
+      load()
+    } catch(err){ toast.error('Erreur import : '+(err.message||err)) }
+    setGenerating(false)
+  }
+
   const printPC = ()=>{
     const headers=[{label:'N° Compte'},{label:'Libellé'},{label:'Type'}]
     const rows=filtered.map(it=>[it.numero, it.libelle||'—', it.est_collectif?'Collectif':'Sous-compte'])
@@ -6938,6 +7118,7 @@ function PlanComptablePage({ companies, companyId, toast, readOnly=false }) {
           <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
             <Btn sm variant="info" onClick={printPC}>🖨️ Imprimer</Btn>
             <Btn sm variant="secondary" onClick={genererManquants} disabled={generating}>{generating?'Génération…':'⚙️ Générer les comptes manquants'}</Btn>
+            <Btn sm variant="info" onClick={importerSyscohada} disabled={generating}>📥 Importer SYSCOHADA</Btn>
             <Btn sm variant="danger" onClick={nettoyerOrphelins} disabled={generating}>🧹 Nettoyer les orphelins</Btn>
             <Btn onClick={openAdd}>+ Nouveau compte</Btn>
           </div>
@@ -6954,12 +7135,13 @@ function PlanComptablePage({ companies, companyId, toast, readOnly=false }) {
         ) : (
           <div style={{overflowX:'auto'}}>
             <table style={{width:'100%',borderCollapse:'collapse',minWidth:520}}>
-              <thead><tr><TH>N° Compte</TH><TH>Libellé</TH><TH>Type</TH>{!readOnly && <TH>Actions</TH>}</tr></thead>
+              <thead><tr><TH>N° Compte</TH><TH>Libellé</TH><TH>Nature</TH><TH>Type</TH>{!readOnly && <TH>Actions</TH>}</tr></thead>
               <tbody>
                 {filtered.map(it=>(
                   <TR key={it.id}>
                     <TD bold sm style={it.est_collectif?{}:{paddingLeft:24}}>{it.numero}</TD>
                     <TD>{it.libelle||'—'}</TD>
+                    <TD sm><span style={{fontSize:11.5,color:'#475569'}}>{natureCompte(it.numero)}</span></TD>
                     <TD sm>{it.est_collectif ? <Badge type="info">Collectif</Badge> : <Badge type="secondary">Sous-compte</Badge>}</TD>
                     {!readOnly && (
                       <TD>
