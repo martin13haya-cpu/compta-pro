@@ -6853,7 +6853,8 @@ function PlanComptablePage({ companies, companyId, toast, readOnly=false }) {
     try {
       const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id; const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
       const cid = companyId || companies[0]?.id
-      let total = 0
+      if (!cid) { toast.error('Veuillez sélectionner une société.'); setGenerating(false); return }
+      const resume = []
       for (const conf of [
         { tableTiers:'compta_fournisseurs', collectif:COLLECTIF_FOURNISSEUR, lib:'Fournisseurs' },
         { tableTiers:'compta_clients',      collectif:COLLECTIF_CLIENT,      lib:'Clients' },
@@ -6865,22 +6866,25 @@ function PlanComptablePage({ companies, companyId, toast, readOnly=false }) {
         const libOf = t => t.type==='morale' ? (t.nom_societe||'') : (t.nom||'')
         let nums = await numerosSousCompte(conf.collectif, cid)
         const numSet = new Set(nums)
-        // 1) Réconcilier les fiches qui ont DÉJÀ un numéro mais absent du plan comptable
+        let cree=0
+        // 1) Fiches déjà bien numérotées (sous le bon collectif) mais absentes du plan → on les inscrit
         for (const t of (tiers||[]).filter(t=>t.numero_compte && String(t.numero_compte).startsWith(conf.collectif))) {
           if (!numSet.has(t.numero_compte)) {
             await supabase.from('compta_plan_comptable').insert({ company_id:cid, user_id:uid, numero:t.numero_compte, libelle:libOf(t), est_collectif:false })
-            numSet.add(t.numero_compte); nums.push(t.numero_compte); total++
+            numSet.add(t.numero_compte); nums.push(t.numero_compte); cree++
           }
         }
-        // 2) Générer pour les fiches SANS numéro
-        for (const t of (tiers||[]).filter(t=>!t.numero_compte)) {
+        // 2) Fiches SANS numéro OU avec un numéro hors collectif → on (ré)attribue un sous-compte correct
+        for (const t of (tiers||[]).filter(t=>!t.numero_compte || !String(t.numero_compte).startsWith(conf.collectif))) {
           const numero = prochainSousCompte(conf.collectif, nums)
           await supabase.from('compta_plan_comptable').insert({ company_id:cid, user_id:uid, numero, libelle:libOf(t), est_collectif:false })
           await supabase.from(conf.tableTiers).update({ numero_compte:numero }).eq('id', t.id)
-          numSet.add(numero); nums.push(numero); total++
+          numSet.add(numero); nums.push(numero); cree++
         }
+        resume.push(`${cree} ${conf.lib.toLowerCase()}`)
       }
-      toast.success(total>0 ? `${total} compte(s) généré(s).` : 'Aucun compte manquant — tout est à jour.')
+      const total = resume.reduce((s,x)=>s+(parseInt(x)||0),0)
+      toast.success(total>0 ? `Comptes générés : ${resume.join(', ')}.` : 'Aucun compte manquant — tout est à jour.')
       load()
     } catch(err) { toast.error('Erreur génération : '+(err.message||err)) }
     setGenerating(false)
