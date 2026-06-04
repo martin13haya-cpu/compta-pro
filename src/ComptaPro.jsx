@@ -117,10 +117,12 @@ function buildPrintDocument(html, filename) {
       var btn=document.getElementById('__pdfbtn');
       if(typeof html2pdf==="undefined"){ alert("La librairie PDF n'est pas encore chargee. Verifiez votre connexion internet et reessayez."); return; }
       btn.textContent='⏳ Génération...'; btn.disabled=true;
-      var tb=document.getElementById('__toolbar'); tb.style.display='none';
-      var opt={ margin:[8,8,8,8], filename:'${fname}.pdf', image:{type:'jpeg',quality:0.98}, html2canvas:{scale:2,useCORS:true,logging:false}, jsPDF:{unit:'mm',format:'a4',orientation:'portrait'} };
+      var tb=document.getElementById('__toolbar'); if(tb) tb.style.display='none';
+      var __hidden=[];
+      document.querySelectorAll('.print-btn').forEach(function(el){ __hidden.push([el, el.style.display]); el.style.display='none'; });
+      var opt={ margin:[6,6,6,6], filename:'${fname}.pdf', image:{type:'jpeg',quality:0.98}, html2canvas:{scale:2,useCORS:true,logging:false}, jsPDF:{unit:'mm',format:'a4',orientation:'portrait'} };
       var content=document.getElementById('__content')||document.body;
-      function __resetBtn(){ tb.style.display='flex'; btn.textContent='📥 PDF'; btn.disabled=false; }
+      function __resetBtn(){ if(tb) tb.style.display='flex'; __hidden.forEach(function(h){ h[0].style.display=h[1]; }); btn.textContent='📥 PDF'; btn.disabled=false; }
       if(__hasAndroidSave()){
         html2pdf().set(opt).from(content).outputPdf('datauristring').then(function(datauri){
           var base64 = (datauri && datauri.indexOf(',')>-1) ? datauri.split(',')[1] : datauri;
@@ -239,7 +241,7 @@ const STATUT_COLORS = {
 
 // ── PDF PRINT ────────────────────────────────────────────────────────────────
 const CSS_PRINT = `
-  @page { size: A4; margin: 1.8cm; }
+  @page { size: A4; margin: 1.2cm; }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: 'Times New Roman', serif; font-size: 11pt; color: #1a1a1a; }
   .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; border-bottom: 2px solid #0f2044; padding-bottom: 12px; }
@@ -563,7 +565,7 @@ function printExpressionBesoin(fiche, lignes, budgets, companyInfo, sigImg=null,
       </div>`:''}
     </div>
 
-    <div class="signatures" style="margin-top:50px">
+    <div class="signatures" style="margin-top:26px">
       <div class="sig-box">
         Signature de l'agent<br><small>${fiche.realise_par||''}</small>
         ${sigImg?`<img src="${sigImg}" style="max-width:100px;max-height:60px;margin-top:8px;display:block" />`:''}
@@ -1851,7 +1853,7 @@ function printFicheTiers(it, kind='fournisseur') {
 
     ${autresBloc}
 
-    <div class="signatures" style="margin-top:50px">
+    <div class="signatures" style="margin-top:26px">
       <div class="sig-box">Signature du ${labelTiers}</div>
       <div class="sig-box">Cachet & visa<br><small>${societe}</small></div>
     </div>
