@@ -6851,30 +6851,38 @@ function PlanComptablePage({ companies, companyId, toast, readOnly=false }) {
     if (!window.confirm('Générer les sous-comptes manquants pour tous les fournisseurs (4011…) et clients (4111…) ?')) return
     setGenerating(true)
     try {
-      const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id; const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
+      const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
       const cid = companyId || companies[0]?.id
       if (!cid) { toast.error('Veuillez sélectionner une société.'); setGenerating(false); return }
+      // Helpers scopés UNIQUEMENT par société (robuste quel que soit le créateur des fiches)
+      const numerosCo = async (collectif) => {
+        const { data } = await supabase.from('compta_plan_comptable').select('numero').like('numero', collectif+'%').eq('company_id', cid)
+        return (data||[]).map(r=>String(r.numero))
+      }
+      const assurerCollectifCo = async (collectif, lib) => {
+        const { data } = await supabase.from('compta_plan_comptable').select('id').eq('numero', collectif).eq('company_id', cid)
+        if (!data || !data.length) await supabase.from('compta_plan_comptable').insert({ company_id:cid, user_id:uid, numero:collectif, libelle:lib, est_collectif:true })
+      }
       const resume = []
       for (const conf of [
         { tableTiers:'compta_fournisseurs', collectif:COLLECTIF_FOURNISSEUR, lib:'Fournisseurs' },
         { tableTiers:'compta_clients',      collectif:COLLECTIF_CLIENT,      lib:'Clients' },
       ]) {
-        await assurerCollectif(conf.collectif, conf.lib, cid, uid)
-        let q = supabase.from(conf.tableTiers).select('id,type,nom,nom_societe,numero_compte')
-        if (isAdmin) { if (cid) q=q.eq('company_id',cid) } else { q=q.eq('user_id',uid); if (cid) q=q.eq('company_id',cid) }
-        const { data:tiers } = await q
+        await assurerCollectifCo(conf.collectif, conf.lib)
+        const { data:tiers } = await supabase.from(conf.tableTiers)
+          .select('id,type,nom,nom_societe,numero_compte').eq('company_id', cid)
         const libOf = t => t.type==='morale' ? (t.nom_societe||'') : (t.nom||'')
-        let nums = await numerosSousCompte(conf.collectif, cid)
+        let nums = await numerosCo(conf.collectif)
         const numSet = new Set(nums)
         let cree=0
-        // 1) Fiches déjà bien numérotées (sous le bon collectif) mais absentes du plan → on les inscrit
+        // 1) Fiches bien numérotées (bon collectif) mais absentes du plan → inscription
         for (const t of (tiers||[]).filter(t=>t.numero_compte && String(t.numero_compte).startsWith(conf.collectif))) {
           if (!numSet.has(t.numero_compte)) {
             await supabase.from('compta_plan_comptable').insert({ company_id:cid, user_id:uid, numero:t.numero_compte, libelle:libOf(t), est_collectif:false })
             numSet.add(t.numero_compte); nums.push(t.numero_compte); cree++
           }
         }
-        // 2) Fiches SANS numéro OU avec un numéro hors collectif → on (ré)attribue un sous-compte correct
+        // 2) Fiches SANS numéro OU hors collectif → (ré)attribution d'un sous-compte correct
         for (const t of (tiers||[]).filter(t=>!t.numero_compte || !String(t.numero_compte).startsWith(conf.collectif))) {
           const numero = prochainSousCompte(conf.collectif, nums)
           await supabase.from('compta_plan_comptable').insert({ company_id:cid, user_id:uid, numero, libelle:libOf(t), est_collectif:false })
