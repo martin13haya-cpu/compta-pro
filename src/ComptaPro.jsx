@@ -6599,8 +6599,8 @@ function GrandLivrePage({ companies, companyId, toast, readOnly=false }) {
       scope(supabase.from('compta_plan_comptable').select('numero,libelle,est_collectif')),
       scope(supabase.from('compta_fournisseurs').select('id,type,nom,nom_societe,numero_compte')),
       scope(supabase.from('compta_clients').select('id,type,nom,nom_societe,numero_compte')),
-      scope(supabase.from('compta_achats_semi_finis').select('date_achat,nom_fournisseur,numero_fact,montant,montant_paye')),
-      scope(supabase.from('compta_reglements').select('date_paiement,tiers_type,tiers_nom,montant_paye,numero_facture')),
+      scope(supabase.from('compta_achats_semi_finis').select('date_achat,nom_fournisseur,numero_fact,montant,montant_paye,compte_paiement')),
+      scope(supabase.from('compta_reglements').select('date_paiement,tiers_type,tiers_nom,montant_paye,numero_facture,mode_paiement')),
       scope(supabase.from('compta_documents').select('date_doc,client_id,montant_ttc,montant_paye,numero,type_doc').eq('type_doc','facture')),
     ])
     setComptes((pc.data||[]).sort((a,b)=>String(a.numero).localeCompare(String(b.numero),undefined,{numeric:true})))
@@ -6611,6 +6611,8 @@ function GrandLivrePage({ companies, companyId, toast, readOnly=false }) {
 
   const inPeriode = d => (!dateFrom || (d||'')>=dateFrom) && (!dateTo || (d||'')<=dateTo)
   const nomTiers = t => t.type==='morale' ? (t.nom_societe||'') : (t.nom||'')
+  const journalCourt = k => ({caisse:'J.Caisse',banque:'J.Banque',mobile:'J.Mobile Money'}[k]||'')
+  const svt = k => journalCourt(k) ? ` / svt ${journalCourt(k)}` : ''
 
   // Construit les lignes (débit/crédit) d'un compte donné
   const lignesPourCompte = (numero) => {
@@ -6625,10 +6627,10 @@ function GrandLivrePage({ companies, companyId, toast, readOnly=false }) {
       achats.filter(a=>inPeriode(a.date_achat) && (filtreNom?norm(a.nom_fournisseur)===filtreNom:true))
         .forEach(a=>{
           lignes.push({ date:a.date_achat, libelle:`Achat${a.numero_fact?(' '+a.numero_fact):''}${a.nom_fournisseur?(' — '+a.nom_fournisseur):''}`, debit:0, credit:a.montant||0 })
-          if ((a.montant_paye||0)>0) lignes.push({ date:a.date_achat, libelle:`Paiement achat${a.numero_fact?(' '+a.numero_fact):''}`, debit:a.montant_paye||0, credit:0 })
+          if ((a.montant_paye||0)>0) lignes.push({ date:a.date_achat, libelle:`Paiement achat${a.numero_fact?(' '+a.numero_fact):''}${svt(a.compte_paiement)}`, debit:a.montant_paye||0, credit:0 })
         })
       regls.filter(r=>r.tiers_type==='fournisseur' && inPeriode(r.date_paiement) && (filtreNom?norm(r.tiers_nom)===filtreNom:true))
-        .forEach(r=>lignes.push({ date:r.date_paiement, libelle:`Règlement${r.numero_facture?(' '+r.numero_facture):''}${r.tiers_nom?(' — '+r.tiers_nom):''}`, debit:r.montant_paye||0, credit:0 }))
+        .forEach(r=>lignes.push({ date:r.date_paiement, libelle:`Règlement${r.numero_facture?(' '+r.numero_facture):''}${r.tiers_nom?(' — '+r.tiers_nom):''}${svt(r.mode_paiement)}`, debit:r.montant_paye||0, credit:0 }))
     }
     // CLIENT : facture = débit (créance), paiement de la facture = crédit, règlement = crédit
     const ajoutCli = (filtreNom, filtreId) => {
