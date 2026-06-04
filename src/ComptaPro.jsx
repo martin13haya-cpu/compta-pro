@@ -6672,9 +6672,12 @@ function GrandLivrePage({ companies, companyId, toast, readOnly=false }) {
   }
 
   // Grand-livre = comptes ayant au moins un mouvement (ou les comptes recherchés, même vides)
+  const searchTerm = norm(compteSearch)
+  const collectifSel = searchTerm ? comptes.find(x=>x.est_collectif && norm(x.numero)===searchTerm) : null
   const matchCompte = c => {
-    const s = norm(compteSearch); if (!s) return true
-    return norm(c.numero).includes(s) || norm(c.libelle).includes(s)
+    if (!searchTerm) return true
+    if (collectifSel) return norm(c.numero).startsWith(searchTerm)   // collectif → lui + ses sous-comptes
+    return norm(c.numero)===searchTerm || norm(c.libelle).includes(searchTerm)  // sinon → numéro exact (ou nom)
   }
   const grandLivreAll = comptes
     .filter(matchCompte)
@@ -6684,7 +6687,9 @@ function GrandLivrePage({ companies, companyId, toast, readOnly=false }) {
       const totalCredit = lignes.reduce((s,l)=>s+(l.credit||0),0)
       return { ...c, lignes, totalDebit, totalCredit }
     })
-  const grandLivre = compteSearch.trim() ? grandLivreAll : grandLivreAll.filter(c=>c.lignes.length>0)
+  // Compte exact : on l'affiche même vide. Collectif ou liste globale : seulement ceux avec mouvements.
+  const exactNonCollectif = searchTerm && !collectifSel
+  const grandLivre = exactNonCollectif ? grandLivreAll : grandLivreAll.filter(c=>c.lignes.length>0)
 
   const grandTotalDebit  = grandLivre.reduce((s,c)=>s+c.totalDebit,0)
   const grandTotalCredit = grandLivre.reduce((s,c)=>s+c.totalCredit,0)
