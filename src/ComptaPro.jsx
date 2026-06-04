@@ -6909,13 +6909,13 @@ function PlanComptablePage({ companies, companyId, toast, readOnly=false }) {
       const cid = companyId || companies[0]?.id
       if(!cid){ toast.error('Veuillez sélectionner une société.'); setGenerating(false); return }
       const [fo, cl, pc] = await Promise.all([
-        supabase.from('compta_fournisseurs').select('numero_compte').eq('company_id',cid),
-        supabase.from('compta_clients').select('numero_compte').eq('company_id',cid),
+        supabase.from('compta_fournisseurs').select('numero_compte,actif').eq('company_id',cid),
+        supabase.from('compta_clients').select('numero_compte,actif').eq('company_id',cid),
         supabase.from('compta_plan_comptable').select('id,numero,est_collectif').eq('company_id',cid),
       ])
       const used = new Set()
-      ;(fo.data||[]).forEach(x=>x.numero_compte&&used.add(String(x.numero_compte)))
-      ;(cl.data||[]).forEach(x=>x.numero_compte&&used.add(String(x.numero_compte)))
+      ;(fo.data||[]).forEach(x=>{ if(x.numero_compte && x.actif!==false) used.add(String(x.numero_compte)) })
+      ;(cl.data||[]).forEach(x=>{ if(x.numero_compte && x.actif!==false) used.add(String(x.numero_compte)) })
       const orphelins = (pc.data||[]).filter(p=>!p.est_collectif
         && (String(p.numero).startsWith(COLLECTIF_FOURNISSEUR)||String(p.numero).startsWith(COLLECTIF_CLIENT))
         && !used.has(String(p.numero)))
