@@ -4037,7 +4037,7 @@ function AchatsSemisPage({ companies, companyId, toast, readOnly=false }) {
       return nf
     })
   }
-  const openAdd = ()=>{ setForm({company_id:companyId||companies[0]?.id||'',numero_fact:'',date_achat:today(),entite:'',nom_fournisseur:'',provenance:'',nom_acheteur:'',id_produit:'',nature_produit:'',quantite:0,prix_unitaire:0,montant:0,statut:'en_cours',modalite_paiement:'total',compte_paiement:''}); setModal(true) }
+  const openAdd = ()=>{ setForm({company_id:companyId||companies[0]?.id||'',numero_fact:'',date_achat:today(),entite:'',nom_fournisseur:'',provenance:'',nom_acheteur:'',id_produit:'',nature_produit:'',quantite:0,prix_unitaire:0,montant:0,statut:'en_cours',modalite_paiement:'total',montant_paye:0,compte_paiement:''}); setModal(true) }
   const close = ()=>setModal(false)
 
   // Ouvre le formulaire d'ajout fournisseur (pré-rempli avec le nom tapé)
@@ -4097,28 +4097,35 @@ function AchatsSemisPage({ companies, companyId, toast, readOnly=false }) {
     if (montant <= 0) { toast.error('Le montant de l\u2019achat doit être supérieur à 0.'); return }
     const cid = company_id||companyId||companies[0]?.id
     const aCredit = modalite==='credit'
+    const partiel = modalite==='partiel'
+    const montantPaye = partiel ? Math.round(parseFloat(form.montant_paye)||0) : montant
+    if (partiel) {
+      if (montantPaye <= 0) { toast.error('Saisissez le montant payé.'); return }
+      if (montantPaye > montant) { toast.error('Le montant payé ne peut pas dépasser le montant de l\u2019achat.'); return }
+    }
+    const montantSortie = aCredit ? 0 : montantPaye
     if (!aCredit && !JOURNAL_TABLE[compte]) { toast.error('Veuillez choisir le journal de paiement.'); return }
     setSaving(true)
     if (!aCredit) {
       const soldeCompte = await getSoldeCompte(compte, cid)
-      if (montant > soldeCompte) {
+      if (montantSortie > soldeCompte) {
         setSaving(false)
         toast.error(`Vous ne pouvez pas régler par ce compte : solde insuffisant (${JOURNAL_LABEL[compte]} : ${fcfa(soldeCompte)}).`)
         return
       }
     }
-    const { data:ins, error } = await supabase.from('compta_achats_semi_finis').insert({ company_id:cid,user_id:uid,numero_fact,date_achat,entite,nom_fournisseur,provenance,nom_acheteur,id_produit,nature_produit,quantite:+quantite,prix_unitaire:+prix_unitaire,montant,statut,modalite_paiement:modalite,compte_paiement:aCredit?null:compte }).select('id').single()
+    const { data:ins, error } = await supabase.from('compta_achats_semi_finis').insert({ company_id:cid,user_id:uid,numero_fact,date_achat,entite,nom_fournisseur,provenance,nom_acheteur,id_produit,nature_produit,quantite:+quantite,prix_unitaire:+prix_unitaire,montant,montant_paye:montantSortie,statut,modalite_paiement:modalite,compte_paiement:aCredit?null:compte }).select('id').single()
     if (error) { setSaving(false); toast.error(error.message); return }
     if (!aCredit) {
       const { error:errJ } = await creerSortieJournal({
-        compte, cid, uid, date:date_achat, montant,
-        libelle:`Achat semi-fini ${nom_fournisseur||''}${numero_fact?(' — '+numero_fact):''}`.trim(),
+        compte, cid, uid, date:date_achat, montant:montantSortie,
+        libelle:`Achat semi-fini ${nom_fournisseur||''}${numero_fact?(' — '+numero_fact):''}${partiel?' (paiement partiel)':''}`.trim(),
         tiers:nom_fournisseur, reference:numero_fact,
         sourceType:'achat_semi_fini', sourceId:ins.id,
       })
       setSaving(false)
       if (errJ) { toast.error('Achat enregistré, mais erreur sur le journal : '+errJ.message); close(); load(); return }
-      toast.success(`Achat enregistré — sortie ${JOURNAL_LABEL[compte]} : ${fcfa(montant)}`)
+      toast.success(`Achat enregistré — sortie ${JOURNAL_LABEL[compte]} : ${fcfa(montantSortie)}`)
     } else {
       setSaving(false)
       toast.success('Achat enregistré à crédit (aucune sortie de trésorerie).')
@@ -4241,6 +4248,9 @@ function AchatsSemisPage({ companies, companyId, toast, readOnly=false }) {
               <div style={{padding:'9px 12px',background:'#eff6ff',borderRadius:8,border:'1px solid #bfdbfe',fontSize:14,fontWeight:700,color:ACCENT}}>{fcfa(form.montant||0)}</div>
             </div>
             <Sel label="Modalité de paiement *" name="modalite_paiement" value={form.modalite_paiement||'total'} onChange={set} options={MODALITE_OPTIONS} />
+            {form.modalite_paiement==='partiel' && (
+              <Input label="Montant payé *" name="montant_paye" type="number" value={form.montant_paye||0} onChange={set} min="0" />
+            )}
             {form.modalite_paiement!=='credit' && (
               <Sel label="Journal de paiement *" name="compte_paiement" value={form.compte_paiement||''} onChange={set}
                 options={[{value:'',label:'— Choisir un journal —'},...COMPTE_OPTIONS]} />
@@ -9345,7 +9355,7 @@ function PaiementsEtuvagePage({ companies, companyId, lots, toast, readOnly=fals
     })
   }
 
-  const openAdd = ()=>{ setForm({company_id:companyId||companies[0]?.id||'',lot_id:'',date_paiement:today(),numero_lot:'',etuveuse_cooperative:'',qte_etuvee_kg:0,prix_unitaire:0,montant_brut:0,taux_aib:'0.03',statut_paiement:'en_attente',modalite_paiement:'total',mode_paiement:'',reference_paiement:''}); setModal(true) }
+  const openAdd = ()=>{ setForm({company_id:companyId||companies[0]?.id||'',lot_id:'',date_paiement:today(),numero_lot:'',etuveuse_cooperative:'',qte_etuvee_kg:0,prix_unitaire:0,montant_brut:0,taux_aib:'0.03',statut_paiement:'en_attente',modalite_paiement:'total',montant_paye:0,mode_paiement:'',reference_paiement:''}); setModal(true) }
   const close = ()=>setModal(false)
 
   const deleteEtuvage = async (id) => {
@@ -9364,12 +9374,19 @@ function PaiementsEtuvagePage({ companies, companyId, lots, toast, readOnly=fals
     const compte = form.mode_paiement
     const { ret, net } = calcAib(form.montant_brut, form.taux_aib)
     if (net <= 0) { toast.error('Le net à payer doit être supérieur à 0.'); return }
+    const partiel = modalite==='partiel'
+    const montantPaye = partiel ? Math.round(parseFloat(form.montant_paye)||0) : net
+    if (partiel) {
+      if (montantPaye <= 0) { toast.error('Saisissez le montant payé.'); return }
+      if (montantPaye > net) { toast.error('Le montant payé ne peut pas dépasser le net à payer.'); return }
+    }
+    const montantSortie = aCredit ? 0 : montantPaye
     if (!aCredit && !JOURNAL_TABLE[compte]) { toast.error('Veuillez choisir le journal de paiement.'); return }
     const cid = form.company_id||companyId||companies[0]?.id
     setSaving(true)
     if (!aCredit) {
       const soldeCompte = await getSoldeCompte(compte, cid)
-      if (net > soldeCompte) {
+      if (montantSortie > soldeCompte) {
         setSaving(false)
         toast.error(`Vous ne pouvez pas régler par ce compte : solde insuffisant (${JOURNAL_LABEL[compte]} : ${fcfa(soldeCompte)}).`)
         return
@@ -9384,21 +9401,21 @@ function PaiementsEtuvagePage({ companies, companyId, lots, toast, readOnly=fals
       numero_lot:form.numero_lot, etuveuse_cooperative:form.etuveuse_cooperative,
       qte_etuvee_kg:+form.qte_etuvee_kg, prix_unitaire:+form.prix_unitaire,
       montant_brut:+form.montant_brut, taux_aib:+form.taux_aib,
-      retenue_aib:ret, net_a_payer:net,
+      retenue_aib:ret, net_a_payer:net, montant_paye:montantSortie,
       statut_paiement:form.statut_paiement, modalite_paiement:modalite, mode_paiement:aCredit?null:compte,
       reference_paiement:form.reference_paiement,
     }).select('id').single()
     if (error) { setSaving(false); toast.error(error.message); return }
     if (!aCredit) {
       const { error:errJ } = await creerSortieJournal({
-        compte, cid, uid, date:form.date_paiement, montant:net,
-        libelle:`Paiement étuvage ${numero} — ${form.etuveuse_cooperative||''}${form.numero_lot?(' (lot '+form.numero_lot+')'):''}`.trim(),
+        compte, cid, uid, date:form.date_paiement, montant:montantSortie,
+        libelle:`Paiement étuvage ${numero} — ${form.etuveuse_cooperative||''}${form.numero_lot?(' (lot '+form.numero_lot+')'):''}${partiel?' (partiel)':''}`.trim(),
         tiers:form.etuveuse_cooperative, reference:form.reference_paiement,
         sourceType:'paiement_etuvage', sourceId:ins.id,
       })
       setSaving(false)
       if (errJ) toast.error('Paiement enregistré, mais erreur sur le journal : '+errJ.message)
-      else toast.success(`Paiement ${numero} enregistré — sortie ${JOURNAL_LABEL[compte]} : ${fcfa(net)}`)
+      else toast.success(`Paiement ${numero} enregistré — sortie ${JOURNAL_LABEL[compte]} : ${fcfa(montantSortie)}`)
     } else { setSaving(false); toast.success(`Paiement ${numero} enregistré à crédit (aucune sortie de trésorerie).`) }
     close(); load()
   }
@@ -9512,6 +9529,9 @@ function PaiementsEtuvagePage({ companies, companyId, lots, toast, readOnly=fals
             <Sel label="Statut paiement" name="statut_paiement" value={form.statut_paiement||'en_attente'} onChange={set}
               options={['en_attente','paye','annule'].map(s=>({value:s,label:s.replace('_',' ')}))} />
             <Sel label="Modalité de paiement *" name="modalite_paiement" value={form.modalite_paiement||'total'} onChange={set} options={MODALITE_OPTIONS} />
+            {form.modalite_paiement==='partiel' && (
+              <Input label="Montant payé *" name="montant_paye" type="number" value={form.montant_paye||0} onChange={set} min="0" />
+            )}
             {form.modalite_paiement!=='credit' && (
               <Sel label="Journal de paiement *" name="mode_paiement" value={form.mode_paiement||''} onChange={set}
                 options={[{value:'',label:'— Choisir un journal —'},...COMPTE_OPTIONS]} />
