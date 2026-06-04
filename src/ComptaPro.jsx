@@ -8287,12 +8287,16 @@ function ExpressionBesoinPage({ companies, companyId, toast, readOnly=false, pro
 
   // Open validation modal (super admin)
   const openValidation=(fiche)=>{
-    const lignesInit=(fiche.lignes||[]).map(l=>({
-      ...l,
-      validation:l.validation||'en_attente',
-      montant_autorise:l.montant_autorise||l.montant||0,
-      quantite_autorisee:l.quantite_autorisee||l.quantite||0
-    }))
+    const lignesInit=(fiche.lignes||[]).map(l=>{
+      const qteAut = l.quantite_autorisee!=null ? l.quantite_autorisee : (l.quantite||0)
+      const pu = (l.quantite>0) ? (l.montant/l.quantite) : 0
+      return {
+        ...l,
+        validation:l.validation||'en_attente',
+        quantite_autorisee:qteAut,
+        montant_autorise: l.montant_autorise!=null ? l.montant_autorise : Math.round((parseFloat(qteAut)||0)*pu)
+      }
+    })
     setValidLignes(lignesInit)
     setValidModal(fiche)
   }
@@ -8475,15 +8479,20 @@ function ExpressionBesoinPage({ companies, companyId, toast, readOnly=false, pro
                       </td>
                       <td style={{padding:'8px 6px'}}>
                         <input type="number" disabled={!isApprove} value={l.quantite_autorisee||0}
-                          onChange={e=>setValidLigne(l.id||i,'quantite_autorisee',e.target.value)}
+                          onChange={e=>{
+                            const q=e.target.value
+                            const pu=(l.quantite>0)?(l.montant/l.quantite):0
+                            const mt=Math.round((parseFloat(q)||0)*pu)
+                            setValidLignes(arr=>arr.map(x=>x.id===(l.id||i)?{...x,quantite_autorisee:q,montant_autorise:mt}:x))
+                          }}
                           style={{width:80,padding:'5px 8px',border:'1px solid #e2e8f0',borderRadius:6,fontSize:12,
                             opacity:isApprove?1:0.4,background:isApprove?'white':'#f8fafc'}} />
                       </td>
                       <td style={{padding:'8px 6px'}}>
-                        <input type="number" disabled={!isApprove} value={l.montant_autorise||0}
-                          onChange={e=>setValidLigne(l.id||i,'montant_autorise',e.target.value)}
+                        <input type="number" readOnly value={l.montant_autorise||0}
+                          title="Calculé automatiquement : qté autorisée × prix unitaire"
                           style={{width:110,padding:'5px 8px',border:'1px solid #e2e8f0',borderRadius:6,fontSize:12,
-                            opacity:isApprove?1:0.4,background:isApprove?'white':'#f8fafc'}} />
+                            background:'#f1f5f9',fontWeight:700,color:'#16a34a',cursor:'not-allowed'}} />
                       </td>
                     </tr>
                   )
