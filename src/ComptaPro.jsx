@@ -9118,7 +9118,10 @@ function JournalPage({ table, title, icon, journalType='caisse', companies, comp
   const onCompteChange = e => {
     const v = e.target.value
     const m = comptesTiers.find(c=>c.numero===v)
-    setForm(f=>({...f, numero_compte:v, ...(m?{tiers:m.nom}:{})}))
+    const auto = String(v).startsWith(COLLECTIF_CLIENT) ? 'entree'
+               : String(v).startsWith(COLLECTIF_FOURNISSEUR) ? 'sortie'
+               : null
+    setForm(f=>({...f, numero_compte:v, ...(m?{tiers:m.nom}:{}), ...(auto?{type_operation:auto}:{})}))
   }
   const openAddTiers = ()=>{ setAddTiersForm({ categorie:'fournisseur', type:'physique', nom:'' }); setAddTiersModal(true) }
   const setAddT = e => setAddTiersForm(f=>({...f,[e.target.name]:e.target.value}))
@@ -9141,7 +9144,7 @@ function JournalPage({ table, title, icon, journalType='caisse', companies, comp
     try{ numero=await attribuerCompteTiers({ tableTiers, tiersId:ins.id, collectif, libelleCollectif:cat==='client'?'Clients':'Fournisseurs', libelleCompte:nom, cid, uid }) }catch(_){}
     setAddTiersSaving(false)
     setAddTiersModal(false)
-    setForm(f=>({...f, numero_compte:numero||'', tiers:nom }))
+    setForm(f=>({...f, numero_compte:numero||'', tiers:nom, type_operation: cat==='client'?'entree':'sortie' }))
     await loadComptesTiers()
     toast.success(`${cat==='client'?'Client':'Fournisseur'} « ${nom} » ajouté (compte ${numero||'—'}).`)
   }
