@@ -32,6 +32,7 @@ public class MainActivity extends BridgeActivity {
 
     private ValueCallback<Uri[]> filePathCallback;
 
+    // Sélecteur de fichiers (images : logo, signature, cachet, chat...)
     private final ActivityResultLauncher<Intent> fileChooserLauncher =
         registerForActivityResult(new ActivityResultContracts.StartActivityForResult(),
             new ActivityResultCallback<ActivityResult>() {
@@ -53,9 +54,12 @@ public class MainActivity extends BridgeActivity {
         super.onStart();
         final WebView webView = this.bridge.getWebView();
 
+        // Pont JS natif : impression + enregistrement PDF
         webView.addJavascriptInterface(new PrintBridge(webView), "AndroidPrint");
 
         webView.setWebChromeClient(new WebChromeClient() {
+
+            // Autoriser micro / caméra demandés par la page web
             @Override
             public void onPermissionRequest(final PermissionRequest request) {
                 runOnUiThread(() -> {
@@ -65,6 +69,7 @@ public class MainActivity extends BridgeActivity {
                 });
             }
 
+            // Ouvrir le sélecteur de fichiers natif (input type=file)
             @Override
             public boolean onShowFileChooser(WebView wv, ValueCallback<Uri[]> callback, FileChooserParams params) {
                 if (filePathCallback != null) { filePathCallback.onReceiveValue(null); }
@@ -77,6 +82,19 @@ public class MainActivity extends BridgeActivity {
                 }
                 return true;
             }
+
+            // FILET DE SÉCURITÉ : à chaque page chargée, forcer window.print()
+            // à utiliser l'impression native Android. Ainsi, même si une mise à
+            // jour du code web efface la correction, les boutons restent fonctionnels.
+            @Override
+            public void onProgressChanged(WebView view, int newProgress) {
+                if (newProgress == 100) {
+                    view.evaluateJavascript(
+                        "if(window.AndroidPrint){window.print=function(){try{AndroidPrint.printPage();}catch(e){}};}",
+                        null
+                    );
+                }
+            }
         });
     }
 
@@ -84,6 +102,7 @@ public class MainActivity extends BridgeActivity {
         private final WebView webView;
         PrintBridge(WebView wv) { this.webView = wv; }
 
+        // Impression native (boîte d'impression / Enregistrer au format PDF)
         @JavascriptInterface
         public void printPage() {
             runOnUiThread(() -> {
@@ -96,6 +115,7 @@ public class MainActivity extends BridgeActivity {
             });
         }
 
+        // Enregistrement direct d'un PDF (base64) dans le dossier Téléchargements
         @JavascriptInterface
         public void savePdf(String base64Data, String filename) {
             runOnUiThread(() -> {
