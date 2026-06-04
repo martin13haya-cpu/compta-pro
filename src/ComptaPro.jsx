@@ -6804,7 +6804,11 @@ function PlanComptablePage({ companies, companyId, toast, readOnly=false }) {
     if (isAdmin) { if (companyId) q=q.eq('company_id',companyId) }
     else { q=q.eq('user_id',uid); if (companyId) q=q.eq('company_id',companyId) }
     const { data } = await q
-    const sorted = (data||[]).sort((a,b)=>String(a.numero).localeCompare(String(b.numero),undefined,{numeric:true}))
+    const sorted = (data||[]).sort((a,b)=>{
+      const pa=String(a.numero).slice(0,4), pb=String(b.numero).slice(0,4)
+      if (pa!==pb) return pa.localeCompare(pb)
+      return String(a.numero).localeCompare(String(b.numero),undefined,{numeric:true})
+    })
     setItems(sorted)
   },[companyId])
   useEffect(()=>{ load() },[load])
@@ -6898,6 +6902,32 @@ function PlanComptablePage({ companies, companyId, toast, readOnly=false }) {
     setGenerating(false)
   }
 
+  const nettoyerOrphelins = async () => {
+    if (!window.confirm('Supprimer du plan les sous-comptes 4011x/4111x qui ne correspondent à aucun fournisseur/client ?')) return
+    setGenerating(true)
+    try {
+      const cid = companyId || companies[0]?.id
+      if(!cid){ toast.error('Veuillez sélectionner une société.'); setGenerating(false); return }
+      const [fo, cl, pc] = await Promise.all([
+        supabase.from('compta_fournisseurs').select('numero_compte').eq('company_id',cid),
+        supabase.from('compta_clients').select('numero_compte').eq('company_id',cid),
+        supabase.from('compta_plan_comptable').select('id,numero,est_collectif').eq('company_id',cid),
+      ])
+      const used = new Set()
+      ;(fo.data||[]).forEach(x=>x.numero_compte&&used.add(String(x.numero_compte)))
+      ;(cl.data||[]).forEach(x=>x.numero_compte&&used.add(String(x.numero_compte)))
+      const orphelins = (pc.data||[]).filter(p=>!p.est_collectif
+        && (String(p.numero).startsWith(COLLECTIF_FOURNISSEUR)||String(p.numero).startsWith(COLLECTIF_CLIENT))
+        && !used.has(String(p.numero)))
+      if (orphelins.length===0){ toast.success('Aucun compte orphelin trouvé.'); setGenerating(false); return }
+      if(!window.confirm(`${orphelins.length} compte(s) orphelin(s) seront supprimés du plan. Continuer ?`)){ setGenerating(false); return }
+      for (const o of orphelins) await supabase.from('compta_plan_comptable').delete().eq('id', o.id)
+      toast.success(`${orphelins.length} compte(s) orphelin(s) supprimé(s).`)
+      load()
+    } catch(err){ toast.error('Erreur nettoyage : '+(err.message||err)) }
+    setGenerating(false)
+  }
+
   const printPC = ()=>{
     const headers=[{label:'N° Compte'},{label:'Libellé'},{label:'Type'}]
     const rows=filtered.map(it=>[it.numero, it.libelle||'—', it.est_collectif?'Collectif':'Sous-compte'])
@@ -6911,6 +6941,7 @@ function PlanComptablePage({ companies, companyId, toast, readOnly=false }) {
           <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
             <Btn sm variant="info" onClick={printPC}>🖨️ Imprimer</Btn>
             <Btn sm variant="secondary" onClick={genererManquants} disabled={generating}>{generating?'Génération…':'⚙️ Générer les comptes manquants'}</Btn>
+            <Btn sm variant="danger" onClick={nettoyerOrphelins} disabled={generating}>🧹 Nettoyer les orphelins</Btn>
             <Btn onClick={openAdd}>+ Nouveau compte</Btn>
           </div>
         ) : null} />
