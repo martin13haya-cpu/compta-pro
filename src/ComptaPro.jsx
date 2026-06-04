@@ -9401,8 +9401,12 @@ function JournalPage({ table, title, icon, journalType='caisse', companies, comp
               )}
             </div>
             <Input label="Tiers" name="tiers" value={form.tiers||''} onChange={set} />
-            <Sel label="Type d'opération *" name="type_operation" value={form.type_operation||'entree'} onChange={set}
-              options={[{value:'entree',label:'⬇️ Entrée (Recette)'},{value:'sortie',label:'⬆️ Sortie (Dépense)'}]} required />
+            <div>
+              <label style={{display:'block',fontSize:12.5,fontWeight:600,color:'#374151',marginBottom:5}}>Type d'opération <span style={{fontWeight:400,color:'#94a3b8'}}>(déterminé par le compte)</span></label>
+              <div style={{padding:'9px 12px',borderRadius:8,border:'1px solid #d1d5db',fontSize:13.5,minHeight:38,display:'flex',alignItems:'center',background:'#f1f5f9',fontWeight:600,color: form.type_operation==='sortie'?'#dc2626':'#16a34a'}}>
+                {form.type_operation==='sortie' ? '⬆️ Sortie (Dépense)' : '⬇️ Entrée (Recette)'}
+              </div>
+            </div>
             <Input label="Montant (FCFA) *" name="montant" type="number" value={form.montant||0} onChange={set} required min="0" />
             {(isBanque||isMobile) && (
               <Sel label={isMobile?'Opérateur Mobile Money':'Mode d\'opération'} name={isMobile?'operateur':'mode_operation'} value={isMobile?(form.operateur||''):(form.mode_operation||'')} onChange={set}
