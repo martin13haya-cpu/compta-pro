@@ -99,54 +99,31 @@ function buildPrintDocument(html, filename) {
   const fname = (filename || 'document').replace(/[^a-zA-Z0-9_-]/g,'_')
   const scriptTag = '<scr'+'ipt src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></scr'+'ipt>'
   const pdfScript = '<scr'+'ipt>' + `
-    if(window.AndroidPrint && typeof window.AndroidPrint.printPage==='function'){
-      window.print = function(){ try{ AndroidPrint.printPage(); }catch(e){} };
-    }
-    // Détecte si on est dans une WebView Android (Capacitor)
+    // Détecte si on est dans une WebView Android (Capacitor) — le téléchargement de blob y échoue
     function __isAndroidWebView(){
       var ua=navigator.userAgent||'';
       var isAndroid=ua.indexOf('Android')>-1;
       var isWebView=ua.indexOf('; wv')>-1 || ua.indexOf('Capacitor')>-1;
       return isAndroid && isWebView;
     }
-    function __hasAndroidSave(){
-      return !!(window.AndroidPrint && typeof window.AndroidPrint.savePdf === 'function');
-    }
     function __downloadPDF(){
-      var btn=document.getElementById('__pdfbtn');
-      if(typeof html2pdf==="undefined"){ alert("La librairie PDF n'est pas encore chargee. Verifiez votre connexion internet et reessayez."); return; }
-      btn.textContent='⏳ Génération...'; btn.disabled=true;
-      var tb=document.getElementById('__toolbar'); if(tb) tb.style.display='none';
-      var __hidden=[];
-      document.querySelectorAll('.print-btn').forEach(function(el){ __hidden.push([el, el.style.display]); el.style.display='none'; });
-      var opt={ margin:[6,6,6,6], filename:'${fname}.pdf', image:{type:'jpeg',quality:0.98}, html2canvas:{scale:2,useCORS:true,logging:false}, jsPDF:{unit:'mm',format:'a4',orientation:'portrait'} };
-      var content=document.getElementById('__content')||document.body;
-      function __resetBtn(){ if(tb) tb.style.display='flex'; __hidden.forEach(function(h){ h[0].style.display=h[1]; }); btn.textContent='📥 PDF'; btn.disabled=false; }
-      if(__hasAndroidSave()){
-        html2pdf().set(opt).from(content).outputPdf('datauristring').then(function(datauri){
-          var base64 = (datauri && datauri.indexOf(',')>-1) ? datauri.split(',')[1] : datauri;
-          try { window.AndroidPrint.savePdf(base64, '${fname}.pdf'); } catch(e){ alert('Erreur enregistrement : '+e); }
-          __resetBtn();
-        }).catch(function(err){
-          __resetBtn();
-          alert('Erreur PDF : '+(err&&err.message?err.message:'inconnue'));
-        });
+      // Sur Android WebView, le téléchargement de blob ne marche pas : on utilise l'impression native
+      if(__isAndroidWebView()){
+        window.print();
         return;
       }
+      var btn=document.getElementById('__pdfbtn');
+      if(typeof html2pdf==="undefined"){ alert("La librairie PDF nest pas encore chargee. Verifiez votre connexion internet et reessayez."); return; }
+      btn.textContent='⏳ Génération...'; btn.disabled=true;
+      var tb=document.getElementById('__toolbar'); tb.style.display='none';
+      var opt={ margin:[8,8,8,8], filename:'${fname}.pdf', image:{type:'jpeg',quality:0.98}, html2canvas:{scale:2,useCORS:true,logging:false}, jsPDF:{unit:'mm',format:'a4',orientation:'portrait'} };
+      var content=document.getElementById('__content')||document.body;
       html2pdf().set(opt).from(content).save().then(function(){
-        __resetBtn();
+        tb.style.display='flex'; btn.textContent='📥 Télécharger PDF'; btn.disabled=false;
       }).catch(function(err){
-        __resetBtn();
+        tb.style.display='flex'; btn.textContent='📥 Télécharger PDF'; btn.disabled=false;
         alert('Erreur PDF : '+(err&&err.message?err.message:'inconnue'));
       });
-    }
-    function __doPrint(){
-      var tb=document.getElementById('__toolbar');
-      if(tb) tb.style.display='none';
-      setTimeout(function(){
-        window.print();
-        setTimeout(function(){ if(tb) tb.style.display='flex'; }, 1500);
-      }, 60);
     }
   ` + '</scr'+'ipt>'
 
@@ -154,7 +131,7 @@ function buildPrintDocument(html, filename) {
     <div id="__toolbar" style="position:sticky;top:0;left:0;right:0;z-index:99999;background:#075E54;padding:8px 10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;box-shadow:0 2px 8px rgba(0,0,0,0.2)">
       <button onclick="history.length>1?history.back():window.close()" style="background:white;color:#075E54;border:none;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap">← Retour</button>
       <button id="__pdfbtn" onclick="__downloadPDF()" style="background:#25D366;color:white;border:none;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap">📥 PDF</button>
-      <button onclick="__doPrint()" style="background:#f0f2f5;color:#1e293b;border:none;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap">🖨️ Imprimer</button>
+      <button onclick="window.print()" style="background:#f0f2f5;color:#1e293b;border:none;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap">🖨️ Imprimer / PDF</button>
     </div>
     <style>@media print { #__toolbar { display:none !important } }</style>
   `
@@ -240,7 +217,7 @@ const STATUT_COLORS = {
 
 // ── PDF PRINT ────────────────────────────────────────────────────────────────
 const CSS_PRINT = `
-  @page { size: A4; margin: 1.2cm; }
+  @page { size: A4; margin: 1.8cm; }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: 'Times New Roman', serif; font-size: 11pt; color: #1a1a1a; }
   .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; border-bottom: 2px solid #0f2044; padding-bottom: 12px; }
@@ -564,7 +541,7 @@ function printExpressionBesoin(fiche, lignes, budgets, companyInfo, sigImg=null,
       </div>`:''}
     </div>
 
-    <div class="signatures" style="margin-top:26px">
+    <div class="signatures" style="margin-top:50px">
       <div class="sig-box">
         Signature de l'agent<br><small>${fiche.realise_par||''}</small>
         ${sigImg?`<img src="${sigImg}" style="max-width:100px;max-height:60px;margin-top:8px;display:block" />`:''}
@@ -1852,7 +1829,7 @@ function printFicheTiers(it, kind='fournisseur') {
 
     ${autresBloc}
 
-    <div class="signatures" style="margin-top:26px">
+    <div class="signatures" style="margin-top:50px">
       <div class="sig-box">Signature du ${labelTiers}</div>
       <div class="sig-box">Cachet & visa<br><small>${societe}</small></div>
     </div>
@@ -6679,11 +6656,8 @@ function GrandLivrePage({ companies, companyId, toast, readOnly=false }) {
       // Créance : factures (débit)
       factures.filter(f=>inPeriode(f.date_doc) && (isCollCli?true:f.client_id===cli.id))
         .forEach(f=>lignes.push({ date:f.date_doc, libelle:`Facture${f.numero?(' '+f.numero):''}`, debit:f.montant_ttc||0, credit:0 }))
-      // Encaissements : mouvements des journaux (entrée=crédit)
+      // Encaissements : mouvements des journaux (entrée=crédit) — règlements clients désormais journalisés
       pushMvts()
-      // Règlements clients non journalisés (crédit)
-      regls.filter(r=>r.tiers_type==='client' && inPeriode(r.date_paiement) && (isCollCli?true:norm(r.tiers_nom)===norm(nomTiers(cli))))
-        .forEach(r=>lignes.push({ date:r.date_paiement, libelle:`Règlement${r.numero_facture?(' '+r.numero_facture):''}${r.tiers_nom?(' — '+r.tiers_nom):''}`, debit:0, credit:r.montant_paye||0 }))
     }
     else {
       // Autre compte : uniquement les mouvements de journaux tagués
@@ -8739,6 +8713,17 @@ async function creerSortieJournal({ compte, cid, uid, date, montant, libelle, ti
   })
 }
 
+async function creerEntreeJournal({ compte, cid, uid, date, montant, libelle, tiers, reference, sourceType, sourceId, numeroCompte }) {
+  const table = JOURNAL_TABLE[compte]; if (!table) return { error:{ message:'Compte invalide' } }
+  return await supabase.from(table).insert({
+    company_id: cid, user_id: uid, date_operation: date || today(),
+    numero_piece:'', libelle: libelle||'', tiers: tiers||'',
+    type_operation:'entree', montant: Math.round(montant||0),
+    reference: reference||'', source_type: sourceType, source_id: sourceId,
+    numero_compte: numeroCompte||null,
+  })
+}
+
 // Retrouve le N° de compte d'un tiers à partir de son nom
 async function numeroCompteParNom(tableTiers, nom, cid) {
   if (!nom) return null
@@ -8804,12 +8789,12 @@ function ReglementsPage({ companies, companyId, toast, readOnly=false, mode='cli
   useEffect(()=>{ load() },[load])
   useEffect(()=>{ loadFactures() },[loadFactures])
 
-  // Charger les fournisseurs (pour l'autocomplétion du nom) — règlements fournisseurs uniquement
+  // Charger les tiers (clients OU fournisseurs) pour l'autocomplétion du nom
   const loadFourns = useCallback(async()=>{
-    if(isClients) return
     const { data:ad }=await supabase.auth.getUser()
     const uid=ad?.user?.id; const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
-    let q = supabase.from('compta_fournisseurs').select('id,type,nom,nom_societe')
+    const tableTiers = isClients ? 'compta_clients' : 'compta_fournisseurs'
+    let q = supabase.from(tableTiers).select('id,type,nom,nom_societe')
     q = isAdmin&&companyId ? q.eq('company_id',companyId) : q.eq('user_id',uid)
     if(companyId&&!isAdmin) q=q.eq('company_id',companyId)
     const { data }=await q
@@ -8858,14 +8843,14 @@ function ReglementsPage({ companies, companyId, toast, readOnly=false, mode='cli
     tiers_type: filterKey, tiers_nom:'', provenance:'',
     acheteur_vendeur:'', nature_produit:'',
     montant_paye:0, solde:0,
-    mode_paiement: isClients?'espèce':'', modalite_paiement:'total', reference_paiement:'', notes:''
+    mode_paiement: '', modalite_paiement:'total', reference_paiement:'', notes:''
   }
 
   const deleteRegl = async(id)=>{
     if(!window.confirm('Supprimer ce règlement ?')) return
     const { error }=await supabase.from('compta_reglements').delete().eq('id',id)
     if(error){ toast.error(error.message); return }
-    if(!isClients) await supprimerSortiesJournal('reglement_fournisseur', id)
+    await supprimerSortiesJournal(isClients?'reglement_client':'reglement_fournisseur', id)
     toast.success('Règlement supprimé !'); load()
   }
 
@@ -8916,16 +8901,33 @@ function ReglementsPage({ companies, companyId, toast, readOnly=false, mode='cli
       close(); load(); return
     }
 
-    // Règlements clients : inchangé
+    // Règlements clients : journal d'encaissement (entrée) — même méthode que fournisseurs
+    const modaliteC = form.modalite_paiement || 'total'
+    const aCreditC = modaliteC==='credit'
+    const compteC = mode_paiement
+    const montantC = +montant_paye || 0
+    if (montantC <= 0) { toast.error('Le montant payé doit être supérieur à 0.'); return }
+    if (!aCreditC && !JOURNAL_TABLE[compteC]) { toast.error('Veuillez choisir le journal d\u2019encaissement.'); return }
     setSaving(true)
-    const { error }=await supabase.from('compta_reglements').insert({
+    const { data:insC, error:errC }=await supabase.from('compta_reglements').insert({
       company_id:cid,user_id:uid,numero_facture,date_paiement,
       tiers_type:filterKey, tiers_nom,provenance,acheteur_vendeur,nature_produit,
-      montant_paye:+montant_paye,solde:+solde,mode_paiement,reference_paiement,notes
-    })
-    setSaving(false)
-    if(error){ toast.error(error.message); return }
-    toast.success('Règlement enregistré !'); close(); load()
+      montant_paye:montantC,solde:+solde,mode_paiement:aCreditC?null:compteC,modalite_paiement:modaliteC,reference_paiement,notes
+    }).select('id').single()
+    if(errC){ setSaving(false); toast.error(errC.message); return }
+    if (!aCreditC) {
+      const numCptC = await numeroCompteParNom('compta_clients', tiers_nom, cid)
+      const { error:errJC } = await creerEntreeJournal({
+        compte:compteC, cid, uid, date:date_paiement, montant:montantC,
+        libelle:`Encaissement client ${tiers_nom||''}${numero_facture?(' — '+numero_facture):''}`.trim(),
+        tiers:tiers_nom, reference:reference_paiement,
+        sourceType:'reglement_client', sourceId:insC.id, numeroCompte:numCptC,
+      })
+      setSaving(false)
+      if (errJC) toast.error('Règlement enregistré, mais erreur sur le journal : '+errJC.message)
+      else toast.success(`Encaissement enregistré — entrée ${JOURNAL_LABEL[compteC]} : ${fcfa(montantC)}`)
+    } else { setSaving(false); toast.success('Règlement enregistré à crédit (aucun encaissement).') }
+    close(); load()
   }
 
   const printFilteredR = () => {
@@ -9070,13 +9072,11 @@ function ReglementsPage({ companies, companyId, toast, readOnly=false, mode='cli
                 {autoFilled('tiers_nom')&&<span style={{marginLeft:6,fontSize:10,color:'#16a34a',fontWeight:700}}>✅ auto</span>}
               </label>
               <input name="tiers_nom" value={form.tiers_nom||''} onChange={set} required style={autoStyle('tiers_nom')}
-                list={isClients?undefined:'fourn-nom-list'}
-                placeholder={isClients?'':'Saisir / choisir un fournisseur'} />
-              {!isClients && (
-                <datalist id="fourn-nom-list">
-                  {fournsList.map((n,i)=><option key={i} value={n} />)}
-                </datalist>
-              )}
+                list="tiers-nom-list"
+                placeholder={isClients?'Saisir / choisir un client':'Saisir / choisir un fournisseur'} />
+              <datalist id="tiers-nom-list">
+                {fournsList.map((n,i)=><option key={i} value={n} />)}
+              </datalist>
             </div>
 
             {/* Provenance */}
@@ -9120,17 +9120,10 @@ function ReglementsPage({ companies, companyId, toast, readOnly=false, mode='cli
                 {fcfa(form.solde||0)}
               </div>
             </div>
-            {isClients ? (
-              <Sel label="Mode de paiement" name="mode_paiement" value={form.mode_paiement||'espèce'} onChange={set}
-                options={['espèce','virement','mobile_money','chèque','autre'].map(m=>({value:m,label:m.charAt(0).toUpperCase()+m.slice(1)}))} />
-            ) : (
-              <>
-                <Sel label="Modalité de paiement *" name="modalite_paiement" value={form.modalite_paiement||'total'} onChange={set} options={MODALITE_OPTIONS} />
-                {form.modalite_paiement!=='credit' && (
-                  <Sel label="Journal de règlement *" name="mode_paiement" value={form.mode_paiement||''} onChange={set}
-                    options={[{value:'',label:'— Choisir un journal —'},...COMPTE_OPTIONS]} />
-                )}
-              </>
+            <Sel label="Modalité de paiement *" name="modalite_paiement" value={form.modalite_paiement||'total'} onChange={set} options={MODALITE_OPTIONS} />
+            {form.modalite_paiement!=='credit' && (
+              <Sel label={isClients?'Journal d\u2019encaissement *':'Journal de règlement *'} name="mode_paiement" value={form.mode_paiement||''} onChange={set}
+                options={[{value:'',label:'— Choisir un journal —'},...COMPTE_OPTIONS]} />
             )}
             <Input label="Référence de paiement" name="reference_paiement" value={form.reference_paiement||''} onChange={set} />
             <Span2><Input label="Notes" name="notes" value={form.notes||''} onChange={set} /></Span2>
@@ -9281,6 +9274,8 @@ function JournalPage({ table, title, icon, journalType='caisse', companies, comp
       if (row.source_type==='achat_semi_fini')
         await supabase.from('compta_achats_semi_finis').update({ montant_paye:0, compte_paiement:null, modalite_paiement:'credit' }).eq('id', row.source_id)
       else if (row.source_type==='reglement_fournisseur')
+        await supabase.from('compta_reglements').delete().eq('id', row.source_id)
+      else if (row.source_type==='reglement_client')
         await supabase.from('compta_reglements').delete().eq('id', row.source_id)
       else if (row.source_type==='paiement_etuvage')
         await supabase.from('compta_paiements_etuvage').update({ montant_paye:0, mode_paiement:null, modalite_paiement:'credit' }).eq('id', row.source_id)
