@@ -9105,7 +9105,18 @@ function JournalPage({ table, title, icon, journalType='caisse', companies, comp
 
   const del = async id => {
     if (!confirm('Supprimer cette ligne ?')) return
+    // Récupérer le lien vers l'opération source avant suppression
+    const { data:row } = await supabase.from(table).select('source_type,source_id').eq('id', id).maybeSingle()
     await supabase.from(table).delete().eq('id', id)
+    // Annuler l'effet sur l'opération source → met à jour le grand-livre automatiquement
+    if (row?.source_type && row?.source_id) {
+      if (row.source_type==='achat_semi_fini')
+        await supabase.from('compta_achats_semi_finis').update({ montant_paye:0, compte_paiement:null, modalite_paiement:'credit' }).eq('id', row.source_id)
+      else if (row.source_type==='reglement_fournisseur')
+        await supabase.from('compta_reglements').delete().eq('id', row.source_id)
+      else if (row.source_type==='paiement_etuvage')
+        await supabase.from('compta_paiements_etuvage').update({ montant_paye:0, mode_paiement:null, modalite_paiement:'credit' }).eq('id', row.source_id)
+    }
     toast.success('Supprimé.'); load()
   }
 
