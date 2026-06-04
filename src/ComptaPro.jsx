@@ -9145,6 +9145,7 @@ function JournalPage({ table, title, icon, journalType='caisse', companies, comp
     await loadComptesTiers()
     toast.success(`${cat==='client'?'Client':'Fournisseur'} « ${nom} » ajouté (compte ${numero||'—'}).`)
   }
+  const totalEntrees = items.filter(i=>i.type_operation==='entree').reduce((s,i)=>s+(i.montant||0),0)
   const totalSorties = items.filter(i=>i.type_operation==='sortie').reduce((s,i)=>s+(i.montant||0),0)
   const solde        = totalEntrees - totalSorties
 
