@@ -139,13 +139,21 @@ function buildPrintDocument(html, filename) {
         alert('Erreur PDF : '+(err&&err.message?err.message:'inconnue'));
       });
     }
+    function __doPrint(){
+      var tb=document.getElementById('__toolbar');
+      if(tb) tb.style.display='none';
+      setTimeout(function(){
+        window.print();
+        setTimeout(function(){ if(tb) tb.style.display='flex'; }, 1500);
+      }, 60);
+    }
   ` + '</scr'+'ipt>'
 
   const toolbar = `
     <div id="__toolbar" style="position:sticky;top:0;left:0;right:0;z-index:99999;background:#075E54;padding:8px 10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;box-shadow:0 2px 8px rgba(0,0,0,0.2)">
       <button onclick="history.length>1?history.back():window.close()" style="background:white;color:#075E54;border:none;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap">← Retour</button>
       <button id="__pdfbtn" onclick="__downloadPDF()" style="background:#25D366;color:white;border:none;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap">📥 PDF</button>
-      <button onclick="window.print()" style="background:#f0f2f5;color:#1e293b;border:none;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap">🖨️ Imprimer</button>
+      <button onclick="__doPrint()" style="background:#f0f2f5;color:#1e293b;border:none;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap">🖨️ Imprimer</button>
     </div>
     <style>@media print { #__toolbar { display:none !important } }</style>
   `
