@@ -1397,6 +1397,7 @@ const NAV = [
   { id:'journal_mobile',     icon:'📱', label:'Journal Mobile Money' },
   { id:'plan_comptable',     icon:'📒', label:'Plan Comptable' },
   { id:'grand_livre',        icon:'📚', label:'Grand-Livre' },
+  { id:'ecritures',          icon:'🧾', label:'Saisie Comptable' },
   { id:'controle_budget',    icon:'📊', label:'Contrôle Budgétaire' },
 ]
 
@@ -4652,7 +4653,7 @@ const ALL_SECTIONS = [
   ['epierrage','Épierrage'],['etuvage_paiements','Paiements étuvage'],
   ['docs_admin','Documents administratifs'],
   ['journal_caisse','Journal Caisse'],['journal_banque','Journal Banque'],
-  ['journal_mobile','Journal Mobile Money'],['plan_comptable','Plan Comptable'],['grand_livre','Grand-Livre'],
+  ['journal_mobile','Journal Mobile Money'],['plan_comptable','Plan Comptable'],['grand_livre','Grand-Livre'],['ecritures','Saisie Comptable'],
 ]
 
 const SECTION_GROUPS = [
@@ -4663,7 +4664,7 @@ const SECTION_GROUPS = [
   {group:'Étuveuses', ids:['etv_repertoire','etv_avances','etv_bc','etv_br','etv_entrees','etv_sorties','etv_inventaire','etv_tresorerie']},
   {group:'Achats', ids:['achats','lots_semi_finis','epierrage','etuvage_paiements']},
   {group:'Documents', ids:['docs_admin']},
-  {group:'Comptabilité', ids:['journal_caisse','journal_banque','journal_mobile','plan_comptable','grand_livre']},
+  {group:'Comptabilité', ids:['journal_caisse','journal_banque','journal_mobile','plan_comptable','grand_livre','ecritures']},
 ]
 
 // ── MES UTILISATEURS (Admin Société) ─────────────────────────────────────────
@@ -6733,6 +6734,217 @@ const BUDGET_IMPOTS = [
   { code:'C20', label:'ORTB' },
 ]
 
+// ── COMPTABILITÉ — SAISIE DE PIÈCES (PARTIE DOUBLE) ───────────────────────────
+const JOURNAUX_COMPTA = [
+  { code:'JA', label:'Journal des Achats' },
+  { code:'JV', label:'Journal des Ventes' },
+  { code:'OD', label:'Opérations Diverses' },
+  { code:'JB', label:'Journal de Banque' },
+  { code:'JC', label:'Journal de Caisse' },
+]
+const journalLabel = c => (JOURNAUX_COMPTA.find(j=>j.code===c)?.label) || c
+
+function ComptabilitePage({ companies, companyId, toast, readOnly=false }) {
+  const [pieces, setPieces]   = useState([])   // regroupées par piece_id
+  const [comptes, setComptes] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [journalF, setJournalF] = useState('')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo]     = useState('')
+  const [modal, setModal]   = useState(false)
+  const [saving, setSaving] = useState(false)
+  const emptyLine = ()=>({ numero_compte:'', compte_libelle:'', libelle:'', debit:'', credit:'' })
+  const [head, setHead] = useState({})
+  const [lines, setLines] = useState([])
+
+  const companyNameC = companies.find(c=>c.id===companyId)?.raison_sociale||''
+
+  const load = useCallback(async()=>{
+    setLoading(true)
+    const { data:ad } = await supabase.auth.getUser()
+    const uid=ad?.user?.id; const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
+    const scope=q=>{ if(isAdmin){if(companyId)q=q.eq('company_id',companyId)}else{q=q.eq('user_id',uid);if(companyId)q=q.eq('company_id',companyId)} return q }
+    let q = scope(supabase.from('compta_ecritures').select('*')).order('date_ecriture',{ascending:false})
+    if (journalF) q=q.eq('journal',journalF)
+    if (dateFrom) q=q.gte('date_ecriture',dateFrom)
+    if (dateTo)   q=q.lte('date_ecriture',dateTo)
+    const { data:ecr } = await q
+    // regrouper par piece_id
+    const map = {}
+    ;(ecr||[]).forEach(e=>{ (map[e.piece_id] ||= { piece_id:e.piece_id, journal:e.journal, date_ecriture:e.date_ecriture, numero_piece:e.numero_piece, numero_facture:e.numero_facture, reference:e.reference, libelle:e.libelle, lignes:[] }).lignes.push(e) })
+    setPieces(Object.values(map))
+    const { data:pc } = await scope(supabase.from('compta_plan_comptable').select('numero,libelle'))
+    setComptes((pc||[]).sort((a,b)=>String(a.numero).localeCompare(String(b.numero),undefined,{numeric:true})))
+    setLoading(false)
+  },[companyId,journalF,dateFrom,dateTo])
+  useEffect(()=>{ load() },[load])
+
+  const openAdd = ()=>{ setHead({ journal:'OD', date_ecriture:today(), numero_piece:'', numero_facture:'', reference:'', libelle:'' }); setLines([emptyLine(),emptyLine()]); setModal(true) }
+  const setH = e=>setHead(h=>({...h,[e.target.name]:e.target.value}))
+  const setLine = (i,field,val)=>setLines(ls=>ls.map((l,idx)=>{
+    if (idx!==i) return l
+    const nl={...l,[field]:val}
+    if (field==='numero_compte'){ const c=comptes.find(x=>String(x.numero)===val); nl.compte_libelle=c?c.libelle:''; if(!nl.libelle&&c) nl.libelle=c.libelle }
+    if (field==='debit' && val) nl.credit=''
+    if (field==='credit' && val) nl.debit=''
+    return nl
+  }))
+  const addLine = ()=>setLines(ls=>[...ls,emptyLine()])
+  const removeLine = i=>setLines(ls=>ls.length>1?ls.filter((_,idx)=>idx!==i):ls)
+
+  const totDebit  = lines.reduce((s,l)=>s+(parseFloat(l.debit)||0),0)
+  const totCredit = lines.reduce((s,l)=>s+(parseFloat(l.credit)||0),0)
+  const equilibre = totDebit>0 && Math.round(totDebit)===Math.round(totCredit)
+
+  const save = async()=>{
+    if (!head.journal) { toast.error('Choisissez le code journal.'); return }
+    const valides = lines.filter(l=>l.numero_compte && ((parseFloat(l.debit)||0)>0 || (parseFloat(l.credit)||0)>0))
+    if (valides.length<2) { toast.error('Saisissez au moins deux lignes (un débit et un crédit).'); return }
+    if (!equilibre) { toast.error(`Pièce non équilibrée : Débit ${fcfa(totDebit)} ≠ Crédit ${fcfa(totCredit)}.`); return }
+    setSaving(true)
+    const { data:ad } = await supabase.auth.getUser(); const uid=ad?.user?.id
+    const cid = companyId || companies[0]?.id
+    const piece_id = (crypto?.randomUUID?.() || (Date.now()+'-'+Math.random()))
+    const rows = valides.map(l=>({
+      company_id:cid, user_id:uid, piece_id,
+      journal:head.journal, date_ecriture:head.date_ecriture||today(),
+      numero_piece:head.numero_piece||'', numero_facture:head.numero_facture||'', reference:head.reference||'',
+      libelle:l.libelle||head.libelle||'', numero_compte:String(l.numero_compte), compte_libelle:l.compte_libelle||'',
+      debit:Math.round(parseFloat(l.debit)||0), credit:Math.round(parseFloat(l.credit)||0),
+    }))
+    const { error } = await supabase.from('compta_ecritures').insert(rows)
+    setSaving(false)
+    if (error) { toast.error(error.message); return }
+    toast.success(`Pièce enregistrée (${journalLabel(head.journal)}) — ${fcfa(totDebit)}.`)
+    setModal(false); load()
+  }
+
+  const delPiece = async(pid)=>{
+    if(!window.confirm('Supprimer cette pièce comptable (toutes ses lignes) ?')) return
+    await supabase.from('compta_ecritures').delete().eq('piece_id',pid)
+    toast.success('Pièce supprimée.'); load()
+  }
+
+  const totalGlobal = pieces.reduce((s,p)=>s+p.lignes.reduce((a,l)=>a+(l.debit||0),0),0)
+
+  return (
+    <div>
+      <PageHeader title="🧾 Comptabilité — Saisie d'écritures" subtitle="Journaux JA / JV / OD — pièces en partie double (Débit = Crédit)"
+        actions={!readOnly ? <Btn onClick={openAdd}>+ Nouvelle écriture</Btn> : null} />
+
+      <div style={{display:'flex',gap:10,flexWrap:'wrap',alignItems:'flex-end',marginBottom:14}}>
+        <div style={{minWidth:200}}>
+          <label style={{display:'block',fontSize:12,color:'#64748b',marginBottom:4}}>Journal</label>
+          <select value={journalF} onChange={e=>setJournalF(e.target.value)} style={{width:'100%',padding:'8px 10px',borderRadius:8,border:'1px solid #d1d5db',background:'white',fontSize:13.5}}>
+            <option value="">Tous les journaux</option>
+            {JOURNAUX_COMPTA.map(j=><option key={j.code} value={j.code}>{j.code} — {j.label}</option>)}
+          </select>
+        </div>
+        <div><label style={{display:'block',fontSize:12,color:'#64748b',marginBottom:4}}>Du</label>
+          <input type="date" value={dateFrom} onChange={e=>setDateFrom(e.target.value)} style={{padding:'8px 10px',borderRadius:8,border:'1px solid #d1d5db'}} /></div>
+        <div><label style={{display:'block',fontSize:12,color:'#64748b',marginBottom:4}}>Au</label>
+          <input type="date" value={dateTo} onChange={e=>setDateTo(e.target.value)} style={{padding:'8px 10px',borderRadius:8,border:'1px solid #d1d5db'}} /></div>
+        {(journalF||dateFrom||dateTo) && <Btn sm variant="secondary" onClick={()=>{setJournalF('');setDateFrom('');setDateTo('')}}>Réinitialiser</Btn>}
+      </div>
+
+      {loading ? <Card><div style={{textAlign:'center',padding:24,color:'#64748b'}}>Chargement…</div></Card>
+      : pieces.length===0 ? <Card><div style={{textAlign:'center',padding:'48px 24px',color:'#64748b'}}>🧾 Aucune écriture. Cliquez sur « + Nouvelle écriture ».</div></Card>
+      : (
+        <div style={{display:'flex',flexDirection:'column',gap:14}}>
+          {pieces.map(p=>{
+            const pd=p.lignes.reduce((s,l)=>s+(l.debit||0),0)
+            return (
+              <div key={p.piece_id} style={{background:'white',borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'10px 14px',background:'#0f2044',color:'white',flexWrap:'wrap',gap:8}}>
+                  <div style={{fontWeight:700,fontSize:13}}>
+                    <Badge type="info">{p.journal}</Badge> &nbsp;{journalLabel(p.journal)} &nbsp;·&nbsp; {p.date_ecriture} {p.numero_piece?`· Pièce ${p.numero_piece}`:''} {p.numero_facture?`· Fact. ${p.numero_facture}`:''}
+                    {p.libelle?<span style={{fontWeight:400,opacity:.85}}> — {p.libelle}</span>:null}
+                  </div>
+                  {!readOnly && <button onClick={()=>delPiece(p.piece_id)} style={{background:'#dc2626',border:'none',color:'white',borderRadius:6,padding:'4px 10px',cursor:'pointer',fontSize:12}}>🗑️ Supprimer</button>}
+                </div>
+                <div style={{overflowX:'auto'}}>
+                  <table style={{width:'100%',borderCollapse:'collapse',minWidth:560,fontSize:13}}>
+                    <thead><tr><TH>N° Compte</TH><TH>Libellé</TH><TH right>Débit</TH><TH right>Crédit</TH></tr></thead>
+                    <tbody>
+                      {p.lignes.map((l,i)=>(
+                        <TR key={i}><TD bold sm>{l.numero_compte}</TD><TD>{l.libelle||l.compte_libelle||'—'}</TD>
+                          <TD right>{l.debit?fcfa(l.debit):''}</TD><TD right>{l.credit?fcfa(l.credit):''}</TD></TR>
+                      ))}
+                      <tr style={{fontWeight:700,background:'#f8fafc'}}><td colSpan={2} style={{padding:'6px 10px',textAlign:'right'}}>Totaux</td>
+                        <td style={{textAlign:'right',padding:'6px 10px'}}>{fcfa(p.lignes.reduce((s,l)=>s+(l.debit||0),0))}</td>
+                        <td style={{textAlign:'right',padding:'6px 10px'}}>{fcfa(p.lignes.reduce((s,l)=>s+(l.credit||0),0))}</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )
+          })}
+          <div style={{textAlign:'right',fontWeight:800,padding:'8px 4px'}}>Total des pièces (débit) : {fcfa(totalGlobal)}</div>
+        </div>
+      )}
+
+      <Modal open={modal} onClose={()=>setModal(false)} title="Nouvelle écriture comptable" size="xl">
+        <Grid cols={3} gap={12} style={{marginBottom:14}}>
+          <Sel label="Code journal *" name="journal" value={head.journal||'OD'} onChange={setH} options={JOURNAUX_COMPTA.map(j=>({value:j.code,label:`${j.code} — ${j.label}`}))} />
+          <Input label="Date *" name="date_ecriture" type="date" value={head.date_ecriture||today()} onChange={setH} />
+          <Input label="N° pièce" name="numero_piece" value={head.numero_piece||''} onChange={setH} />
+          <Input label="N° facture" name="numero_facture" value={head.numero_facture||''} onChange={setH} />
+          <Input label="Référence" name="reference" value={head.reference||''} onChange={setH} />
+          <Input label="Libellé (pièce)" name="libelle" value={head.libelle||''} onChange={setH} />
+        </Grid>
+
+        <div style={{overflowX:'auto',border:'1px solid #e2e8f0',borderRadius:8}}>
+          <table style={{width:'100%',borderCollapse:'collapse',minWidth:620,fontSize:13}}>
+            <thead><tr style={{background:'#f1f5f9'}}>
+              <th style={{padding:'8px',textAlign:'left',width:'22%'}}>N° compte général</th>
+              <th style={{padding:'8px',textAlign:'left'}}>Libellé</th>
+              <th style={{padding:'8px',textAlign:'right',width:'16%'}}>Débit</th>
+              <th style={{padding:'8px',textAlign:'right',width:'16%'}}>Crédit</th>
+              <th style={{width:36}}></th>
+            </tr></thead>
+            <tbody>
+              {lines.map((l,i)=>(
+                <tr key={i} style={{borderTop:'1px solid #eef2f7'}}>
+                  <td style={{padding:'5px 6px'}}>
+                    <input list="compta-pc-list" value={l.numero_compte} onChange={e=>setLine(i,'numero_compte',e.target.value)}
+                      placeholder="N° compte" style={{width:'100%',padding:'6px 8px',border:'1px solid #e2e8f0',borderRadius:6,fontSize:12.5,boxSizing:'border-box'}} />
+                  </td>
+                  <td style={{padding:'5px 6px'}}>
+                    <input value={l.libelle} onChange={e=>setLine(i,'libelle',e.target.value)} placeholder={l.compte_libelle||'Libellé'}
+                      style={{width:'100%',padding:'6px 8px',border:'1px solid #e2e8f0',borderRadius:6,fontSize:12.5,boxSizing:'border-box'}} />
+                  </td>
+                  <td style={{padding:'5px 6px'}}>
+                    <input type="number" value={l.debit} onChange={e=>setLine(i,'debit',e.target.value)} min="0"
+                      style={{width:'100%',padding:'6px 8px',border:'1px solid #e2e8f0',borderRadius:6,fontSize:12.5,textAlign:'right',boxSizing:'border-box'}} />
+                  </td>
+                  <td style={{padding:'5px 6px'}}>
+                    <input type="number" value={l.credit} onChange={e=>setLine(i,'credit',e.target.value)} min="0"
+                      style={{width:'100%',padding:'6px 8px',border:'1px solid #e2e8f0',borderRadius:6,fontSize:12.5,textAlign:'right',boxSizing:'border-box'}} />
+                  </td>
+                  <td style={{textAlign:'center'}}>
+                    <button type="button" onClick={()=>removeLine(i)} style={{background:'none',border:'none',cursor:'pointer',color:'#dc2626',fontSize:15}}>✕</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <datalist id="compta-pc-list">{comptes.map(c=><option key={c.numero} value={c.numero}>{c.libelle}</option>)}</datalist>
+        </div>
+        <div style={{marginTop:8}}><Btn sm variant="secondary" onClick={addLine}>+ Ajouter une ligne</Btn></div>
+
+        <div style={{display:'flex',justifyContent:'flex-end',gap:24,marginTop:14,padding:'10px 14px',background:equilibre?'#f0fdf4':'#fef2f2',borderRadius:8,fontWeight:700}}>
+          <span>Total Débit : {fcfa(totDebit)}</span>
+          <span>Total Crédit : {fcfa(totCredit)}</span>
+          <span style={{color:equilibre?'#16a34a':'#dc2626'}}>{equilibre?'✓ Équilibrée':`Solde : ${fcfa(totDebit-totCredit)}`}</span>
+        </div>
+
+        <Row><Btn variant="secondary" onClick={()=>setModal(false)}>Annuler</Btn>
+          <Btn onClick={save} disabled={saving||!equilibre}>{saving?'...':'💾 Enregistrer la pièce'}</Btn></Row>
+      </Modal>
+    </div>
+  )
+}
+
 // ── GRAND-LIVRE ───────────────────────────────────────────────────────────────
 function GrandLivrePage({ companies, companyId, toast, readOnly=false }) {
   const [comptes, setComptes]   = useState([])
@@ -6742,6 +6954,7 @@ function GrandLivrePage({ companies, companyId, toast, readOnly=false }) {
   const [regls, setRegls]       = useState([])
   const [factures, setFactures] = useState([])
   const [mouv, setMouv]         = useState([])
+  const [ecr, setEcr]           = useState([])
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo]     = useState('')
   const [compteSearch, setCompteSearch] = useState('')
@@ -6755,7 +6968,7 @@ function GrandLivrePage({ companies, companyId, toast, readOnly=false }) {
     const { data:ad } = await supabase.auth.getUser()
     const uid=ad?.user?.id; const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
     const scope = (q) => { if (isAdmin) { if(companyId) q=q.eq('company_id',companyId) } else { q=q.eq('user_id',uid); if(companyId) q=q.eq('company_id',companyId) } return q }
-    const [pc, fo, cl, ac, rg, fa, jc, jb, jm] = await Promise.all([
+    const [pc, fo, cl, ac, rg, fa, jc, jb, jm, ec] = await Promise.all([
       scope(supabase.from('compta_plan_comptable').select('numero,libelle,est_collectif')),
       scope(supabase.from('compta_fournisseurs').select('id,type,nom,nom_societe,numero_compte')),
       scope(supabase.from('compta_clients').select('id,type,nom,nom_societe,numero_compte')),
@@ -6765,6 +6978,7 @@ function GrandLivrePage({ companies, companyId, toast, readOnly=false }) {
       scope(supabase.from('compta_journal_caisse').select('date_operation,libelle,tiers,type_operation,montant,numero_compte')),
       scope(supabase.from('compta_journal_banque').select('date_operation,libelle,tiers,type_operation,montant,numero_compte')),
       scope(supabase.from('compta_journal_mobile').select('date_operation,libelle,tiers,type_operation,montant,numero_compte')),
+      scope(supabase.from('compta_ecritures').select('date_ecriture,journal,numero_piece,libelle,numero_compte,debit,credit')),
     ])
     setComptes((pc.data||[]).sort((a,b)=>String(a.numero).localeCompare(String(b.numero),undefined,{numeric:true})))
     setFourns(fo.data||[]); setClis(cl.data||[]); setAchats(ac.data||[]); setRegls(rg.data||[]); setFactures(fa.data||[])
@@ -6773,6 +6987,7 @@ function GrandLivrePage({ companies, companyId, toast, readOnly=false }) {
     ;(jb.data||[]).forEach(r=>mv.push({...r, jkey:'banque'}))
     ;(jm.data||[]).forEach(r=>mv.push({...r, jkey:'mobile'}))
     setMouv(mv)
+    setEcr(ec.data||[])
     setLoading(false)
   },[companyId])
   useEffect(()=>{ load() },[load])
@@ -6821,6 +7036,17 @@ function GrandLivrePage({ companies, companyId, toast, readOnly=false }) {
       // Autre compte : uniquement les mouvements de journaux tagués
       pushMvts()
     }
+
+    // Écritures comptables (JA/JV/OD…) rattachées à ce compte — débit/crédit directs
+    ecr.filter(x=>inPeriode(x.date_ecriture) && (
+      isCollFourn ? String(x.numero_compte||'').startsWith(COLLECTIF_FOURNISSEUR)
+      : isCollCli ? String(x.numero_compte||'').startsWith(COLLECTIF_CLIENT)
+      : (x.numero_compte && x.numero_compte===numero)
+    )).forEach(x=>lignes.push({
+      date:x.date_ecriture,
+      libelle:`${x.journal||''} ${x.numero_piece?('Pièce '+x.numero_piece+' '):''}${x.libelle||''}`.trim(),
+      debit:x.debit||0, credit:x.credit||0,
+    }))
 
     lignes.sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')))
     return lignes
@@ -10527,7 +10753,7 @@ export default function ComptaPro() {
     achats:'Achats Semi-finis', lots_semi_finis:'Lots Semi-finis', epierrage:'Épierrage', reglements_clients:'Règlements Clients', reglements_fourn:'Règlements Fournisseurs', etuvage_paiements:'Paiements Étuvage',
     docs_admin:'Documents administratifs', parametres:'Paramètres',
     prestations:'Prestations', journal_caisse:'Journal Caisse', journal_banque:'Journal Banque',
-    suivi_lot:'Suivi de Lot', journal_mobile:'Journal Mobile Money', plan_comptable:'Plan Comptable', grand_livre:'Grand-Livre',
+    suivi_lot:'Suivi de Lot', journal_mobile:'Journal Mobile Money', plan_comptable:'Plan Comptable', grand_livre:'Grand-Livre', ecritures:'Saisie Comptable',
   }
 
   const renderPage = () => {
@@ -10587,6 +10813,7 @@ export default function ComptaPro() {
       case 'journal_mobile':    return <JournalPage table="compta_journal_mobile" title="Journal Mobile Money" icon="📱" journalType="mobile" {...sp} />
       case 'plan_comptable':    return <PlanComptablePage {...sp} readOnly={getReadOnly('plan_comptable')} />
       case 'grand_livre':       return <GrandLivrePage {...sp} readOnly={getReadOnly('grand_livre')} />
+      case 'ecritures':         return <ComptabilitePage {...sp} readOnly={getReadOnly('ecritures')} />
       case 'users':          return isSuperAdmin ? <UsersManagementPage toast={toast} /> : <Dashboard {...sp} setPage={setPage} />
       case 'controle_budget': return <ControleBudgetairePage {...sp} readOnly={getReadOnly('controle_budget')} />
       case 'chat':           return <ChatPage profile={profile} toast={toast} />
