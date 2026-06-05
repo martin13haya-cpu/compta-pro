@@ -219,30 +219,29 @@ const STATUT_COLORS = {
 const CSS_PRINT = `
   @page { size: A4; margin: 1.8cm; }
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: 'Times New Roman', serif; font-size: 11pt; color: #1a1a1a; }
-  .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; border-bottom: 2px solid #0f2044; padding-bottom: 12px; }
+  body { font-family: 'Times New Roman', serif; font-size: 11pt; color: #1a1a1a; background:#fff; }
+  .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; border-bottom: 1.5px solid #94a3b8; padding-bottom: 12px; }
   .company-logo { max-height:70px; max-width:120px; object-fit:contain; margin-bottom:4px; display:block; }
-  .company-name { font-size: 16pt; font-weight: 800; color: #0f2044; }
+  .company-name { font-size: 16pt; font-weight: 800; color: #1a1a1a; }
   .company-info { font-size: 9.5pt; color: #555; line-height: 1.6; }
   .doc-title { text-align: right; }
-  .doc-title h1 { font-size: 18pt; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; color: #0f2044; }
+  .doc-title h1 { font-size: 18pt; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; color: #1a1a1a; }
   .doc-numero { font-size: 12pt; color: #555; margin-top: 4px; }
   .doc-date { font-size: 10pt; color: #555; }
-  .client-box { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 4px; padding: 10px 14px; margin-bottom: 16px; font-size: 10.5pt; }
-  .client-box strong { color: #0f2044; }
+  .client-box { background: transparent; border: 1px solid #cbd5e1; border-radius: 4px; padding: 10px 14px; margin-bottom: 16px; font-size: 10.5pt; }
+  .client-box strong { color: #1a1a1a; }
   table { width: 100%; border-collapse: collapse; margin-bottom: 12px; font-size: 10.5pt; }
-  th { background: #0f2044; color: white; padding: 8px 10px; text-align: left; font-size: 9.5pt; }
+  th { background: #eceff3; color: #1a1a1a; padding: 8px 10px; text-align: left; font-size: 9.5pt; border-bottom:1px solid #cbd5e1; }
   th.r { text-align: right; }
   td { padding: 7px 10px; border-bottom: 1px solid #e2e8f0; }
   td.r { text-align: right; }
-  tr:nth-child(even) td { background: #f8fafc; }
   .totals { margin-left: auto; width: 280px; font-size: 10.5pt; }
   .totals .row { display: flex; justify-content: space-between; padding: 5px 10px; border-bottom: 1px solid #e2e8f0; }
-  .totals .ttc { background: #0f2044; color: white; font-weight: 800; font-size: 13pt; padding: 10px 14px; display: flex; justify-content: space-between; border-radius: 4px; margin-top: 6px; }
-  .notes { background: #fffde7; border-left: 3px solid #f59e0b; padding: 8px 12px; font-size: 9.5pt; margin-top: 10px; }
+  .totals .ttc { background: #eceff3; color: #1a1a1a; font-weight: 800; font-size: 13pt; padding: 10px 14px; display: flex; justify-content: space-between; border-radius: 4px; margin-top: 6px; }
+  .notes { background: transparent; border-left: 3px solid #94a3b8; padding: 8px 12px; font-size: 9.5pt; margin-top: 10px; }
   .signatures { display: flex; justify-content: space-between; margin-top: 40px; }
   .sig-box { width: 44%; text-align: center; border-top: 1px solid #ccc; padding-top: 8px; font-size: 9.5pt; }
-  .print-btn { position: fixed; top: 12px; right: 12px; background: #0f2044; color: white; border: none; padding: 10px 20px; border-radius: 6px; font-size: 13px; cursor: pointer; z-index: 999; font-family: Arial, sans-serif; }
+  .print-btn { position: fixed; top: 12px; right: 12px; background: #475569; color: white; border: none; padding: 10px 20px; border-radius: 6px; font-size: 13px; cursor: pointer; z-index: 999; font-family: Arial, sans-serif; }
   @media print { .print-btn { display: none; } }
 `
 
@@ -523,7 +522,7 @@ function printExpressionBesoin(fiche, lignes, budgets, companyInfo, sigImg=null,
     <tbody>${budgetsHtml||'<tr><td colspan="3" style="text-align:center;color:#999">Aucune ligne</td></tr>'}</tbody></table>
 
     <div class="section-title">${isValidee?'Détail des besoins exprimés':'Détail des besoins'}</div>
-    <table><thead><tr style="background:#0f2044;color:white"><th>N°</th><th>Description</th><th class="r">Qté demandée</th><th class="r">Prix U.</th><th class="r">TVA</th><th class="r">Montant demandé</th></tr></thead>
+    <table><thead><tr style="background:#eceff3;color:#1a1a1a"><th>N°</th><th>Description</th><th class="r">Qté demandée</th><th class="r">Prix U.</th><th class="r">TVA</th><th class="r">Montant demandé</th></tr></thead>
     <tbody>${lignesDemandeesHtml||'<tr><td colspan="6" style="text-align:center;color:#999">Aucune ligne</td></tr>'}</tbody></table>
 
     ${isValidee&&lignesAutoriseeHtml?`
@@ -2271,7 +2270,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
       'N° IFU','N° CIP','Email','Adresse',
       ...(isFourn?['Département','Commune','Arrondissement','Village','Bas-fonds','Superficie (ha)']:[]),
     ]
-    const thead = cols.map(c=>`<th style="background:#0f2044;color:white;padding:6px 10px;white-space:nowrap">${c}</th>`).join('')
+    const thead = cols.map(c=>`<th style="background:#eceff3;color:#1a1a1a;padding:6px 10px;white-space:nowrap">${c}</th>`).join('')
     const tbody = filtered.map((it,i)=>`<tr style="background:${i%2===0?'#f8fafc':'white'}">${cols.map(c=>`<td>${tiersVal(it,c)}</td>`).join('')}</tr>`).join('')
     const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
       <head><meta charset="UTF-8"><style>
@@ -3793,7 +3792,7 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
   const exportExcel = () => {
     const period = dateFrom||dateTo ? `_${dateFrom||'debut'}_${dateTo||'fin'}` : ''
     const allFields = [{label:'Date'},{label:'N° Lot'},...fields.map(f=>({label:f.label,name:f.name,type:f.type,dec:f.dec,unit:f.unit}))]
-    const thead = allFields.map(f=>`<th style="background:#0f2044;color:white;padding:6px 10px;white-space:nowrap">${f.label}</th>`).join('')
+    const thead = allFields.map(f=>`<th style="background:#eceff3;color:#1a1a1a;padding:6px 10px;white-space:nowrap">${f.label}</th>`).join('')
     const tbody = items.map((it,i)=>{
       const dateVal = it.date_etape||it.date_reception||''
       const lotVal  = it.compta_lots_production?.numero_lot||it.numero_lot||'—'
@@ -6828,10 +6827,46 @@ function ComptabilitePage({ companies, companyId, toast, readOnly=false }) {
 
   const totalGlobal = pieces.reduce((s,p)=>s+p.lignes.reduce((a,l)=>a+(l.debit||0),0),0)
 
+  const telechargerPDF = () => {
+    if (pieces.length===0) { toast.error('Aucune écriture à imprimer.'); return }
+    const titre = journalF ? `${journalF} — ${journalLabel(journalF)}` : 'Tous les journaux'
+    const periode = (dateFrom||dateTo) ? `du ${dateFrom||'…'} au ${dateTo||'…'}` : `au ${today()}`
+    const blocs = pieces.map(p=>{
+      const corps = p.lignes.map(l=>`<tr><td>${l.numero_compte}</td><td>${l.libelle||l.compte_libelle||''}</td>
+        <td class="r">${l.debit?Math.round(l.debit).toLocaleString('fr-FR'):''}</td>
+        <td class="r">${l.credit?Math.round(l.credit).toLocaleString('fr-FR'):''}</td></tr>`).join('')
+      const td=p.lignes.reduce((s,l)=>s+(l.debit||0),0), tc=p.lignes.reduce((s,l)=>s+(l.credit||0),0)
+      return `<tr><td colspan="4" style="background:#eceff3;font-weight:700">${p.journal} · ${p.date_ecriture||''}${p.numero_piece?(' · Pièce '+p.numero_piece):''}${p.numero_facture?(' · Fact. '+p.numero_facture):''}${p.libelle?(' — '+p.libelle):''}</td></tr>
+        ${corps}
+        <tr style="font-weight:700;background:#eceff3"><td colspan="2" style="text-align:right">Totaux pièce</td><td class="r">${Math.round(td).toLocaleString('fr-FR')}</td><td class="r">${Math.round(tc).toLocaleString('fr-FR')}</td></tr>`
+    }).join('')
+    const totD = pieces.reduce((s,p)=>s+p.lignes.reduce((a,l)=>a+(l.debit||0),0),0)
+    const totC = pieces.reduce((s,p)=>s+p.lignes.reduce((a,l)=>a+(l.credit||0),0),0)
+    const html=`<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><title>journal</title>
+      <style>${CSS_PRINT}
+        @page { size: A4 landscape; margin: 10mm; }
+        table{width:100%;border-collapse:collapse;font-size:9.5pt}
+        th,td{border:1px solid #cbd5e1;padding:4px 8px}
+        td.r,th.r{text-align:right}
+      </style></head><body>
+      <button class="print-btn" onclick="window.print()">🖨️ Imprimer / PDF</button>
+      <div class="header"><div><div class="company-name">JOURNAL ${titre} ${periode}</div><div class="doc-numero" style="margin-top:4px">${companyNameC}</div></div></div>
+      <table>
+        <thead><tr><th style="width:16%">N° Compte</th><th>Libellé</th><th class="r" style="width:16%">Débit</th><th class="r" style="width:16%">Crédit</th></tr></thead>
+        <tbody>${blocs}
+          <tr style="font-weight:800;background:#eceff3"><td colspan="2" style="text-align:right">TOTAL ${titre}</td><td class="r">${Math.round(totD).toLocaleString('fr-FR')}</td><td class="r">${Math.round(totC).toLocaleString('fr-FR')}</td></tr>
+        </tbody>
+      </table></body></html>`
+    openPrintWindow(html, 'journal_compta')
+  }
+
   return (
     <div>
       <PageHeader title="🧾 Comptabilité — Saisie d'écritures" subtitle="Journaux JA / JV / OD — pièces en partie double (Débit = Crédit)"
-        actions={!readOnly ? <Btn onClick={openAdd}>+ Nouvelle écriture</Btn> : null} />
+        actions={<div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+          <Btn variant="info" onClick={telechargerPDF}>📥 Télécharger PDF</Btn>
+          {!readOnly && <Btn onClick={openAdd}>+ Nouvelle écriture</Btn>}
+        </div>} />
 
       <div style={{display:'flex',gap:10,flexWrap:'wrap',alignItems:'flex-end',marginBottom:14}}>
         <div style={{minWidth:200}}>
@@ -7088,7 +7123,7 @@ function GrandLivrePage({ companies, companyId, toast, readOnly=false }) {
         <td class="r">${l.debit?Math.round(l.debit).toLocaleString('fr-FR'):''}</td>
         <td class="r">${l.credit?Math.round(l.credit).toLocaleString('fr-FR'):''}</td></tr>`).join('')
       return `
-        <tr><td colspan="4" style="background:#e8eef7;font-weight:700;text-align:center">Compte ${c.numero} ${c.libelle||''}${c.est_collectif?' (collectif)':''}</td></tr>
+        <tr><td colspan="4" style="background:#eceff3;font-weight:700;text-align:center">Compte ${c.numero} ${c.libelle||''}${c.est_collectif?' (collectif)':''}</td></tr>
         ${corps}
         <tr style="font-weight:700"><td>${today()}</td><td>Total</td><td class="r">${Math.round(c.totalDebit).toLocaleString('fr-FR')}</td><td class="r">${Math.round(c.totalCredit).toLocaleString('fr-FR')}</td></tr>
         <tr style="font-weight:700"><td>${today()}</td><td>Solde</td><td class="r">${soldeDebit(c)?Math.round(soldeDebit(c)).toLocaleString('fr-FR'):'0'}</td><td class="r">${soldeCredit(c)?Math.round(soldeCredit(c)).toLocaleString('fr-FR'):'0'}</td></tr>`
@@ -7098,7 +7133,7 @@ function GrandLivrePage({ companies, companyId, toast, readOnly=false }) {
         @page { size: A4 landscape; margin: 10mm; }
         table{width:100%;border-collapse:collapse;font-size:9.5pt}
         th,td{border:1px solid #94a3b8;padding:4px 8px}
-        th{background:#0f2044;color:white}
+        th{background:#eceff3;color:#1a1a1a}
         td.r{text-align:right}
       </style></head><body>
       <button class="print-btn" onclick="window.print()">🖨️ Imprimer / PDF</button>
@@ -7107,7 +7142,7 @@ function GrandLivrePage({ companies, companyId, toast, readOnly=false }) {
         <thead><tr><th style="width:14%">Date</th><th>Libellé</th><th class="r" style="width:16%">Débit</th><th class="r" style="width:16%">Crédit</th></tr></thead>
         <tbody>
           ${sections}
-          <tr style="font-weight:800;background:#fff7ed"><td colspan="2" style="text-align:right">TOTAL GRAND-LIVRE</td><td class="r">${Math.round(grandTotalDebit).toLocaleString('fr-FR')}</td><td class="r">${Math.round(grandTotalCredit).toLocaleString('fr-FR')}</td></tr>
+          <tr style="font-weight:800;background:#eceff3"><td colspan="2" style="text-align:right">TOTAL GRAND-LIVRE</td><td class="r">${Math.round(grandTotalDebit).toLocaleString('fr-FR')}</td><td class="r">${Math.round(grandTotalCredit).toLocaleString('fr-FR')}</td></tr>
         </tbody>
       </table>
     </body></html>`
@@ -7277,7 +7312,7 @@ function BalancePage({ companies, companyId, toast }) {
         @page { size: A4 landscape; margin: 10mm; }
         table{width:100%;border-collapse:collapse;font-size:9pt}
         th,td{border:1px solid #94a3b8;padding:3px 6px}
-        th{background:#0f2044;color:white;font-size:8.5pt}
+        th{background:#eceff3;color:#1a1a1a;font-size:8.5pt}
         td.r{text-align:right}
       </style></head><body>
       <div class="header"><div><div class="company-name">BALANCE GÉNÉRALE ${periode}</div><div class="doc-numero" style="margin-top:4px">${companyNameB}</div></div></div>
@@ -7287,7 +7322,7 @@ function BalancePage({ companies, companyId, toast }) {
           <tr><th class="r">Débiteur</th><th class="r">Créditeur</th><th class="r">Débit</th><th class="r">Crédit</th><th class="r">Débiteur</th><th class="r">Créditeur</th></tr>
         </thead>
         <tbody>${rows}
-          <tr style="font-weight:800;background:#fff7ed"><td colspan="2" style="text-align:right">TOTAUX</td><td class="r"></td><td class="r"></td>
+          <tr style="font-weight:800;background:#eceff3"><td colspan="2" style="text-align:right">TOTAUX</td><td class="r"></td><td class="r"></td>
             <td class="r">${Math.round(tot.d).toLocaleString('fr-FR')}</td><td class="r">${Math.round(tot.cr).toLocaleString('fr-FR')}</td>
             <td class="r">${Math.round(tot.sd).toLocaleString('fr-FR')}</td><td class="r">${Math.round(tot.sc).toLocaleString('fr-FR')}</td></tr>
         </tbody>
@@ -9919,7 +9954,7 @@ function JournalPage({ table, title, icon, journalType='caisse', companies, comp
     const period = dateFrom||dateTo ? `_${dateFrom||'debut'}_${dateTo||'fin'}` : ''
     const extraCols = isBanque ? ['Mode'] : isMobile ? ['Opérateur','N° Mobile'] : []
     const allHeaders = ['Date','N° Pièce','Libellé','Tiers',...extraCols,'Référence','Entrée (FCFA)','Sortie (FCFA)','Solde cumulatif (FCFA)','Notes']
-    const thead = allHeaders.map(h=>`<th style="background:#0f2044;color:white;padding:6px 10px;white-space:nowrap;text-align:${h.includes('FCFA')?'right':'left'}">${h}</th>`).join('')
+    const thead = allHeaders.map(h=>`<th style="background:#eceff3;color:#1a1a1a;padding:6px 10px;white-space:nowrap;text-align:${h.includes('FCFA')?'right':'left'}">${h}</th>`).join('')
     const tbody = itemsAvecSolde.map((it,i)=>{
       const extras = isBanque ? [`<td>${it.mode_operation||'—'}</td>`]
         : isMobile ? [`<td>${it.operateur||'—'}</td>`,`<td>${it.numero_mobile||'—'}</td>`] : []
@@ -9936,7 +9971,7 @@ function JournalPage({ table, title, icon, journalType='caisse', companies, comp
         <td>${it.notes||'—'}</td>
       </tr>`
     }).join('')
-    const totalsRow = `<tr style="background:#0f2044;color:white;font-weight:bold">
+    const totalsRow = `<tr style="background:#eceff3;color:#1a1a1a;font-weight:bold">
       <td colspan="${4+extraCols.length+1}" style="padding:6px 10px">TOTAUX (${items.length} ligne${items.length>1?'s':''})</td>
       <td style="text-align:right;padding:6px 10px;color:#4ade80">${Math.round(totalEntrees).toLocaleString('fr-FR')}</td>
       <td style="text-align:right;padding:6px 10px;color:#f87171">${Math.round(totalSorties).toLocaleString('fr-FR')}</td>
