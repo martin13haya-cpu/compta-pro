@@ -1398,6 +1398,7 @@ const NAV = [
   { id:'plan_comptable',     icon:'📒', label:'Plan Comptable' },
   { id:'grand_livre',        icon:'📚', label:'Grand-Livre' },
   { id:'ecritures',          icon:'🧾', label:'Saisie Comptable' },
+  { id:'balance',            icon:'⚖️', label:'Balance' },
   { id:'controle_budget',    icon:'📊', label:'Contrôle Budgétaire' },
 ]
 
@@ -4653,7 +4654,7 @@ const ALL_SECTIONS = [
   ['epierrage','Épierrage'],['etuvage_paiements','Paiements étuvage'],
   ['docs_admin','Documents administratifs'],
   ['journal_caisse','Journal Caisse'],['journal_banque','Journal Banque'],
-  ['journal_mobile','Journal Mobile Money'],['plan_comptable','Plan Comptable'],['grand_livre','Grand-Livre'],['ecritures','Saisie Comptable'],
+  ['journal_mobile','Journal Mobile Money'],['plan_comptable','Plan Comptable'],['grand_livre','Grand-Livre'],['ecritures','Saisie Comptable'],['balance','Balance'],
 ]
 
 const SECTION_GROUPS = [
@@ -4664,7 +4665,7 @@ const SECTION_GROUPS = [
   {group:'Étuveuses', ids:['etv_repertoire','etv_avances','etv_bc','etv_br','etv_entrees','etv_sorties','etv_inventaire','etv_tresorerie']},
   {group:'Achats', ids:['achats','lots_semi_finis','epierrage','etuvage_paiements']},
   {group:'Documents', ids:['docs_admin']},
-  {group:'Comptabilité', ids:['journal_caisse','journal_banque','journal_mobile','plan_comptable','grand_livre','ecritures']},
+  {group:'Comptabilité', ids:['journal_caisse','journal_banque','journal_mobile','plan_comptable','grand_livre','ecritures','balance']},
 ]
 
 // ── MES UTILISATEURS (Admin Société) ─────────────────────────────────────────
@@ -7159,6 +7160,186 @@ function GrandLivrePage({ companies, companyId, toast, readOnly=false }) {
                   </Fragment>
                 ))}
                 <tr style={{fontWeight:800,background:'#fff7ed'}}><td colSpan={2} style={{textAlign:'right',padding:'10px'}}>TOTAL GRAND-LIVRE</td><td style={{textAlign:'right',padding:'10px'}}>{fcfa(grandTotalDebit)}</td><td style={{textAlign:'right',padding:'10px'}}>{fcfa(grandTotalCredit)}</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── BALANCE GÉNÉRALE ──────────────────────────────────────────────────────────
+function BalancePage({ companies, companyId, toast }) {
+  const [comptes, setComptes]   = useState([])
+  const [fourns, setFourns]     = useState([])
+  const [clis, setClis]         = useState([])
+  const [achats, setAchats]     = useState([])
+  const [regls, setRegls]       = useState([])
+  const [factures, setFactures] = useState([])
+  const [mouv, setMouv]         = useState([])
+  const [ecr, setEcr]           = useState([])
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo]     = useState('')
+  const [compteSearch, setCompteSearch] = useState('')
+  const [loading, setLoading]   = useState(true)
+
+  const norm = s => String(s||'').trim().toLowerCase()
+  const companyNameB = companies.find(c=>c.id===companyId)?.raison_sociale||''
+
+  const load = useCallback(async()=>{
+    setLoading(true)
+    const { data:ad } = await supabase.auth.getUser()
+    const uid=ad?.user?.id; const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
+    const scope = (q) => { if (isAdmin) { if(companyId) q=q.eq('company_id',companyId) } else { q=q.eq('user_id',uid); if(companyId) q=q.eq('company_id',companyId) } return q }
+    const [pc, fo, cl, ac, rg, fa, jc, jb, jm, ec] = await Promise.all([
+      scope(supabase.from('compta_plan_comptable').select('numero,libelle,est_collectif')),
+      scope(supabase.from('compta_fournisseurs').select('id,type,nom,nom_societe,numero_compte')),
+      scope(supabase.from('compta_clients').select('id,type,nom,nom_societe,numero_compte')),
+      scope(supabase.from('compta_achats_semi_finis').select('date_achat,nom_fournisseur,montant')),
+      scope(supabase.from('compta_reglements').select('date_paiement,tiers_type,tiers_nom,montant_paye')),
+      scope(supabase.from('compta_documents').select('date_doc,client_id,montant_ttc,type_doc').eq('type_doc','facture')),
+      scope(supabase.from('compta_journal_caisse').select('date_operation,type_operation,montant,numero_compte')),
+      scope(supabase.from('compta_journal_banque').select('date_operation,type_operation,montant,numero_compte')),
+      scope(supabase.from('compta_journal_mobile').select('date_operation,type_operation,montant,numero_compte')),
+      scope(supabase.from('compta_ecritures').select('date_ecriture,numero_compte,debit,credit')),
+    ])
+    setComptes((pc.data||[]).sort((a,b)=>{
+      const pa=String(a.numero).slice(0,4), pb=String(b.numero).slice(0,4)
+      if(pa!==pb) return pa.localeCompare(pb)
+      return String(a.numero).localeCompare(String(b.numero),undefined,{numeric:true})
+    }))
+    setFourns(fo.data||[]); setClis(cl.data||[]); setAchats(ac.data||[]); setRegls(rg.data||[]); setFactures(fa.data||[])
+    const mv=[]
+    ;(jc.data||[]).forEach(r=>mv.push(r)); ;(jb.data||[]).forEach(r=>mv.push(r)); ;(jm.data||[]).forEach(r=>mv.push(r))
+    setMouv(mv); setEcr(ec.data||[])
+    setLoading(false)
+  },[companyId])
+  useEffect(()=>{ load() },[load])
+
+  const inPeriode = d => (!dateFrom || (d||'')>=dateFrom) && (!dateTo || (d||'')<=dateTo)
+  const nomTiers = t => t.type==='morale' ? (t.nom_societe||'') : (t.nom||'')
+
+  // Totaux Débit/Crédit d'un compte (mêmes règles que le Grand-Livre)
+  const totauxCompte = (numero) => {
+    let debit=0, credit=0
+    const fourn = fourns.find(f=>f.numero_compte===numero)
+    const cli   = clis.find(c=>c.numero_compte===numero)
+    const isCollFourn = numero===COLLECTIF_FOURNISSEUR
+    const isCollCli   = numero===COLLECTIF_CLIENT
+    const mvts = mouv.filter(m=>inPeriode(m.date_operation) && (
+      isCollFourn ? String(m.numero_compte||'').startsWith(COLLECTIF_FOURNISSEUR)
+      : isCollCli ? String(m.numero_compte||'').startsWith(COLLECTIF_CLIENT)
+      : (m.numero_compte && m.numero_compte===numero)))
+    const addMvts = ()=>mvts.forEach(m=>{ if(m.type_operation==='sortie') debit+=m.montant||0; else credit+=m.montant||0 })
+    if (isCollFourn || fourn) {
+      achats.filter(a=>inPeriode(a.date_achat) && (isCollFourn?true:norm(a.nom_fournisseur)===norm(nomTiers(fourn)))).forEach(a=>credit+=a.montant||0)
+      addMvts()
+    } else if (isCollCli || cli) {
+      factures.filter(f=>inPeriode(f.date_doc) && (isCollCli?true:f.client_id===cli.id)).forEach(f=>debit+=f.montant_ttc||0)
+      addMvts()
+    } else { addMvts() }
+    ecr.filter(x=>inPeriode(x.date_ecriture) && (
+      isCollFourn ? String(x.numero_compte||'').startsWith(COLLECTIF_FOURNISSEUR)
+      : isCollCli ? String(x.numero_compte||'').startsWith(COLLECTIF_CLIENT)
+      : (x.numero_compte && x.numero_compte===numero)))
+      .forEach(x=>{ debit+=x.debit||0; credit+=x.credit||0 })
+    return { debit, credit }
+  }
+
+  const searchTerm = norm(compteSearch)
+  const collectifSel = searchTerm ? comptes.find(x=>x.est_collectif && norm(x.numero)===searchTerm) : null
+  const matchCompte = c => {
+    if (!searchTerm) return true
+    if (collectifSel) return norm(c.numero).startsWith(searchTerm)
+    return norm(c.numero)===searchTerm || norm(c.libelle).includes(searchTerm)
+  }
+  const balanceAll = comptes.filter(matchCompte).map(c=>{
+    const { debit, credit } = totauxCompte(c.numero)
+    return { ...c, debit, credit, soldeD:Math.max(0,debit-credit), soldeC:Math.max(0,credit-debit) }
+  })
+  const balance = (searchTerm && !collectifSel) ? balanceAll : balanceAll.filter(c=>c.debit>0||c.credit>0)
+
+  const tot = balance.reduce((a,c)=>({d:a.d+c.debit,cr:a.cr+c.credit,sd:a.sd+c.soldeD,sc:a.sc+c.soldeC}),{d:0,cr:0,sd:0,sc:0})
+
+  const telechargerPDF = () => {
+    if (balance.length===0) { toast.error('Aucun mouvement à afficher.'); return }
+    const periode = (dateFrom||dateTo) ? `du ${dateFrom||'…'} au ${dateTo||'…'}` : `au ${today()}`
+    const rows = balance.map(c=>`<tr>
+      <td>${c.numero}</td><td>${c.libelle||''}</td>
+      <td class="r"></td><td class="r"></td>
+      <td class="r">${c.debit?Math.round(c.debit).toLocaleString('fr-FR'):''}</td>
+      <td class="r">${c.credit?Math.round(c.credit).toLocaleString('fr-FR'):''}</td>
+      <td class="r">${c.soldeD?Math.round(c.soldeD).toLocaleString('fr-FR'):''}</td>
+      <td class="r">${c.soldeC?Math.round(c.soldeC).toLocaleString('fr-FR'):''}</td></tr>`).join('')
+    const html=`<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><title>balance</title>
+      <style>${CSS_PRINT}
+        @page { size: A4 landscape; margin: 10mm; }
+        table{width:100%;border-collapse:collapse;font-size:9pt}
+        th,td{border:1px solid #94a3b8;padding:3px 6px}
+        th{background:#0f2044;color:white;font-size:8.5pt}
+        td.r{text-align:right}
+      </style></head><body>
+      <div class="header"><div><div class="company-name">BALANCE GÉNÉRALE ${periode}</div><div class="doc-numero" style="margin-top:4px">${companyNameB}</div></div></div>
+      <table>
+        <thead>
+          <tr><th rowspan="2">N° Compte</th><th rowspan="2">Intitulé</th><th colspan="2">Solde N-1</th><th colspan="2">Mouvements période</th><th colspan="2">Solde N</th></tr>
+          <tr><th class="r">Débiteur</th><th class="r">Créditeur</th><th class="r">Débit</th><th class="r">Crédit</th><th class="r">Débiteur</th><th class="r">Créditeur</th></tr>
+        </thead>
+        <tbody>${rows}
+          <tr style="font-weight:800;background:#fff7ed"><td colspan="2" style="text-align:right">TOTAUX</td><td class="r"></td><td class="r"></td>
+            <td class="r">${Math.round(tot.d).toLocaleString('fr-FR')}</td><td class="r">${Math.round(tot.cr).toLocaleString('fr-FR')}</td>
+            <td class="r">${Math.round(tot.sd).toLocaleString('fr-FR')}</td><td class="r">${Math.round(tot.sc).toLocaleString('fr-FR')}</td></tr>
+        </tbody>
+      </table>
+    </body></html>`
+    openPrintWindow(html, 'balance')
+  }
+
+  return (
+    <div>
+      <PageHeader title="⚖️ Balance Générale" subtitle="Mouvements et soldes par compte (dérivés des opérations et écritures)"
+        actions={<Btn variant="info" onClick={telechargerPDF}>📥 Imprimer / PDF</Btn>} />
+
+      <div style={{display:'flex',gap:10,flexWrap:'wrap',alignItems:'flex-end',marginBottom:14}}>
+        <div style={{minWidth:240}}>
+          <label style={{display:'block',fontSize:12,color:'#64748b',marginBottom:4}}>Compte</label>
+          <input list="bal-compte-list" value={compteSearch} onChange={e=>setCompteSearch(e.target.value)}
+            placeholder="Tous les comptes — taper un n° ou libellé…"
+            style={{width:'100%',padding:'8px 10px',borderRadius:8,border:'1px solid #d1d5db',fontSize:13.5,background:'white',boxSizing:'border-box'}} />
+          <datalist id="bal-compte-list">{comptes.map(c=><option key={c.numero} value={c.numero}>{c.libelle||''}</option>)}</datalist>
+        </div>
+        <div><label style={{display:'block',fontSize:12,color:'#64748b',marginBottom:4}}>Du</label>
+          <input type="date" value={dateFrom} onChange={e=>setDateFrom(e.target.value)} style={{padding:'8px 10px',borderRadius:8,border:'1px solid #d1d5db'}} /></div>
+        <div><label style={{display:'block',fontSize:12,color:'#64748b',marginBottom:4}}>Au</label>
+          <input type="date" value={dateTo} onChange={e=>setDateTo(e.target.value)} style={{padding:'8px 10px',borderRadius:8,border:'1px solid #d1d5db'}} /></div>
+        {(dateFrom||dateTo||compteSearch) && <Btn sm variant="secondary" onClick={()=>{setDateFrom('');setDateTo('');setCompteSearch('')}}>Réinitialiser</Btn>}
+      </div>
+
+      {loading ? <Card><div style={{textAlign:'center',padding:24,color:'#64748b'}}>Chargement…</div></Card>
+      : balance.length===0 ? <Card><div style={{textAlign:'center',padding:'48px 24px',color:'#64748b'}}>⚖️ Aucun mouvement sur la période.</div></Card>
+      : (
+        <div style={{background:'white',borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
+          <div style={{overflowX:'auto'}}>
+            <table style={{width:'100%',borderCollapse:'collapse',minWidth:760,fontSize:12.5}}>
+              <thead>
+                <tr><TH>N° Compte</TH><TH>Intitulé</TH><TH right>Mvt Débit</TH><TH right>Mvt Crédit</TH><TH right>Solde Débiteur</TH><TH right>Solde Créditeur</TH></tr>
+              </thead>
+              <tbody>
+                {balance.map(c=>(
+                  <TR key={c.numero}>
+                    <TD bold sm>{c.numero}</TD><TD>{c.libelle||'—'}</TD>
+                    <TD right>{c.debit?fcfa(c.debit):''}</TD><TD right>{c.credit?fcfa(c.credit):''}</TD>
+                    <TD right>{c.soldeD?fcfa(c.soldeD):''}</TD><TD right>{c.soldeC?fcfa(c.soldeC):''}</TD>
+                  </TR>
+                ))}
+                <tr style={{fontWeight:800,background:'#fff7ed'}}>
+                  <td colSpan={2} style={{padding:'10px',textAlign:'right'}}>TOTAUX</td>
+                  <td style={{textAlign:'right',padding:'10px'}}>{fcfa(tot.d)}</td>
+                  <td style={{textAlign:'right',padding:'10px'}}>{fcfa(tot.cr)}</td>
+                  <td style={{textAlign:'right',padding:'10px'}}>{fcfa(tot.sd)}</td>
+                  <td style={{textAlign:'right',padding:'10px'}}>{fcfa(tot.sc)}</td>
+                </tr>
               </tbody>
             </table>
           </div>
@@ -9783,6 +9964,23 @@ function JournalPage({ table, title, icon, journalType='caisse', companies, comp
 
   const operateurs = ['MTN Money','Moov Money','Celtis Cash','Wave','Orange Money','autre']
 
+  const printOne = (it) => {
+    const lignes = [
+      ['Journal', title], ['Date', it.date_operation||'—'], ['N° Pièce', it.numero_piece||'—'],
+      ['N° Compte', it.numero_compte||'—'], ['Tiers', it.tiers||'—'], ['Libellé', it.libelle||'—'],
+      ['Type', it.type_operation==='entree'?'Entrée (Recette)':'Sortie (Dépense)'],
+      ['Montant', fcfa(it.montant||0)], ['Référence', it.reference||'—'], ['Notes', it.notes||'—'],
+    ]
+    const rows = lignes.map(([l,v])=>`<tr><td style="font-weight:600;color:#475569;width:35%">${l}</td><td>${v}</td></tr>`).join('')
+    const html = `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><title>piece</title>
+      <style>${CSS_PRINT} table{width:100%;border-collapse:collapse} td{border:1px solid #cbd5e1;padding:8px 12px;font-size:11pt}</style></head><body>
+      <button class="print-btn" onclick="window.print()">🖨️ Imprimer / PDF</button>
+      <div class="header"><div><div class="company-name">${title}</div><div class="doc-numero" style="margin-top:4px">${companyName}</div></div></div>
+      <h3 style="margin:16px 0 8px">Pièce ${it.type_operation==='entree'?'de recette':'de dépense'}${it.numero_piece?(' N° '+it.numero_piece):''}</h3>
+      <table>${rows}</table></body></html>`
+    openPrintWindow(html, 'piece_journal')
+  }
+
   return (
     <div>
       <PageHeader title={title} subtitle={`${items.length} opération(s)`}
@@ -9841,7 +10039,7 @@ function JournalPage({ table, title, icon, journalType='caisse', companies, comp
               <TH right><span style={{color:'#16a34a'}}>Entrée (FCFA)</span></TH>
               <TH right><span style={{color:'#dc2626'}}>Sortie (FCFA)</span></TH>
               <TH right>Solde cum.</TH>
-              {!readOnly && <TH>Actions</TH>}
+              <TH>Actions</TH>
             </tr></thead>
             <tbody>
               {itemsAvecSolde.map(it=>(
@@ -9856,12 +10054,12 @@ function JournalPage({ table, title, icon, journalType='caisse', companies, comp
                   <TD right color="#16a34a" bold>{it.type_operation==='entree'?Math.round(it.montant||0).toLocaleString('fr-FR'):''}</TD>
                   <TD right color="#dc2626" bold>{it.type_operation==='sortie'?Math.round(it.montant||0).toLocaleString('fr-FR'):''}</TD>
                   <TD right bold color={it.soldeCum>=0?'#2563eb':'#dc2626'}>{Math.round(it.soldeCum||0).toLocaleString('fr-FR')}</TD>
-                  {!readOnly && (
-                    <TD><div style={{display:'flex',gap:4}}>
-                      <Btn sm variant="secondary" onClick={()=>openEdit(it)}>✏️</Btn>
-                      <Btn sm variant="danger" onClick={()=>del(it.id)}>🗑️</Btn>
-                    </div></TD>
-                  )}
+                  <TD><div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
+                    <Btn sm variant="info" onClick={()=>setViewItem(it)}>👁️</Btn>
+                    <Btn sm variant="secondary" onClick={()=>printOne(it)}>🖨️</Btn>
+                    {!readOnly && <Btn sm variant="secondary" onClick={()=>openEdit(it)}>✏️</Btn>}
+                    {!readOnly && <Btn sm variant="danger" onClick={()=>del(it.id)}>🗑️</Btn>}
+                  </div></TD>
                 </TR>
               ))}
               <tr style={{background:'#f8fafc',fontWeight:700,fontSize:12}}>
@@ -9937,6 +10135,21 @@ function JournalPage({ table, title, icon, journalType='caisse', companies, comp
           <Row><Btn variant="secondary" onClick={()=>setAddTiersModal(false)}>Annuler</Btn><Btn type="submit" disabled={addTiersSaving}>{addTiersSaving?'...':'Enregistrer le tiers'}</Btn></Row>
         </form>
       </Modal>
+
+      {viewItem && (
+        <Modal open={!!viewItem} onClose={()=>setViewItem(null)} title={`Opération — ${viewItem.numero_piece||viewItem.date_operation||''}`} size="md">
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'10px 16px',marginBottom:16}}>
+            {[['Date',viewItem.date_operation||'—'],['N° Pièce',viewItem.numero_piece||'—'],['N° Compte',viewItem.numero_compte||'—'],
+              ['Tiers',viewItem.tiers||'—'],['Type',viewItem.type_operation==='entree'?'Entrée (Recette)':'Sortie (Dépense)'],
+              ['Montant',fcfa(viewItem.montant||0)],['Référence',viewItem.reference||'—']].map(([l,v])=>(
+              <div key={l}><div style={{fontSize:11,color:'#94a3b8',fontWeight:600}}>{l}</div><div style={{fontSize:14}}>{v}</div></div>
+            ))}
+            <div style={{gridColumn:'1 / -1'}}><div style={{fontSize:11,color:'#94a3b8',fontWeight:600}}>Libellé</div><div style={{fontSize:14}}>{viewItem.libelle||'—'}</div></div>
+            {viewItem.notes && <div style={{gridColumn:'1 / -1'}}><div style={{fontSize:11,color:'#94a3b8',fontWeight:600}}>Notes</div><div style={{fontSize:14}}>{viewItem.notes}</div></div>}
+          </div>
+          <Row><Btn variant="info" onClick={()=>printOne(viewItem)}>🖨️ Imprimer</Btn><Btn variant="secondary" onClick={()=>setViewItem(null)}>Fermer</Btn></Row>
+        </Modal>
+      )}
     </div>
   )
 }
@@ -10770,7 +10983,7 @@ export default function ComptaPro() {
     achats:'Achats Semi-finis', lots_semi_finis:'Lots Semi-finis', epierrage:'Épierrage', reglements_clients:'Règlements Clients', reglements_fourn:'Règlements Fournisseurs', etuvage_paiements:'Paiements Étuvage',
     docs_admin:'Documents administratifs', parametres:'Paramètres',
     prestations:'Prestations', journal_caisse:'Journal Caisse', journal_banque:'Journal Banque',
-    suivi_lot:'Suivi de Lot', journal_mobile:'Journal Mobile Money', plan_comptable:'Plan Comptable', grand_livre:'Grand-Livre', ecritures:'Saisie Comptable',
+    suivi_lot:'Suivi de Lot', journal_mobile:'Journal Mobile Money', plan_comptable:'Plan Comptable', grand_livre:'Grand-Livre', ecritures:'Saisie Comptable', balance:'Balance',
   }
 
   const renderPage = () => {
@@ -10831,6 +11044,7 @@ export default function ComptaPro() {
       case 'plan_comptable':    return <PlanComptablePage {...sp} readOnly={getReadOnly('plan_comptable')} />
       case 'grand_livre':       return <GrandLivrePage {...sp} readOnly={getReadOnly('grand_livre')} />
       case 'ecritures':         return <ComptabilitePage {...sp} readOnly={getReadOnly('ecritures')} />
+      case 'balance':           return <BalancePage {...sp} />
       case 'users':          return isSuperAdmin ? <UsersManagementPage toast={toast} /> : <Dashboard {...sp} setPage={setPage} />
       case 'controle_budget': return <ControleBudgetairePage {...sp} readOnly={getReadOnly('controle_budget')} />
       case 'chat':           return <ChatPage profile={profile} toast={toast} />
