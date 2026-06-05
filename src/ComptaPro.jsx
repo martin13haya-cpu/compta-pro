@@ -9165,6 +9165,12 @@ function ReglementsPage({ companies, companyId, toast, readOnly=false, mode='cli
   const [dateTo,   setDateTo]  = useState('')
   const [factures, setFactures]= useState([])
   const [fournsList, setFournsList] = useState([])
+  const [comptesTiers, setComptesTiers] = useState([])
+  const onCompteTiersChange = e => {
+    const v = e.target.value
+    const m = comptesTiers.find(c=>c.numero===v)
+    setForm(f=>({...f, numero_compte:v, ...(m?{tiers_nom:m.nom}:{})}))
+  }
   const [viewItem, setViewItem]= useState(null)
 
   const load = useCallback(async()=>{
@@ -9208,6 +9214,7 @@ function ReglementsPage({ companies, companyId, toast, readOnly=false, mode='cli
     const { data }=await q
     const noms = (data||[]).map(f=> f.type==='morale' ? (f.nom_societe||'') : (f.nom||'')).filter(n=>n.trim()!=='')
     setFournsList([...new Set(noms)].sort((a,b)=>a.localeCompare(b)))
+    setComptesTiers((data||[]).filter(f=>f.numero_compte).map(f=>({ numero:String(f.numero_compte), nom: f.type==='morale'?(f.nom_societe||''):(f.nom||'') })).sort((a,b)=>a.numero.localeCompare(b.numero,undefined,{numeric:true})))
   },[companyId,isClients])
   useEffect(()=>{ loadFourns() },[loadFourns])
 
@@ -9472,6 +9479,19 @@ function ReglementsPage({ companies, companyId, toast, readOnly=false, mode='cli
 
             <Input label="Date *" name="date_paiement" type="date" value={form.date_paiement||''} onChange={set} required />
             <div /> {/* spacer */}
+
+            {/* N° Compte du tiers */}
+            <div>
+              <label style={{display:'block',fontSize:12.5,fontWeight:600,color:'#374151',marginBottom:5}}>
+                N° Compte {isClients?'client (4111…)':'fournisseur (4011…)'}
+              </label>
+              <input list="regl-compte-list" value={form.numero_compte||''} onChange={onCompteTiersChange}
+                placeholder="Taper / choisir un compte → remplit le nom"
+                style={{width:'100%',padding:'9px 12px',borderRadius:8,border:'1px solid #d1d5db',fontSize:13.5,boxSizing:'border-box',background:'white'}} />
+              <datalist id="regl-compte-list">
+                {comptesTiers.map(c=><option key={c.numero} value={c.numero}>{c.nom}</option>)}
+              </datalist>
+            </div>
 
             {/* Nom du tiers */}
             <div>
