@@ -9493,18 +9493,15 @@ function ReglementsPage({ companies, companyId, toast, readOnly=false, mode='cli
               </datalist>
             </div>
 
-            {/* Nom du tiers */}
+            {/* Nom du tiers — verrouillé, rempli par le N° compte */}
             <div>
               <label style={{display:'block',fontSize:12.5,fontWeight:600,color:'#374151',marginBottom:5}}>
                 {isClients?'Nom du client':'Nom du fournisseur'} *
-                {autoFilled('tiers_nom')&&<span style={{marginLeft:6,fontSize:10,color:'#16a34a',fontWeight:700}}>✅ auto</span>}
+                <span style={{marginLeft:6,fontSize:10,color:'#94a3b8',fontWeight:600}}>(auto — verrouillé)</span>
               </label>
-              <input name="tiers_nom" value={form.tiers_nom||''} onChange={set} required style={autoStyle('tiers_nom')}
-                list="tiers-nom-list"
-                placeholder={isClients?'Saisir / choisir un client':'Saisir / choisir un fournisseur'} />
-              <datalist id="tiers-nom-list">
-                {fournsList.map((n,i)=><option key={i} value={n} />)}
-              </datalist>
+              <input name="tiers_nom" value={form.tiers_nom||''} readOnly required
+                placeholder={isClients?'Sélectionnez le N° compte client':'Sélectionnez le N° compte fournisseur'}
+                style={{width:'100%',padding:'9px 12px',borderRadius:8,border:'1px solid #d1d5db',fontSize:13.5,boxSizing:'border-box',background:'#f1f5f9',color:'#0f172a',cursor:'not-allowed'}} />
             </div>
 
             {/* Provenance */}
