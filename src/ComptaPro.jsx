@@ -9208,9 +9208,9 @@ function ReglementsPage({ companies, companyId, toast, readOnly=false, mode='cli
     const { data:ad }=await supabase.auth.getUser()
     const uid=ad?.user?.id; const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
     const tableTiers = isClients ? 'compta_clients' : 'compta_fournisseurs'
-    let q = supabase.from(tableTiers).select('id,type,nom,nom_societe')
-    q = isAdmin&&companyId ? q.eq('company_id',companyId) : q.eq('user_id',uid)
-    if(companyId&&!isAdmin) q=q.eq('company_id',companyId)
+    let q = supabase.from(tableTiers).select('id,type,nom,nom_societe,numero_compte')
+    if (companyId) q = q.eq('company_id', companyId)
+    else q = q.eq('user_id', uid)
     const { data }=await q
     const noms = (data||[]).map(f=> f.type==='morale' ? (f.nom_societe||'') : (f.nom||'')).filter(n=>n.trim()!=='')
     setFournsList([...new Set(noms)].sort((a,b)=>a.localeCompare(b)))
