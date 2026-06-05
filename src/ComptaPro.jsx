@@ -6763,7 +6763,7 @@ function ComptabilitePage({ companies, companyId, toast, readOnly=false }) {
     setLoading(true)
     const { data:ad } = await supabase.auth.getUser()
     const uid=ad?.user?.id; const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
-    const scope=q=>{ if(isAdmin){if(companyId)q=q.eq('company_id',companyId)}else{q=q.eq('user_id',uid);if(companyId)q=q.eq('company_id',companyId)} return q }
+    const scope=q=>{ if(companyId) q=q.eq('company_id',companyId); else q=q.eq('user_id',uid); return q }
     let q = scope(supabase.from('compta_ecritures').select('*')).order('date_ecriture',{ascending:false})
     if (journalF) q=q.eq('journal',journalF)
     if (dateFrom) q=q.gte('date_ecriture',dateFrom)
@@ -9810,6 +9810,7 @@ function JournalPage({ table, title, icon, journalType='caisse', companies, comp
 
   // Comptes tiers (pour le champ N° compte) : numero_compte → nom
   const [comptesTiers, setComptesTiers] = useState([])
+  const [viewItem, setViewItem] = useState(null)
   const [addTiersModal, setAddTiersModal] = useState(false)
   const [addTiersForm, setAddTiersForm]   = useState({})
   const [addTiersSaving, setAddTiersSaving] = useState(false)
@@ -9817,7 +9818,7 @@ function JournalPage({ table, title, icon, journalType='caisse', companies, comp
   const loadComptesTiers = useCallback(async()=>{
     const { data:ad }=await supabase.auth.getUser()
     const uid=ad?.user?.id; const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
-    const scope=q=>{ if(isAdmin){if(companyId)q=q.eq('company_id',companyId)}else{q=q.eq('user_id',uid);if(companyId)q=q.eq('company_id',companyId)} return q }
+    const scope=q=>{ if(companyId) q=q.eq('company_id',companyId); else q=q.eq('user_id',uid); return q }
     const [fo,cl]=await Promise.all([
       scope(supabase.from('compta_fournisseurs').select('type,nom,nom_societe,numero_compte')),
       scope(supabase.from('compta_clients').select('type,nom,nom_societe,numero_compte')),
