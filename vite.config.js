@@ -31,7 +31,22 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
+        // --- Mise à jour immédiate du code après chaque déploiement ---
+        skipWaiting: true,
+        clientsClaim: true,
+        cleanupOutdatedCaches: true,
+        // Le HTML est récupéré sur le réseau en priorité => toujours la dernière version
+        navigateFallback: null,
         runtimeCaching: [
+          {
+            // Page principale / navigation : réseau d'abord (app toujours en ligne)
+            urlPattern: ({ request }) => request.mode === 'navigate',
+            handler: 'NetworkFirst',
+            options: {
+              cacheName: 'html-cache',
+              networkTimeoutSeconds: 5,
+            },
+          },
           {
             urlPattern: /^https:\/\/proehigsikgqdrxjltmq\.supabase\.co\/.*/i,
             handler: 'NetworkFirst',
@@ -46,4 +61,13 @@ export default defineConfig({
       devOptions: { enabled: true },
     }),
   ],
+  build: {
+    rollupOptions: {
+      output: {
+        entryFileNames: 'assets/[name]-[hash].js',
+        chunkFileNames: 'assets/[name]-[hash].js',
+        assetFileNames: 'assets/[name]-[hash].[ext]',
+      },
+    },
+  },
 })
