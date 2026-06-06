@@ -1675,11 +1675,12 @@ function CompaniesPage({ companies, refresh, toast, isSuperAdmin=false, currentU
   }
 
   const del = async c => {
-    if (!isOwn(c)) { toast.error('Vous ne pouvez pas supprimer la société d\'un autre utilisateur.'); return }
-    if (!confirm('Supprimer cette société ?')) return
-    const { error } = await supabase.from('compta_companies').delete().eq('id',c.id)
-    if (error) { toast.error(error.message); return }
-    toast.success('Société supprimée.'); refresh()
+    if (!isSuperAdmin && !isOwn(c)) { toast.error('Vous ne pouvez pas supprimer la société d\'un autre utilisateur.'); return }
+    if (!confirm('⚠️ SUPPRESSION DÉFINITIVE\n\nSupprimer la société « '+c.raison_sociale+' » et TOUTES ses données (articles, clients, fournisseurs, documents, écritures, stock, étuveuses, etc.) ?\n\nCette action est IRRÉVERSIBLE.')) return
+    if (!confirm('Êtes-vous vraiment sûr ? Toutes les données de « '+c.raison_sociale+' » seront définitivement perdues.')) return
+    const { error } = await supabase.rpc('delete_company_cascade', { p_company_id: c.id })
+    if (error) { toast.error('Erreur : '+error.message); return }
+    toast.success('Société et toutes ses données supprimées.'); refresh()
   }
 
   return (
@@ -1711,8 +1712,8 @@ function CompaniesPage({ companies, refresh, toast, isSuperAdmin=false, currentU
               {c.email   && <div style={{fontSize:12.5,color:'#64748b',marginBottom:12}}>✉️ {c.email}</div>}
               <div style={{display:'flex',gap:8,marginTop:12}}>
                 {isOwn(c) && <Btn sm variant="secondary" onClick={()=>open(c)}>Modifier</Btn>}
-                {isOwn(c) && <Btn sm variant="danger" onClick={()=>del(c)}>🗑️</Btn>}
-                {!isOwn(c) && <span style={{fontSize:11,color:'#94a3b8',fontStyle:'italic'}}>Lecture seule</span>}
+                {(isOwn(c) || isSuperAdmin) && <Btn sm variant="danger" onClick={()=>del(c)}>🗑️ Supprimer</Btn>}
+                {!isOwn(c) && !isSuperAdmin && <span style={{fontSize:11,color:'#94a3b8',fontStyle:'italic'}}>Lecture seule</span>}
               </div>
             </Card>
           ))}
