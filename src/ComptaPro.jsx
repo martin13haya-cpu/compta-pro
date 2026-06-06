@@ -99,31 +99,54 @@ function buildPrintDocument(html, filename) {
   const fname = (filename || 'document').replace(/[^a-zA-Z0-9_-]/g,'_')
   const scriptTag = '<scr'+'ipt src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></scr'+'ipt>'
   const pdfScript = '<scr'+'ipt>' + `
-    // Détecte si on est dans une WebView Android (Capacitor) — le téléchargement de blob y échoue
+    if(window.AndroidPrint && typeof window.AndroidPrint.printPage==='function'){
+      window.print = function(){ try{ AndroidPrint.printPage(); }catch(e){} };
+    }
+    // Détecte si on est dans une WebView Android (Capacitor)
     function __isAndroidWebView(){
       var ua=navigator.userAgent||'';
       var isAndroid=ua.indexOf('Android')>-1;
       var isWebView=ua.indexOf('; wv')>-1 || ua.indexOf('Capacitor')>-1;
       return isAndroid && isWebView;
     }
+    function __hasAndroidSave(){
+      return !!(window.AndroidPrint && typeof window.AndroidPrint.savePdf === 'function');
+    }
     function __downloadPDF(){
-      // Sur Android WebView, le téléchargement de blob ne marche pas : on utilise l'impression native
-      if(__isAndroidWebView()){
-        window.print();
+      var btn=document.getElementById('__pdfbtn');
+      if(typeof html2pdf==="undefined"){ alert("La librairie PDF n'est pas encore chargee. Verifiez votre connexion internet et reessayez."); return; }
+      btn.textContent='⏳ Génération...'; btn.disabled=true;
+      var tb=document.getElementById('__toolbar'); if(tb) tb.style.display='none';
+      var __hidden=[];
+      document.querySelectorAll('.print-btn').forEach(function(el){ __hidden.push([el, el.style.display]); el.style.display='none'; });
+      var opt={ margin:[6,6,6,6], filename:'${fname}.pdf', image:{type:'jpeg',quality:0.98}, html2canvas:{scale:2,useCORS:true,logging:false}, jsPDF:{unit:'mm',format:'a4',orientation:'portrait'} };
+      var content=document.getElementById('__content')||document.body;
+      function __resetBtn(){ if(tb) tb.style.display='flex'; __hidden.forEach(function(h){ h[0].style.display=h[1]; }); btn.textContent='📥 PDF'; btn.disabled=false; }
+      if(__hasAndroidSave()){
+        html2pdf().set(opt).from(content).outputPdf('datauristring').then(function(datauri){
+          var base64 = (datauri && datauri.indexOf(',')>-1) ? datauri.split(',')[1] : datauri;
+          try { window.AndroidPrint.savePdf(base64, '${fname}.pdf'); } catch(e){ alert('Erreur enregistrement : '+e); }
+          __resetBtn();
+        }).catch(function(err){
+          __resetBtn();
+          alert('Erreur PDF : '+(err&&err.message?err.message:'inconnue'));
+        });
         return;
       }
-      var btn=document.getElementById('__pdfbtn');
-      if(typeof html2pdf==="undefined"){ alert("La librairie PDF nest pas encore chargee. Verifiez votre connexion internet et reessayez."); return; }
-      btn.textContent='⏳ Génération...'; btn.disabled=true;
-      var tb=document.getElementById('__toolbar'); tb.style.display='none';
-      var opt={ margin:[8,8,8,8], filename:'${fname}.pdf', image:{type:'jpeg',quality:0.98}, html2canvas:{scale:2,useCORS:true,logging:false}, jsPDF:{unit:'mm',format:'a4',orientation:'portrait'} };
-      var content=document.getElementById('__content')||document.body;
       html2pdf().set(opt).from(content).save().then(function(){
-        tb.style.display='flex'; btn.textContent='📥 Télécharger PDF'; btn.disabled=false;
+        __resetBtn();
       }).catch(function(err){
-        tb.style.display='flex'; btn.textContent='📥 Télécharger PDF'; btn.disabled=false;
+        __resetBtn();
         alert('Erreur PDF : '+(err&&err.message?err.message:'inconnue'));
       });
+    }
+    function __doPrint(){
+      var tb=document.getElementById('__toolbar');
+      if(tb) tb.style.display='none';
+      setTimeout(function(){
+        window.print();
+        setTimeout(function(){ if(tb) tb.style.display='flex'; }, 1500);
+      }, 60);
     }
   ` + '</scr'+'ipt>'
 
@@ -131,7 +154,7 @@ function buildPrintDocument(html, filename) {
     <div id="__toolbar" style="position:sticky;top:0;left:0;right:0;z-index:99999;background:#075E54;padding:8px 10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;box-shadow:0 2px 8px rgba(0,0,0,0.2)">
       <button onclick="history.length>1?history.back():window.close()" style="background:white;color:#075E54;border:none;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap">← Retour</button>
       <button id="__pdfbtn" onclick="__downloadPDF()" style="background:#25D366;color:white;border:none;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap">📥 PDF</button>
-      <button onclick="window.print()" style="background:#f0f2f5;color:#1e293b;border:none;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap">🖨️ Imprimer / PDF</button>
+      <button onclick="__doPrint()" style="background:#f0f2f5;color:#1e293b;border:none;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap">🖨️ Imprimer</button>
     </div>
     <style>@media print { #__toolbar { display:none !important } }</style>
   `
@@ -217,7 +240,7 @@ const STATUT_COLORS = {
 
 // ── PDF PRINT ────────────────────────────────────────────────────────────────
 const CSS_PRINT = `
-  @page { size: A4; margin: 1.8cm; }
+  @page { size: A4; margin: 1.2cm; }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: 'Times New Roman', serif; font-size: 11pt; color: #1a1a1a; background:#fff; }
   .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; border-bottom: 1.5px solid #94a3b8; padding-bottom: 12px; }
@@ -540,7 +563,7 @@ function printExpressionBesoin(fiche, lignes, budgets, companyInfo, sigImg=null,
       </div>`:''}
     </div>
 
-    <div class="signatures" style="margin-top:50px">
+    <div class="signatures" style="margin-top:26px">
       <div class="sig-box">
         Signature de l'agent<br><small>${fiche.realise_par||''}</small>
         ${sigImg?`<img src="${sigImg}" style="max-width:100px;max-height:60px;margin-top:8px;display:block" />`:''}
@@ -1830,7 +1853,7 @@ function printFicheTiers(it, kind='fournisseur') {
 
     ${autresBloc}
 
-    <div class="signatures" style="margin-top:50px">
+    <div class="signatures" style="margin-top:26px">
       <div class="sig-box">Signature du ${labelTiers}</div>
       <div class="sig-box">Cachet & visa<br><small>${societe}</small></div>
     </div>
