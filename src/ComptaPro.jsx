@@ -2074,6 +2074,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
   const [search,     setSearch]    = useState('')
   const [filterType, setFilterType]= useState('')   // clients: physique|morale
   const [filterProv, setFilterProv]= useState('')   // provenance
+  const [avances, setAvances] = useState([])
 
   const load = useCallback(async()=>{
     const uid = (await supabase.auth.getUser()).data?.user?.id
@@ -2117,6 +2118,25 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
   const open = (it=null) => {
     const defaults = extraFields ? extraFields.defaults : {}
     setForm(it?{...it}:{...baseDefaults,...defaults}); setModal(it?'edit':'add')
+    setAvances([])
+    if (it && table==='compta_fournisseurs') {
+      supabase.from('compta_avances_fournisseur')
+        .select('type_avance,quantite_recue,valeur_remboursement')
+        .eq('fournisseur_id', it.id)
+        .then(({data})=>{ if(data&&data.length) setAvances(data.map(d=>({ type_avance:d.type_avance||'Labour', quantite_recue:d.quantite_recue??'', valeur_remboursement:d.valeur_remboursement??'' }))) })
+    }
+  }
+  const addAvance = () => setAvances(a=>[...a,{ type_avance:'Labour', quantite_recue:'', valeur_remboursement:'' }])
+  const delAvance = (i) => setAvances(a=>a.filter((_,j)=>j!==i))
+  const setAvanceField = (i,field,val) => setAvances(a=>{ const n=[...a]; n[i]={...n[i],[field]:val}; return n })
+  const persistAvances = async (fournId, cid, uidp) => {
+    if (table!=='compta_fournisseurs' || !fournId) return
+    await supabase.from('compta_avances_fournisseur').delete().eq('fournisseur_id', fournId)
+    const lignes = (avances||[]).filter(a => a.type_avance && ((parseFloat(a.quantite_recue)||0) || (parseFloat(a.valeur_remboursement)||0)))
+    if (lignes.length) {
+      const rows = lignes.map(a => ({ fournisseur_id:fournId, company_id:cid, user_id:uidp, type_avance:a.type_avance, quantite_recue:parseFloat(a.quantite_recue)||0, valeur_remboursement:parseFloat(a.valeur_remboursement)||0 }))
+      await supabase.from('compta_avances_fournisseur').insert(rows)
+    }
   }
   const close = ()=>setModal(null)
 
@@ -2155,12 +2175,14 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
           })
         } catch(_) {}
       }
+      await persistAvances(ins.id, pay.company_id, uid)
       setSaving(false)
       toast.success(`${titleSingle} enregistré(e) !`); close(); load(); return
     }
     const { error } = await supabase.from(table).update(pay).eq('id',form.id)
+    if (error) { setSaving(false); toast.error(error.message); return }
+    await persistAvances(form.id, pay.company_id, uid)
     setSaving(false)
-    if (error) { toast.error(error.message); return }
     toast.success(`${titleSingle} enregistré(e) !`); close(); load()
   }
 
@@ -2491,6 +2513,52 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
               </>
             )}
           </Grid>
+
+          {table==='compta_fournisseurs' && (
+            <div style={{marginBottom:16}}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+                <label style={{fontSize:13,fontWeight:700,color:'#334155'}}>💰 Avances reçues</label>
+                <Btn sm type="button" variant="secondary" onClick={addAvance}>+ Ajouter une ligne</Btn>
+              </div>
+              <div style={{border:'1px solid #e2e8f0',borderRadius:8,overflow:'hidden'}}>
+                <table style={{width:'100%',borderCollapse:'collapse',fontSize:13}}>
+                  <thead><tr style={{background:'#f8fafc'}}>
+                    <th style={{padding:'8px 10px',textAlign:'left',fontSize:12,color:'#475569'}}>Type d'avance</th>
+                    <th style={{padding:'8px 10px',textAlign:'right',fontSize:12,color:'#475569'}}>Quantité reçue</th>
+                    <th style={{padding:'8px 10px',textAlign:'right',fontSize:12,color:'#475569'}}>Valeur remboursement</th>
+                    <th style={{width:44}}></th>
+                  </tr></thead>
+                  <tbody>
+                    {avances.length===0 ? (
+                      <tr><td colSpan={4} style={{padding:'12px',textAlign:'center',color:'#94a3b8'}}>Aucune avance — cliquez sur « + Ajouter une ligne »</td></tr>
+                    ) : avances.map((a,i)=>(
+                      <tr key={i} style={{borderTop:'1px solid #f1f5f9'}}>
+                        <td style={{padding:'6px 8px'}}>
+                          <select value={a.type_avance} onChange={e=>setAvanceField(i,'type_avance',e.target.value)}
+                            style={{width:'100%',padding:'7px 8px',border:'1px solid #cbd5e1',borderRadius:6,fontSize:13}}>
+                            {TYPES_AVANCE.map(t=> <option key={t} value={t}>{t}</option>)}
+                          </select>
+                        </td>
+                        <td style={{padding:'6px 8px'}}>
+                          <input type="number" value={a.quantite_recue} onChange={e=>setAvanceField(i,'quantite_recue',e.target.value)}
+                            style={{width:'100%',padding:'7px 8px',border:'1px solid #cbd5e1',borderRadius:6,fontSize:13,textAlign:'right'}} />
+                        </td>
+                        <td style={{padding:'6px 8px'}}>
+                          <input type="number" value={a.valeur_remboursement} onChange={e=>setAvanceField(i,'valeur_remboursement',e.target.value)}
+                            style={{width:'100%',padding:'7px 8px',border:'1px solid #cbd5e1',borderRadius:6,fontSize:13,textAlign:'right'}} />
+                        </td>
+                        <td style={{padding:'6px 8px',textAlign:'center'}}>
+                          <button type="button" onClick={()=>delAvance(i)} title="Supprimer"
+                            style={{background:'none',border:'none',cursor:'pointer',color:'#dc2626',fontSize:16}}>🗑️</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
           <Row><Btn variant="secondary" onClick={close}>Annuler</Btn><Btn type="submit" disabled={saving}>{saving?'...':'Enregistrer'}</Btn></Row>
         </form>
       </Modal>
