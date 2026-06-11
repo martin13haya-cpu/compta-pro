@@ -1433,7 +1433,7 @@ const NAV_ADMIN = [
 
 const NAV_ADMIN_SOCIETE = [
   { section:'Administration' },
-  { id:'mes_utilisateurs',   icon:'👥', label:'Mes utilisateurs' },
+  { id:'mes_utilisateurs',   icon:'👤', label:'Utilisateurs' },
   { id:'parametres',         icon:'⚙️', label:'Paramètres' },
 ]
 
@@ -1442,8 +1442,8 @@ function Sidebar({ page, setPage, user, profile, onLogout, open, onClose }) {
   // En paysage sur mobile : sidebar visible en mode compact
   const collapsed = isMobile || isMobileLandscape  // sidebar overlay en portrait ET paysage mobile
   const isSuperAdmin = profile?.role === 'super_admin' || user?.email === SUPER_ADMIN_EMAIL
-  const isAdminSociete = profile?.role === 'admin_societe' || profile?.role === 'admin'
   const isUtilisateurSimple = profile?.role === 'utilisateur_simple'
+  const isAdminSociete = !isSuperAdmin && !isUtilisateurSimple
   const permissions = profile?.permissions || {}
 
   // Filter NAV based on permissions for utilisateur_simple
@@ -11108,8 +11108,8 @@ export default function ComptaPro() {
       case 'users':          return isSuperAdmin ? <UsersManagementPage toast={toast} /> : <Dashboard {...sp} setPage={setPage} />
       case 'controle_budget': return <ControleBudgetairePage {...sp} readOnly={getReadOnly('controle_budget')} />
       case 'chat':           return <ChatPage profile={profile} toast={toast} />
-      case 'parametres':     return (isSuperAdmin||profile?.role==='admin_societe'||profile?.role==='admin') ? <ParametresPage toast={toast} companies={companies} companyId={companyId} /> : <Dashboard {...sp} setPage={setPage} />
-      case 'mes_utilisateurs': return (profile?.role==='admin_societe'||profile?.role==='admin'||isSuperAdmin) ? <MesUtilisateursPage toast={toast} companies={companies} companyId={companyId} profile={profile} /> : <Dashboard {...sp} setPage={setPage} />
+      case 'parametres':     return (isSuperAdmin||profile?.role!=='utilisateur_simple') ? <ParametresPage toast={toast} companies={companies} companyId={companyId} /> : <Dashboard {...sp} setPage={setPage} />
+      case 'mes_utilisateurs': return (isSuperAdmin||profile?.role!=='utilisateur_simple') ? <MesUtilisateursPage toast={toast} companies={companies} companyId={companyId} profile={profile} /> : <Dashboard {...sp} setPage={setPage} />
     }
   }
 
