@@ -2066,6 +2066,9 @@ async function attribuerCompteTiers({ tableTiers, tiersId, collectif, libelleCol
   return numero
 }
 
+const TYPES_AVANCE = ['Labour','Semences','Engrais','Herbicide','Crédits']
+const UNITES_AVANCE = { Labour:'ha', Semences:'kg', Engrais:'sac', Herbicide:'L', 'Crédits':'FCFA' }
+
 function TiersPage({ table, title, titleSingle, icon, companies, companyId, toast, extraFields, readOnly=false }) {
   const [items,      setItems]     = useState([])
   const [modal,      setModal]     = useState(null)
@@ -2114,7 +2117,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
 
   const set = e => setForm(f=>({...f,[e.target.name]:e.target.value}))
 
-  const baseDefaults = { company_id:companyId||companies[0]?.id||'', nom:'', prenom:'', nom_societe:'', telephone:'', provenance:'', cip:'', ifu:'', email:'', adresse:'', mentor_nom:'', mentor_telephone:'', mentor_cip:'', departement:'', commune:'', arrondissement:'', village:'', nom_bas_fonds:'', superficie_bas_fonds:'', cooperative_affiliee:'', numero_contrat:'' }
+  const baseDefaults = { company_id:companyId||companies[0]?.id||'', nom:'', prenom:'', nom_societe:'', telephone:'', provenance:'', cip:'', ifu:'', email:'', adresse:'', mentor_nom:'', mentor_telephone:'', mentor_cip:'', departement:'', commune:'', arrondissement:'', village:'', nom_bas_fonds:'', superficie_bas_fonds:'', cooperative_affiliee:'', numero_contrat:'', prix_contrat:'' }
   const open = (it=null) => {
     const defaults = extraFields ? extraFields.defaults : {}
     setForm(it?{...it}:{...baseDefaults,...defaults}); setModal(it?'edit':'add')
@@ -2123,18 +2126,18 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
       supabase.from('compta_avances_fournisseur')
         .select('type_avance,quantite_recue,valeur_remboursement')
         .eq('fournisseur_id', it.id)
-        .then(({data})=>{ if(data&&data.length) setAvances(data.map(d=>({ type_avance:d.type_avance||'Labour', quantite_recue:d.quantite_recue??'', valeur_remboursement:d.valeur_remboursement??'' }))) })
+        .then(({data})=>{ if(data&&data.length) setAvances(data.map(d=>({ type_avance:d.type_avance||'Labour', quantite_recue:d.quantite_recue??'', montant:d.valeur_remboursement??'' }))) })
     }
   }
-  const addAvance = () => setAvances(a=>[...a,{ type_avance:'Labour', quantite_recue:'', valeur_remboursement:'' }])
+  const addAvance = () => setAvances(a=>[...a,{ type_avance:'Labour', quantite_recue:'', montant:'' }])
   const delAvance = (i) => setAvances(a=>a.filter((_,j)=>j!==i))
   const setAvanceField = (i,field,val) => setAvances(a=>{ const n=[...a]; n[i]={...n[i],[field]:val}; return n })
   const persistAvances = async (fournId, cid, uidp) => {
     if (table!=='compta_fournisseurs' || !fournId) return
     await supabase.from('compta_avances_fournisseur').delete().eq('fournisseur_id', fournId)
-    const lignes = (avances||[]).filter(a => a.type_avance && ((parseFloat(a.quantite_recue)||0) || (parseFloat(a.valeur_remboursement)||0)))
+    const lignes = (avances||[]).filter(a => a.type_avance && ((parseFloat(a.quantite_recue)||0) || (parseFloat(a.montant)||0)))
     if (lignes.length) {
-      const rows = lignes.map(a => ({ fournisseur_id:fournId, company_id:cid, user_id:uidp, type_avance:a.type_avance, quantite_recue:parseFloat(a.quantite_recue)||0, valeur_remboursement:parseFloat(a.valeur_remboursement)||0 }))
+      const rows = lignes.map(a => ({ fournisseur_id:fournId, company_id:cid, user_id:uidp, type_avance:a.type_avance, quantite_recue:parseFloat(a.quantite_recue)||0, valeur_remboursement:parseFloat(a.montant)||0 }))
       await supabase.from('compta_avances_fournisseur').insert(rows)
     }
   }
@@ -2146,8 +2149,10 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     const isPhysique = (form.type||'physique')!=='morale'
     const mentorFields = table==='compta_fournisseurs' && isPhysique ? ['mentor_nom','mentor_telephone','mentor_cip'] : []
     const locFields = table==='compta_fournisseurs' ? ['departement','commune','arrondissement','village','nom_bas_fonds','superficie_bas_fonds','cooperative_affiliee','numero_contrat'] : []
-    const fields = ['company_id','nom','telephone','provenance','cip','ifu','email','adresse', ...mentorFields, ...locFields, ...(extraFields?.names||[])]
+    const fournExtra = table==='compta_fournisseurs' ? ['prix_contrat'] : []
+    const fields = ['company_id','nom','telephone','provenance','cip','ifu','email','adresse', ...mentorFields, ...locFields, ...fournExtra, ...(extraFields?.names||[])]
     const pay = {}; fields.forEach(k=>{ if(form[k]!==undefined) pay[k]=form[k] })
+    if (table==='compta_fournisseurs') { pay.prix_contrat = (form.prix_contrat===''||form.prix_contrat==null) ? null : (parseFloat(form.prix_contrat)||0) }
     // Fix: ensure company_id is a valid non-empty value
     if (!pay.company_id) {
       const prof = (await supabase.from('compta_profiles').select('company_id').eq('id', uid).single()).data
@@ -2514,50 +2519,79 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
             )}
           </Grid>
 
-          {table==='compta_fournisseurs' && (
-            <div style={{marginBottom:16}}>
-              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
-                <label style={{fontSize:13,fontWeight:700,color:'#334155'}}>💰 Avances reçues</label>
-                <Btn sm type="button" variant="secondary" onClick={addAvance}>+ Ajouter une ligne</Btn>
-              </div>
-              <div style={{border:'1px solid #e2e8f0',borderRadius:8,overflow:'hidden'}}>
-                <table style={{width:'100%',borderCollapse:'collapse',fontSize:13}}>
-                  <thead><tr style={{background:'#f8fafc'}}>
-                    <th style={{padding:'8px 10px',textAlign:'left',fontSize:12,color:'#475569'}}>Type d'avance</th>
-                    <th style={{padding:'8px 10px',textAlign:'right',fontSize:12,color:'#475569'}}>Quantité reçue</th>
-                    <th style={{padding:'8px 10px',textAlign:'right',fontSize:12,color:'#475569'}}>Valeur remboursement</th>
-                    <th style={{width:44}}></th>
-                  </tr></thead>
-                  <tbody>
-                    {avances.length===0 ? (
-                      <tr><td colSpan={4} style={{padding:'12px',textAlign:'center',color:'#94a3b8'}}>Aucune avance — cliquez sur « + Ajouter une ligne »</td></tr>
-                    ) : avances.map((a,i)=>(
-                      <tr key={i} style={{borderTop:'1px solid #f1f5f9'}}>
-                        <td style={{padding:'6px 8px'}}>
-                          <select value={a.type_avance} onChange={e=>setAvanceField(i,'type_avance',e.target.value)}
-                            style={{width:'100%',padding:'7px 8px',border:'1px solid #cbd5e1',borderRadius:6,fontSize:13}}>
-                            {TYPES_AVANCE.map(t=> <option key={t} value={t}>{t}</option>)}
-                          </select>
-                        </td>
-                        <td style={{padding:'6px 8px'}}>
-                          <input type="number" value={a.quantite_recue} onChange={e=>setAvanceField(i,'quantite_recue',e.target.value)}
-                            style={{width:'100%',padding:'7px 8px',border:'1px solid #cbd5e1',borderRadius:6,fontSize:13,textAlign:'right'}} />
-                        </td>
-                        <td style={{padding:'6px 8px'}}>
-                          <input type="number" value={a.valeur_remboursement} onChange={e=>setAvanceField(i,'valeur_remboursement',e.target.value)}
-                            style={{width:'100%',padding:'7px 8px',border:'1px solid #cbd5e1',borderRadius:6,fontSize:13,textAlign:'right'}} />
-                        </td>
-                        <td style={{padding:'6px 8px',textAlign:'center'}}>
-                          <button type="button" onClick={()=>delAvance(i)} title="Supprimer"
-                            style={{background:'none',border:'none',cursor:'pointer',color:'#dc2626',fontSize:16}}>🗑️</button>
-                        </td>
+          {table==='compta_fournisseurs' && (() => {
+            const totalAvance = (avances||[]).reduce((sm,a)=>sm+(parseFloat(a.montant)||0),0)
+            const prixContrat = parseFloat(form.prix_contrat)||0
+            const rizPaddy = prixContrat>0 ? totalAvance/prixContrat : 0
+            return (
+              <div style={{marginBottom:16}}>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+                  <label style={{fontSize:13,fontWeight:700,color:'#334155'}}>💰 Avances reçues</label>
+                  <Btn sm type="button" variant="secondary" onClick={addAvance}>+ Ajouter une ligne</Btn>
+                </div>
+                <div style={{border:'1px solid #e2e8f0',borderRadius:8,overflow:'hidden'}}>
+                  <table style={{width:'100%',borderCollapse:'collapse',fontSize:13}}>
+                    <thead><tr style={{background:'#f8fafc'}}>
+                      <th style={{padding:'8px 10px',textAlign:'left',fontSize:12,color:'#475569'}}>Type d'avance</th>
+                      <th style={{padding:'8px 10px',textAlign:'right',fontSize:12,color:'#475569'}}>Quantité reçue</th>
+                      <th style={{padding:'8px 10px',textAlign:'right',fontSize:12,color:'#475569'}}>Montant (FCFA)</th>
+                      <th style={{width:44}}></th>
+                    </tr></thead>
+                    <tbody>
+                      {avances.length===0 ? (
+                        <tr><td colSpan={4} style={{padding:'12px',textAlign:'center',color:'#94a3b8'}}>Aucune avance — cliquez sur « + Ajouter une ligne »</td></tr>
+                      ) : avances.map((a,i)=>(
+                        <tr key={i} style={{borderTop:'1px solid #f1f5f9'}}>
+                          <td style={{padding:'6px 8px'}}>
+                            <select value={a.type_avance} onChange={e=>setAvanceField(i,'type_avance',e.target.value)}
+                              style={{width:'100%',padding:'7px 8px',border:'1px solid #cbd5e1',borderRadius:6,fontSize:13}}>
+                              {TYPES_AVANCE.map(t=> <option key={t} value={t}>{t}</option>)}
+                            </select>
+                          </td>
+                          <td style={{padding:'6px 8px'}}>
+                            <div style={{display:'flex',alignItems:'center',gap:6}}>
+                              <input type="number" value={a.quantite_recue} onChange={e=>setAvanceField(i,'quantite_recue',e.target.value)}
+                                style={{width:'100%',padding:'7px 8px',border:'1px solid #cbd5e1',borderRadius:6,fontSize:13,textAlign:'right'}} />
+                              <span style={{fontSize:12,color:'#64748b',minWidth:30,fontWeight:600}}>{UNITES_AVANCE[a.type_avance]||''}</span>
+                            </div>
+                          </td>
+                          <td style={{padding:'6px 8px'}}>
+                            <input type="number" value={a.montant} onChange={e=>setAvanceField(i,'montant',e.target.value)}
+                              style={{width:'100%',padding:'7px 8px',border:'1px solid #cbd5e1',borderRadius:6,fontSize:13,textAlign:'right'}} />
+                          </td>
+                          <td style={{padding:'6px 8px',textAlign:'center'}}>
+                            <button type="button" onClick={()=>delAvance(i)} title="Supprimer"
+                              style={{background:'none',border:'none',cursor:'pointer',color:'#dc2626',fontSize:16}}>🗑️</button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr style={{background:'#f8fafc',borderTop:'2px solid #e2e8f0'}}>
+                        <td colSpan={2} style={{padding:'9px 10px',textAlign:'right',fontWeight:700,color:'#334155'}}>Total avance reçue</td>
+                        <td style={{padding:'9px 10px',textAlign:'right',fontWeight:800,color:'#0f2044'}}>{Math.round(totalAvance).toLocaleString('fr-FR')} FCFA</td>
+                        <td></td>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </tfoot>
+                  </table>
+                </div>
+
+                <div style={{marginTop:12,display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+                  <div>
+                    <label style={{display:'block',fontSize:12.5,fontWeight:600,color:'#374151',marginBottom:5}}>Prix /contrat (FCFA)</label>
+                    <input type="number" name="prix_contrat" value={form.prix_contrat||''} onChange={set}
+                      style={{width:'100%',padding:'9px 12px',border:'1px solid #d1d5db',borderRadius:8,fontSize:13.5}} />
+                  </div>
+                  <div>
+                    <label style={{display:'block',fontSize:12.5,fontWeight:600,color:'#374151',marginBottom:5}}>Riz paddy équivalente (kg)</label>
+                    <div style={{padding:'9px 12px',background:'#f0fdf4',borderRadius:8,border:'1px solid #bbf7d0',fontSize:14,fontWeight:800,color:'#166534',minHeight:38,display:'flex',alignItems:'center'}}>
+                      {prixContrat>0 ? rizPaddy.toLocaleString('fr-FR',{maximumFractionDigits:2}) + ' kg' : '—'}
+                    </div>
+                  </div>
+                </div>
               </div>
-            </div>
-          )}
+            )
+          })()}
 
           <Row><Btn variant="secondary" onClick={close}>Annuler</Btn><Btn type="submit" disabled={saving}>{saving?'...':'Enregistrer'}</Btn></Row>
         </form>
@@ -4243,8 +4277,6 @@ function PrestationPage({ companies, companyId, toast, readOnly=false }) {
 }
 
 // ── ACHATS SEMI-FINIS ─────────────────────────────────────────────────────────
-const TYPES_AVANCE = ['Labour','Semences','Engrais','Herbicide','Crédits']
-
 function AchatsSemisPage({ companies, companyId, toast, readOnly=false }) {
   const [items, setItems]   = useState([])
   const [modal, setModal]   = useState(false)
@@ -4257,7 +4289,6 @@ function AchatsSemisPage({ companies, companyId, toast, readOnly=false }) {
   const [fournModal, setFournModal] = useState(false)
   const [fournForm, setFournForm]   = useState({})
   const [fournSaving, setFournSaving] = useState(false)
-  const [avances, setAvances] = useState([])
 
   const loadFourns = useCallback(async()=>{
     const { data:ad }=await supabase.auth.getUser()
@@ -4299,13 +4330,9 @@ function AchatsSemisPage({ companies, companyId, toast, readOnly=false }) {
     const nom = (form.nom_fournisseur||'').trim()
     if (nom && fournsNames.some(n=>n.toLowerCase()===nom.toLowerCase())) { toast.error('Ce fournisseur existe déjà.'); return }
     setFournForm({ type:'physique', nom, nom_societe:'', telephone:'', provenance:form.provenance||'', cooperative_affiliee:'', numero_contrat:'', cip:'', ifu:'', email:'', adresse:'' })
-    setAvances([])
     setFournModal(true)
   }
   const setFourn = e => setFournForm(f=>({...f,[e.target.name]:e.target.value}))
-  const addAvance = () => setAvances(a=>[...a,{ type_avance:'Labour', quantite_recue:'', valeur_remboursement:'' }])
-  const delAvance = (i) => setAvances(a=>a.filter((_,j)=>j!==i))
-  const setAvanceField = (i,field,val) => setAvances(a=>{ const n=[...a]; n[i]={...n[i],[field]:val}; return n })
 
   // Enregistre le fournisseur dans la table (avec sécurité anti-doublon)
   const saveFourn = async e => {
@@ -4330,18 +4357,6 @@ function AchatsSemisPage({ companies, companyId, toast, readOnly=false }) {
       await attribuerCompteTiers({ tableTiers:'compta_fournisseurs', tiersId:ins.id,
         collectif:COLLECTIF_FOURNISSEUR, libelleCollectif:'Fournisseurs', libelleCompte:nomAff, cid, uid })
     } catch(_) {}
-    // Enregistrer les lignes d'avance reçue liées à ce fournisseur
-    const lignesAvance = (avances||[]).filter(a => a.type_avance && ((parseFloat(a.quantite_recue)||0) || (parseFloat(a.valeur_remboursement)||0)))
-    if (lignesAvance.length) {
-      const rowsAv = lignesAvance.map(a => ({
-        fournisseur_id: ins.id, company_id: cid, user_id: uid,
-        type_avance: a.type_avance,
-        quantite_recue: parseFloat(a.quantite_recue)||0,
-        valeur_remboursement: parseFloat(a.valeur_remboursement)||0,
-      }))
-      const { error: errAv } = await supabase.from('compta_avances_fournisseur').insert(rowsAv)
-      if (errAv) console.error('Avances fournisseur:', errAv.message)
-    }
     setFournSaving(false)
     toast.success(`Fournisseur « ${nomAff} » enregistré.`)
     setFournModal(false)
@@ -4548,50 +4563,6 @@ function AchatsSemisPage({ companies, companyId, toast, readOnly=false }) {
             <Input label="Email" name="email" value={fournForm.email||''} onChange={setFourn} />
             <Input label="Adresse" name="adresse" value={fournForm.adresse||''} onChange={setFourn} />
           </Grid>
-
-          <div style={{marginBottom:16}}>
-            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
-              <label style={{fontSize:13,fontWeight:700,color:'#334155'}}>Avances reçues</label>
-              <Btn sm type="button" variant="secondary" onClick={addAvance}>+ Ajouter une ligne</Btn>
-            </div>
-            <div style={{border:'1px solid #e2e8f0',borderRadius:8,overflow:'hidden'}}>
-              <table style={{width:'100%',borderCollapse:'collapse',fontSize:13}}>
-                <thead><tr style={{background:'#f8fafc'}}>
-                  <th style={{padding:'8px 10px',textAlign:'left',fontSize:12,color:'#475569'}}>Type d'avance</th>
-                  <th style={{padding:'8px 10px',textAlign:'right',fontSize:12,color:'#475569'}}>Quantité reçue</th>
-                  <th style={{padding:'8px 10px',textAlign:'right',fontSize:12,color:'#475569'}}>Valeur remboursement</th>
-                  <th style={{width:44}}></th>
-                </tr></thead>
-                <tbody>
-                  {avances.length===0 ? (
-                    <tr><td colSpan={4} style={{padding:'12px',textAlign:'center',color:'#94a3b8'}}>Aucune avance — cliquez sur « + Ajouter une ligne »</td></tr>
-                  ) : avances.map((a,i)=>(
-                    <tr key={i} style={{borderTop:'1px solid #f1f5f9'}}>
-                      <td style={{padding:'6px 8px'}}>
-                        <select value={a.type_avance} onChange={e=>setAvanceField(i,'type_avance',e.target.value)}
-                          style={{width:'100%',padding:'7px 8px',border:'1px solid #cbd5e1',borderRadius:6,fontSize:13}}>
-                          {TYPES_AVANCE.map(t=> <option key={t} value={t}>{t}</option>)}
-                        </select>
-                      </td>
-                      <td style={{padding:'6px 8px'}}>
-                        <input type="number" value={a.quantite_recue} onChange={e=>setAvanceField(i,'quantite_recue',e.target.value)}
-                          style={{width:'100%',padding:'7px 8px',border:'1px solid #cbd5e1',borderRadius:6,fontSize:13,textAlign:'right'}} />
-                      </td>
-                      <td style={{padding:'6px 8px'}}>
-                        <input type="number" value={a.valeur_remboursement} onChange={e=>setAvanceField(i,'valeur_remboursement',e.target.value)}
-                          style={{width:'100%',padding:'7px 8px',border:'1px solid #cbd5e1',borderRadius:6,fontSize:13,textAlign:'right'}} />
-                      </td>
-                      <td style={{padding:'6px 8px',textAlign:'center'}}>
-                        <button type="button" onClick={()=>delAvance(i)} title="Supprimer"
-                          style={{background:'none',border:'none',cursor:'pointer',color:'#dc2626',fontSize:16}}>🗑️</button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
           <Row><Btn variant="secondary" onClick={()=>setFournModal(false)}>Annuler</Btn><Btn type="submit" disabled={fournSaving}>{fournSaving?'...':'Enregistrer le fournisseur'}</Btn></Row>
         </form>
       </Modal>
