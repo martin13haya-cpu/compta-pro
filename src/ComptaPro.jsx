@@ -4175,6 +4175,8 @@ function PrestationPage({ companies, companyId, toast, readOnly=false }) {
 }
 
 // ── ACHATS SEMI-FINIS ─────────────────────────────────────────────────────────
+const TYPES_AVANCE = ['Labour','Semences','Engrais','Herbicide','Crédits']
+
 function AchatsSemisPage({ companies, companyId, toast, readOnly=false }) {
   const [items, setItems]   = useState([])
   const [modal, setModal]   = useState(false)
@@ -4187,6 +4189,7 @@ function AchatsSemisPage({ companies, companyId, toast, readOnly=false }) {
   const [fournModal, setFournModal] = useState(false)
   const [fournForm, setFournForm]   = useState({})
   const [fournSaving, setFournSaving] = useState(false)
+  const [avances, setAvances] = useState([])
 
   const loadFourns = useCallback(async()=>{
     const { data:ad }=await supabase.auth.getUser()
@@ -4228,9 +4231,13 @@ function AchatsSemisPage({ companies, companyId, toast, readOnly=false }) {
     const nom = (form.nom_fournisseur||'').trim()
     if (nom && fournsNames.some(n=>n.toLowerCase()===nom.toLowerCase())) { toast.error('Ce fournisseur existe déjà.'); return }
     setFournForm({ type:'physique', nom, nom_societe:'', telephone:'', provenance:form.provenance||'', cooperative_affiliee:'', numero_contrat:'', cip:'', ifu:'', email:'', adresse:'' })
+    setAvances([])
     setFournModal(true)
   }
   const setFourn = e => setFournForm(f=>({...f,[e.target.name]:e.target.value}))
+  const addAvance = () => setAvances(a=>[...a,{ type_avance:'Labour', quantite_recue:'', valeur_remboursement:'' }])
+  const delAvance = (i) => setAvances(a=>a.filter((_,j)=>j!==i))
+  const setAvanceField = (i,field,val) => setAvances(a=>{ const n=[...a]; n[i]={...n[i],[field]:val}; return n })
 
   // Enregistre le fournisseur dans la table (avec sécurité anti-doublon)
   const saveFourn = async e => {
@@ -4255,6 +4262,18 @@ function AchatsSemisPage({ companies, companyId, toast, readOnly=false }) {
       await attribuerCompteTiers({ tableTiers:'compta_fournisseurs', tiersId:ins.id,
         collectif:COLLECTIF_FOURNISSEUR, libelleCollectif:'Fournisseurs', libelleCompte:nomAff, cid, uid })
     } catch(_) {}
+    // Enregistrer les lignes d'avance reçue liées à ce fournisseur
+    const lignesAvance = (avances||[]).filter(a => a.type_avance && ((parseFloat(a.quantite_recue)||0) || (parseFloat(a.valeur_remboursement)||0)))
+    if (lignesAvance.length) {
+      const rowsAv = lignesAvance.map(a => ({
+        fournisseur_id: ins.id, company_id: cid, user_id: uid,
+        type_avance: a.type_avance,
+        quantite_recue: parseFloat(a.quantite_recue)||0,
+        valeur_remboursement: parseFloat(a.valeur_remboursement)||0,
+      }))
+      const { error: errAv } = await supabase.from('compta_avances_fournisseur').insert(rowsAv)
+      if (errAv) console.error('Avances fournisseur:', errAv.message)
+    }
     setFournSaving(false)
     toast.success(`Fournisseur « ${nomAff} » enregistré.`)
     setFournModal(false)
@@ -4461,6 +4480,50 @@ function AchatsSemisPage({ companies, companyId, toast, readOnly=false }) {
             <Input label="Email" name="email" value={fournForm.email||''} onChange={setFourn} />
             <Input label="Adresse" name="adresse" value={fournForm.adresse||''} onChange={setFourn} />
           </Grid>
+
+          <div style={{marginBottom:16}}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+              <label style={{fontSize:13,fontWeight:700,color:'#334155'}}>Avances reçues</label>
+              <Btn sm type="button" variant="secondary" onClick={addAvance}>+ Ajouter une ligne</Btn>
+            </div>
+            <div style={{border:'1px solid #e2e8f0',borderRadius:8,overflow:'hidden'}}>
+              <table style={{width:'100%',borderCollapse:'collapse',fontSize:13}}>
+                <thead><tr style={{background:'#f8fafc'}}>
+                  <th style={{padding:'8px 10px',textAlign:'left',fontSize:12,color:'#475569'}}>Type d'avance</th>
+                  <th style={{padding:'8px 10px',textAlign:'right',fontSize:12,color:'#475569'}}>Quantité reçue</th>
+                  <th style={{padding:'8px 10px',textAlign:'right',fontSize:12,color:'#475569'}}>Valeur remboursement</th>
+                  <th style={{width:44}}></th>
+                </tr></thead>
+                <tbody>
+                  {avances.length===0 ? (
+                    <tr><td colSpan={4} style={{padding:'12px',textAlign:'center',color:'#94a3b8'}}>Aucune avance — cliquez sur « + Ajouter une ligne »</td></tr>
+                  ) : avances.map((a,i)=>(
+                    <tr key={i} style={{borderTop:'1px solid #f1f5f9'}}>
+                      <td style={{padding:'6px 8px'}}>
+                        <select value={a.type_avance} onChange={e=>setAvanceField(i,'type_avance',e.target.value)}
+                          style={{width:'100%',padding:'7px 8px',border:'1px solid #cbd5e1',borderRadius:6,fontSize:13}}>
+                          {TYPES_AVANCE.map(t=> <option key={t} value={t}>{t}</option>)}
+                        </select>
+                      </td>
+                      <td style={{padding:'6px 8px'}}>
+                        <input type="number" value={a.quantite_recue} onChange={e=>setAvanceField(i,'quantite_recue',e.target.value)}
+                          style={{width:'100%',padding:'7px 8px',border:'1px solid #cbd5e1',borderRadius:6,fontSize:13,textAlign:'right'}} />
+                      </td>
+                      <td style={{padding:'6px 8px'}}>
+                        <input type="number" value={a.valeur_remboursement} onChange={e=>setAvanceField(i,'valeur_remboursement',e.target.value)}
+                          style={{width:'100%',padding:'7px 8px',border:'1px solid #cbd5e1',borderRadius:6,fontSize:13,textAlign:'right'}} />
+                      </td>
+                      <td style={{padding:'6px 8px',textAlign:'center'}}>
+                        <button type="button" onClick={()=>delAvance(i)} title="Supprimer"
+                          style={{background:'none',border:'none',cursor:'pointer',color:'#dc2626',fontSize:16}}>🗑️</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
           <Row><Btn variant="secondary" onClick={()=>setFournModal(false)}>Annuler</Btn><Btn type="submit" disabled={fournSaving}>{fournSaving?'...':'Enregistrer le fournisseur'}</Btn></Row>
         </form>
       </Modal>
