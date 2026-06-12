@@ -199,7 +199,7 @@ const SIDEBAR = '#075E54'
 // Theme system
 const THEMES = {
   light: { bg:'#f0f2f5', surface:'#ffffff', text:'#1e293b', textMuted:'#64748b', border:'#e2e8f0', sidebar:'#075E54' },
-  dark:  { bg:'#0b141a', surface:'#1f2c34', text:'#e9edef', textMuted:'#8696a0', border:'#2a3942', sidebar:'#1f2c34' }
+  dark:  { bg:'#F7F7FC', surface:'#ffffff', text:'#2A2E4A', textMuted:'#6E739B', border:'#E5E7F2', sidebar:'#6C5CE7' }
 }
 function applyTheme(mode){
   const t = THEMES[mode] || THEMES.light
@@ -209,16 +209,22 @@ function applyTheme(mode){
   if(!s){ s=document.createElement('style'); s.id='theme-css'; document.head.appendChild(s) }
   if(mode==='dark'){
     s.textContent = `
-      html,body{background:${t.bg}!important;color:${t.text}!important}
-      [data-theme="dark"] div[style*="background:#f1f5f9"],
-      [data-theme="dark"] div[style*="background: #f1f5f9"]{background:${t.bg}!important}
-      [data-theme="dark"] div[style*="background:white"],
-      [data-theme="dark"] div[style*="background: white"],
-      [data-theme="dark"] div[style*="background:#fff"],
-      [data-theme="dark"] div[style*="background:#ffffff"]{background:${t.surface}!important;color:${t.text}!important}
-      [data-theme="dark"] table{color:${t.text}!important}
-      [data-theme="dark"] input,[data-theme="dark"] select,[data-theme="dark"] textarea{background:${t.surface}!important;color:${t.text}!important;border-color:${t.border}!important}
-      [data-theme="dark"] th{background:${t.bg}!important;color:${t.text}!important}
+      html,body{background:${t.bg}!important}
+      [data-theme="dark"] [style*="background: rgb(240, 242, 245)"],
+      [data-theme="dark"] [style*="background:#f0f2f5"],
+      [data-theme="dark"] [style*="background: #f0f2f5"],
+      [data-theme="dark"] [style*="background: rgb(241, 245, 249)"],
+      [data-theme="dark"] [style*="background:#f1f5f9"],
+      [data-theme="dark"] [style*="background: #f1f5f9"]{background:${t.bg}!important}
+      [data-theme="dark"] [style*="background: rgb(7, 94, 84)"],
+      [data-theme="dark"] [style*="background:#075E54"],
+      [data-theme="dark"] [style*="background: #075E54"]{background:${t.sidebar}!important}
+      [data-theme="dark"] [style*="background: rgb(37, 211, 102)"],
+      [data-theme="dark"] [style*="background:#25D366"],
+      [data-theme="dark"] [style*="background: #25D366"]{background:${t.sidebar}!important;border-color:${t.sidebar}!important}
+      [data-theme="dark"] [style*="color: rgb(37, 211, 102)"],
+      [data-theme="dark"] [style*="color:#25D366"],
+      [data-theme="dark"] [style*="color: #25D366"]{color:${t.sidebar}!important}
     `
   } else { s.textContent='' }
 }
@@ -2067,6 +2073,7 @@ async function attribuerCompteTiers({ tableTiers, tiersId, collectif, libelleCol
 }
 
 const TYPES_AVANCE = ['Labour','Semences','Engrais','Herbicide','Crédits']
+const numFR = (v) => parseFloat(String(v==null?'':v).replace(/\s/g,'').replace(',','.')) || 0
 const UNITES_AVANCE = { Labour:'ha', Semences:'kg', Engrais:'sac', Herbicide:'L', 'Crédits':'FCFA' }
 
 function TiersPage({ table, title, titleSingle, icon, companies, companyId, toast, extraFields, readOnly=false }) {
@@ -2135,9 +2142,9 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
   const persistAvances = async (fournId, cid, uidp) => {
     if (table!=='compta_fournisseurs' || !fournId) return
     await supabase.from('compta_avances_fournisseur').delete().eq('fournisseur_id', fournId)
-    const lignes = (avances||[]).filter(a => a.type_avance && ((parseFloat(a.quantite_recue)||0) || (parseFloat(a.montant)||0)))
+    const lignes = (avances||[]).filter(a => a.type_avance && (numFR(a.quantite_recue) || numFR(a.montant)))
     if (lignes.length) {
-      const rows = lignes.map(a => ({ fournisseur_id:fournId, company_id:cid, user_id:uidp, type_avance:a.type_avance, quantite_recue:parseFloat(a.quantite_recue)||0, valeur_remboursement:parseFloat(a.montant)||0 }))
+      const rows = lignes.map(a => ({ fournisseur_id:fournId, company_id:cid, user_id:uidp, type_avance:a.type_avance, quantite_recue:numFR(a.quantite_recue), valeur_remboursement:numFR(a.montant) }))
       await supabase.from('compta_avances_fournisseur').insert(rows)
     }
   }
@@ -2152,7 +2159,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     const fournExtra = table==='compta_fournisseurs' ? ['prix_contrat'] : []
     const fields = ['company_id','nom','telephone','provenance','cip','ifu','email','adresse', ...mentorFields, ...locFields, ...fournExtra, ...(extraFields?.names||[])]
     const pay = {}; fields.forEach(k=>{ if(form[k]!==undefined) pay[k]=form[k] })
-    if (table==='compta_fournisseurs') { pay.prix_contrat = (form.prix_contrat===''||form.prix_contrat==null) ? null : (parseFloat(form.prix_contrat)||0) }
+    if (table==='compta_fournisseurs') { pay.prix_contrat = (form.prix_contrat===''||form.prix_contrat==null) ? null : numFR(form.prix_contrat) }
     // Fix: ensure company_id is a valid non-empty value
     if (!pay.company_id) {
       const prof = (await supabase.from('compta_profiles').select('company_id').eq('id', uid).single()).data
@@ -2520,8 +2527,8 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
           </Grid>
 
           {table==='compta_fournisseurs' && (() => {
-            const totalAvance = (avances||[]).reduce((sm,a)=>sm+(parseFloat(a.montant)||0),0)
-            const prixContrat = parseFloat(form.prix_contrat)||0
+            const totalAvance = (avances||[]).reduce((sm,a)=>sm+numFR(a.montant),0)
+            const prixContrat = numFR(form.prix_contrat)
             const rizPaddy = prixContrat>0 ? totalAvance/prixContrat : 0
             return (
               <div style={{marginBottom:16}}>
@@ -2529,12 +2536,12 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
                   <label style={{fontSize:13,fontWeight:700,color:'#334155'}}>💰 Avances reçues</label>
                   <Btn sm type="button" variant="secondary" onClick={addAvance}>+ Ajouter une ligne</Btn>
                 </div>
-                <div style={{border:'1px solid #e2e8f0',borderRadius:8,overflow:'hidden'}}>
-                  <table style={{width:'100%',borderCollapse:'collapse',fontSize:13}}>
+                <div style={{border:'1px solid #e2e8f0',borderRadius:8,overflowX:'auto'}}>
+                  <table style={{width:'100%',minWidth:480,tableLayout:'fixed',borderCollapse:'collapse',fontSize:13}}>
                     <thead><tr style={{background:'#f8fafc'}}>
-                      <th style={{padding:'8px 10px',textAlign:'left',fontSize:12,color:'#475569'}}>Type d'avance</th>
-                      <th style={{padding:'8px 10px',textAlign:'right',fontSize:12,color:'#475569'}}>Quantité reçue</th>
-                      <th style={{padding:'8px 10px',textAlign:'right',fontSize:12,color:'#475569'}}>Montant (FCFA)</th>
+                      <th style={{width:'42%',padding:'8px 10px',textAlign:'left',fontSize:12,color:'#475569'}}>Type d'avance</th>
+                      <th style={{width:'27%',padding:'8px 10px',textAlign:'right',fontSize:12,color:'#475569'}}>Quantité reçue</th>
+                      <th style={{width:'27%',padding:'8px 10px',textAlign:'right',fontSize:12,color:'#475569'}}>Montant (FCFA)</th>
                       <th style={{width:44}}></th>
                     </tr></thead>
                     <tbody>
@@ -2544,20 +2551,20 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
                         <tr key={i} style={{borderTop:'1px solid #f1f5f9'}}>
                           <td style={{padding:'6px 8px'}}>
                             <select value={a.type_avance} onChange={e=>setAvanceField(i,'type_avance',e.target.value)}
-                              style={{width:'100%',padding:'7px 8px',border:'1px solid #cbd5e1',borderRadius:6,fontSize:13}}>
+                              style={{width:'100%',padding:'7px 6px',border:'1px solid #cbd5e1',borderRadius:6,fontSize:13,minWidth:0,boxSizing:'border-box'}}>
                               {TYPES_AVANCE.map(t=> <option key={t} value={t}>{t}</option>)}
                             </select>
                           </td>
                           <td style={{padding:'6px 8px'}}>
                             <div style={{display:'flex',alignItems:'center',gap:6}}>
-                              <input type="number" value={a.quantite_recue} onChange={e=>setAvanceField(i,'quantite_recue',e.target.value)}
-                                style={{width:'100%',padding:'7px 8px',border:'1px solid #cbd5e1',borderRadius:6,fontSize:13,textAlign:'right'}} />
-                              <span style={{fontSize:12,color:'#64748b',minWidth:30,fontWeight:600}}>{UNITES_AVANCE[a.type_avance]||''}</span>
+                              <input type="text" inputMode="decimal" value={a.quantite_recue} onChange={e=>setAvanceField(i,'quantite_recue',e.target.value)}
+                                style={{width:'100%',minWidth:0,padding:'7px 8px',border:'1px solid #cbd5e1',borderRadius:6,fontSize:13,textAlign:'right',boxSizing:'border-box'}} />
+                              <span style={{fontSize:12,color:'#64748b',minWidth:26,fontWeight:600}}>{UNITES_AVANCE[a.type_avance]||''}</span>
                             </div>
                           </td>
                           <td style={{padding:'6px 8px'}}>
-                            <input type="number" value={a.montant} onChange={e=>setAvanceField(i,'montant',e.target.value)}
-                              style={{width:'100%',padding:'7px 8px',border:'1px solid #cbd5e1',borderRadius:6,fontSize:13,textAlign:'right'}} />
+                            <input type="text" inputMode="decimal" value={a.montant} onChange={e=>setAvanceField(i,'montant',e.target.value)}
+                              style={{width:'100%',minWidth:0,padding:'7px 8px',border:'1px solid #cbd5e1',borderRadius:6,fontSize:13,textAlign:'right',boxSizing:'border-box'}} />
                           </td>
                           <td style={{padding:'6px 8px',textAlign:'center'}}>
                             <button type="button" onClick={()=>delAvance(i)} title="Supprimer"
@@ -2579,8 +2586,8 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
                 <div style={{marginTop:12,display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
                   <div>
                     <label style={{display:'block',fontSize:12.5,fontWeight:600,color:'#374151',marginBottom:5}}>Prix /contrat (FCFA)</label>
-                    <input type="number" name="prix_contrat" value={form.prix_contrat||''} onChange={set}
-                      style={{width:'100%',padding:'9px 12px',border:'1px solid #d1d5db',borderRadius:8,fontSize:13.5}} />
+                    <input type="text" inputMode="decimal" name="prix_contrat" value={form.prix_contrat||''} onChange={set}
+                      style={{width:'100%',padding:'9px 12px',border:'1px solid #d1d5db',borderRadius:8,fontSize:13.5,boxSizing:'border-box'}} />
                   </div>
                   <div>
                     <label style={{display:'block',fontSize:12.5,fontWeight:600,color:'#374151',marginBottom:5}}>Riz paddy équivalente (kg)</label>
@@ -8452,10 +8459,10 @@ function ParametresPage({ toast, companies, companyId }) {
             <span style={{fontSize:13,fontWeight:600,color:'#1e293b'}}>Mode Clair</span>
             {theme==='light' && <span style={{fontSize:11,color:'#16a34a',fontWeight:700}}>✓ Actif</span>}
           </button>
-          <button onClick={()=>switchTheme('dark')} style={{flex:1,maxWidth:200,padding:'14px',borderRadius:10,cursor:'pointer',border:theme==='dark'?'2px solid #25D366':'1px solid #e2e8f0',background:theme==='dark'?'#1f2c34':'white',display:'flex',flexDirection:'column',alignItems:'center',gap:8}}>
-            <span style={{fontSize:28}}>🌙</span>
-            <span style={{fontSize:13,fontWeight:600,color:theme==='dark'?'#e9edef':'#1e293b'}}>Mode Sombre</span>
-            {theme==='dark' && <span style={{fontSize:11,color:'#25D366',fontWeight:700}}>✓ Actif</span>}
+          <button onClick={()=>switchTheme('dark')} style={{flex:1,maxWidth:200,padding:'14px',borderRadius:10,cursor:'pointer',border:theme==='dark'?'2px solid #6C5CE7':'1px solid #e2e8f0',background:theme==='dark'?'#F3F1FE':'white',display:'flex',flexDirection:'column',alignItems:'center',gap:8}}>
+            <span style={{fontSize:28}}>🟣</span>
+            <span style={{fontSize:13,fontWeight:600,color:'#1e293b'}}>Design Immo</span>
+            {theme==='dark' && <span style={{fontSize:11,color:'#6C5CE7',fontWeight:700}}>✓ Actif</span>}
           </button>
         </div>
       </div>
