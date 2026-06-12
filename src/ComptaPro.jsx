@@ -1798,6 +1798,7 @@ function printFicheTiers(it, kind='fournisseur') {
     'cooperative_affiliee','numero_contrat','ifu','cip',
     'mentor_nom','mentor_telephone','mentor_cip',
     'departement','commune','arrondissement','village','nom_bas_fonds','superficie_bas_fonds',
+    '_avances','prix_contrat',
   ])
   const prettify = k => (LABELS[k] || k.replace(/_/g,' ').replace(/^./,c=>c.toUpperCase()))
 
@@ -1808,6 +1809,23 @@ function printFicheTiers(it, kind='fournisseur') {
   const autresBloc = autres.length ? `
     <h3 style="margin:18px 0 6px;font-size:11pt;color:#075E54">🗂️ Autres informations</h3>
     <table><tbody>${rows(autres)}</tbody></table>` : ''
+
+  // Bloc Avances reçues (fournisseurs)
+  const UNITES_PDF = { Labour:'ha', Semences:'kg', Engrais:'sac', Herbicide:'L', 'Crédits':'FCFA' }
+  const avList = Array.isArray(it._avances) ? it._avances : []
+  const totalAv = avList.reduce((sm,a)=>sm+(Number(a.valeur_remboursement)||0),0)
+  const prixC = Number(it.prix_contrat)||0
+  const rizP = prixC>0 ? totalAv/prixC : 0
+  const avancesBloc = (isFourn && (avList.length || prixC>0)) ? `
+    <h3 style="margin:18px 0 6px;font-size:11pt;color:#075E54">💰 Avances reçues</h3>
+    <table><thead><tr><th style="text-align:left">Type d'avance</th><th class="r">Quantité reçue</th><th class="r">Montant (FCFA)</th></tr></thead><tbody>
+      ${avList.map(a=>`<tr><td>${a.type_avance||'—'}</td><td class="r">${(Number(a.quantite_recue)||0).toLocaleString('fr-FR')} ${UNITES_PDF[a.type_avance]||''}</td><td class="r">${(Number(a.valeur_remboursement)||0).toLocaleString('fr-FR')}</td></tr>`).join('')}
+      <tr style="font-weight:700;background:#f1f5f9"><td colspan="2" class="r">Total avance reçue</td><td class="r">${Math.round(totalAv).toLocaleString('fr-FR')} FCFA</td></tr>
+    </tbody></table>
+    <table style="margin-top:8px"><tbody>
+      <tr><td style="font-weight:600;width:42%">Prix /contrat</td><td class="r" style="text-align:left">${prixC>0?prixC.toLocaleString('fr-FR')+' FCFA':'—'}</td></tr>
+      <tr><td style="font-weight:600;width:42%">Riz paddy équivalente</td><td class="r" style="text-align:left">${prixC>0?rizP.toLocaleString('fr-FR',{maximumFractionDigits:2})+' kg':'—'}</td></tr>
+    </tbody></table>` : ''
 
   const mentorBloc = (isFourn && !isMorale) ? `
     <h3 style="margin:18px 0 6px;font-size:11pt;color:#075E54">👤 Informations du mentor</h3>
@@ -1859,6 +1877,8 @@ function printFicheTiers(it, kind='fournisseur') {
     ])}</tbody></table>` : ''}
 
     ${autresBloc}
+
+    ${avancesBloc}
 
     <div class="signatures" style="margin-top:26px">
       <div class="sig-box">Signature du ${labelTiers}</div>
@@ -2093,7 +2113,17 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     // sinon fallback sur user_id
     if (companyId) q = q.eq('company_id', companyId)
     else q = q.eq('user_id', uid)
-    const { data } = await q; setItems(data||[])
+    const { data } = await q
+    let rowsF = data||[]
+    if (table==='compta_fournisseurs' && rowsF.length) {
+      const ids = rowsF.map(r=>r.id)
+      const { data:av } = await supabase.from('compta_avances_fournisseur')
+        .select('fournisseur_id,type_avance,quantite_recue,valeur_remboursement').in('fournisseur_id', ids)
+      const byF = {}
+      ;(av||[]).forEach(a=>{ (byF[a.fournisseur_id]=byF[a.fournisseur_id]||[]).push(a) })
+      rowsF = rowsF.map(r=>({ ...r, _avances: byF[r.id]||[] }))
+    }
+    setItems(rowsF)
   },[table,companyId])
 
   useEffect(()=>{ load() },[load])
@@ -2213,9 +2243,9 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
   const canImport = table==='compta_fournisseurs' || table==='compta_clients'
 
   const downloadTemplate = () => {
-    const headers = ['type','nom','nom_societe','telephone','provenance','cooperative_affiliee','numero_contrat','cip','ifu','email','adresse','mentor_nom','mentor_telephone','mentor_cip','departement','commune','arrondissement','village','nom_bas_fonds','superficie_bas_fonds']
-    const ex1 = ['physique','HAYA Martin','','22997000000','Tanguiéta','Coop PINGOU','CTR-2026-001','','3202012190967','martin@exemple.com','BP 707','KOUDORO Jean','22995000000','CIP9988','Atacora','Tanguiéta','Cotiakou','Pingou','Bas-fonds Pingou','2.5']
-    const ex2 = ['morale','','SARL EXEMPLE','22996000000','Natitingou','','','','3201998877665','contact@exemple.com','Cotonou','','','','','','','','','']
+    const headers = ['type','nom','nom_societe','telephone','provenance','cooperative_affiliee','numero_contrat','cip','ifu','email','adresse','mentor_nom','mentor_telephone','mentor_cip','departement','commune','arrondissement','village','nom_bas_fonds','superficie_bas_fonds','prix_contrat','labour_qte','labour_montant','semences_qte','semences_montant','engrais_qte','engrais_montant','herbicide_qte','herbicide_montant','credits_qte','credits_montant']
+    const ex1 = ['physique','HAYA Martin','','22997000000','Tanguiéta','Coop PINGOU','CTR-2026-001','','3202012190967','martin@exemple.com','BP 707','KOUDORO Jean','22995000000','CIP9988','Atacora','Tanguiéta','Cotiakou','Pingou','Bas-fonds Pingou','2.5','150000','2.5','50000','10','30000','','','1.5','15000','','']
+    const ex2 = ['morale','','SARL EXEMPLE','22996000000','Natitingou','','','','3201998877665','contact@exemple.com','Cotonou','','','','','','','','','','','','','','','','','','','','']
     const csv = [headers.join(';'), ex1.join(';'), ex2.join(';')].join('\n')
     const blob = new Blob(['\ufeff'+csv], {type:'text/csv;charset=utf-8;'})
     const url = URL.createObjectURL(blob)
@@ -2241,6 +2271,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
       if(!cid){ toast.error('Aucune société active'); setImporting(false); return }
 
       const rows = []
+      const avancesPerRow = []
       for(let i=1;i<lines.length;i++){
         const vals = lines[i].split(delim).map(v=>v.trim())
         const obj = {}
@@ -2249,6 +2280,8 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
         const t = (obj.type||'physique').toLowerCase()
         if(t==='morale' && !obj.nom_societe){ continue }
         if(t!=='morale' && !obj.nom){ continue }
+        const avTypesImp = [['Labour','labour_qte','labour_montant'],['Semences','semences_qte','semences_montant'],['Engrais','engrais_qte','engrais_montant'],['Herbicide','herbicide_qte','herbicide_montant'],['Crédits','credits_qte','credits_montant']]
+        const avsImp = avTypesImp.map(([ty,qk,mk])=>({ type_avance:ty, quantite_recue: parseFloat(String(obj[qk]||'').replace(',','.'))||0, valeur_remboursement: parseFloat(String(obj[mk]||'').replace(',','.'))||0 })).filter(a=>a.quantite_recue||a.valeur_remboursement)
         rows.push({
           company_id: cid, user_id: uid,
           type: t==='morale'?'morale':'physique',
@@ -2269,8 +2302,10 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
             village: obj.village||null,
             nom_bas_fonds: obj.nom_bas_fonds||null,
             superficie_bas_fonds: obj.superficie_bas_fonds ? parseFloat(obj.superficie_bas_fonds.replace(',','.'))||null : null,
+            prix_contrat: obj.prix_contrat ? parseFloat(String(obj.prix_contrat).replace(',','.'))||null : null,
           } : {})
         })
+        avancesPerRow.push(table==='compta_fournisseurs' ? avsImp : [])
       }
       if(rows.length===0){ toast.error('Aucune ligne valide trouvée'); setImporting(false); return }
       const { data:insRows, error } = await supabase.from(table).insert(rows).select('id,type,nom,nom_societe')
@@ -2288,6 +2323,12 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
           await supabase.from(table).update({ numero_compte:numero }).eq('id', r.id)
           nums.push(numero)
         }
+      }
+      // Avances reçues importées (fournisseurs)
+      if (table==='compta_fournisseurs') {
+        const avRows = []
+        ;(insRows||[]).forEach((r,idx)=>{ (avancesPerRow[idx]||[]).forEach(a=>avRows.push({ ...a, fournisseur_id:r.id, company_id:cid, user_id:uid })) })
+        if (avRows.length) await supabase.from('compta_avances_fournisseur').insert(avRows)
       }
       toast.success(`${rows.length} ${titleSingle.toLowerCase()}(s) importé(s) !`)
       load()
@@ -2319,6 +2360,10 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     'Village': it.village||'',
     'Bas-fonds': it.nom_bas_fonds||'',
     'Superficie (ha)': it.superficie_bas_fonds||'',
+    'Total avance (FCFA)': (Array.isArray(it._avances)?it._avances:[]).reduce((sm,a)=>sm+(Number(a.valeur_remboursement)||0),0) || '',
+    'Prix/contrat (FCFA)': it.prix_contrat||'',
+    'Riz paddy équiv. (kg)': (()=>{ const tt=(Array.isArray(it._avances)?it._avances:[]).reduce((sm,a)=>sm+(Number(a.valeur_remboursement)||0),0); const pp=Number(it.prix_contrat)||0; return pp>0?(tt/pp).toFixed(2):'' })(),
+    'Détail avances': (Array.isArray(it._avances)?it._avances:[]).map(a=>`${a.type_avance}: ${Number(a.quantite_recue)||0} = ${Number(a.valeur_remboursement)||0}`).join(' | '),
   }[c] ?? '')
 
   const exportExcelTiers = () => {
@@ -2326,7 +2371,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
       'Type','Nom','Téléphone','Provenance',
       ...(isFourn?['Coopérative','N° Contrat']:[]),
       'N° IFU','N° CIP','Email','Adresse',
-      ...(isFourn?['Département','Commune','Arrondissement','Village','Bas-fonds','Superficie (ha)']:[]),
+      ...(isFourn?['Département','Commune','Arrondissement','Village','Bas-fonds','Superficie (ha)','Total avance (FCFA)','Prix/contrat (FCFA)','Riz paddy équiv. (kg)','Détail avances']:[]),
     ]
     const thead = cols.map(c=>`<th style="background:#eceff3;color:#1a1a1a;padding:6px 10px;white-space:nowrap">${c}</th>`).join('')
     const tbody = filtered.map((it,i)=>`<tr style="background:${i%2===0?'#f8fafc':'white'}">${cols.map(c=>`<td>${tiersVal(it,c)}</td>`).join('')}</tr>`).join('')
@@ -2352,6 +2397,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
       {label:'Type'},{label:'Nom'},{label:'Téléphone'},{label:'Provenance'},
       ...(isFourn?[{label:'Coopérative'},{label:'N° Contrat'}]:[]),
       {label:'IFU'},{label:'CIP'},
+      ...(isFourn?[{label:'Total avance'},{label:'Prix/contrat'},{label:'Riz paddy (kg)'}]:[]),
     ]
     const rows = filtered.map(it=>[
       it.type==='morale'?'Société':'Physique',
@@ -2361,6 +2407,11 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
       ...(isFourn?[it.cooperative_affiliee||'—', it.numero_contrat||'—']:[]),
       it.ifu||'—',
       it.cip||'—',
+      ...(isFourn?[
+        (()=>{ const tt=(Array.isArray(it._avances)?it._avances:[]).reduce((sm,a)=>sm+(Number(a.valeur_remboursement)||0),0); return tt?Math.round(tt).toLocaleString('fr-FR'):'—' })(),
+        it.prix_contrat?Number(it.prix_contrat).toLocaleString('fr-FR'):'—',
+        (()=>{ const tt=(Array.isArray(it._avances)?it._avances:[]).reduce((sm,a)=>sm+(Number(a.valeur_remboursement)||0),0); const pp=Number(it.prix_contrat)||0; return pp>0?(tt/pp).toLocaleString('fr-FR',{maximumFractionDigits:2}):'—' })(),
+      ]:[]),
     ])
     printFilteredList({ title, companyName, headers, rows })
   }
