@@ -2189,7 +2189,11 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     const fournExtra = table==='compta_fournisseurs' ? ['prix_contrat'] : []
     const fields = ['company_id','nom','telephone','provenance','cip','ifu','email','adresse', ...mentorFields, ...locFields, ...fournExtra, ...(extraFields?.names||[])]
     const pay = {}; fields.forEach(k=>{ if(form[k]!==undefined) pay[k]=form[k] })
-    if (table==='compta_fournisseurs') { pay.prix_contrat = (form.prix_contrat===''||form.prix_contrat==null) ? null : numFR(form.prix_contrat) }
+    // Normaliser les champs numériques (accepter les décimales avec virgule : 0,5)
+    ;['superficie_bas_fonds','prix_contrat'].forEach(k=>{
+      if (!(k in pay)) return
+      pay[k] = (pay[k]===''||pay[k]==null) ? null : numFR(pay[k])
+    })
     // Fix: ensure company_id is a valid non-empty value
     if (!pay.company_id) {
       const prof = (await supabase.from('compta_profiles').select('company_id').eq('id', uid).single()).data
@@ -2572,7 +2576,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
                 <Input label="Arrondissement" name="arrondissement" value={form.arrondissement||''} onChange={set} />
                 <Input label="Village" name="village" value={form.village||''} onChange={set} />
                 <Input label="Nom du bas-fonds" name="nom_bas_fonds" value={form.nom_bas_fonds||''} onChange={set} />
-                <Input label="Superficie bas-fonds (ha)" name="superficie_bas_fonds" type="number" value={form.superficie_bas_fonds||''} onChange={set} />
+                <Input label="Superficie bas-fonds (ha)" name="superficie_bas_fonds" type="text" inputMode="decimal" value={form.superficie_bas_fonds||''} onChange={set} />
               </>
             )}
           </Grid>
