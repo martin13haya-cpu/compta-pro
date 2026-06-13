@@ -1427,6 +1427,7 @@ const NAV = [
   { id:'grand_livre',        icon:'📚', label:'Grand-Livre' },
   { id:'ecritures',          icon:'🧾', label:'Saisie Comptable' },
   { id:'balance',            icon:'⚖️', label:'Balance' },
+  { id:'etats_financiers',   icon:'📑', label:'États Financiers' },
   { id:'controle_budget',    icon:'📊', label:'Contrôle Budgétaire' },
 ]
 
@@ -4841,7 +4842,7 @@ const ALL_SECTIONS = [
   ['epierrage','Épierrage'],['etuvage_paiements','Paiements étuvage'],
   ['docs_admin','Documents administratifs'],
   ['journal_caisse','Journal Caisse'],['journal_banque','Journal Banque'],
-  ['journal_mobile','Journal Mobile Money'],['plan_comptable','Plan Comptable'],['grand_livre','Grand-Livre'],['ecritures','Saisie Comptable'],['balance','Balance'],
+  ['journal_mobile','Journal Mobile Money'],['plan_comptable','Plan Comptable'],['grand_livre','Grand-Livre'],['ecritures','Saisie Comptable'],['balance','Balance'],['etats_financiers','États Financiers'],
 ]
 
 const SECTION_GROUPS = [
@@ -4852,7 +4853,7 @@ const SECTION_GROUPS = [
   {group:'Étuveuses', ids:['etv_repertoire','etv_avances','etv_bc','etv_br','etv_entrees','etv_sorties','etv_inventaire','etv_tresorerie']},
   {group:'Achats', ids:['achats','lots_semi_finis','epierrage','etuvage_paiements']},
   {group:'Documents', ids:['docs_admin']},
-  {group:'Comptabilité', ids:['journal_caisse','journal_banque','journal_mobile','plan_comptable','grand_livre','ecritures','balance']},
+  {group:'Comptabilité', ids:['journal_caisse','journal_banque','journal_mobile','plan_comptable','grand_livre','ecritures','balance','etats_financiers']},
 ]
 
 // ── MES UTILISATEURS (Admin Société) ─────────────────────────────────────────
@@ -7393,6 +7394,595 @@ function GrandLivrePage({ companies, companyId, toast, readOnly=false }) {
 }
 
 // ── BALANCE GÉNÉRALE ──────────────────────────────────────────────────────────
+// ===== ÉTATS FINANCIERS SYSCOHADA (inséré) =====
+// ════════════════════════════════════════════════════════════════════════════
+//  ÉTATS FINANCIERS SYSCOHADA — MOTEUR DE MAPPING (Phase 1 : Bilan + Compte de Résultat)
+//  À coller dans ComptaPro.jsx (avant la page EtatsFinanciersPage).
+//
+//  Source des soldes N  : ta Balance Générale (soldeD / soldeC par compte, via totauxCompte).
+//  Source des soldes N-1 : balance importée (table compta_balance_n1).
+//  Report à nouveau      : formulaire (table compta_report_a_nouveau) → poste CH.
+//  Résultat net          : calculé (XI du Compte de Résultat) → injecté au poste CJ.
+//
+//  Principe : chaque compte est rattaché à un poste REF par le PRÉFIXE de son n°.
+//  Robuste quelle que soit la longueur du compte (4 à 8 chiffres, sous-comptes tiers inclus).
+// ════════════════════════════════════════════════════════════════════════════
+
+// ── Helper : un n° de compte correspond-il à un ensemble de préfixes ? ─────────
+const _startsAny = (numero, prefixes) => {
+  const n = String(numero || '')
+  return prefixes.some(p => n.startsWith(p))
+}
+// Match avec exclusions (ex. classe 2 SAUF 28/29)
+const _match = (numero, prefixes, exclude = []) =>
+  _startsAny(numero, prefixes) && !_startsAny(numero, exclude)
+
+// soldeD = solde débiteur, soldeC = solde créditeur d'un compte
+// On somme le DÉBITEUR pour les postes d'actif/charges, le CRÉDITEUR pour passif/produits.
+const _sumD = (comptes, prefixes, exclude = []) =>
+  comptes.filter(c => _match(c.numero, prefixes, exclude)).reduce((s, c) => s + (c.soldeD || 0), 0)
+const _sumC = (comptes, prefixes, exclude = []) =>
+  comptes.filter(c => _match(c.numero, prefixes, exclude)).reduce((s, c) => s + (c.soldeC || 0), 0)
+// Solde net signé (D - C) — utile pour variations de stocks & report à nouveau
+const _sumNet = (comptes, prefixes, exclude = []) =>
+  comptes.filter(c => _match(c.numero, prefixes, exclude)).reduce((s, c) => s + (c.soldeD || 0) - (c.soldeC || 0), 0)
+
+// ════════════════════════════════════════════════════════════════════════════
+//  BILAN — ACTIF  (colonnes : BRUT / AMORT-DÉPRÉC / NET-N / NET-N-1)
+//  brut    = préfixes de comptes d'actif (solde débiteur)
+//  ad      = préfixes des amortissements/dépréciations associés (solde créditeur)
+// ════════════════════════════════════════════════════════════════════════════
+const ACTIF_DETAIL = [
+  // ── Immobilisations incorporelles (21) / amort 281 / déprec 291 ──
+  { ref:'AE', lib:'Frais de développement et de prospection', note:'3',  brut:['211','219'],            ad:['2811','2911'] },
+  { ref:'AF', lib:'Brevets, licences, logiciels et droits similaires', note:'3', brut:['212','213'],   ad:['2812','2813','2912','2913'] },
+  { ref:'AG', lib:'Fonds commercial et droit au bail', note:'3', brut:['215','216'],                    ad:['2815','2816','2915','2916'] },
+  { ref:'AH', lib:'Autres immobilisations incorporelles', note:'3', brut:['214','217','218'],           ad:['2814','2817','2818','2914','2917','2918','2919'] },
+  // ── Immobilisations corporelles (22,23,24) / amort 282-284 / déprec 292-294 ──
+  { ref:'AJ', lib:'Terrains', note:'3', brut:['22'],                                                    ad:['282','292'] },
+  { ref:'AK', lib:'Bâtiments', note:'3', brut:['231','232','233','237','2391','2393'],                  ad:['2831','2832','2833','2837','2931','2932','2933','2937'] },
+  { ref:'AL', lib:'Aménagements, agencements et installations', note:'3', brut:['234','235','238','2392','2394','2395','2398'], ad:['2834','2835','2838','2934','2935','2938','2939'] },
+  { ref:'AM', lib:'Matériel, mobilier et actifs biologiques', note:'3', brut:['241','242','243','244','246','247','248','2491','2492','2493','2494','2496','2497','2498'], ad:['2841','2842','2843','2844','2846','2847','2848','2941','2942','2943','2944','2946','2947','2948','2949'] },
+  { ref:'AN', lib:'Matériel de transport', note:'3', brut:['245','2495'],                                ad:['2845','2945'] },
+  { ref:'AP', lib:'Avances et acomptes versés sur immobilisations', note:'3', brut:['25'],              ad:['295'] },
+  // ── Immobilisations financières (26,27) / déprec 296,297 ──
+  { ref:'AR', lib:'Titres de participation', note:'4', brut:['26'],                                     ad:['296'] },
+  { ref:'AS', lib:'Autres immobilisations financières', note:'4', brut:['27'],                          ad:['297'] },
+  // ── Actif circulant ──
+  { ref:'BA', lib:'ACTIF CIRCULANT HAO', note:'5', brut:['485','488'],                                  ad:['498'] },
+  { ref:'BB', lib:'STOCKS ET ENCOURS', note:'6', brut:['31','32','33','34','35','36','37','38'],         ad:['39'] },
+  { ref:'BH', lib:'Fournisseurs, avances versées', note:'17', brut:['409'],                             ad:['490'] },
+  { ref:'BI', lib:'Clients', note:'7', brut:['411','412','413','414','416','418'],                       ad:['491'] },
+  { ref:'BJ', lib:'Autres créances', note:'8', brut:['421','423','425','4271','428','431','432','433','438','441','445','447','448','449','461','462','463','465','466','467','471','472','473','4746','4751','476','488'], ad:['492','493','494','495','496','497'] },
+  // ── Trésorerie-Actif ──
+  { ref:'BQ', lib:'Titres de placement', note:'9',  brut:['50'],                                        ad:['590'] },
+  { ref:'BR', lib:'Valeurs à encaisser', note:'10', brut:['51'],                                        ad:['591'] },
+  { ref:'BS', lib:'Banques, chèques postaux, caisse et assimilés', note:'11', brut:['52','53','54','55','57','58'], ad:['592','593','594'] },
+  { ref:'BU', lib:'Écart de conversion-Actif', note:'12', brut:['478'],                                 ad:[] },
+]
+// Sous-totaux & totaux de l'ACTIF (calculés à partir des détails ci-dessus)
+const ACTIF_TOTAUX = {
+  AD: ['AE','AF','AG','AH'],                                  // Immob. incorporelles
+  AI: ['AJ','AK','AL','AM','AN','AP'],                        // Immob. corporelles
+  AQ: ['AR','AS'],                                            // Immob. financières
+  AZ: ['AD','AI','AQ'],                                       // TOTAL ACTIF IMMOBILISÉ
+  BG: ['BH','BI','BJ'],                                       // Créances et emplois assimilés
+  BK: ['BA','BB','BG'],                                       // TOTAL ACTIF CIRCULANT
+  BT: ['BQ','BR','BS'],                                       // TOTAL TRÉSORERIE-ACTIF
+  BZ: ['AZ','BK','BT','BU'],                                  // TOTAL GÉNÉRAL
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  BILAN — PASSIF  (colonnes : NET-N / NET-N-1)  — soldes créditeurs
+// ════════════════════════════════════════════════════════════════════════════
+const PASSIF_DETAIL = [
+  { ref:'CA', lib:'Capital', note:'13', cred:['101','102','103','104'] },
+  { ref:'CB', lib:'Apporteurs capital non appelé (-)', note:'13', cred:['109'], signe:-1 },
+  { ref:'CD', lib:'Primes liées au capital social', note:'14', cred:['105'] },
+  { ref:'CE', lib:"Écarts de réévaluation", note:'3e', cred:['106'] },
+  { ref:'CF', lib:'Réserves indisponibles', note:'14', cred:['111','112','113'] },
+  { ref:'CG', lib:'Réserves libres', note:'14', cred:['118'] },
+  { ref:'CH', lib:'Report à nouveau (+ ou -)', note:'14', special:'report_a_nouveau' },  // ← formulaire
+  { ref:'CJ', lib:"Résultat net de l'exercice (bénéfice + ou perte -)", note:'', special:'resultat_net' }, // ← XI calculé
+  { ref:'CL', lib:"Subventions d'investissement", note:'15', cred:['14'] },
+  { ref:'CM', lib:'Provisions réglementées', note:'15', cred:['15'] },
+  // ── Dettes financières & ressources assimilées ──
+  { ref:'DA', lib:'Emprunts et dettes financières diverses', note:'16', cred:['16','181','182','183','184','185','188'] },
+  { ref:'DB', lib:'Dettes de location acquisition', note:'16', cred:['17'] },
+  { ref:'DC', lib:'Provisions pour risques et charges', note:'16', cred:['19'] },
+  // ── Passif circulant ──
+  { ref:'DH', lib:'Dettes circulantes HAO', note:'5',  cred:['481','482','484'] },
+  { ref:'DI', lib:'Clients, avances reçues', note:'7',  cred:['419'] },
+  { ref:'DJ', lib:"Fournisseurs d'exploitation", note:'17', cred:['401','402','408'] },
+  { ref:'DK', lib:'Dettes fiscales et sociales', note:'18', cred:['422','423','424','425','427','428','431','432','433','438','441','442','443','444','446','447','448'] },
+  { ref:'DM', lib:'Autres dettes', note:'19', cred:['464','465','466','467','4712','472','4747','4752','477'] },
+  { ref:'DN', lib:'Provisions pour risques à court terme', note:'19', cred:['499'] },
+  // ── Trésorerie-Passif ──
+  { ref:'DQ', lib:"Banques, crédits d'escompte", note:'20', cred:['564','565'] },
+  { ref:'DR', lib:'Banques, établissements financiers et crédits de trésorerie', note:'20', cred:['561','566'] },
+  { ref:'DV', lib:'Écart de conversion-Passif', note:'12', cred:['479'] },
+]
+const PASSIF_TOTAUX = {
+  CP: ['CA','CB','CD','CE','CF','CG','CH','CJ','CL','CM'],    // TOTAL CAPITAUX PROPRES
+  DD: ['DA','DB','DC'],                                       // TOTAL DETTES FINANCIÈRES
+  DF: ['CP','DD'],                                            // TOTAL RESSOURCES STABLES
+  DP: ['DH','DI','DJ','DK','DM','DN'],                        // TOTAL PASSIF CIRCULANT
+  DT: ['DQ','DR'],                                            // TOTAL TRÉSORERIE-PASSIF
+  DZ: ['DF','DP','DT','DV'],                                  // TOTAL GÉNÉRAL
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  COMPTE DE RÉSULTAT  (cascade de soldes intermédiaires de gestion)
+//  signe +1 : produit (solde créditeur) ; signe -1 : charge (solde débiteur)
+//  var=true : variation de stock → solde net signé (peut être + ou -)
+// ════════════════════════════════════════════════════════════════════════════
+const CR_LIGNES = [
+  { ref:'TA', lib:'Ventes de marchandises', note:'21', signe:+1, cpt:['701'] },
+  { ref:'RA', lib:'Achats de marchandises', note:'22', signe:-1, cpt:['601'] },
+  { ref:'RB', lib:'Variation de stocks de marchandises', note:'6', var:true, cpt:['6031'] },
+  { ref:'XA', lib:'MARGE COMMERCIALE', total:['TA','RA','RB'] },
+  { ref:'TB', lib:'Ventes de produits fabriqués', note:'21', signe:+1, cpt:['702','703','704'] },
+  { ref:'TC', lib:'Travaux, services vendus', note:'21', signe:+1, cpt:['705','706'] },
+  { ref:'TD', lib:'Produits accessoires', note:'21', signe:+1, cpt:['707'] },
+  { ref:'XB', lib:"CHIFFRE D'AFFAIRES", total:['TA','TB','TC','TD'] },
+  { ref:'TE', lib:'Production stockée (ou déstockage)', note:'6', var:true, cpt:['73'] },
+  { ref:'TF', lib:'Production immobilisée', note:'21', signe:+1, cpt:['72'] },
+  { ref:'TG', lib:"Subventions d'exploitation", note:'21', signe:+1, cpt:['71'] },
+  { ref:'TH', lib:'Autres produits', note:'21', signe:+1, cpt:['75'] },
+  { ref:'TI', lib:"Transferts de charges d'exploitation", note:'12', signe:+1, cpt:['781'] },
+  { ref:'RC', lib:'Achats de matières premières et fournitures liées', note:'22', signe:-1, cpt:['602'] },
+  { ref:'RD', lib:'Variation de stocks de matières premières', note:'6', var:true, cpt:['6032'] },
+  { ref:'RE', lib:'Autres achats', note:'22', signe:-1, cpt:['604','605','608'] },
+  { ref:'RF', lib:"Variation de stocks d'autres approvisionnements", note:'6', var:true, cpt:['6033'] },
+  { ref:'RG', lib:'Transports', note:'23', signe:-1, cpt:['61'] },
+  { ref:'RH', lib:'Services extérieurs', note:'24', signe:-1, cpt:['62','63'] },
+  { ref:'RI', lib:'Impôts et taxes', note:'25', signe:-1, cpt:['64'] },
+  { ref:'RJ', lib:'Autres charges', note:'26', signe:-1, cpt:['65'] },
+  { ref:'XC', lib:'VALEUR AJOUTÉE', total:['XB','RA','RB','TE','TF','TG','TH','TI','RC','RD','RE','RF','RG','RH','RI','RJ'] },
+  { ref:'RK', lib:'Charges de personnel', note:'27', signe:-1, cpt:['66'] },
+  { ref:'XD', lib:"EXCÉDENT BRUT D'EXPLOITATION", total:['XC','RK'] },
+  { ref:'TJ', lib:'Reprises d’amortissements, provisions et dépréciations', note:'28', signe:+1, cpt:['791','798','759'] },
+  { ref:'RL', lib:'Dotations aux amortissements, provisions et dépréciations', note:'28', signe:-1, cpt:['681','691','659'] },
+  { ref:'XE', lib:"RÉSULTAT D'EXPLOITATION", total:['XD','TJ','RL'] },
+  { ref:'TK', lib:'Revenus financiers et assimilés', note:'29', signe:+1, cpt:['77'] },
+  { ref:'TL', lib:'Reprises de provisions et dépréciations financières', note:'28', signe:+1, cpt:['797','779'] },
+  { ref:'TM', lib:'Transferts de charges financières', note:'12', signe:+1, cpt:['787'] },
+  { ref:'RM', lib:'Frais financiers et charges assimilées', note:'29', signe:-1, cpt:['67'] },
+  { ref:'RN', lib:'Dotations aux provisions et dépréciations financières', note:'28', signe:-1, cpt:['697','679'] },
+  { ref:'XF', lib:'RÉSULTAT FINANCIER', total:['TK','TL','TM','RM','RN'] },
+  { ref:'XG', lib:'RÉSULTAT DES ACTIVITÉS ORDINAIRES', total:['XE','XF'] },
+  { ref:'TN', lib:"Produits des cessions d'immobilisations", note:'3D', signe:+1, cpt:['82'] },
+  { ref:'TO', lib:'Autres Produits HAO', note:'30', signe:+1, cpt:['84','86','88'] },
+  { ref:'RO', lib:"Valeurs comptables des cessions d'immobilisations", note:'3D', signe:-1, cpt:['81'] },
+  { ref:'RP', lib:'Autres Charges HAO', note:'30', signe:-1, cpt:['83','85'] },
+  { ref:'XH', lib:'RÉSULTAT HORS ACTIVITÉS ORDINAIRES', total:['TN','TO','RO','RP'] },
+  { ref:'RQ', lib:'Participation des travailleurs', note:'30', signe:-1, cpt:['87'] },
+  { ref:'RS', lib:'Impôts sur le résultat', note:'', signe:-1, cpt:['89'] },
+  { ref:'XI', lib:'RÉSULTAT NET', total:['XG','XH','RQ','RS'] },
+]
+
+// ════════════════════════════════════════════════════════════════════════════
+//  CALCUL DU COMPTE DE RÉSULTAT
+//  comptes = [{ numero, soldeD, soldeC }]  (soldes de l'exercice considéré)
+//  Retourne { XA, XB, ... XI, lignes:{ ref: montant } }
+// ════════════════════════════════════════════════════════════════════════════
+function calculerResultat(comptes) {
+  const v = {}  // valeur de chaque poste REF (signée : produit +, charge -)
+  for (const l of CR_LIGNES) {
+    if (l.total) { v[l.ref] = l.total.reduce((s, r) => s + (v[r] || 0), 0); continue }
+    let montant
+    if (l.var) {
+      // Variation de stock (603x ET 73) : contribution au résultat = crédit − débit.
+      //  • solde créditeur (stock augmenté / production stockée) → favorable (+)
+      //  • solde débiteur  (déstockage)                          → défavorable (-)
+      montant = -_sumNet(comptes, l.cpt)            // -(D-C) = C-D
+    } else if (l.signe > 0) {
+      montant = _sumC(comptes, l.cpt)               // produit
+    } else {
+      montant = -_sumD(comptes, l.cpt)              // charge (négatif)
+    }
+    v[l.ref] = montant
+  }
+  return v
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  CALCUL DU BILAN (ACTIF + PASSIF) pour un jeu de soldes donné
+//  comptes        = soldes exercice (N ou N-1)  [{numero, soldeD, soldeC}]
+//  reportANouveau = montant signé du report à nouveau (poste CH)
+//  resultatNet    = XI calculé (poste CJ)
+// ════════════════════════════════════════════════════════════════════════════
+function calculerBilan(comptes, reportANouveau = 0, resultatNet = 0) {
+  // ── ACTIF ──
+  const actif = {}
+  for (const p of ACTIF_DETAIL) {
+    const brut = _sumD(comptes, p.brut)
+    const ad   = p.ad && p.ad.length ? _sumC(comptes, p.ad) : 0
+    actif[p.ref] = { brut, ad, net: brut - ad }
+  }
+  for (const [ref, parts] of Object.entries(ACTIF_TOTAUX)) {
+    actif[ref] = parts.reduce((s, r) => ({
+      brut: s.brut + (actif[r]?.brut || 0),
+      ad:   s.ad   + (actif[r]?.ad   || 0),
+      net:  s.net  + (actif[r]?.net  || 0),
+    }), { brut:0, ad:0, net:0 })
+  }
+  // ── PASSIF ──
+  const passif = {}
+  for (const p of PASSIF_DETAIL) {
+    let net
+    if (p.special === 'report_a_nouveau') net = reportANouveau
+    else if (p.special === 'resultat_net') net = resultatNet
+    else net = _sumC(comptes, p.cred) * (p.signe || 1)
+    passif[p.ref] = { net }
+  }
+  for (const [ref, parts] of Object.entries(PASSIF_TOTAUX)) {
+    passif[ref] = { net: parts.reduce((s, r) => s + (passif[r]?.net || 0), 0) }
+  }
+  return { actif, passif }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  POINT D'ENTRÉE : produit les 3 états (N et N-1) prêts à exporter
+//  soldesN   = [{numero, soldeD, soldeC}]  (issus de la Balance, exercice N)
+//  soldesN1  = [{numero, soldeD, soldeC}]  (balance importée N-1) — peut être []
+//  ranN, ranN1 = report à nouveau saisi pour N et N-1
+// ════════════════════════════════════════════════════════════════════════════
+function genererEtatsFinanciers({ soldesN, soldesN1 = [], ranN = 0, ranN1 = 0 }) {
+  const crN  = calculerResultat(soldesN)
+  const crN1 = calculerResultat(soldesN1)
+  const bilanN  = calculerBilan(soldesN,  ranN,  crN.XI)
+  const bilanN1 = calculerBilan(soldesN1, ranN1, crN1.XI)
+  return {
+    resultat: { N: crN, N1: crN1, lignes: CR_LIGNES },
+    actif:    { N: bilanN.actif,  N1: bilanN1.actif,  detail: ACTIF_DETAIL,  totaux: ACTIF_TOTAUX },
+    passif:   { N: bilanN.passif, N1: bilanN1.passif, detail: PASSIF_DETAIL, totaux: PASSIF_TOTAUX },
+    // contrôle d'équilibre
+    controle: {
+      actifN:  bilanN.actif.BZ?.net  || 0,
+      passifN: bilanN.passif.DZ?.net || 0,
+      ecartN:  (bilanN.actif.BZ?.net || 0) - (bilanN.passif.DZ?.net || 0),
+    },
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  PAGE « ÉTATS FINANCIERS » (Phase 1 : Bilan Actif/Passif + Compte de Résultat)
+//  À coller dans ComptaPro.jsx APRÈS le bloc moteur (etats_financiers_mapping).
+//  Dépendances déjà présentes dans le projet : supabase, fcfa, today,
+//  SUPER_ADMIN_EMAIL, COLLECTIF_FOURNISSEUR, COLLECTIF_CLIENT, Btn, Card,
+//  PageHeader, Sel, useToast (via prop toast).
+// ════════════════════════════════════════════════════════════════════════════
+
+function EtatsFinanciersPage({ companies, companyId, toast }) {
+  const company = companies.find(c => c.id === companyId)
+  const companyName = company?.raison_sociale || ''
+  const anneeCourante = new Date().getFullYear()
+
+  const [exercice, setExercice]   = useState(anneeCourante)
+  const [dateFrom, setDateFrom]   = useState(`${anneeCourante}-01-01`)
+  const [dateTo, setDateTo]       = useState(`${anneeCourante}-12-31`)
+  const [ranN, setRanN]           = useState(0)     // report à nouveau N
+  const [ranN1, setRanN1]         = useState(0)     // report à nouveau N-1
+  const [soldesN, setSoldesN]     = useState([])
+  const [soldesN1, setSoldesN1]   = useState([])
+  const [etats, setEtats]         = useState(null)
+  const [loading, setLoading]     = useState(false)
+  const [nbN1, setNbN1]           = useState(0)     // nb de comptes N-1 importés
+
+  // Quand l'année change, recale les bornes (modifiables ensuite pour exercice irrégulier)
+  const onExercice = (y) => {
+    const yy = parseInt(y, 10)
+    setExercice(yy)
+    setDateFrom(`${yy}-01-01`); setDateTo(`${yy}-12-31`)
+  }
+
+  const norm = s => String(s || '').trim().toLowerCase()
+  const nomTiers = t => t.type === 'morale' ? (t.nom_societe || '') : (t.nom || '')
+
+  // ── Chargement des soldes N (réplique fidèle de la Balance) ─────────────────
+  const chargerSoldesN = useCallback(async () => {
+    const { data: ad } = await supabase.auth.getUser()
+    const uid = ad?.user?.id; const isAdmin = ad?.user?.email === SUPER_ADMIN_EMAIL
+    const scope = (q) => { if (isAdmin) { if (companyId) q = q.eq('company_id', companyId) } else { q = q.eq('user_id', uid); if (companyId) q = q.eq('company_id', companyId) } return q }
+    const [pc, fo, cl, ac, rg, fa, jc, jb, jm, ec] = await Promise.all([
+      scope(supabase.from('compta_plan_comptable').select('numero,libelle,est_collectif')),
+      scope(supabase.from('compta_fournisseurs').select('id,type,nom,nom_societe,numero_compte')),
+      scope(supabase.from('compta_clients').select('id,type,nom,nom_societe,numero_compte')),
+      scope(supabase.from('compta_achats_semi_finis').select('date_achat,nom_fournisseur,montant')),
+      scope(supabase.from('compta_reglements').select('date_paiement,tiers_type,tiers_nom,montant_paye')),
+      scope(supabase.from('compta_documents').select('date_doc,client_id,montant_ttc,type_doc').eq('type_doc', 'facture')),
+      scope(supabase.from('compta_journal_caisse').select('date_operation,type_operation,montant,numero_compte')),
+      scope(supabase.from('compta_journal_banque').select('date_operation,type_operation,montant,numero_compte')),
+      scope(supabase.from('compta_journal_mobile').select('date_operation,type_operation,montant,numero_compte')),
+      scope(supabase.from('compta_ecritures').select('date_ecriture,numero_compte,debit,credit')),
+    ])
+    const comptes = pc.data || []
+    const fourns = fo.data || [], clis = cl.data || [], achats = ac.data || [], factures = fa.data || []
+    const mouv = []; (jc.data || []).forEach(r => mouv.push(r)); (jb.data || []).forEach(r => mouv.push(r)); (jm.data || []).forEach(r => mouv.push(r))
+    const ecr = ec.data || []
+    const inP = d => (!dateFrom || (d || '') >= dateFrom) && (!dateTo || (d || '') <= dateTo)
+
+    const totauxCompte = (numero) => {
+      let debit = 0, credit = 0
+      const fourn = fourns.find(f => f.numero_compte === numero)
+      const cli = clis.find(c => c.numero_compte === numero)
+      const isCollF = numero === COLLECTIF_FOURNISSEUR, isCollC = numero === COLLECTIF_CLIENT
+      const mvts = mouv.filter(m => inP(m.date_operation) && (
+        isCollF ? String(m.numero_compte || '').startsWith(COLLECTIF_FOURNISSEUR)
+        : isCollC ? String(m.numero_compte || '').startsWith(COLLECTIF_CLIENT)
+        : (m.numero_compte && m.numero_compte === numero)))
+      const addMvts = () => mvts.forEach(m => { if (m.type_operation === 'sortie') debit += m.montant || 0; else credit += m.montant || 0 })
+      if (isCollF || fourn) {
+        achats.filter(a => inP(a.date_achat) && (isCollF ? true : norm(a.nom_fournisseur) === norm(nomTiers(fourn)))).forEach(a => credit += a.montant || 0); addMvts()
+      } else if (isCollC || cli) {
+        factures.filter(f => inP(f.date_doc) && (isCollC ? true : f.client_id === cli.id)).forEach(f => debit += f.montant_ttc || 0); addMvts()
+      } else { addMvts() }
+      ecr.filter(x => inP(x.date_ecriture) && (
+        isCollF ? String(x.numero_compte || '').startsWith(COLLECTIF_FOURNISSEUR)
+        : isCollC ? String(x.numero_compte || '').startsWith(COLLECTIF_CLIENT)
+        : (x.numero_compte && x.numero_compte === numero)))
+        .forEach(x => { debit += x.debit || 0; credit += x.credit || 0 })
+      return { debit, credit }
+    }
+    return comptes.map(c => {
+      const { debit, credit } = totauxCompte(c.numero)
+      return { numero: c.numero, libelle: c.libelle, soldeD: Math.max(0, debit - credit), soldeC: Math.max(0, credit - debit) }
+    })
+  }, [companyId, dateFrom, dateTo])
+
+  // ── Chargement N-1 (table importée) + reports à nouveau ─────────────────────
+  const chargerN1etRAN = useCallback(async () => {
+    const { data: ad } = await supabase.auth.getUser()
+    const uid = ad?.user?.id; const isAdmin = ad?.user?.email === SUPER_ADMIN_EMAIL
+    const scope = (q) => { if (isAdmin) { if (companyId) q = q.eq('company_id', companyId) } else { q = q.eq('user_id', uid); if (companyId) q = q.eq('company_id', companyId) } return q }
+    const { data: bn1 } = await scope(supabase.from('compta_balance_n1').select('numero_compte,solde_debiteur,solde_crediteur').eq('exercice', exercice))
+    setSoldesN1((bn1 || []).map(r => ({ numero: r.numero_compte, soldeD: r.solde_debiteur || 0, soldeC: r.solde_crediteur || 0 })))
+    setNbN1((bn1 || []).length)
+    const { data: ran } = await scope(supabase.from('compta_report_a_nouveau').select('exercice,montant').in('exercice', [exercice, exercice - 1]))
+    setRanN((ran || []).find(r => r.exercice === exercice)?.montant || 0)
+    setRanN1((ran || []).find(r => r.exercice === exercice - 1)?.montant || 0)
+  }, [companyId, exercice])
+
+  useEffect(() => { chargerN1etRAN() }, [chargerN1etRAN])
+
+  // ── Génération des états ────────────────────────────────────────────────────
+  const generer = async () => {
+    if (!companyId) { toast.error('Sélectionnez une société.'); return }
+    setLoading(true)
+    try {
+      const sN = await chargerSoldesN()
+      setSoldesN(sN)
+      const data = genererEtatsFinanciers({ soldesN: sN, soldesN1, ranN, ranN1 })
+      setEtats(data)
+      const ec = Math.abs(data.controle.ecartN)
+      if (ec < 1) toast.success('États générés — Bilan équilibré ✅')
+      else toast.error(`États générés — déséquilibre de ${fcfa(ec)} (Actif ≠ Passif). Vérifiez vos écritures.`)
+    } catch (e) { toast.error('Erreur génération : ' + e.message) }
+    setLoading(false)
+  }
+
+  // ── Sauvegarde du report à nouveau ──────────────────────────────────────────
+  const saveRAN = async (annee, montant) => {
+    const { data: ad } = await supabase.auth.getUser()
+    const uid = ad?.user?.id
+    const { error } = await supabase.from('compta_report_a_nouveau')
+      .upsert({ company_id: companyId, user_id: uid, exercice: annee, montant: Number(montant) || 0 }, { onConflict: 'company_id,exercice' })
+    if (error) toast.error('Report à nouveau : ' + error.message)
+    else { toast.success(`Report à nouveau ${annee} enregistré.`); chargerN1etRAN() }
+  }
+
+  // ── Import balance N-1 (gabarit MODELE DE BALANCE.xlsx) ─────────────────────
+  const importerN1 = async (file) => {
+    if (!file) return
+    if (!companyId) { toast.error('Sélectionnez une société avant d’importer.'); return }
+    try {
+      const XLSX = await import('https://cdn.sheetjs.com/xlsx-0.20.0/package/xlsx.mjs')
+      const buf = await file.arrayBuffer()
+      const wb = XLSX.read(buf, { type: 'array' })
+      const ws = wb.Sheets[wb.SheetNames[0]]
+      const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' })
+      // Repère la ligne d'en-tête (contient « N_CPTE »)
+      let hi = rows.findIndex(r => r.some(c => String(c).toUpperCase().includes('N_CPTE')))
+      if (hi < 0) hi = 1
+      // Colonnes attendues : N_CPTE | INTITULES | SOLDE N-1 DEB | SOLDE N-1 CRED | ...
+      const dataRows = rows.slice(hi + 1).filter(r => String(r[0] || '').trim())
+      const num = v => { const n = parseFloat(String(v).replace(/\s/g, '').replace(',', '.')); return isNaN(n) ? 0 : n }
+      const { data: ad } = await supabase.auth.getUser(); const uid = ad?.user?.id
+      const payload = dataRows.map(r => ({
+        company_id: companyId, user_id: uid, exercice,
+        numero_compte: String(r[0]).trim(),
+        intitule: String(r[1] || '').trim(),
+        solde_debiteur: num(r[2]),
+        solde_crediteur: num(r[3]),
+      })).filter(r => r.numero_compte && (r.solde_debiteur || r.solde_crediteur))
+      if (!payload.length) { toast.error('Aucune ligne exploitable (colonnes attendues : N_CPTE, INTITULES, Solde N-1 Débiteur, Créditeur).'); return }
+      // Remplace l'import précédent du même exercice
+      await supabase.from('compta_balance_n1').delete().eq('company_id', companyId).eq('exercice', exercice)
+      const { error } = await supabase.from('compta_balance_n1').insert(payload)
+      if (error) { toast.error('Import N-1 : ' + error.message); return }
+      toast.success(`${payload.length} comptes N-1 importés pour l’exercice ${exercice}.`)
+      chargerN1etRAN()
+    } catch (e) { toast.error('Lecture du fichier impossible : ' + e.message) }
+  }
+
+  // ── Export Excel officiel (multi-feuilles) ──────────────────────────────────
+  const exporterExcel = async () => {
+    if (!etats) { toast.error('Générez d’abord les états.'); return }
+    const XLSX = await import('https://cdn.sheetjs.com/xlsx-0.20.0/package/xlsx.mjs')
+    const wb = XLSX.utils.book_new()
+    const r0 = v => Math.round(v || 0)
+    const entete = (titre) => ([
+      [`Désignation entité : ${companyName}`],
+      [`N° d'identification : ${company?.rccm || ''}`, '', `Exercice clos le : 31/12/${exercice}`, 'Durée (mois) : 12'],
+      [titre], [],
+    ])
+
+    // ----- ACTIF -----
+    const a = etats.actif
+    const aoaActif = [
+      ...entete(`BILAN AU 31 DÉCEMBRE ${exercice} — ACTIF`),
+      ['REF', 'ACTIF', 'Note', 'BRUT', 'AMORT/DÉPRÉC', `NET ${exercice}`, `NET ${exercice - 1}`],
+    ]
+    const pushActif = (ref, lib, note) => {
+      const N = a.N[ref] || { brut: 0, ad: 0, net: 0 }, P = a.N1[ref] || { net: 0 }
+      aoaActif.push([ref, lib, note || '', r0(N.brut), r0(N.ad), r0(N.net), r0(P.net)])
+    }
+    // Ordre officiel
+    pushActif('AD', 'IMMOBILISATIONS INCORPORELLES', '3')
+    a.detail.filter(d => ['AE', 'AF', 'AG', 'AH'].includes(d.ref)).forEach(d => pushActif(d.ref, d.lib, d.note))
+    pushActif('AI', 'IMMOBILISATIONS CORPORELLES', '3')
+    a.detail.filter(d => ['AJ', 'AK', 'AL', 'AM', 'AN', 'AP'].includes(d.ref)).forEach(d => pushActif(d.ref, d.lib, d.note))
+    pushActif('AQ', 'IMMOBILISATIONS FINANCIÈRES', '4')
+    a.detail.filter(d => ['AR', 'AS'].includes(d.ref)).forEach(d => pushActif(d.ref, d.lib, d.note))
+    pushActif('AZ', 'TOTAL ACTIF IMMOBILISÉ', '')
+    a.detail.filter(d => ['BA', 'BB'].includes(d.ref)).forEach(d => pushActif(d.ref, d.lib, d.note))
+    pushActif('BG', 'CRÉANCES ET EMPLOIS ASSIMILÉS', '')
+    a.detail.filter(d => ['BH', 'BI', 'BJ'].includes(d.ref)).forEach(d => pushActif(d.ref, d.lib, d.note))
+    pushActif('BK', 'TOTAL ACTIF CIRCULANT', '')
+    a.detail.filter(d => ['BQ', 'BR', 'BS'].includes(d.ref)).forEach(d => pushActif(d.ref, d.lib, d.note))
+    pushActif('BT', 'TOTAL TRÉSORERIE-ACTIF', '')
+    a.detail.filter(d => d.ref === 'BU').forEach(d => pushActif(d.ref, d.lib, d.note))
+    pushActif('BZ', 'TOTAL GÉNÉRAL', '')
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoaActif), 'ACTIF')
+
+    // ----- PASSIF -----
+    const p = etats.passif
+    const aoaPassif = [
+      ...entete(`BILAN AU 31 DÉCEMBRE ${exercice} — PASSIF`),
+      ['REF', 'PASSIF', 'Note', `NET ${exercice}`, `NET ${exercice - 1}`],
+    ]
+    const pushPassif = (ref, lib, note) => {
+      aoaPassif.push([ref, lib, note || '', r0(p.N[ref]?.net), r0(p.N1[ref]?.net)])
+    }
+    p.detail.filter(d => ['CA', 'CB', 'CD', 'CE', 'CF', 'CG', 'CH', 'CJ', 'CL', 'CM'].includes(d.ref)).forEach(d => pushPassif(d.ref, d.lib, d.note))
+    pushPassif('CP', 'TOTAL CAPITAUX PROPRES ET RESSOURCES ASSIMILÉES', '')
+    p.detail.filter(d => ['DA', 'DB', 'DC'].includes(d.ref)).forEach(d => pushPassif(d.ref, d.lib, d.note))
+    pushPassif('DD', 'TOTAL DETTES FINANCIÈRES ET RESSOURCES ASSIMILÉES', '')
+    pushPassif('DF', 'TOTAL RESSOURCES STABLES', '')
+    p.detail.filter(d => ['DH', 'DI', 'DJ', 'DK', 'DM', 'DN'].includes(d.ref)).forEach(d => pushPassif(d.ref, d.lib, d.note))
+    pushPassif('DP', 'TOTAL PASSIF CIRCULANT', '')
+    p.detail.filter(d => ['DQ', 'DR'].includes(d.ref)).forEach(d => pushPassif(d.ref, d.lib, d.note))
+    pushPassif('DT', 'TOTAL TRÉSORERIE-PASSIF', '')
+    p.detail.filter(d => d.ref === 'DV').forEach(d => pushPassif(d.ref, d.lib, d.note))
+    pushPassif('DZ', 'TOTAL GÉNÉRAL', '')
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoaPassif), 'PASSIF')
+
+    // ----- COMPTE DE RÉSULTAT -----
+    const cr = etats.resultat
+    const aoaCR = [
+      ...entete(`COMPTE DE RÉSULTAT AU 31 DÉCEMBRE ${exercice}`),
+      ['REF', 'LIBELLÉS', 'Note', `EXERCICE ${exercice}`, `EXERCICE ${exercice - 1}`],
+    ]
+    cr.lignes.forEach(l => {
+      aoaCR.push([l.ref, l.lib, l.note || '', r0(cr.N[l.ref]), r0(cr.N1[l.ref])])
+    })
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoaCR), 'Compte de Résultat')
+
+    XLSX.writeFile(wb, `etats_financiers_${companyName.replace(/\s+/g, '_') || 'societe'}_${exercice}.xlsx`)
+    toast.success('États financiers Excel téléchargés.')
+  }
+
+  const lbl = { display: 'block', fontSize: 12, color: '#64748b', marginBottom: 4 }
+  const inp = { padding: '8px 10px', borderRadius: 8, border: '1px solid #d1d5db', fontSize: 13.5, boxSizing: 'border-box' }
+  const fmt = v => r0Signed(v)
+  function r0Signed(v) { const n = Math.round(v || 0); return n.toLocaleString('fr-FR') }
+
+  const annees = []; for (let y = anneeCourante + 1; y >= anneeCourante - 6; y--) annees.push(y)
+
+  return (
+    <div>
+      <PageHeader title="📑 États Financiers SYSCOHADA" subtitle="Bilan (Actif/Passif) & Compte de Résultat — Système Normal" />
+
+      {/* Paramètres */}
+      <Card>
+        <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+          <div style={{ minWidth: 160 }}>
+            <label style={lbl}>Exercice (N)</label>
+            <select value={exercice} onChange={e => onExercice(e.target.value)} style={{ ...inp, width: '100%', background: 'white' }}>
+              {annees.map(y => <option key={y} value={y}>{y}</option>)}
+            </select>
+          </div>
+          <div><label style={lbl}>Du</label><input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} style={inp} /></div>
+          <div><label style={lbl}>Au</label><input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} style={inp} /></div>
+          <Btn variant="primary" onClick={generer} disabled={loading}>{loading ? '⏳ Calcul…' : '⚙️ Générer les états'}</Btn>
+          {etats && <Btn variant="success" onClick={exporterExcel}>📊 Export Excel officiel</Btn>}
+        </div>
+      </Card>
+
+      {/* Comparatif N-1 + Report à nouveau */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(280px,1fr))', gap: 14, marginTop: 14 }}>
+        <Card>
+          <div style={{ fontWeight: 700, marginBottom: 8 }}>📥 Balance N-1 (comparatif {exercice - 1})</div>
+          <div style={{ fontSize: 12.5, color: '#64748b', marginBottom: 10 }}>
+            Format attendu : <b>MODELE DE BALANCE.xlsx</b> (colonnes N_CPTE · INTITULES · Solde N-1 Débiteur · Créditeur).
+          </div>
+          <input type="file" accept=".xlsx,.xls" onChange={e => importerN1(e.target.files?.[0])} style={{ fontSize: 13 }} />
+          <div style={{ marginTop: 8, fontSize: 13, color: nbN1 ? '#15803d' : '#b45309' }}>
+            {nbN1 ? `✅ ${nbN1} comptes N-1 importés.` : '⚠️ Aucune balance N-1 importée — la colonne N-1 restera à 0.'}
+          </div>
+        </Card>
+
+        <Card>
+          <div style={{ fontWeight: 700, marginBottom: 8 }}>✍️ Report à nouveau (poste CH)</div>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+            <div>
+              <label style={lbl}>Exercice {exercice}</label>
+              <input type="text" inputMode="decimal" defaultValue={ranN} key={'ran-' + exercice + '-' + ranN}
+                onBlur={e => saveRAN(exercice, e.target.value)} style={{ ...inp, width: 140 }} placeholder="+ ou -" />
+            </div>
+            <div>
+              <label style={lbl}>Exercice {exercice - 1}</label>
+              <input type="text" inputMode="decimal" defaultValue={ranN1} key={'ran1-' + exercice + '-' + ranN1}
+                onBlur={e => saveRAN(exercice - 1, e.target.value)} style={{ ...inp, width: 140 }} placeholder="+ ou -" />
+            </div>
+          </div>
+          <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 6 }}>Montant signé : + créditeur (normal), − si report débiteur (perte). Enregistré à la sortie du champ.</div>
+        </Card>
+      </div>
+
+      {/* Contrôle d'équilibre */}
+      {etats && (
+        <Card style={{ marginTop: 14 }}>
+          <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', alignItems: 'center' }}>
+            <div><div style={{ fontSize: 12, color: '#64748b' }}>TOTAL ACTIF (net {exercice})</div><div style={{ fontWeight: 800, fontSize: 18 }}>{fmt(etats.controle.actifN)}</div></div>
+            <div><div style={{ fontSize: 12, color: '#64748b' }}>TOTAL PASSIF (net {exercice})</div><div style={{ fontWeight: 800, fontSize: 18 }}>{fmt(etats.controle.passifN)}</div></div>
+            <div style={{ padding: '8px 14px', borderRadius: 10, background: Math.abs(etats.controle.ecartN) < 1 ? '#dcfce7' : '#fee2e2', color: Math.abs(etats.controle.ecartN) < 1 ? '#15803d' : '#b91c1c', fontWeight: 700 }}>
+              {Math.abs(etats.controle.ecartN) < 1 ? '✅ Bilan équilibré' : `⚠️ Écart : ${fmt(etats.controle.ecartN)}`}
+            </div>
+            <div style={{ fontSize: 12.5, color: '#64748b' }}>Résultat net : <b>{fmt(etats.resultat.N.XI)}</b></div>
+          </div>
+        </Card>
+      )}
+
+      {/* Aperçu écran : Compte de Résultat (synthèse) */}
+      {etats && (
+        <Card style={{ marginTop: 14, overflowX: 'auto' }}>
+          <div style={{ fontWeight: 700, marginBottom: 10 }}>Aperçu — Compte de Résultat {exercice}</div>
+          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 560, fontSize: 13 }}>
+            <thead><tr style={{ background: '#f1f5f9' }}>
+              <th style={{ textAlign: 'left', padding: 8 }}>REF</th><th style={{ textAlign: 'left', padding: 8 }}>Libellé</th>
+              <th style={{ textAlign: 'right', padding: 8 }}>{exercice}</th><th style={{ textAlign: 'right', padding: 8 }}>{exercice - 1}</th>
+            </tr></thead>
+            <tbody>
+              {etats.resultat.lignes.map(l => {
+                const isTotal = !!l.total
+                return (
+                  <tr key={l.ref} style={{ borderTop: '1px solid #eef2f7', background: isTotal ? '#f8fafc' : 'white', fontWeight: isTotal ? 800 : 400 }}>
+                    <td style={{ padding: 7 }}>{l.ref}</td><td style={{ padding: 7 }}>{l.lib}</td>
+                    <td style={{ padding: 7, textAlign: 'right' }}>{fmt(etats.resultat.N[l.ref])}</td>
+                    <td style={{ padding: 7, textAlign: 'right' }}>{fmt(etats.resultat.N1[l.ref])}</td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </Card>
+      )}
+    </div>
+  )
+}
+
 function BalancePage({ companies, companyId, toast }) {
   const [comptes, setComptes]   = useState([])
   const [fourns, setFourns]     = useState([])
@@ -11207,7 +11797,7 @@ export default function ComptaPro() {
     achats:'Achats Semi-finis', lots_semi_finis:'Lots Semi-finis', epierrage:'Épierrage', reglements_clients:'Règlements Clients', reglements_fourn:'Règlements Fournisseurs', etuvage_paiements:'Paiements Étuvage',
     docs_admin:'Documents administratifs', parametres:'Paramètres',
     prestations:'Prestations', journal_caisse:'Journal Caisse', journal_banque:'Journal Banque',
-    suivi_lot:'Suivi de Lot', journal_mobile:'Journal Mobile Money', plan_comptable:'Plan Comptable', grand_livre:'Grand-Livre', ecritures:'Saisie Comptable', balance:'Balance',
+    suivi_lot:'Suivi de Lot', journal_mobile:'Journal Mobile Money', plan_comptable:'Plan Comptable', grand_livre:'Grand-Livre', ecritures:'Saisie Comptable', balance:'Balance', etats_financiers:'États Financiers',
   }
 
   const renderPage = () => {
@@ -11269,6 +11859,7 @@ export default function ComptaPro() {
       case 'grand_livre':       return <GrandLivrePage {...sp} readOnly={getReadOnly('grand_livre')} />
       case 'ecritures':         return <ComptabilitePage {...sp} readOnly={getReadOnly('ecritures')} />
       case 'balance':           return <BalancePage {...sp} />
+      case 'etats_financiers':  return <EtatsFinanciersPage {...sp} />
       case 'users':          return isSuperAdmin ? <UsersManagementPage toast={toast} /> : <Dashboard {...sp} setPage={setPage} />
       case 'controle_budget': return <ControleBudgetairePage {...sp} readOnly={getReadOnly('controle_budget')} />
       case 'chat':           return <ChatPage profile={profile} toast={toast} />
