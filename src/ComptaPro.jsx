@@ -7736,7 +7736,7 @@ function calculerTFT(soldesN, bilanN, bilanN1, crN) {
 //  Colonnes échéances (à 1 an / 1-2 ans / +2 ans) non incluses : nécessitent
 //  une donnée de maturité non saisie dans ComptaPro (phase ultérieure).
 // ════════════════════════════════════════════════════════════════════════════
-function genererNotes({ soldesN, soldesN1 = [], bilanN, bilanN1, exercice }) {
+function genererNotes({ soldesN, soldesN1 = [], bilanN, bilanN1, exercice, crN = {}, crN1 = {} }) {
   const r0 = v => Math.round(v || 0)
   const cmpD = (pref) => { const n = _sumD(soldesN, pref), n1 = _sumD(soldesN1, pref); return [r0(n), r0(n1), r0(n - n1)] }
   const cmpC = (pref) => { const n = _sumC(soldesN, pref), n1 = _sumC(soldesN1, pref); return [r0(n), r0(n1), r0(n - n1)] }
@@ -7972,6 +7972,233 @@ function genererNotes({ soldesN, soldesN1 = [], bilanN, bilanN1, exercice }) {
   ]
   notes.push({ sheetName: 'Note 29', titre: `NOTE 29 — CHARGES ET REVENUS FINANCIERS — ${exercice}`, cols: COLS4, numFrom: 2, land: false, headers: HDR4, rows: rows29 })
 
+  // ════════════ VAGUE 3 — Notes restantes (dérivées + gabarits) ════════════
+  const HDR3 = ['Libellés', `Année ${exercice}`, `Année ${exercice - 1}`]
+  const COLS3 = [54, 20, 20]
+  // gabarit : lignes à valeurs vides (à compléter manuellement avant dépôt)
+  const tplRows = (libs, ncols) => libs.map(l => ({ cells: [l, ...Array(ncols - 1).fill('')], total: /TOTAL|SOUS-?TOTAL/i.test(l) }))
+  const tpl = (sheetName, titre, headers, libs, cols, land) =>
+    notes.push({ sheetName, titre, cols: cols || COLS3, numFrom: 2, land: !!land, headers, rows: tplRows(libs, headers.length) })
+
+  // ── Note 1 : Dettes garanties par des sûretés réelles (gabarit) ──
+  tpl('Note 1', `NOTE 1 — DETTES GARANTIES PAR DES SÛRETÉS RÉELLES — ${exercice}`,
+    ['Libellés', 'Montant brut', 'Hypothèques', 'Nantissements', 'Gages / autres'],
+    ['Emprunts obligataires', 'Emprunts et dettes des établissements de crédit', 'Autres dettes financières', 'SOUS-TOTAL DETTES FINANCIÈRES', 'Dettes de location-acquisition', 'TOTAL GÉNÉRAL'],
+    [46, 16, 16, 16, 16], true)
+
+  // ── Note 2 : Informations obligatoires (texte standard SYSCOHADA) ──
+  notes.push({ sheetName: 'Note 2', titre: `NOTE 2 — INFORMATIONS OBLIGATOIRES — ${exercice}`, cols: [110], numFrom: 99, land: false,
+    headers: ['INFORMATIONS OBLIGATOIRES'], rows: [
+      { cells: ['A - DÉCLARATION DE CONFORMITÉ AU SYSCOHADA'], total: true },
+      { cells: ["Les états financiers sont établis en conformité avec le Système Comptable OHADA et l'Acte Uniforme relatif au droit comptable et à l'information financière."] },
+      { cells: ['B - RÈGLES ET MÉTHODES COMPTABLES'], total: true },
+      { cells: ["Les états financiers ont été confectionnés dans le respect des postulats, conventions et règles d'évaluation édictés par le SYSCOHADA et l'Acte Uniforme."] },
+      { cells: ['C - DÉROGATION AUX POSTULATS ET CONVENTIONS COMPTABLES'], total: true },
+      { cells: ['Respect de tous les postulats et conventions comptables sans aucune dérogation.'] },
+      { cells: ['D - INFORMATIONS COMPLÉMENTAIRES'], total: true },
+      { cells: ["Pas d'informations complémentaires relatives aux autres états financiers."] },
+    ] })
+
+  // ── Note 3B : Biens pris en location acquisition (gabarit) ──
+  tpl('Note 3B', `NOTE 3B — BIENS EN LOCATION ACQUISITION — ${exercice}`,
+    ['Rubriques', "Brut à l'ouverture", 'Augmentations', 'Diminutions', 'Brut à la clôture'],
+    ['SOUS-TOTAL IMMOBILISATIONS INCORPORELLES', 'Terrains', 'Bâtiments', 'Aménagements, agencements et installations', 'Matériel, mobilier et actifs biologiques', 'Matériel de transport', 'SOUS-TOTAL IMMOBILISATIONS CORPORELLES', 'TOTAL GÉNÉRAL'],
+    [46, 16, 16, 16, 16], true)
+
+  // ── Note 3D : Plus-values et moins-values de cession (gabarit) ──
+  tpl('Note 3D', `NOTE 3D — IMMOBILISATIONS : PLUS/MOINS-VALUES DE CESSION — ${exercice}`,
+    ['Rubriques', 'Montant brut', 'Amortissements', 'Valeur comptable nette', 'Prix de cession', 'Plus/moins-value'],
+    ['SOUS-TOTAL IMMOBILISATIONS INCORPORELLES', 'SOUS-TOTAL IMMOBILISATIONS CORPORELLES', 'SOUS-TOTAL IMMOBILISATIONS FINANCIÈRES', 'TOTAL GÉNÉRAL'],
+    [44, 14, 14, 14, 14, 14], true)
+
+  // ── Note 3E : Réévaluations (gabarit) ──
+  tpl('Note 3E', `NOTE 3E — INFORMATIONS SUR LES RÉÉVALUATIONS — ${exercice}`,
+    ['Éléments réévalués (postes du bilan)', 'Montants coûts historiques', 'Amortissements supplémentaires'],
+    ['(à compléter)', '(à compléter)', '(à compléter)'], [54, 24, 24], false)
+
+  // ── Note 4 : Immobilisations financières (calculée) ──
+  notes.push({ sheetName: 'Note 4', titre: `NOTE 4 — IMMOBILISATIONS FINANCIÈRES — ${exercice}`, cols: COLS3, numFrom: 2, land: false, headers: HDR3, rows: [
+    { cells: ['Titres de participation', ...cmpD(['26'])] },
+    { cells: ['Prêts et créances', ...cmpD(['271','272','273'])] },
+    { cells: ['Prêts au personnel', ...cmpD(['274'])] },
+    { cells: ['Dépôts et cautionnements', ...cmpD(['275'])] },
+    { cells: ['Intérêts courus', ...cmpD(['276'])] },
+    { cells: ['Autres immobilisations financières', ...cmpD(['277','278'])] },
+    { cells: ['TOTAL BRUT', ...cmpD(['26','27'])], total: true },
+  ] })
+
+  // ── Note 5 : Actif circulant HAO (calculée) ──
+  notes.push({ sheetName: 'Note 5', titre: `NOTE 5 — ACTIF CIRCULANT HAO — ${exercice}`, cols: COLS3, numFrom: 2, land: false, headers: HDR3, rows: [
+    { cells: ["Créances sur cessions d'immobilisations", ...cmpD(['485'])] },
+    { cells: ['Autres créances HAO', ...cmpD(['488'])] },
+    { cells: ['TOTAL BRUT', ...cmpD(['485','488'])], total: true },
+    { cells: ['Dépréciations des créances HAO', ...cmpC(['498'])] },
+    { cells: ['TOTAL NET DE DÉPRÉCIATION', ...sub(cmpD(['485','488']), cmpC(['498']))], total: true },
+  ] })
+
+  // ── Note 9 : Titres de placement (calculée) ──
+  notes.push({ sheetName: 'Note 9', titre: `NOTE 9 — TITRES DE PLACEMENT — ${exercice}`, cols: COLS3, numFrom: 2, land: false, headers: HDR3, rows: [
+    { cells: ['Actions', ...cmpD(['502'])] },
+    { cells: ['Obligations', ...cmpD(['503','506'])] },
+    { cells: ['Bons et autres titres', ...cmpD(['501','504','505','508'])] },
+    { cells: ['TOTAL BRUT TITRES', ...cmpD(['50'])], total: true },
+    { cells: ['Dépréciations', ...cmpC(['590'])] },
+    { cells: ['TOTAL NET', ...sub(cmpD(['50']), cmpC(['590']))], total: true },
+  ] })
+
+  // ── Note 10 : Valeurs à encaisser (calculée) ──
+  notes.push({ sheetName: 'Note 10', titre: `NOTE 10 — VALEURS À ENCAISSER — ${exercice}`, cols: COLS3, numFrom: 2, land: false, headers: HDR3, rows: [
+    { cells: ['Effets à encaisser / à l\'encaissement', ...cmpD(['511','512'])] },
+    { cells: ['Chèques à encaisser / à l\'encaissement', ...cmpD(['513','514'])] },
+    { cells: ['Cartes de crédit et autres valeurs', ...cmpD(['515','518'])] },
+    { cells: ['TOTAL BRUT VALEURS À ENCAISSER', ...cmpD(['51'])], total: true },
+    { cells: ['Dépréciations', ...cmpC(['591'])] },
+    { cells: ['TOTAL NET', ...sub(cmpD(['51']), cmpC(['591']))], total: true },
+  ] })
+
+  // ── Note 11 : Disponibilités (calculée) ──
+  notes.push({ sheetName: 'Note 11', titre: `NOTE 11 — DISPONIBILITÉS — ${exercice}`, cols: COLS3, numFrom: 2, land: false, headers: HDR3, rows: [
+    { cells: ['Banques locales', ...cmpD(['521'])] },
+    { cells: ['Banques, dépôts à terme', ...cmpD(['522'])] },
+    { cells: ['Autres banques', ...cmpD(['523','524','526'])] },
+    { cells: ['Chèques postaux', ...cmpD(['531'])] },
+    { cells: ['Caisse', ...cmpD(['571'])] },
+    { cells: ['Régies et autres disponibilités', ...cmpD(['54','58'])] },
+    { cells: ['TOTAL DISPONIBILITÉS', ...cmpD(['52','53','54','57','58'])], total: true },
+  ] })
+
+  // ── Note 12 : Écarts de conversion (calculée) ──
+  notes.push({ sheetName: 'Note 12', titre: `NOTE 12 — ÉCARTS DE CONVERSION — ${exercice}`, cols: COLS3, numFrom: 2, land: false, headers: HDR3, rows: [
+    { cells: ['Écart de conversion - Actif', ...cmpD(['478'])] },
+    { cells: ['Écart de conversion - Passif', ...cmpC(['479'])] },
+  ] })
+
+  // ── Note 13 : Capital (calculée + détail actionnaires à compléter) ──
+  notes.push({ sheetName: 'Note 13', titre: `NOTE 13 — CAPITAL — ${exercice}`, cols: COLS3, numFrom: 2, land: false, headers: HDR3, rows: [
+    { cells: ['Capital social', ...cmpC(['101','102','103','104'])] },
+    { cells: ['Apporteurs, capital non appelé (-)', ...cmpD(['109'])] },
+    { cells: ['TOTAL CAPITAL', ...sub(cmpC(['101','102','103','104']), cmpD(['109']))], total: true },
+  ] })
+
+  // ── Note 14 : Primes et réserves (calculée) ──
+  notes.push({ sheetName: 'Note 14', titre: `NOTE 14 — PRIMES ET RÉSERVES — ${exercice}`, cols: COLS3, numFrom: 2, land: false, headers: HDR3, rows: [
+    { cells: ['Primes liées au capital', ...cmpC(['105'])] },
+    { cells: ['Réserve légale', ...cmpC(['111'])] },
+    { cells: ['Réserves réglementées', ...cmpC(['112','113'])] },
+    { cells: ['Réserves libres', ...cmpC(['118'])] },
+    { cells: ['Report à nouveau', ...cmpC(['12'])] },
+    { cells: ['TOTAL PRIMES ET RÉSERVES', ...cmpC(['105','111','112','113','118','12'])], total: true },
+  ] })
+
+  // ── Note 15A : Subventions et provisions réglementées (calculée) ──
+  notes.push({ sheetName: 'Note 15A', titre: `NOTE 15A — SUBVENTIONS ET PROVISIONS RÉGLEMENTÉES — ${exercice}`, cols: COLS3, numFrom: 2, land: false, headers: HDR3, rows: [
+    { cells: ["Subventions d'investissement", ...cmpC(['14'])] },
+    { cells: ['TOTAL SUBVENTIONS', ...cmpC(['14'])], total: true },
+    { cells: ['Provisions réglementées', ...cmpC(['15'])] },
+    { cells: ['TOTAL PROVISIONS RÉGLEMENTÉES', ...cmpC(['15'])], total: true },
+  ] })
+
+  // ── Note 15B : gabarit ──
+  tpl('Note 15B', `NOTE 15B — DÉTAIL SUBVENTIONS / PROVISIONS — ${exercice}`, HDR3, ['(à compléter)', 'TOTAL'], COLS3, false)
+
+  // ── Note 16B / 16B bis / 16C : engagements de retraite et éventuels (gabarits) ──
+  tpl('Note 16B', `NOTE 16B — ENGAGEMENTS DE RETRAITE (HYPOTHÈSES) — ${exercice}`, HDR3,
+    ["Taux d'augmentation des salaires", "Taux d'actualisation", "Taux d'inflation", 'Probabilité de présence à la retraite', 'Taux de rendement des actifs'], COLS3, false)
+  tpl('Note 16B bis', `NOTE 16B bis — ACTIF/PASSIF NET DES RÉGIMES FINANCÉS — ${exercice}`, HDR3,
+    ["Valeur actuelle de l'obligation", 'Valeur actuelle des actifs du régime', 'Excédent / Déficit de régime'], COLS3, false)
+  tpl('Note 16C', `NOTE 16C — ACTIFS ET PASSIFS ÉVENTUELS — ${exercice}`, HDR3,
+    ['Actif éventuel (litiges, ...)', 'Passif éventuel (litiges, ...)'], COLS3, false)
+
+  // ── Note 18 : Dettes fiscales et sociales (calculée) ──
+  notes.push({ sheetName: 'Note 18', titre: `NOTE 18 — DETTES FISCALES ET SOCIALES — ${exercice}`, cols: COLS3, numFrom: 2, land: false, headers: HDR3, rows: [
+    { cells: ['Personnel, rémunérations dues', ...cmpC(['422','423','427','428'])] },
+    { cells: ['Caisse de sécurité sociale', ...cmpC(['431'])] },
+    { cells: ['Caisse de retraite', ...cmpC(['432'])] },
+    { cells: ['Autres organismes sociaux', ...cmpC(['433','438'])] },
+    { cells: ['État (TVA, impôts et taxes)', ...cmpC(['441','442','443','444','446','447','448'])] },
+    { cells: ['TOTAL DETTES FISCALES ET SOCIALES', ...cmpC(['42','43','44'])], total: true },
+  ] })
+
+  // ── Note 19 : Autres dettes et provisions risques CT (calculée) ──
+  notes.push({ sheetName: 'Note 19', titre: `NOTE 19 — AUTRES DETTES ET PROVISIONS POUR RISQUES À CT — ${exercice}`, cols: COLS3, numFrom: 2, land: false, headers: HDR3, rows: [
+    { cells: ['Associés et comptes courants', ...cmpC(['462','463'])] },
+    { cells: ['Associés, dividendes à payer', ...cmpC(['465'])] },
+    { cells: ['Apporteurs, opérations sur le capital', ...cmpC(['461'])] },
+    { cells: ['Autres dettes diverses', ...cmpC(['464','466','467','472','477'])] },
+    { cells: ['Provisions pour risques à court terme', ...cmpC(['499'])] },
+    { cells: ['TOTAL AUTRES DETTES', ...cmpC(['461','462','463','464','465','466','467','472','477','499'])], total: true },
+  ] })
+
+  // ── Note 20 : Banques, crédits d'escompte et de trésorerie (calculée) ──
+  notes.push({ sheetName: 'Note 20', titre: `NOTE 20 — BANQUES, CRÉDITS D'ESCOMPTE ET DE TRÉSORERIE — ${exercice}`, cols: COLS3, numFrom: 2, land: false, headers: HDR3, rows: [
+    { cells: ["Crédits d'escompte", ...cmpC(['564','565'])] },
+    { cells: ['Banques, crédits de trésorerie', ...cmpC(['561','566'])] },
+    { cells: ['TOTAL', ...cmpC(['56'])], total: true },
+  ] })
+
+  // ── Note 27B : Effectifs et masse salariale (gabarit) ──
+  tpl('Note 27B', `NOTE 27B — EFFECTIFS ET MASSE SALARIALE — ${exercice}`,
+    ['Qualification', 'Effectif (H)', 'Effectif (F)', 'Total', 'Masse salariale'],
+    ['Cadres supérieurs', 'Techniciens supérieurs et cadres moyens', 'Techniciens, agents de maîtrise et ouvriers qualifiés', 'Employés, manœuvres, ouvriers et apprentis', 'TOTAL'],
+    [40, 14, 14, 12, 20], true)
+
+  // ── Note 30 : Autres charges et produits HAO (calculée) ──
+  notes.push({ sheetName: 'Note 30', titre: `NOTE 30 — AUTRES CHARGES ET PRODUITS HAO — ${exercice}`, cols: COLS3, numFrom: 2, land: false, headers: HDR3, rows: [
+    { cells: ['Charges HAO', ...cmpD(['83'])] },
+    { cells: ['Dotations HAO', ...cmpD(['85'])] },
+    { cells: ['TOTAL CHARGES HAO', ...cmpD(['83','85'])], total: true },
+    { cells: ['Produits HAO', ...cmpC(['84'])] },
+    { cells: ['Reprises HAO', ...cmpC(['86'])] },
+    { cells: ["Subventions d'équilibre", ...cmpC(['88'])] },
+    { cells: ['TOTAL PRODUITS HAO', ...cmpC(['84','86','88'])], total: true },
+  ] })
+
+  // ── Note 31 : Résultat des 5 derniers exercices (gabarit) ──
+  tpl('Note 31', `NOTE 31 — RÉSULTAT DES CINQ DERNIERS EXERCICES — ${exercice}`,
+    ['Éléments', `${exercice}`, `${exercice - 1}`, `${exercice - 2}`, `${exercice - 3}`, `${exercice - 4}`],
+    ['Capital social', "Chiffre d'affaires", 'Résultat net', 'Effectif', 'Dividendes distribués'],
+    [40, 14, 14, 14, 14, 14], true)
+
+  // ── Note 32 : Production de l'exercice (gabarit) ──
+  tpl('Note 32', `NOTE 32 — PRODUCTION DE L'EXERCICE — ${exercice}`,
+    ['Désignation du produit', 'Unité', 'Quantité', 'Valeur'],
+    ['(à ventiler par produit)', 'TOTAL'], [44, 18, 18, 20], false)
+
+  // ── Note 33 : Achats destinés à la production (gabarit) ──
+  tpl('Note 33', `NOTE 33 — ACHATS DESTINÉS À LA PRODUCTION — ${exercice}`,
+    ['Désignation des matières et produits', 'Unité', 'Quantité', 'Valeur'],
+    ['(à ventiler par matière)', 'TOTAL'], [44, 18, 18, 20], false)
+
+  // ── Note 34 : Synthèse des principaux indicateurs (SIG, calculée) ──
+  notes.push({ sheetName: 'Note 34', titre: `NOTE 34 — SYNTHÈSE DES INDICATEURS FINANCIERS (SIG) — ${exercice}`, cols: COLS3, numFrom: 2, land: false, headers: HDR3, rows: [
+    { cells: ["CHIFFRE D'AFFAIRES", r0(crN.XB), r0(crN1.XB)], total: true },
+    { cells: ['MARGE COMMERCIALE', r0(crN.XA), r0(crN1.XA)] },
+    { cells: ['VALEUR AJOUTÉE', r0(crN.XC), r0(crN1.XC)], total: true },
+    { cells: ["EXCÉDENT BRUT D'EXPLOITATION", r0(crN.XD), r0(crN1.XD)] },
+    { cells: ["RÉSULTAT D'EXPLOITATION", r0(crN.XE), r0(crN1.XE)] },
+    { cells: ['RÉSULTAT FINANCIER', r0(crN.XF), r0(crN1.XF)] },
+    { cells: ['RÉSULTAT DES ACTIVITÉS ORDINAIRES', r0(crN.XG), r0(crN1.XG)] },
+    { cells: ['RÉSULTAT HORS ACTIVITÉS ORDINAIRES', r0(crN.XH), r0(crN1.XH)] },
+    { cells: ['RÉSULTAT NET', r0(crN.XI), r0(crN1.XI)], total: true },
+  ] })
+
+  // ── Note 35 : Informations sociales et environnementales (gabarit/texte) ──
+  notes.push({ sheetName: 'Note 35', titre: `NOTE 35 — INFORMATIONS SOCIALES ET ENVIRONNEMENTALES — ${exercice}`, cols: [110], numFrom: 99, land: false,
+    headers: ['Informations sociales, environnementales et sociétales (obligatoire si effectif > 250 salariés)'], rows: [
+      { cells: ['Emploi : effectif total et répartition par sexe, âge et zone géographique.'] },
+      { cells: ['Embauches et licenciements de la période.'] },
+      { cells: ['Rémunérations et leur évolution.'] },
+      { cells: ['Informations environnementales et sociétales (à compléter le cas échéant).'] },
+    ] })
+
+  // ── Note 36 : Codes (référence DGI, gabarit) ──
+  tpl('Note 36', `NOTE 36 — CODES (FORME JURIDIQUE / PAYS) — ${exercice}`,
+    ['Rubrique', 'Code'], ['Code forme juridique', 'Code pays du siège social'], [60, 18], false)
+
+  // ── Tri en ordre officiel ──
+  const ORDER = ['Note 1','Note 2','Note 3A','Note 3B','Note 3C','Note 3D','Note 3E','Note 4','Note 5','Note 6','Note 7','Note 8','Note 9','Note 10','Note 11','Note 12','Note 13','Note 14','Note 15A','Note 15B','Note 16A','Note 16B','Note 16B bis','Note 16C','Note 17','Note 18','Note 19','Note 20','Note 21','Note 22','Note 23','Note 24','Note 25','Note 26','Note 27A','Note 27B','Note 28','Note 29','Note 30','Note 31','Note 32','Note 33','Note 34','Note 35','Note 36']
+  notes.sort((a, b) => (ORDER.indexOf(a.sheetName) - ORDER.indexOf(b.sheetName)))
+
   return notes
 }
 // soustraction terme à terme de deux triplets [n, n1, var]
@@ -7982,8 +8209,8 @@ function genererEtatsFinanciers({ soldesN, soldesN1 = [], ranN = 0, ranN1 = 0, e
   const crN1 = calculerResultat(soldesN1)
   const bilanN  = calculerBilan(soldesN,  ranN,  crN.XI)
   const bilanN1 = calculerBilan(soldesN1, ranN1, crN1.XI)
-  const tft = (soldesN1 && soldesN1.length) ? calculerTFT(soldesN, bilanN, bilanN1, crN) : null
-  const notes = genererNotes({ soldesN, soldesN1, bilanN, bilanN1, exercice })
+  const tft = calculerTFT(soldesN, bilanN, bilanN1, crN)  // toujours généré (même sans N-1)
+  const notes = genererNotes({ soldesN, soldesN1, bilanN, bilanN1, exercice, crN, crN1 })
   return {
     tft,
     notes,
@@ -8226,7 +8453,7 @@ function EtatsFinanciersPage({ companies, companyId, toast }) {
       const r1 = ws.addRow([`Désignation entité : ${ident?.raison_sociale || companyName}`]); r1.font = { name: 'Calibri', size: 10, bold: true }
       ws.addRow([`N° d'identification (IFU) : ${ident?.ifu || ''}`, '', '', `Exercice clos le : 31/12/${exercice}`, 'Durée (mois) : 12'])
       const rt = ws.addRow([titre]); rt.font = { name: 'Calibri', size: 12, bold: true }
-      ws.mergeCells(rt.number, 1, rt.number, nc); rt.getCell(1).alignment = { horizontal: 'center' }
+      if (nc > 1) ws.mergeCells(rt.number, 1, rt.number, nc); rt.getCell(1).alignment = { horizontal: nc > 1 ? 'center' : 'left' }
       ws.addRow([])
       const hr = ws.addRow(headers); hr.height = 26
       hr.eachCell((c, col) => { if (col <= nc) { c.font = { ...FONT, bold: true }; c.fill = FILL_HEAD; c.border = BORDER; c.alignment = { vertical: 'middle', horizontal: col >= numFrom ? 'right' : 'left', wrapText: true } } })
