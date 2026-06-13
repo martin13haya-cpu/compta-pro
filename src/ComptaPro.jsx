@@ -7840,6 +7840,138 @@ function genererNotes({ soldesN, soldesN1 = [], bilanN, bilanN1, exercice }) {
   ]
   notes.push({ sheetName: 'Note 17', titre: `NOTE 17 — FOURNISSEURS D'EXPLOITATION — ${exercice}`, cols: COLS4, numFrom: 2, land: false, headers: HDR4, rows: rows17 })
 
+  // ════════════ VAGUE 2 — Notes du Compte de Résultat (classes 6 et 7) ════════════
+
+  // ── Note 21 : Chiffre d'affaires et autres produits ──
+  const rows21 = [
+    { cells: ['Ventes de marchandises', ...cmpC(['701'])] },
+    { cells: ['Ventes de produits fabriqués', ...cmpC(['702','703','704'])] },
+    { cells: ['Travaux, services vendus', ...cmpC(['705','706'])] },
+    { cells: ['Produits accessoires', ...cmpC(['707'])] },
+    { cells: ["CHIFFRE D'AFFAIRES", ...cmpC(['701','702','703','704','705','706','707'])], total: true },
+    { cells: ['Production stockée (ou déstockage)', ...cmpC(['73'])] },
+    { cells: ['Production immobilisée', ...cmpC(['72'])] },
+    { cells: ["Subventions d'exploitation", ...cmpC(['71'])] },
+    { cells: ['Autres produits', ...cmpC(['75'])] },
+    { cells: ['TOTAL PRODUITS', ...cmpC(['70','71','72','73','75'])], total: true },
+  ]
+  notes.push({ sheetName: 'Note 21', titre: `NOTE 21 — CHIFFRE D'AFFAIRES ET AUTRES PRODUITS — ${exercice}`, cols: COLS4, numFrom: 2, land: false, headers: HDR4, rows: rows21 })
+
+  // ── Note 22 : Achats ──
+  const rows22 = [
+    { cells: ['Achats de marchandises', ...cmpD(['601'])] },
+    { cells: ['Achats de matières premières et fournitures liées', ...cmpD(['602'])] },
+    { cells: ['Autres achats', ...cmpD(['604','605','608'])] },
+    { cells: ['TOTAL ACHATS', ...cmpD(['601','602','604','605','608'])], total: true },
+  ]
+  notes.push({ sheetName: 'Note 22', titre: `NOTE 22 — ACHATS — ${exercice}`, cols: COLS4, numFrom: 2, land: false, headers: HDR4, rows: rows22 })
+
+  // ── Note 23 : Transports ──
+  const rows23 = [
+    { cells: ['Transports sur achats', ...cmpD(['611'])] },
+    { cells: ['Transports sur ventes', ...cmpD(['612'])] },
+    { cells: ['Transports pour le compte de tiers', ...cmpD(['613'])] },
+    { cells: ['Transports du personnel', ...cmpD(['614'])] },
+    { cells: ['Transports de plis', ...cmpD(['616'])] },
+    { cells: ['Autres transports', ...cmpD(['618'])] },
+    { cells: ['TOTAL TRANSPORTS', ...cmpD(['61'])], total: true },
+  ]
+  notes.push({ sheetName: 'Note 23', titre: `NOTE 23 — TRANSPORTS — ${exercice}`, cols: COLS4, numFrom: 2, land: false, headers: HDR4, rows: rows23 })
+
+  // ── Note 24 : Services extérieurs ──
+  const rows24 = [
+    { cells: ['Sous-traitance générale', ...cmpD(['621'])] },
+    { cells: ['Locations et charges locatives', ...cmpD(['622'])] },
+    { cells: ['Redevances de location acquisition', ...cmpD(['623'])] },
+    { cells: ['Entretien, réparations et maintenance', ...cmpD(['624'])] },
+    { cells: ["Primes d'assurance", ...cmpD(['625'])] },
+    { cells: ['Études, recherches et documentation', ...cmpD(['626'])] },
+    { cells: ['Publicité, publications, relations publiques', ...cmpD(['627'])] },
+    { cells: ['Frais de télécommunications', ...cmpD(['628'])] },
+    { cells: ['Frais bancaires', ...cmpD(['631'])] },
+    { cells: ["Rémunérations d'intermédiaires et de conseils", ...cmpD(['632'])] },
+    { cells: ['Frais de formation du personnel', ...cmpD(['633'])] },
+    { cells: ['Redevances pour brevets, licences, logiciels', ...cmpD(['634'])] },
+    { cells: ['Cotisations', ...cmpD(['635'])] },
+    { cells: ['Autres charges externes', ...cmpD(['637','638'])] },
+    { cells: ['TOTAL SERVICES EXTÉRIEURS', ...cmpD(['62','63'])], total: true },
+  ]
+  notes.push({ sheetName: 'Note 24', titre: `NOTE 24 — SERVICES EXTÉRIEURS — ${exercice}`, cols: COLS4, numFrom: 2, land: false, headers: HDR4, rows: rows24 })
+
+  // ── Note 25 : Impôts et taxes ──
+  const rows25 = [
+    { cells: ['Impôts et taxes directs', ...cmpD(['641'])] },
+    { cells: ['Impôts et taxes indirects', ...cmpD(['645'])] },
+    { cells: ["Droits d'enregistrement", ...cmpD(['646'])] },
+    { cells: ['Pénalités et amendes fiscales', ...cmpD(['647'])] },
+    { cells: ['Autres impôts et taxes', ...cmpD(['648'])] },
+    { cells: ['TOTAL IMPÔTS ET TAXES', ...cmpD(['64'])], total: true },
+  ]
+  notes.push({ sheetName: 'Note 25', titre: `NOTE 25 — IMPÔTS ET TAXES — ${exercice}`, cols: COLS4, numFrom: 2, land: false, headers: HDR4, rows: rows25 })
+
+  // ── Note 26 : Autres charges ──
+  const rows26 = [
+    { cells: ['Pertes sur créances clients', ...cmpD(['651'])] },
+    { cells: ['Quote-part de résultat sur opérations en commun', ...cmpD(['652'])] },
+    { cells: ['Valeur comptable des cessions courantes', ...cmpD(['654'])] },
+    { cells: ['Indemnités et rémunérations administrateurs', ...cmpD(['653'])] },
+    { cells: ['Dons, mécénat et autres charges diverses', ...cmpD(['658'])] },
+    { cells: ['TOTAL AUTRES CHARGES', ...cmpD(['65'])], total: true },
+  ]
+  notes.push({ sheetName: 'Note 26', titre: `NOTE 26 — AUTRES CHARGES — ${exercice}`, cols: COLS4, numFrom: 2, land: false, headers: HDR4, rows: rows26 })
+
+  // ── Note 27A : Charges de personnel ──
+  const rows27 = [
+    { cells: ['Rémunérations directes versées au personnel', ...cmpD(['661','662'])] },
+    { cells: ['Indemnités forfaitaires versées au personnel', ...cmpD(['663'])] },
+    { cells: ['Charges sociales', ...cmpD(['664'])] },
+    { cells: ["Rémunérations et charges sociales de l'exploitant", ...cmpD(['666'])] },
+    { cells: ['Rémunération transférée de personnel extérieur', ...cmpD(['667'])] },
+    { cells: ['Autres charges sociales', ...cmpD(['668'])] },
+    { cells: ['TOTAL CHARGES DE PERSONNEL', ...cmpD(['66'])], total: true },
+  ]
+  notes.push({ sheetName: 'Note 27A', titre: `NOTE 27A — CHARGES DE PERSONNEL — ${exercice}`, cols: COLS4, numFrom: 2, land: false, headers: HDR4, rows: rows27 })
+
+  // ── Note 28 : Provisions et dépréciations inscrites au bilan (mouvements) ──
+  const mvtProv = (pref) => {
+    const ouv = _sumC(soldesN1, pref), clo = _sumC(soldesN, pref)
+    return [r0(ouv), Math.max(0, r0(clo - ouv)), Math.max(0, r0(ouv - clo)), r0(clo)]
+  }
+  const rows28 = [
+    { cells: ['Provisions réglementées', ...mvtProv(['15'])] },
+    { cells: ['Provisions financières pour risques et charges', ...mvtProv(['19'])] },
+    { cells: ['Dépréciations des immobilisations', ...mvtProv(['29'])] },
+    { cells: ['Dépréciations des stocks', ...mvtProv(['39'])] },
+    { cells: ['Dépréciations actif circulant HAO', ...mvtProv(['498'])] },
+    { cells: ['Dépréciations clients', ...mvtProv(['491'])] },
+    { cells: ['Dépréciations autres créances', ...mvtProv(['492','493','494','495','496','497'])] },
+    { cells: ['Provisions pour risques à court terme', ...mvtProv(['499'])] },
+    { cells: ['TOTAL PROVISIONS ET DÉPRÉCIATIONS', ...mvtProv(['15','19','29','39','49'])], total: true },
+  ]
+  notes.push({ sheetName: 'Note 28', titre: `NOTE 28 — PROVISIONS ET DÉPRÉCIATIONS — ${exercice}`,
+    cols: [46, 16, 16, 16, 16], numFrom: 2, land: true,
+    headers: ['Rubriques', "À l'ouverture", 'Dotations', 'Reprises', 'À la clôture'], rows: rows28 })
+
+  // ── Note 29 : Charges et revenus financiers ──
+  const rows29 = [
+    { cells: ['Intérêts des emprunts', ...cmpD(['671'])] },
+    { cells: ['Intérêts dans loyers de location acquisition', ...cmpD(['672'])] },
+    { cells: ['Escomptes accordés', ...cmpD(['673'])] },
+    { cells: ['Autres intérêts', ...cmpD(['674'])] },
+    { cells: ['Pertes de change', ...cmpD(['676'])] },
+    { cells: ['Pertes sur cessions de titres de placement', ...cmpD(['677'])] },
+    { cells: ['Autres charges financières', ...cmpD(['678'])] },
+    { cells: ['SOUS-TOTAL : FRAIS FINANCIERS', ...cmpD(['67'])], total: true },
+    { cells: ['Intérêts de prêts et créances diverses', ...cmpC(['771'])] },
+    { cells: ['Revenus de participations', ...cmpC(['772'])] },
+    { cells: ['Escomptes obtenus', ...cmpC(['773'])] },
+    { cells: ['Revenus de placement', ...cmpC(['774'])] },
+    { cells: ['Gains de change', ...cmpC(['776'])] },
+    { cells: ['Autres revenus financiers', ...cmpC(['777','778'])] },
+    { cells: ['SOUS-TOTAL : REVENUS FINANCIERS', ...cmpC(['77'])], total: true },
+  ]
+  notes.push({ sheetName: 'Note 29', titre: `NOTE 29 — CHARGES ET REVENUS FINANCIERS — ${exercice}`, cols: COLS4, numFrom: 2, land: false, headers: HDR4, rows: rows29 })
+
   return notes
 }
 // soustraction terme à terme de deux triplets [n, n1, var]
@@ -7890,6 +8022,33 @@ function EtatsFinanciersPage({ companies, companyId, toast }) {
   const [etats, setEtats]         = useState(null)
   const [loading, setLoading]     = useState(false)
   const [nbN1, setNbN1]           = useState(0)     // nb de comptes N-1 importés
+  const [ident, setIdent]         = useState(null)  // fiche d'identification de l'entité
+
+  // Champs obligatoires de la fiche d'identification
+  const CHAMPS_IDENT_OBLIG = [
+    ['raison_sociale', 'Dénomination sociale'], ['ifu', 'IFU'], ['forme_juridique', 'Forme juridique'],
+    ['adresse', 'Adresse'], ['ville', 'Ville'], ['activite_principale', 'Activité principale'], ['dirigeant_nom', 'Dirigeant'],
+  ]
+  const champsIdentManquants = () => CHAMPS_IDENT_OBLIG.filter(([k]) => !String(ident?.[k] || '').trim()).map(([, lib]) => lib)
+
+  // Chargement de la fiche d'identification depuis compta_companies
+  const chargerIdent = useCallback(async () => {
+    if (!companyId) { setIdent(null); return }
+    const { data } = await supabase.from('compta_companies').select('*').eq('id', companyId).single()
+    setIdent(data || {})
+  }, [companyId])
+  useEffect(() => { chargerIdent() }, [chargerIdent])
+
+  const setI = (k, v) => setIdent(p => ({ ...(p || {}), [k]: v }))
+  const saveIdent = async () => {
+    if (!companyId) { toast.error('Sélectionnez une société.'); return }
+    const champs = ['raison_sociale', 'sigle', 'forme_juridique', 'adresse', 'ville', 'tel', 'email', 'ifu', 'rccm', 'code_activite', 'activite_principale', 'capital_social', 'date_creation', 'regime', 'centre_impots', 'dirigeant_nom', 'dirigeant_fonction', 'dirigeant_tel', 'comptable_nom']
+    const payload = {}; champs.forEach(k => { if (ident?.[k] !== undefined) payload[k] = ident[k] === '' ? null : ident[k] })
+    if (payload.capital_social != null) payload.capital_social = numFR(payload.capital_social)
+    const { error } = await supabase.from('compta_companies').update(payload).eq('id', companyId)
+    if (error) toast.error('Enregistrement fiche : ' + error.message)
+    else toast.success('Fiche d’identification enregistrée.')
+  }
 
   // Quand l'année change, recale les bornes (modifiables ensuite pour exercice irrégulier)
   const onExercice = (y) => {
@@ -7970,6 +8129,8 @@ function EtatsFinanciersPage({ companies, companyId, toast }) {
   // ── Génération des états ────────────────────────────────────────────────────
   const generer = async () => {
     if (!companyId) { toast.error('Sélectionnez une société.'); return }
+    const manq = champsIdentManquants()
+    if (manq.length) { toast.error('Complétez d’abord la fiche d’identification : ' + manq.join(', ') + '.'); return }
     setLoading(true)
     try {
       const sN = await chargerSoldesN()
@@ -8030,6 +8191,8 @@ function EtatsFinanciersPage({ companies, companyId, toast }) {
   // ── Export Excel officiel (multi-feuilles) ──────────────────────────────────
   const exporterExcel = async () => {
     if (!etats) { toast.error('Générez d’abord les états.'); return }
+    const manq = champsIdentManquants()
+    if (manq.length) { toast.error('Fiche d’identification incomplète : ' + manq.join(', ') + '.'); return }
     let ExcelJS
     try {
       const mod = await import('https://esm.sh/exceljs@4.4.0')
@@ -8060,13 +8223,13 @@ function EtatsFinanciersPage({ companies, companyId, toast }) {
       })
       const nc = headers.length
       ws.columns = cols.map(w => ({ width: w }))
-      const r1 = ws.addRow([`Désignation entité : ${companyName}`]); r1.font = { name: 'Calibri', size: 10, bold: true }
-      ws.addRow([`N° d'identification : ${company?.rccm || ''}`, '', '', `Exercice clos le : 31/12/${exercice}`, 'Durée (mois) : 12'])
+      const r1 = ws.addRow([`Désignation entité : ${ident?.raison_sociale || companyName}`]); r1.font = { name: 'Calibri', size: 10, bold: true }
+      ws.addRow([`N° d'identification (IFU) : ${ident?.ifu || ''}`, '', '', `Exercice clos le : 31/12/${exercice}`, 'Durée (mois) : 12'])
       const rt = ws.addRow([titre]); rt.font = { name: 'Calibri', size: 12, bold: true }
       ws.mergeCells(rt.number, 1, rt.number, nc); rt.getCell(1).alignment = { horizontal: 'center' }
       ws.addRow([])
       const hr = ws.addRow(headers); hr.height = 26
-      hr.eachCell((c, col) => { if (col <= nc) { c.font = { ...FONT, bold: true }; c.fill = FILL_HEAD; c.border = BORDER; c.alignment = { vertical: 'middle', horizontal: col >= numFrom ? 'right' : 'center', wrapText: true } } })
+      hr.eachCell((c, col) => { if (col <= nc) { c.font = { ...FONT, bold: true }; c.fill = FILL_HEAD; c.border = BORDER; c.alignment = { vertical: 'middle', horizontal: col >= numFrom ? 'right' : 'left', wrapText: true } } })
       for (const d of rows) {
         const row = ws.addRow(d.cells)
         row.eachCell((c, col) => {
@@ -8074,12 +8237,74 @@ function EtatsFinanciersPage({ companies, companyId, toast }) {
           c.font = { ...FONT, bold: !!d.total }; c.border = BORDER
           if (d.total) c.fill = FILL_TOTAL
           if (col >= numFrom) { c.numFmt = NUMFMT; c.alignment = { horizontal: 'right' } }
-          else c.alignment = { horizontal: col === 1 ? 'center' : 'left', wrapText: col === 2 }
+          else c.alignment = { horizontal: 'left', wrapText: col === 2 }
         })
       }
       ws.views = [{ state: 'frozen', ySplit: 5 }]
       ws.pageSetup.printArea = `A1:${colLetter(nc)}${ws.rowCount}`
       return ws
+    }
+
+    // ===== PAGE DE GARDE =====
+    {
+      const ws = wb.addWorksheet('Page de garde', { pageSetup: { paperSize: 9, orientation: 'portrait', margins: { left: 0.6, right: 0.6, top: 0.6, bottom: 0.6, header: 0.2, footer: 0.2 } } })
+      ws.columns = [{ width: 4 }, { width: 42 }, { width: 34 }, { width: 16 }]
+      const center = (txt, size, bold) => { const r = ws.addRow(['', txt]); ws.mergeCells(r.number, 2, r.number, 4); r.getCell(2).font = { name: 'Calibri', size: size || 11, bold: !!bold }; r.getCell(2).alignment = { horizontal: 'center' }; return r }
+      center('RÉPUBLIQUE DU BÉNIN', 12, true)
+      center('Direction Générale des Impôts', 10)
+      center(`Centre de dépôt : ${ident?.centre_impots || '—'}`, 10)
+      ws.addRow([])
+      center('ÉTATS FINANCIERS NORMALISÉS', 14, true)
+      center('SYSTÈME COMPTABLE OHADA (SYSCOHADA)', 11, true)
+      center(`EXERCICE CLOS LE : 31 DÉCEMBRE ${exercice}`, 11, true)
+      ws.addRow([]); ws.addRow([])
+      const kv = (k, v) => { const r = ws.addRow(['', k, v || '']); r.getCell(2).font = { name: 'Calibri', size: 10, bold: true }; r.getCell(3).font = { name: 'Calibri', size: 10 } }
+      kv('DÉSIGNATION DE L’ENTITÉ', '')
+      kv('Dénomination sociale :', ident?.raison_sociale || companyName)
+      kv('Sigle usuel :', ident?.sigle || '')
+      kv('Forme juridique :', ident?.forme_juridique || '')
+      kv('Adresse complète :', ident?.adresse || '')
+      kv('Ville :', ident?.ville || '')
+      kv('N° d’identification fiscale (IFU) :', ident?.ifu || '')
+      kv('RCCM :', ident?.rccm || '')
+      kv('Activité principale :', ident?.activite_principale || '')
+      kv('Régime :', ident?.regime || 'Système Normal')
+      ws.addRow([])
+      const hd = ws.addRow(['', 'Documents déposés', '']); hd.getCell(2).font = { name: 'Calibri', size: 10, bold: true }
+      ;['Fiche d’identification et renseignements divers', 'Bilan', 'Compte de résultat', 'Tableau des flux de trésorerie', 'Notes annexes'].forEach(d => { const r = ws.addRow(['', d, 'X']); r.getCell(3).alignment = { horizontal: 'center' } })
+      ws.pageSetup.printArea = `A1:D${ws.rowCount}`
+    }
+
+    // ===== FICHE R1 — IDENTIFICATION =====
+    {
+      const ws = wb.addWorksheet('Fiche R1', { pageSetup: { paperSize: 9, orientation: 'portrait', fitToPage: true, fitToWidth: 1, fitToHeight: 0, margins: { left: 0.5, right: 0.5, top: 0.5, bottom: 0.5, header: 0.2, footer: 0.2 } } })
+      ws.columns = [{ width: 50 }, { width: 46 }]
+      const t = ws.addRow(['FICHE R1 — IDENTIFICATION ET RENSEIGNEMENTS DIVERS']); ws.mergeCells(t.number, 1, t.number, 2); t.getCell(1).font = { name: 'Calibri', size: 12, bold: true }; t.getCell(1).alignment = { horizontal: 'center' }
+      ws.addRow([])
+      const kv = (k, v) => { const r = ws.addRow([k, (v === 0 || v) ? v : '']); r.getCell(1).font = { ...FONT, bold: true }; r.getCell(2).font = FONT; r.getCell(1).border = BORDER; r.getCell(2).border = BORDER; r.getCell(1).alignment = { horizontal: 'left', wrapText: true }; r.getCell(2).alignment = { horizontal: 'left', wrapText: true } }
+      kv('Dénomination sociale', ident?.raison_sociale || companyName)
+      kv('Sigle usuel', ident?.sigle)
+      kv('Forme juridique', ident?.forme_juridique)
+      kv('Adresse complète', ident?.adresse)
+      kv('Ville', ident?.ville)
+      kv('Téléphone', ident?.tel)
+      kv('Email', ident?.email)
+      kv('N° d’identification fiscale (IFU)', ident?.ifu)
+      kv('RCCM', ident?.rccm)
+      kv('Code activité économique', ident?.code_activite)
+      kv('Activité principale', ident?.activite_principale)
+      kv('Capital social (FCFA)', ident?.capital_social ? Math.round(ident.capital_social).toLocaleString('fr-FR') : '')
+      kv('Date de création', ident?.date_creation)
+      kv('Régime fiscal', ident?.regime || 'Système Normal')
+      kv('Centre de dépôt (DGI)', ident?.centre_impots)
+      kv('Exercice clos le', `31/12/${exercice}`)
+      kv('Exercice précédent clos le', `31/12/${exercice - 1}`)
+      kv('Durée de l’exercice (mois)', '12')
+      kv('Principal dirigeant', ident?.dirigeant_nom)
+      kv('Fonction du dirigeant', ident?.dirigeant_fonction)
+      kv('Téléphone du dirigeant', ident?.dirigeant_tel)
+      kv('Responsable comptable', ident?.comptable_nom)
+      ws.pageSetup.printArea = `A1:B${ws.rowCount}`
     }
 
     // ===== ACTIF =====
@@ -8186,6 +8411,37 @@ function EtatsFinanciersPage({ companies, companyId, toast }) {
           <Btn variant="primary" onClick={generer} disabled={loading}>{loading ? '⏳ Calcul…' : '⚙️ Générer les états'}</Btn>
           {etats && <Btn variant="success" onClick={exporterExcel}>📊 Export Excel officiel</Btn>}
         </div>
+      </Card>
+
+      {/* Fiche d'identification de l'entité (obligatoire) */}
+      <Card style={{ marginTop: 14 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+          <div style={{ fontWeight: 700 }}>🪪 Fiche d’identification de l’entité <span style={{ color: '#ef4444' }}>(obligatoire)</span></div>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+            {champsIdentManquants().length > 0
+              ? <span style={{ fontSize: 12.5, color: '#b45309' }}>⚠️ À compléter : {champsIdentManquants().join(', ')}</span>
+              : <span style={{ fontSize: 12.5, color: '#15803d' }}>✅ Fiche complète</span>}
+            <Btn sm variant="primary" onClick={saveIdent}>💾 Enregistrer la fiche</Btn>
+          </div>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(220px,1fr))', gap: 12 }}>
+          {[
+            ['raison_sociale', 'Dénomination sociale *'], ['sigle', 'Sigle usuel'], ['forme_juridique', 'Forme juridique * (SA, SARL…)'],
+            ['ifu', 'N° IFU *'], ['rccm', 'RCCM'], ['code_activite', 'Code activité économique'],
+            ['activite_principale', 'Activité principale *'], ['adresse', 'Adresse complète *'], ['ville', 'Ville *'],
+            ['tel', 'Téléphone'], ['email', 'Email'], ['capital_social', 'Capital social (FCFA)'],
+            ['date_creation', 'Date de création', 'date'], ['regime', 'Régime fiscal'], ['centre_impots', 'Centre de dépôt (DGI)'],
+            ['dirigeant_nom', 'Principal dirigeant *'], ['dirigeant_fonction', 'Fonction du dirigeant'], ['dirigeant_tel', 'Tél. du dirigeant'],
+            ['comptable_nom', 'Responsable comptable'],
+          ].map(([k, label, type]) => (
+            <div key={k}>
+              <label style={lbl}>{label}</label>
+              <input type={type || 'text'} value={ident?.[k] ?? ''} onChange={e => setI(k, e.target.value)}
+                style={{ ...inp, width: '100%', background: 'white' }} />
+            </div>
+          ))}
+        </div>
+        <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 8 }}>Ces informations alimentent la Page de garde, la Fiche R1 et l’en-tête de toutes les feuilles. Champs marqués * obligatoires avant génération.</div>
       </Card>
 
       {/* Comparatif N-1 + Report à nouveau */}
