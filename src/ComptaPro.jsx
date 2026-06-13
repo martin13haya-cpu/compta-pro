@@ -7729,14 +7729,132 @@ function calculerTFT(soldesN, bilanN, bilanN1, crN) {
   return { valeurs: v, lignes: TFT_LIGNES, controle: { tresoReelleN: tresoN, tresoReconstitueeN: v.ZH, ecart: v.ZH - tresoN } }
 }
 
-function genererEtatsFinanciers({ soldesN, soldesN1 = [], ranN = 0, ranN1 = 0 }) {
+// ════════════════════════════════════════════════════════════════════════════
+//  NOTES ANNEXES — Vague 1 (dérivées des soldes N et N-1)
+//  Note 3A (immob. brutes), 3C (amortissements), 6 (stocks), 7 (clients),
+//  8 (autres créances), 16A (emprunts & dettes fin.), 17 (fournisseurs).
+//  Colonnes échéances (à 1 an / 1-2 ans / +2 ans) non incluses : nécessitent
+//  une donnée de maturité non saisie dans ComptaPro (phase ultérieure).
+// ════════════════════════════════════════════════════════════════════════════
+function genererNotes({ soldesN, soldesN1 = [], bilanN, bilanN1, exercice }) {
+  const r0 = v => Math.round(v || 0)
+  const cmpD = (pref) => { const n = _sumD(soldesN, pref), n1 = _sumD(soldesN1, pref); return [r0(n), r0(n1), r0(n - n1)] }
+  const cmpC = (pref) => { const n = _sumC(soldesN, pref), n1 = _sumC(soldesN1, pref); return [r0(n), r0(n1), r0(n - n1)] }
+  const HDR4 = ['Libellés', `Année ${exercice}`, `Année ${exercice - 1}`, 'Variation']
+  const COLS4 = [46, 18, 18, 18]
+  const notes = []
+
+  // ── Note 3A : Immobilisations brutes (mouvements) ──
+  const aN = bilanN.actif, a1 = bilanN1.actif
+  const mvtBrut = (ref) => {
+    const ouv = r0(a1[ref]?.brut), clo = r0(aN[ref]?.brut)
+    return [ouv, Math.max(0, clo - ouv), Math.max(0, ouv - clo), clo]   // ouverture, acquisitions, cessions, clôture
+  }
+  const rows3A = []
+  const p3A = (ref, lib, total) => rows3A.push({ cells: [lib, ...mvtBrut(ref)], total })
+  const lib3 = (ref) => (ACTIF_DETAIL.find(d => d.ref === ref) || {}).lib || ref
+  p3A('AD', 'IMMOBILISATIONS INCORPORELLES', true); ['AE','AF','AG','AH'].forEach(r => p3A(r, lib3(r)))
+  p3A('AI', 'IMMOBILISATIONS CORPORELLES', true); ['AJ','AK','AL','AM','AN','AP'].forEach(r => p3A(r, lib3(r)))
+  p3A('AQ', 'IMMOBILISATIONS FINANCIÈRES', true); ['AR','AS'].forEach(r => p3A(r, lib3(r)))
+  p3A('AZ', 'TOTAL GÉNÉRAL', true)
+  notes.push({ sheetName: 'Note 3A', titre: `NOTE 3A — IMMOBILISATIONS (VALEURS BRUTES) — ${exercice}`,
+    cols: [46, 16, 16, 16, 16], numFrom: 2, land: true,
+    headers: ['Rubriques', "Brut à l'ouverture", 'Acquisitions', 'Cessions / sorties', 'Brut à la clôture'], rows: rows3A })
+
+  // ── Note 3C : Amortissements (mouvements) ──
+  const mvtAmort = (ref) => {
+    const ouv = r0(a1[ref]?.ad), clo = r0(aN[ref]?.ad)
+    return [ouv, Math.max(0, clo - ouv), Math.max(0, ouv - clo), clo]   // ouverture, dotations, diminutions, clôture
+  }
+  const rows3C = []
+  const p3C = (ref, lib, total) => rows3C.push({ cells: [lib, ...mvtAmort(ref)], total })
+  p3C('AD', 'IMMOBILISATIONS INCORPORELLES', true); ['AE','AF','AG','AH'].forEach(r => p3C(r, lib3(r)))
+  p3C('AI', 'IMMOBILISATIONS CORPORELLES', true); ['AJ','AK','AL','AM','AN'].forEach(r => p3C(r, lib3(r)))
+  p3C('AZ', 'TOTAL GÉNÉRAL', true)
+  notes.push({ sheetName: 'Note 3C', titre: `NOTE 3C — IMMOBILISATIONS (AMORTISSEMENTS) — ${exercice}`,
+    cols: [46, 16, 16, 16, 16], numFrom: 2, land: true,
+    headers: ['Rubriques', "Cumul à l'ouverture", "Dotations de l'exercice", 'Diminutions (sorties)', 'Cumul à la clôture'], rows: rows3C })
+
+  // ── Note 6 : Stocks et en-cours ──
+  const rows6 = [
+    { cells: ['Marchandises', ...cmpD(['31'])] },
+    { cells: ['Matières premières et fournitures liées', ...cmpD(['32'])] },
+    { cells: ['Autres approvisionnements', ...cmpD(['33'])] },
+    { cells: ['Produits en cours', ...cmpD(['34'])] },
+    { cells: ['Services en cours', ...cmpD(['35'])] },
+    { cells: ['Produits finis', ...cmpD(['36'])] },
+    { cells: ['Produits intermédiaires et résiduels', ...cmpD(['37'])] },
+    { cells: ['Stocks en cours de route, consignation, dépôt', ...cmpD(['38'])] },
+    { cells: ['TOTAL BRUT STOCKS ET EN-COURS', ...cmpD(['31','32','33','34','35','36','37','38'])], total: true },
+    { cells: ['Dépréciations des stocks', ...cmpC(['39'])] },
+    { cells: ['TOTAL NET DE DÉPRÉCIATION', ...sub(cmpD(['31','32','33','34','35','36','37','38']), cmpC(['39']))], total: true },
+  ]
+  notes.push({ sheetName: 'Note 6', titre: `NOTE 6 — STOCKS ET EN-COURS — ${exercice}`, cols: COLS4, numFrom: 2, land: false, headers: HDR4, rows: rows6 })
+
+  // ── Note 7 : Clients ──
+  const rows7 = [
+    { cells: ['Clients (hors groupe)', ...cmpD(['411'])] },
+    { cells: ['Clients, effets à recevoir', ...cmpD(['412'])] },
+    { cells: ['Créances sur cessions courantes', ...cmpD(['414'])] },
+    { cells: ['Clients douteux ou litigieux', ...cmpD(['416'])] },
+    { cells: ['Clients, produits à recevoir', ...cmpD(['418'])] },
+    { cells: ['TOTAL BRUT CLIENTS', ...cmpD(['411','412','413','414','416','417','418'])], total: true },
+    { cells: ['Dépréciations des comptes clients', ...cmpC(['491'])] },
+    { cells: ['TOTAL NET DE DÉPRÉCIATION', ...sub(cmpD(['411','412','413','414','416','417','418']), cmpC(['491']))], total: true },
+    { cells: ['Clients créditeurs (avances reçues)', ...cmpC(['419'])] },
+  ]
+  notes.push({ sheetName: 'Note 7', titre: `NOTE 7 — CLIENTS — ${exercice}`, cols: COLS4, numFrom: 2, land: false, headers: HDR4, rows: rows7 })
+
+  // ── Note 8 : Autres créances ──
+  const rows8 = [
+    { cells: ['Personnel', ...cmpD(['42'])] },
+    { cells: ['Organismes sociaux', ...cmpD(['43'])] },
+    { cells: ['État et collectivités publiques', ...cmpD(['44'])] },
+    { cells: ['Apporteurs, associés et groupe', ...cmpD(['46'])] },
+    { cells: ['Autres débiteurs divers', ...cmpD(['471','472','473','475','476'])] },
+    { cells: ['TOTAL BRUT AUTRES CRÉANCES', ...cmpD(['42','43','44','46','471','472','473','475','476'])], total: true },
+    { cells: ['Dépréciations des autres créances', ...cmpC(['492','493','494','495','496','497'])] },
+    { cells: ['TOTAL NET DE DÉPRÉCIATION', ...sub(cmpD(['42','43','44','46','471','472','473','475','476']), cmpC(['492','493','494','495','496','497']))], total: true },
+  ]
+  notes.push({ sheetName: 'Note 8', titre: `NOTE 8 — AUTRES CRÉANCES — ${exercice}`, cols: COLS4, numFrom: 2, land: false, headers: HDR4, rows: rows8 })
+
+  // ── Note 16A : Emprunts et dettes financières ──
+  const rows16 = [
+    { cells: ['Emprunts obligataires', ...cmpC(['161'])] },
+    { cells: ['Emprunts et dettes auprès des établissements de crédit', ...cmpC(['162','163'])] },
+    { cells: ["Avances reçues de l'État", ...cmpC(['164'])] },
+    { cells: ['Dépôts et cautionnements reçus', ...cmpC(['165'])] },
+    { cells: ['Intérêts courus', ...cmpC(['166'])] },
+    { cells: ['Autres emprunts et dettes', ...cmpC(['167','168','18'])] },
+    { cells: ['TOTAL EMPRUNTS ET DETTES FINANCIÈRES', ...cmpC(['16','18'])], total: true },
+  ]
+  notes.push({ sheetName: 'Note 16A', titre: `NOTE 16A — EMPRUNTS ET DETTES FINANCIÈRES — ${exercice}`, cols: COLS4, numFrom: 2, land: false, headers: HDR4, rows: rows16 })
+
+  // ── Note 17 : Fournisseurs d'exploitation ──
+  const rows17 = [
+    { cells: ['Fournisseurs, dettes en compte (hors groupe)', ...cmpC(['401'])] },
+    { cells: ['Fournisseurs, effets à payer', ...cmpC(['402'])] },
+    { cells: ['Fournisseurs, factures non parvenues', ...cmpC(['408'])] },
+    { cells: ['TOTAL FOURNISSEURS', ...cmpC(['401','402','408'])], total: true },
+    { cells: ['Fournisseurs, avances et acomptes versés', ...cmpD(['409'])] },
+  ]
+  notes.push({ sheetName: 'Note 17', titre: `NOTE 17 — FOURNISSEURS D'EXPLOITATION — ${exercice}`, cols: COLS4, numFrom: 2, land: false, headers: HDR4, rows: rows17 })
+
+  return notes
+}
+// soustraction terme à terme de deux triplets [n, n1, var]
+function sub(a, b) { return [a[0] - b[0], a[1] - b[1], a[2] - b[2]] }
+
+function genererEtatsFinanciers({ soldesN, soldesN1 = [], ranN = 0, ranN1 = 0, exercice = new Date().getFullYear() }) {
   const crN  = calculerResultat(soldesN)
   const crN1 = calculerResultat(soldesN1)
   const bilanN  = calculerBilan(soldesN,  ranN,  crN.XI)
   const bilanN1 = calculerBilan(soldesN1, ranN1, crN1.XI)
   const tft = (soldesN1 && soldesN1.length) ? calculerTFT(soldesN, bilanN, bilanN1, crN) : null
+  const notes = genererNotes({ soldesN, soldesN1, bilanN, bilanN1, exercice })
   return {
     tft,
+    notes,
     resultat: { N: crN, N1: crN1, lignes: CR_LIGNES },
     actif:    { N: bilanN.actif,  N1: bilanN1.actif,  detail: ACTIF_DETAIL,  totaux: ACTIF_TOTAUX },
     passif:   { N: bilanN.passif, N1: bilanN1.passif, detail: PASSIF_DETAIL, totaux: PASSIF_TOTAUX },
@@ -7856,7 +7974,7 @@ function EtatsFinanciersPage({ companies, companyId, toast }) {
     try {
       const sN = await chargerSoldesN()
       setSoldesN(sN)
-      const data = genererEtatsFinanciers({ soldesN: sN, soldesN1, ranN, ranN1 })
+      const data = genererEtatsFinanciers({ soldesN: sN, soldesN1, ranN, ranN1, exercice })
       setEtats(data)
       const ec = Math.abs(data.controle.ecartN)
       if (ec < 1) toast.success('États générés — Bilan équilibré ✅')
@@ -8025,6 +8143,13 @@ function EtatsFinanciersPage({ companies, companyId, toast }) {
         [7, 70, 18],
         ['REF', 'LIBELLÉS', `EXERCICE ${exercice}`],
         tRows, 3, false)
+    }
+
+    // ===== NOTES ANNEXES (vague 1) =====
+    if (etats.notes) {
+      for (const nt of etats.notes) {
+        buildSheet(nt.sheetName, nt.titre, nt.cols, nt.headers, nt.rows, nt.numFrom, nt.land)
+      }
     }
 
     const buf = await wb.xlsx.writeBuffer()
