@@ -7628,12 +7628,115 @@ function calculerBilan(comptes, reportANouveau = 0, resultatNet = 0) {
 //  soldesN1  = [{numero, soldeD, soldeC}]  (balance importée N-1) — peut être []
 //  ranN, ranN1 = report à nouveau saisi pour N et N-1
 // ════════════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════════════
+//  TABLEAU DES FLUX DE TRÉSORERIE (TFT) — Système Normal
+//  Calculé à partir des deux bilans (N et N-1) + du Compte de Résultat N.
+//  Nécessite la balance N-1 (sinon non calculable).
+//
+//  Choix de modélisation (surfacés par la ligne de contrôle officielle) :
+//   • FA CAFG  = Résultat net + dotations (amort/prov/déprec, expl+fin+HAO)
+//                − reprises − résultat de cession d'immobilisations.
+//   • FB→FE    = variations du besoin en fonds de roulement (deltas de bilan).
+//   • FF→FH    = acquisitions d'immobilisations = Δ valeurs brutes.
+//   • FI       = encaissements de cessions ≈ produits de cession (poste TN).
+//   • FK/FM    = Δ capital (+ apports / − prélèvements).  FL = Δ subventions.
+//   • FN dividendes : non déductible des seules balances → défaut 0 (à ajuster).
+//   • FO/FQ    = Δ dettes financières (+ emprunts / − remboursements).
+//  La ligne « Contrôle » compare la trésorerie reconstituée (ZH) à la
+//  trésorerie réelle de clôture (Trésorerie-Actif N − Trésorerie-Passif N).
+// ════════════════════════════════════════════════════════════════════════════
+const TFT_LIGNES = [
+  { ref:'ZA', lib:'Trésorerie nette au 1er janvier (A)', bold:true },
+  { ref:'FA', lib:"Capacité d'Autofinancement Globale (CAFG)" },
+  { ref:'FB', lib:'- Variation Actif circulant HAO' },
+  { ref:'FC', lib:'- Variation des stocks' },
+  { ref:'FD', lib:'- Variation des créances' },
+  { ref:'FE', lib:'+ Variation du passif circulant' },
+  { ref:'ZB', lib:'Flux de trésorerie des activités opérationnelles (B)', bold:true },
+  { ref:'FF', lib:"- Décaissements / acquisitions d'immobilisations incorporelles" },
+  { ref:'FG', lib:"- Décaissements / acquisitions d'immobilisations corporelles" },
+  { ref:'FH', lib:"- Décaissements / acquisitions d'immobilisations financières" },
+  { ref:'FI', lib:'+ Encaissements / cessions immobilisations incorp. et corp.' },
+  { ref:'FJ', lib:'+ Encaissements / cessions immobilisations financières' },
+  { ref:'ZC', lib:"Flux de trésorerie des activités d'investissement (C)", bold:true },
+  { ref:'FK', lib:'+ Augmentations de capital par apports nouveaux' },
+  { ref:'FL', lib:"+ Subventions d'investissement reçues" },
+  { ref:'FM', lib:'- Prélèvements sur le capital' },
+  { ref:'FN', lib:'- Dividendes versés' },
+  { ref:'ZD', lib:'Flux de trésorerie des capitaux propres (D)', bold:true },
+  { ref:'FO', lib:'+ Emprunts' },
+  { ref:'FP', lib:'+ Autres dettes financières' },
+  { ref:'FQ', lib:'- Remboursements des emprunts et autres dettes financières' },
+  { ref:'ZE', lib:'Flux de trésorerie des capitaux étrangers (E)', bold:true },
+  { ref:'ZF', lib:'Flux de trésorerie des activités de financement (D+E) (F)', bold:true },
+  { ref:'ZG', lib:'VARIATION DE LA TRÉSORERIE NETTE DE LA PÉRIODE (B+C+F) (G)', bold:true },
+  { ref:'ZH', lib:'Trésorerie nette au 31 Décembre (G+A) (H)', bold:true },
+]
+
+function calculerTFT(soldesN, bilanN, bilanN1, crN) {
+  const aN = bilanN.actif,  pN = bilanN.passif
+  const a1 = bilanN1.actif, p1 = bilanN1.passif
+  const netA  = (b, ref) => b.actif[ref]?.net  || 0
+  const brutA = (b, ref) => b.actif[ref]?.brut || 0
+  const netP  = (b, ref) => b.passif[ref]?.net || 0
+  const d = (fnN, fn1) => fnN - fn1   // delta N - N-1
+
+  // Trésorerie nette = Trésorerie-Actif (BT) − Trésorerie-Passif (DT)
+  const tresoN = (aN.BT?.net || 0) - (pN.DT?.net || 0)
+  const treso1 = (a1.BT?.net || 0) - (p1.DT?.net || 0)
+
+  // CAFG (depuis le Compte de Résultat — charges déjà signées négativement)
+  const dotHAO  = _sumD(soldesN, ['85'])   // dotations HAO
+  const reprHAO = _sumC(soldesN, ['86'])   // reprises HAO
+  const CAFG = (crN.XI || 0)
+    - (crN.RL || 0) - (crN.RN || 0) + dotHAO   // + dotations (RL,RN négatifs → on les retranche)
+    - (crN.TJ || 0) - (crN.TL || 0) - reprHAO  // - reprises
+    - (crN.TN || 0) - (crN.RO || 0)            // - résultat de cession (TN produit, RO charge)
+
+  const v = {}
+  v.ZA = treso1
+  v.FA = CAFG
+  v.FB = -d(netA(bilanN,'BA'), netA(bilanN1,'BA'))
+  v.FC = -d(netA(bilanN,'BB'), netA(bilanN1,'BB'))
+  v.FD = -d(netA(bilanN,'BG'), netA(bilanN1,'BG'))
+  v.FE =  d(netP(bilanN,'DP'), netP(bilanN1,'DP'))
+  v.ZB = v.FA + v.FB + v.FC + v.FD + v.FE
+
+  v.FF = -d(brutA(bilanN,'AD'), brutA(bilanN1,'AD'))
+  v.FG = -d(brutA(bilanN,'AI'), brutA(bilanN1,'AI'))
+  v.FH = -d(brutA(bilanN,'AQ'), brutA(bilanN1,'AQ'))
+  v.FI = (crN.TN || 0)
+  v.FJ = 0
+  v.ZC = v.FF + v.FG + v.FH + v.FI + v.FJ
+
+  const dCapital = d(netP(bilanN,'CA'), netP(bilanN1,'CA'))
+  v.FK = Math.max(0, dCapital)
+  v.FM = Math.min(0, dCapital)
+  v.FL = d(netP(bilanN,'CL'), netP(bilanN1,'CL'))
+  v.FN = 0
+  v.ZD = v.FK + v.FL + v.FM + v.FN
+
+  const dDettesFin = d(netP(bilanN,'DD'), netP(bilanN1,'DD'))
+  v.FO = Math.max(0, dDettesFin)
+  v.FP = 0
+  v.FQ = Math.min(0, dDettesFin)
+  v.ZE = v.FO + v.FP + v.FQ
+
+  v.ZF = v.ZD + v.ZE
+  v.ZG = v.ZB + v.ZC + v.ZF
+  v.ZH = v.ZG + v.ZA
+
+  return { valeurs: v, lignes: TFT_LIGNES, controle: { tresoReelleN: tresoN, tresoReconstitueeN: v.ZH, ecart: v.ZH - tresoN } }
+}
+
 function genererEtatsFinanciers({ soldesN, soldesN1 = [], ranN = 0, ranN1 = 0 }) {
   const crN  = calculerResultat(soldesN)
   const crN1 = calculerResultat(soldesN1)
   const bilanN  = calculerBilan(soldesN,  ranN,  crN.XI)
   const bilanN1 = calculerBilan(soldesN1, ranN1, crN1.XI)
+  const tft = (soldesN1 && soldesN1.length) ? calculerTFT(soldesN, bilanN, bilanN1, crN) : null
   return {
+    tft,
     resultat: { N: crN, N1: crN1, lignes: CR_LIGNES },
     actif:    { N: bilanN.actif,  N1: bilanN1.actif,  detail: ACTIF_DETAIL,  totaux: ACTIF_TOTAUX },
     passif:   { N: bilanN.passif, N1: bilanN1.passif, detail: PASSIF_DETAIL, totaux: PASSIF_TOTAUX },
@@ -7879,6 +7982,20 @@ function EtatsFinanciersPage({ companies, companyId, toast }) {
     })
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoaCR), 'Compte de Résultat')
 
+    // ----- TABLEAU DES FLUX DE TRÉSORERIE -----
+    if (etats.tft) {
+      const t = etats.tft
+      const aoaTFT = [
+        ...entete(`TABLEAU DES FLUX DE TRÉSORERIE AU 31 DÉCEMBRE ${exercice}`),
+        ['REF', 'LIBELLÉS', `EXERCICE ${exercice}`],
+        ...t.lignes.map(l => [l.ref, l.lib, r0(t.valeurs[l.ref])]),
+        [],
+        ['', 'Contrôle : Trésorerie réelle de clôture (Tréso-Actif N − Tréso-Passif N)', r0(t.controle.tresoReelleN)],
+        ['', 'Écart (ZH reconstituée − Trésorerie réelle)', r0(t.controle.ecart)],
+      ]
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoaTFT), 'TFT')
+    }
+
     XLSX.writeFile(wb, `etats_financiers_${companyName.replace(/\s+/g, '_') || 'societe'}_${exercice}.xlsx`)
     toast.success('États financiers Excel téléchargés.')
   }
@@ -7979,6 +8096,37 @@ function EtatsFinanciersPage({ companies, companyId, toast }) {
           </table>
         </Card>
       )}
+
+      {/* Aperçu écran : TFT */}
+      {etats && (etats.tft ? (
+        <Card style={{ marginTop: 14, overflowX: 'auto' }}>
+          <div style={{ fontWeight: 700, marginBottom: 10 }}>Aperçu — Tableau des Flux de Trésorerie {exercice}</div>
+          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 560, fontSize: 13 }}>
+            <thead><tr style={{ background: '#f1f5f9' }}>
+              <th style={{ textAlign: 'left', padding: 8 }}>REF</th><th style={{ textAlign: 'left', padding: 8 }}>Libellé</th>
+              <th style={{ textAlign: 'right', padding: 8 }}>{exercice}</th>
+            </tr></thead>
+            <tbody>
+              {etats.tft.lignes.map(l => (
+                <tr key={l.ref} style={{ borderTop: '1px solid #eef2f7', background: l.bold ? '#f8fafc' : 'white', fontWeight: l.bold ? 800 : 400 }}>
+                  <td style={{ padding: 7 }}>{l.ref}</td><td style={{ padding: 7 }}>{l.lib}</td>
+                  <td style={{ padding: 7, textAlign: 'right' }}>{fmt(etats.tft.valeurs[l.ref])}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div style={{ marginTop: 10, display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'center', fontSize: 13 }}>
+            <span>Contrôle — trésorerie réelle de clôture : <b>{fmt(etats.tft.controle.tresoReelleN)}</b></span>
+            <span style={{ padding: '6px 12px', borderRadius: 8, background: Math.abs(etats.tft.controle.ecart) < 1 ? '#dcfce7' : '#fef3c7', color: Math.abs(etats.tft.controle.ecart) < 1 ? '#15803d' : '#b45309', fontWeight: 700 }}>
+              {Math.abs(etats.tft.controle.ecart) < 1 ? '✅ TFT réconcilié' : `Écart à ajuster : ${fmt(etats.tft.controle.ecart)}`}
+            </span>
+          </div>
+        </Card>
+      ) : (
+        <Card style={{ marginTop: 14 }}>
+          <div style={{ color: '#b45309', fontSize: 13.5 }}>ℹ️ Le Tableau des Flux de Trésorerie nécessite la <b>balance N-1 importée</b> (il se calcule sur les variations N / N-1). Importez-la ci-dessus puis régénérez.</div>
+        </Card>
+      ))}
     </div>
   )
 }
