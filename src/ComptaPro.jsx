@@ -7912,91 +7912,127 @@ function EtatsFinanciersPage({ companies, companyId, toast }) {
   // ── Export Excel officiel (multi-feuilles) ──────────────────────────────────
   const exporterExcel = async () => {
     if (!etats) { toast.error('Générez d’abord les états.'); return }
-    const XLSX = await import('https://cdn.sheetjs.com/xlsx-0.20.0/package/xlsx.mjs')
-    const wb = XLSX.utils.book_new()
+    let ExcelJS
+    try {
+      const mod = await import('https://esm.sh/exceljs@4.4.0')
+      ExcelJS = mod.default || mod
+    } catch (e) { toast.error('Chargement du moteur Excel impossible (réseau). Réessayez.'); return }
+
+    const wb = new ExcelJS.Workbook()
+    wb.creator = 'ComptaPro'; wb.created = new Date()
     const r0 = v => Math.round(v || 0)
-    const entete = (titre) => ([
-      [`Désignation entité : ${companyName}`],
-      [`N° d'identification : ${company?.rccm || ''}`, '', `Exercice clos le : 31/12/${exercice}`, 'Durée (mois) : 12'],
-      [titre], [],
-    ])
 
-    // ----- ACTIF -----
+    // — Styles communs (mise en forme du modèle officiel) —
+    const THIN = { style: 'thin', color: { argb: 'FF94A3B8' } }
+    const BORDER = { top: THIN, left: THIN, bottom: THIN, right: THIN }
+    const FILL_HEAD  = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE2E8F0' } }
+    const FILL_TOTAL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF1F5F9' } }
+    const FONT = { name: 'Calibri', size: 9 }
+    const NUMFMT = '#,##0'
+    const colLetter = n => { let s = ''; while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26) } return s }
+
+    // Construit une feuille stylée et bordée, avec zone d'impression A4.
+    const buildSheet = (name, titre, cols, headers, rows, numFrom, land) => {
+      const ws = wb.addWorksheet(name, {
+        pageSetup: {
+          paperSize: 9, orientation: land ? 'landscape' : 'portrait',
+          fitToPage: true, fitToWidth: 1, fitToHeight: 0,
+          margins: { left: 0.4, right: 0.4, top: 0.5, bottom: 0.5, header: 0.2, footer: 0.2 },
+        },
+      })
+      const nc = headers.length
+      ws.columns = cols.map(w => ({ width: w }))
+      const r1 = ws.addRow([`Désignation entité : ${companyName}`]); r1.font = { name: 'Calibri', size: 10, bold: true }
+      ws.addRow([`N° d'identification : ${company?.rccm || ''}`, '', '', `Exercice clos le : 31/12/${exercice}`, 'Durée (mois) : 12'])
+      const rt = ws.addRow([titre]); rt.font = { name: 'Calibri', size: 12, bold: true }
+      ws.mergeCells(rt.number, 1, rt.number, nc); rt.getCell(1).alignment = { horizontal: 'center' }
+      ws.addRow([])
+      const hr = ws.addRow(headers); hr.height = 26
+      hr.eachCell((c, col) => { if (col <= nc) { c.font = { ...FONT, bold: true }; c.fill = FILL_HEAD; c.border = BORDER; c.alignment = { vertical: 'middle', horizontal: col >= numFrom ? 'right' : 'center', wrapText: true } } })
+      for (const d of rows) {
+        const row = ws.addRow(d.cells)
+        row.eachCell((c, col) => {
+          if (col > nc) return
+          c.font = { ...FONT, bold: !!d.total }; c.border = BORDER
+          if (d.total) c.fill = FILL_TOTAL
+          if (col >= numFrom) { c.numFmt = NUMFMT; c.alignment = { horizontal: 'right' } }
+          else c.alignment = { horizontal: col === 1 ? 'center' : 'left', wrapText: col === 2 }
+        })
+      }
+      ws.views = [{ state: 'frozen', ySplit: 5 }]
+      ws.pageSetup.printArea = `A1:${colLetter(nc)}${ws.rowCount}`
+      return ws
+    }
+
+    // ===== ACTIF =====
     const a = etats.actif
-    const aoaActif = [
-      ...entete(`BILAN AU 31 DÉCEMBRE ${exercice} — ACTIF`),
-      ['REF', 'ACTIF', 'Note', 'BRUT', 'AMORT/DÉPRÉC', `NET ${exercice}`, `NET ${exercice - 1}`],
-    ]
-    const pushActif = (ref, lib, note) => {
+    const dA = ref => a.detail.find(x => x.ref === ref) || {}
+    const aRow = (ref, lib, note, total) => {
       const N = a.N[ref] || { brut: 0, ad: 0, net: 0 }, P = a.N1[ref] || { net: 0 }
-      aoaActif.push([ref, lib, note || '', r0(N.brut), r0(N.ad), r0(N.net), r0(P.net)])
+      return { cells: [ref, lib, note || '', r0(N.brut), r0(N.ad), r0(N.net), r0(P.net)], total }
     }
-    // Ordre officiel
-    pushActif('AD', 'IMMOBILISATIONS INCORPORELLES', '3')
-    a.detail.filter(d => ['AE', 'AF', 'AG', 'AH'].includes(d.ref)).forEach(d => pushActif(d.ref, d.lib, d.note))
-    pushActif('AI', 'IMMOBILISATIONS CORPORELLES', '3')
-    a.detail.filter(d => ['AJ', 'AK', 'AL', 'AM', 'AN', 'AP'].includes(d.ref)).forEach(d => pushActif(d.ref, d.lib, d.note))
-    pushActif('AQ', 'IMMOBILISATIONS FINANCIÈRES', '4')
-    a.detail.filter(d => ['AR', 'AS'].includes(d.ref)).forEach(d => pushActif(d.ref, d.lib, d.note))
-    pushActif('AZ', 'TOTAL ACTIF IMMOBILISÉ', '')
-    a.detail.filter(d => ['BA', 'BB'].includes(d.ref)).forEach(d => pushActif(d.ref, d.lib, d.note))
-    pushActif('BG', 'CRÉANCES ET EMPLOIS ASSIMILÉS', '')
-    a.detail.filter(d => ['BH', 'BI', 'BJ'].includes(d.ref)).forEach(d => pushActif(d.ref, d.lib, d.note))
-    pushActif('BK', 'TOTAL ACTIF CIRCULANT', '')
-    a.detail.filter(d => ['BQ', 'BR', 'BS'].includes(d.ref)).forEach(d => pushActif(d.ref, d.lib, d.note))
-    pushActif('BT', 'TOTAL TRÉSORERIE-ACTIF', '')
-    a.detail.filter(d => d.ref === 'BU').forEach(d => pushActif(d.ref, d.lib, d.note))
-    pushActif('BZ', 'TOTAL GÉNÉRAL', '')
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoaActif), 'ACTIF')
+    const aRows = []
+    const pa = (ref, lib, note, total) => aRows.push(aRow(ref, lib, note, total))
+    const paMany = refs => refs.forEach(r => pa(r, dA(r).lib, dA(r).note))
+    pa('AD', 'IMMOBILISATIONS INCORPORELLES', '3', true); paMany(['AE', 'AF', 'AG', 'AH'])
+    pa('AI', 'IMMOBILISATIONS CORPORELLES', '3', true); paMany(['AJ', 'AK', 'AL', 'AM', 'AN', 'AP'])
+    pa('AQ', 'IMMOBILISATIONS FINANCIÈRES', '4', true); paMany(['AR', 'AS'])
+    pa('AZ', 'TOTAL ACTIF IMMOBILISÉ', '', true); paMany(['BA', 'BB'])
+    pa('BG', 'CRÉANCES ET EMPLOIS ASSIMILÉS', '', true); paMany(['BH', 'BI', 'BJ'])
+    pa('BK', 'TOTAL ACTIF CIRCULANT', '', true); paMany(['BQ', 'BR', 'BS'])
+    pa('BT', 'TOTAL TRÉSORERIE-ACTIF', '', true); paMany(['BU'])
+    pa('BZ', 'TOTAL GÉNÉRAL', '', true)
+    buildSheet('ACTIF', `BILAN AU 31 DÉCEMBRE ${exercice} — ACTIF`,
+      [7, 46, 6, 16, 16, 16, 16],
+      ['REF', 'ACTIF', 'Note', 'BRUT', 'AMORT/DÉPRÉC.', `NET ${exercice}`, `NET ${exercice - 1}`],
+      aRows, 4, true)
 
-    // ----- PASSIF -----
+    // ===== PASSIF =====
     const p = etats.passif
-    const aoaPassif = [
-      ...entete(`BILAN AU 31 DÉCEMBRE ${exercice} — PASSIF`),
+    const dP = ref => p.detail.find(x => x.ref === ref) || {}
+    const pRow = (ref, lib, note, total) => ({ cells: [ref, lib, note || '', r0(p.N[ref]?.net), r0(p.N1[ref]?.net)], total })
+    const pRows = []
+    const pp = (ref, lib, note, total) => pRows.push(pRow(ref, lib, note, total))
+    const ppMany = refs => refs.forEach(r => pp(r, dP(r).lib, dP(r).note))
+    ppMany(['CA', 'CB', 'CD', 'CE', 'CF', 'CG', 'CH', 'CJ', 'CL', 'CM'])
+    pp('CP', 'TOTAL CAPITAUX PROPRES ET RESSOURCES ASSIMILÉES', '', true); ppMany(['DA', 'DB', 'DC'])
+    pp('DD', 'TOTAL DETTES FINANCIÈRES ET RESSOURCES ASSIMILÉES', '', true)
+    pp('DF', 'TOTAL RESSOURCES STABLES', '', true); ppMany(['DH', 'DI', 'DJ', 'DK', 'DM', 'DN'])
+    pp('DP', 'TOTAL PASSIF CIRCULANT', '', true); ppMany(['DQ', 'DR'])
+    pp('DT', 'TOTAL TRÉSORERIE-PASSIF', '', true); ppMany(['DV'])
+    pp('DZ', 'TOTAL GÉNÉRAL', '', true)
+    buildSheet('PASSIF', `BILAN AU 31 DÉCEMBRE ${exercice} — PASSIF`,
+      [7, 56, 6, 18, 18],
       ['REF', 'PASSIF', 'Note', `NET ${exercice}`, `NET ${exercice - 1}`],
-    ]
-    const pushPassif = (ref, lib, note) => {
-      aoaPassif.push([ref, lib, note || '', r0(p.N[ref]?.net), r0(p.N1[ref]?.net)])
-    }
-    p.detail.filter(d => ['CA', 'CB', 'CD', 'CE', 'CF', 'CG', 'CH', 'CJ', 'CL', 'CM'].includes(d.ref)).forEach(d => pushPassif(d.ref, d.lib, d.note))
-    pushPassif('CP', 'TOTAL CAPITAUX PROPRES ET RESSOURCES ASSIMILÉES', '')
-    p.detail.filter(d => ['DA', 'DB', 'DC'].includes(d.ref)).forEach(d => pushPassif(d.ref, d.lib, d.note))
-    pushPassif('DD', 'TOTAL DETTES FINANCIÈRES ET RESSOURCES ASSIMILÉES', '')
-    pushPassif('DF', 'TOTAL RESSOURCES STABLES', '')
-    p.detail.filter(d => ['DH', 'DI', 'DJ', 'DK', 'DM', 'DN'].includes(d.ref)).forEach(d => pushPassif(d.ref, d.lib, d.note))
-    pushPassif('DP', 'TOTAL PASSIF CIRCULANT', '')
-    p.detail.filter(d => ['DQ', 'DR'].includes(d.ref)).forEach(d => pushPassif(d.ref, d.lib, d.note))
-    pushPassif('DT', 'TOTAL TRÉSORERIE-PASSIF', '')
-    p.detail.filter(d => d.ref === 'DV').forEach(d => pushPassif(d.ref, d.lib, d.note))
-    pushPassif('DZ', 'TOTAL GÉNÉRAL', '')
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoaPassif), 'PASSIF')
+      pRows, 4, false)
 
-    // ----- COMPTE DE RÉSULTAT -----
+    // ===== COMPTE DE RÉSULTAT =====
     const cr = etats.resultat
-    const aoaCR = [
-      ...entete(`COMPTE DE RÉSULTAT AU 31 DÉCEMBRE ${exercice}`),
+    const crRows = cr.lignes.map(l => ({ cells: [l.ref, l.lib, l.note || '', r0(cr.N[l.ref]), r0(cr.N1[l.ref])], total: !!l.total }))
+    buildSheet('Compte de Résultat', `COMPTE DE RÉSULTAT AU 31 DÉCEMBRE ${exercice}`,
+      [7, 56, 6, 18, 18],
       ['REF', 'LIBELLÉS', 'Note', `EXERCICE ${exercice}`, `EXERCICE ${exercice - 1}`],
-    ]
-    cr.lignes.forEach(l => {
-      aoaCR.push([l.ref, l.lib, l.note || '', r0(cr.N[l.ref]), r0(cr.N1[l.ref])])
-    })
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoaCR), 'Compte de Résultat')
+      crRows, 4, false)
 
-    // ----- TABLEAU DES FLUX DE TRÉSORERIE -----
+    // ===== TFT =====
     if (etats.tft) {
       const t = etats.tft
-      const aoaTFT = [
-        ...entete(`TABLEAU DES FLUX DE TRÉSORERIE AU 31 DÉCEMBRE ${exercice}`),
+      const tRows = t.lignes.map(l => ({ cells: [l.ref, l.lib, r0(t.valeurs[l.ref])], total: !!l.bold }))
+      tRows.push({ cells: ['', '', ''], total: false })
+      tRows.push({ cells: ['', 'Contrôle : Trésorerie réelle de clôture (Tréso-Actif N − Tréso-Passif N)', r0(t.controle.tresoReelleN)], total: true })
+      tRows.push({ cells: ['', 'Écart (ZH reconstituée − Trésorerie réelle)', r0(t.controle.ecart)], total: false })
+      buildSheet('TFT', `TABLEAU DES FLUX DE TRÉSORERIE AU 31 DÉCEMBRE ${exercice}`,
+        [7, 70, 18],
         ['REF', 'LIBELLÉS', `EXERCICE ${exercice}`],
-        ...t.lignes.map(l => [l.ref, l.lib, r0(t.valeurs[l.ref])]),
-        [],
-        ['', 'Contrôle : Trésorerie réelle de clôture (Tréso-Actif N − Tréso-Passif N)', r0(t.controle.tresoReelleN)],
-        ['', 'Écart (ZH reconstituée − Trésorerie réelle)', r0(t.controle.ecart)],
-      ]
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoaTFT), 'TFT')
+        tRows, 3, false)
     }
 
-    XLSX.writeFile(wb, `etats_financiers_${companyName.replace(/\s+/g, '_') || 'societe'}_${exercice}.xlsx`)
+    const buf = await wb.xlsx.writeBuffer()
+    const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url; link.download = `etats_financiers_${(companyName || 'societe').replace(/\s+/g, '_')}_${exercice}.xlsx`
+    link.click(); URL.revokeObjectURL(url)
     toast.success('États financiers Excel téléchargés.')
   }
 
