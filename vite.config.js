@@ -7,10 +7,16 @@ export default defineConfig({
     chunkSizeWarningLimit: 2000,
     rollupOptions: {
       output: {
-        manualChunks: {
-          'react-vendor': ['react', 'react-dom'],
-          'supabase': ['@supabase/supabase-js'],
-          'excel': ['exceljs', 'jszip'],
+        manualChunks(id) {
+          if (id.includes('node_modules/react') || id.includes('node_modules/react-dom')) {
+            return 'react-vendor'
+          }
+          if (id.includes('node_modules/@supabase')) {
+            return 'supabase'
+          }
+          if (id.includes('node_modules/exceljs') || id.includes('node_modules/jszip')) {
+            return 'excel'
+          }
         }
       }
     }
