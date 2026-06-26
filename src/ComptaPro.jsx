@@ -1419,6 +1419,12 @@ const NAV = [
   { id:'etuvage_paiements',  icon:'💰', label:'Paiements étuvage' },
   { section:'Documents' },
   { id:'docs_admin',         icon:'📁', label:'Documents administratifs' },
+  { section:'RH & Paie' },
+  { id:'rh_employes',        icon:'👥', label:'Employés' },
+  { id:'rh_fiches_paie',     icon:'💰', label:'Fiches de Paie' },
+  { id:'rh_historique',      icon:'📜', label:'Historique Paie' },
+  { id:'rh_declarations',    icon:'📋', label:'Déclarations CNSS/ITS' },
+  { id:'rh_rapport',         icon:'📊', label:'Rapport Cabinet' },
   { section:'Comptabilité' },
   { id:'journal_caisse',     icon:'🏦', label:'Journal Caisse' },
   { id:'journal_banque',     icon:'🏛️',  label:'Journal Banque' },
@@ -1429,12 +1435,6 @@ const NAV = [
   { id:'balance',            icon:'⚖️', label:'Balance' },
   { id:'etats_financiers',   icon:'📑', label:'États Financiers' },
   { id:'controle_budget',    icon:'📊', label:'Contrôle Budgétaire' },
-  { section:'RH & Paie' },
-  { id:'rh_employes',        icon:'👥', label:'Employés' },
-  { id:'rh_fiches_paie',     icon:'💰', label:'Fiches de Paie' },
-  { id:'rh_historique',      icon:'📜', label:'Historique Paie' },
-  { id:'rh_declarations',    icon:'📋', label:'Déclarations CNSS/ITS' },
-  { id:'rh_rapport',         icon:'📊', label:'Rapport Cabinet' },
 ]
 
 const NAV_ADMIN = [
@@ -4859,8 +4859,8 @@ const SECTION_GROUPS = [
   {group:'Étuveuses', ids:['etv_repertoire','etv_avances','etv_bc','etv_br','etv_entrees','etv_sorties','etv_inventaire','etv_tresorerie']},
   {group:'Achats', ids:['achats','lots_semi_finis','epierrage','etuvage_paiements']},
   {group:'Documents', ids:['docs_admin']},
-  {group:'Comptabilité', ids:['journal_caisse','journal_banque','journal_mobile','plan_comptable','grand_livre','ecritures','balance','etats_financiers']},
   {group:'RH & Paie', ids:['rh_employes','rh_fiches_paie','rh_historique','rh_declarations','rh_rapport']},
+  {group:'Comptabilité', ids:['journal_caisse','journal_banque','journal_mobile','plan_comptable','grand_livre','ecritures','balance','etats_financiers']},
 ]
 
 // ── MES UTILISATEURS (Admin Société) ─────────────────────────────────────────
