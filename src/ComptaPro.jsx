@@ -14093,7 +14093,7 @@ const getTauxRisque = (taux) => {
 };
 
 const genDeclarationCNSS = async (comp, employes, mois, annee) => {
-  const ExcelJS = (await import('exceljs')).default;
+  const ExcelJS = (await import('https://esm.sh/exceljs@4.4.0')).default;
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.load(b64ToBuffer(CNSS_TEMPLATE_B64));
 
@@ -14227,7 +14227,7 @@ const genDeclarationCNSS = async (comp, employes, mois, annee) => {
 };
 
 const genDeclarationITS = async (comp, employes, mois, annee) => {
-  const ExcelJS = (await import('exceljs')).default;
+  const ExcelJS = (await import('https://esm.sh/exceljs@4.4.0')).default;
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.load(b64ToBuffer(ITS_TEMPLATE_B64));
 
@@ -14295,7 +14295,7 @@ const genDeclarationITS = async (comp, employes, mois, annee) => {
 
 // ─── GÉNÉRATION DEPUIS MODÈLE ─────────────────────────────────────────────────
 const generateFromTemplate = async (template, variables) => {
-  const ExcelJS = (await import('exceljs')).default;
+  const ExcelJS = (await import('https://esm.sh/exceljs@4.4.0')).default;
   const {data:fileData, error}=await supabaseRH.storage
     .from("declaration-templates").download(template.file_path);
   if(error){rhToast.error("Erreur téléchargement : "+error.message); return;}
