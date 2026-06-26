@@ -12594,7 +12594,8 @@ export default function ComptaPro() {
 
   const renderPage = () => {
     // Super admin — dashboard global ou vue société
-    if (isSuperAdmin) {
+    // Exception : la page 'companies' reste accessible directement pour créer/gérer ses propres sociétés
+    if (isSuperAdmin && page !== 'companies') {
       if (!adminViewCompany) {
         return <SuperAdminDashboard companies={companies} toast={toast}
           onSelect={c=>{ setAdminViewCompany(c); setPage('dashboard') }} />
