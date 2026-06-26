@@ -12626,7 +12626,7 @@ const RH_ToastContainer = () => {
   );
 };
 
-const Btn = ({children,onClick,variant="primary",small=false,type="button",disabled=false}) => {
+const RH_Btn = ({children,onClick,variant="primary",small=false,type="button",disabled=false}) => {
   const bg=variant==="primary"?G.accent:variant==="danger"?G.red:variant==="ghost"?"transparent":"#e8f0fe";
   const col=variant==="ghost"?G.textDim:variant==="secondary"?G.accent:"#fff";
   const border=variant==="ghost"?`1px solid ${G.border}`:variant==="secondary"?`1px solid ${G.accent}`:"none";
@@ -12641,7 +12641,7 @@ const Btn = ({children,onClick,variant="primary",small=false,type="button",disab
   );
 };
 
-const Input = ({label,value,onChange,type="text",placeholder="",required=false,small=false}) => (
+const RH_Input = ({label,value,onChange,type="text",placeholder="",required=false,small=false}) => (
   <div style={{marginBottom:small?0:"14px"}}>
     {label&&<label style={{display:"block",fontSize:"12px",color:"#1a3a6b",marginBottom:"5px",fontWeight:600}}>{label}</label>}
     <input type={type} value={value} onChange={e=>onChange(e.target.value)}
@@ -12663,17 +12663,17 @@ const Select = ({label,value,onChange,options,small=false}) => (
   </div>
 );
 
-const Card = ({children,style={}}) => (
+const RH_Card = ({children,style={}}) => (
   <div className="rh-card" style={{background:"#ffffff",border:"1px solid #d0dff5",borderRadius:"10px",
                padding:"24px",boxShadow:"0 2px 12px rgba(26,61,107,0.07)",...style}}>{children}</div>
 );
 
-const Badge = ({label,color=G.accent}) => (
+const RH_Badge = ({label,color=G.accent}) => (
   <span style={{background:color+"22",color,padding:"3px 10px",borderRadius:"20px",
                 fontSize:"11px",fontWeight:600}}>{label}</span>
 );
 
-const Modal = ({title,onClose,children,width="500px"}) => {
+const RH_Modal = ({title,onClose,children,width="500px"}) => {
   useEffect(()=>{
     if(typeof document==="undefined") return;
     document.body.classList.add("rh-no-scroll");
@@ -12815,7 +12815,7 @@ const PricingPage = ({currentSub, userId, onClose}) => {
     <div style={{padding:"24px"}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"24px"}}>
         <h2 style={{fontSize:"22px",fontWeight:700,color:"#1a3a6b"}}>💳 Plans & Abonnements</h2>
-        {onClose&&<Btn onClick={onClose} variant="ghost" small>✕ Fermer</Btn>}
+        {onClose&&<RH_Btn onClick={onClose} variant="ghost" small>✕ Fermer</RH_Btn>}
       </div>
       <div style={{display:"flex",gap:"8px",marginBottom:"24px",background:"#f0f4ff",
                    padding:"4px",borderRadius:"8px",width:"fit-content"}}>
@@ -12904,8 +12904,8 @@ const AdminPanel = () => {
           </div>
         ))}
       </div>
-      <Card>
-        <Input label="Rechercher par User ID" value={search} onChange={setSearch} placeholder="UUID..."/>
+      <RH_Card>
+        <RH_Input label="Rechercher par User ID" value={search} onChange={setSearch} placeholder="UUID..."/>
         {loading ? <div style={{padding:"20px",textAlign:"center",color:"#64748b"}}>Chargement…</div> : (
           <div style={{overflowX:"auto",marginTop:"16px"}}>
             <table style={{width:"100%",borderCollapse:"collapse",fontSize:"12px"}}>
@@ -12961,12 +12961,12 @@ const AdminPanel = () => {
             {filtered.length===0&&<div style={{padding:"20px",textAlign:"center",color:"#64748b"}}>Aucun utilisateur trouvé</div>}
           </div>
         )}
-      </Card>
+      </RH_Card>
     </div>
   );
 };
 
-const NAV = [
+const RH_NAV = [
   {id:"dashboard",icon:"⊞",label:"Tableau de bord"},
   {id:"companies",icon:"🏢",label:"Sociétés"},
   {id:"employees",icon:"👥",label:"Employés"},
@@ -12978,10 +12978,10 @@ const NAV = [
   {id:"settings",icon:"⚙",label:"Paramètres"},
 ];
 
-const Sidebar = ({page,setPage,user,onLogout,open=false,setOpen=()=>{},sub,onUpgrade}) => {
+const RH_Sidebar = ({page,setPage,user,onLogout,open=false,setOpen=()=>{},sub,onUpgrade}) => {
   const info = getPlanInfo(sub);
   const isAdmin = user?.email===ADMIN_EMAIL;
-  const nav = isAdmin ? [...NAV,{id:"admin",icon:"🛡️",label:"Admin"}] : NAV;
+  const nav = isAdmin ? [...RH_NAV,{id:"admin",icon:"🛡️",label:"Admin"}] : RH_NAV;
   return (
   <>
     <div className={`rh-overlay ${open?"open":""}`} onClick={()=>setOpen(false)}/>
@@ -12991,7 +12991,7 @@ const Sidebar = ({page,setPage,user,onLogout,open=false,setOpen=()=>{},sub,onUpg
           style={{position:"absolute",top:"14px",right:"14px",background:"none",border:"none",color:"#fff",fontSize:"24px",cursor:"pointer",lineHeight:1}}>×</button>
         <div className="rh-sidebar-brand-text" style={{fontSize:"18px",fontWeight:800,color:"#ffffff",letterSpacing:"-0.5px"}}>RH-Paie Pro</div>
         <div className="rh-sidebar-brand-text" style={{fontSize:"11px",color:"#a0c0e8",marginTop:"3px"}}>Gestion de la Paie</div>
-        {/* Badge plan */}
+        {/* RH_Badge plan */}
         <div onClick={onUpgrade}
           style={{marginTop:"8px",display:"inline-flex",alignItems:"center",gap:"5px",
                   background:info.color+"33",border:`1px solid ${info.color}66`,
@@ -13020,7 +13020,7 @@ const Sidebar = ({page,setPage,user,onLogout,open=false,setOpen=()=>{},sub,onUpg
                      overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
           {user?.email}
         </div>
-        <Btn onClick={()=>{setOpen(false);onLogout();}} variant="ghost" small>Déconnexion</Btn>
+        <RH_Btn onClick={()=>{setOpen(false);onLogout();}} variant="ghost" small>Déconnexion</RH_Btn>
       </div>
     </aside>
   </>
@@ -13029,7 +13029,7 @@ const Sidebar = ({page,setPage,user,onLogout,open=false,setOpen=()=>{},sub,onUpg
 // ─── PAGES ────────────────────────────────────────────────────────────────────
 
 // LOGIN
-const LoginPage = ({onLogin}) => {
+const RH_LoginPage = ({onLogin}) => {
   const [email,setEmail]=useState(""), [pass,setPass]=useState(""),
         [err,setErr]=useState(""), [loading,setLoading]=useState(false),
         [isSignup,setIsSignup]=useState(false), [showForgot,setShowForgot]=useState(false),
@@ -13235,7 +13235,7 @@ const ForgotPasswordModal = ({onClose}) => {
   };
 
   return (
-    <Modal title="🔑 Mot de passe oublié" onClose={onClose} width="400px">
+    <RH_Modal title="🔑 Mot de passe oublié" onClose={onClose} width="400px">
       {sent
         ?<div style={{textAlign:"center",padding:"16px 0"}}>
           <div style={{fontSize:"36px",marginBottom:"12px"}}>📧</div>
@@ -13243,21 +13243,21 @@ const ForgotPasswordModal = ({onClose}) => {
           <div style={{fontSize:"13px",color:G.textDim,marginBottom:"20px"}}>
             Vérifiez votre boîte mail et cliquez le lien de réinitialisation.
           </div>
-          <Btn onClick={onClose}>Fermer</Btn>
+          <RH_Btn onClick={onClose}>Fermer</RH_Btn>
         </div>
         :<>
           <div style={{fontSize:"13px",color:G.textDim,marginBottom:"16px"}}>
             Entrez votre email — vous recevrez un lien pour créer un nouveau mot de passe.
           </div>
           <Alert msg={err} type="error"/>
-          <Input label="Email" value={email} onChange={setEmail} type="email" placeholder="votre@email.com"/>
+          <RH_Input label="Email" value={email} onChange={setEmail} type="email" placeholder="votre@email.com"/>
           <div style={{display:"flex",gap:"8px",marginTop:"8px"}}>
-            <Btn onClick={handle} disabled={loading}>{loading?"Envoi...":"Envoyer le lien"}</Btn>
-            <Btn onClick={onClose} variant="ghost">Annuler</Btn>
+            <RH_Btn onClick={handle} disabled={loading}>{loading?"Envoi...":"Envoyer le lien"}</RH_Btn>
+            <RH_Btn onClick={onClose} variant="ghost">Annuler</RH_Btn>
           </div>
         </>
       }
-    </Modal>
+    </RH_Modal>
   );
 };
 
@@ -13288,7 +13288,7 @@ const ResetPasswordPage = ({onDone}) => {
           <div style={{fontSize:"32px",fontWeight:900,color:"#fff",letterSpacing:"-1px"}}>RH-Paie Pro</div>
           <div style={{color:"rgba(255,255,255,0.75)",fontSize:"14px",marginTop:"6px"}}>Réinitialisation du mot de passe</div>
         </div>
-        <Card>
+        <RH_Card>
           {ok
             ?<div style={{textAlign:"center",padding:"16px 0"}}>
               <div style={{fontSize:"36px",marginBottom:"12px"}}>✅</div>
@@ -13298,19 +13298,19 @@ const ResetPasswordPage = ({onDone}) => {
             :<>
               <div style={{fontSize:"14px",fontWeight:700,color:G.text,marginBottom:"16px"}}>🔒 Nouveau mot de passe</div>
               <Alert msg={err} type="error"/>
-              <Input label="Nouveau mot de passe" value={pass} onChange={setPass} type="password" placeholder="Minimum 6 caractères"/>
-              <Input label="Confirmer" value={confirm} onChange={setConfirm} type="password" placeholder="Répétez le mot de passe"/>
-              <Btn onClick={handle} disabled={loading}>{loading?"Mise à jour...":"Changer le mot de passe"}</Btn>
+              <RH_Input label="Nouveau mot de passe" value={pass} onChange={setPass} type="password" placeholder="Minimum 6 caractères"/>
+              <RH_Input label="Confirmer" value={confirm} onChange={setConfirm} type="password" placeholder="Répétez le mot de passe"/>
+              <RH_Btn onClick={handle} disabled={loading}>{loading?"Mise à jour...":"Changer le mot de passe"}</RH_Btn>
             </>
           }
-        </Card>
+        </RH_Card>
       </div>
     </div>
   );
 };
 
 // DASHBOARD
-const Dashboard = ({companies}) => {
+const RH_Dashboard = ({companies}) => {
   const [stats,setStats]=useState({employees:0,payrolls:0,monthlyCost:0});
   useEffect(()=>{
     (async()=>{
@@ -13335,19 +13335,19 @@ const Dashboard = ({companies}) => {
       <h2 style={{marginBottom:"24px",fontSize:"22px",fontWeight:700,color:"#1a3a6b"}}>Tableau de bord</h2>
       <div className="rh-grid-4">
         {cards.map(c=>(
-          <Card key={c.label}>
+          <RH_Card key={c.label}>
             <div style={{fontSize:"24px",marginBottom:"8px"}}>{c.icon}</div>
             <div style={{fontSize:"24px",fontWeight:800,color:c.color}}>{c.value}</div>
             <div style={{fontSize:"12px",color:G.textDim,marginTop:"4px"}}>{c.label}</div>
-          </Card>
+          </RH_Card>
         ))}
       </div>
-      <Card>
+      <RH_Card>
         <div style={{color:G.textDim,fontSize:"13px"}}>
           Bienvenue dans <strong style={{color:G.text}}>RH-Paie Pro</strong> — Votre solution de gestion de la paie conforme aux règles CNSS, VPS et ITS du Bénin.
           <br/><br/>Commencez par créer votre <strong style={{color:G.accent}}>société</strong>, ajoutez vos <strong style={{color:G.accent}}>employés</strong>, puis générez les <strong style={{color:G.accent}}>fiches de paie</strong>.
         </div>
-      </Card>
+      </RH_Card>
     </div>
   );
 };
@@ -13434,9 +13434,9 @@ const Companies = ({companies,reload,userId}) => {
     <div>
       <div className="rh-page-header">
         <h2 style={{fontSize:"22px",fontWeight:700,color:"#1a3a6b"}}>Sociétés</h2>
-        <div className="rh-btn-group"><Btn onClick={()=>open()}>+ Nouvelle société</Btn></div>
+        <div className="rh-btn-group"><RH_Btn onClick={()=>open()}>+ Nouvelle société</RH_Btn></div>
       </div>
-      <Card>
+      <RH_Card>
         <Table cols={[
           {key:"raison_sociale",label:"Raison sociale"},
           {key:"rccm",label:"RCCM",dim:true},
@@ -13444,26 +13444,26 @@ const Companies = ({companies,reload,userId}) => {
           {label:"CNSS Pat.",render:r=>`${(parseFloat(r.taux_cnss_patronale||0.194)*100).toFixed(1)}%`},
           {label:"Actions",render:r=>(
             <div className="rh-btn-group">
-              <Btn small onClick={e=>{e.stopPropagation();open(r)}} variant="secondary">Modifier</Btn>
-              <Btn small onClick={e=>{e.stopPropagation();del(r.id)}} variant="danger">Suppr.</Btn>
+              <RH_Btn small onClick={e=>{e.stopPropagation();open(r)}} variant="secondary">Modifier</RH_Btn>
+              <RH_Btn small onClick={e=>{e.stopPropagation();del(r.id)}} variant="danger">Suppr.</RH_Btn>
             </div>
           )}
         ]} rows={companies}/>
-      </Card>
+      </RH_Card>
       {modal&&(
-        <Modal title={modal==="new"?"Nouvelle société":"Modifier société"} onClose={()=>setModal(null)}>
+        <RH_Modal title={modal==="new"?"Nouvelle société":"Modifier société"} onClose={()=>setModal(null)}>
           <Alert msg={msg} type="error"/>
-          <Input label="Raison sociale *" value={form.raison_sociale} onChange={v=>f("raison_sociale",v)} required/>
-          <Input label="RCCM" value={form.rccm} onChange={v=>f("rccm",v)}/>
-          <Input label="Adresse" value={form.adresse} onChange={v=>f("adresse",v)}/>
-          <Input label="Téléphone" value={form.tel} onChange={v=>f("tel",v)}/>
-          <Input label="Email" value={form.email} onChange={v=>f("email",v)} type="email"/>
-          <Input label="Taux CNSS patronale (ex: 0.194)" value={form.taux_cnss_patronale} onChange={v=>f("taux_cnss_patronale",v)}/>
-          <Input label="N° CNSS Employeur" value={form.cnss_employeur||""} onChange={v=>f("cnss_employeur",v)} placeholder="ex: RB/NAT/2020-B-321"/>
-          <Input label="N° IFU" value={form.ifu||""} onChange={v=>f("ifu",v)} placeholder="ex: 3201641471613"/>
+          <RH_Input label="Raison sociale *" value={form.raison_sociale} onChange={v=>f("raison_sociale",v)} required/>
+          <RH_Input label="RCCM" value={form.rccm} onChange={v=>f("rccm",v)}/>
+          <RH_Input label="Adresse" value={form.adresse} onChange={v=>f("adresse",v)}/>
+          <RH_Input label="Téléphone" value={form.tel} onChange={v=>f("tel",v)}/>
+          <RH_Input label="Email" value={form.email} onChange={v=>f("email",v)} type="email"/>
+          <RH_Input label="Taux CNSS patronale (ex: 0.194)" value={form.taux_cnss_patronale} onChange={v=>f("taux_cnss_patronale",v)}/>
+          <RH_Input label="N° CNSS Employeur" value={form.cnss_employeur||""} onChange={v=>f("cnss_employeur",v)} placeholder="ex: RB/NAT/2020-B-321"/>
+          <RH_Input label="N° IFU" value={form.ifu||""} onChange={v=>f("ifu",v)} placeholder="ex: 3201641471613"/>
           <div style={{gridColumn:"1/-1"}}><LogoUpload value={form.logo_url||""} onChange={v=>f("logo_url",v)}/></div>
-          <Input label="Signataire" value={form.signataire} onChange={v=>f("signataire",v)}/>
-          <Input label="Fonction signataire" value={form.fonction_signataire} onChange={v=>f("fonction_signataire",v)}/>
+          <RH_Input label="Signataire" value={form.signataire} onChange={v=>f("signataire",v)}/>
+          <RH_Input label="Fonction signataire" value={form.fonction_signataire} onChange={v=>f("fonction_signataire",v)}/>
           <div style={{marginBottom:"14px"}}>
             <label style={{display:"flex",alignItems:"center",gap:"8px",color:G.textDim,fontSize:"13px",cursor:"pointer"}}>
               <input type="checkbox" checked={form.nouvelle_entreprise} onChange={e=>f("nouvelle_entreprise",e.target.checked)}/>
@@ -13471,13 +13471,13 @@ const Companies = ({companies,reload,userId}) => {
             </label>
           </div>
           {form.nouvelle_entreprise&&(
-            <Input label="Date premier exercice" value={form.date_premier_exercice} onChange={v=>f("date_premier_exercice",v)} type="date"/>
+            <RH_Input label="Date premier exercice" value={form.date_premier_exercice} onChange={v=>f("date_premier_exercice",v)} type="date"/>
           )}
           <div className="rh-actions-row" style={{marginTop:"8px"}}>
-            <Btn onClick={save}>Enregistrer</Btn>
-            <Btn onClick={()=>setModal(null)} variant="ghost">Annuler</Btn>
+            <RH_Btn onClick={save}>Enregistrer</RH_Btn>
+            <RH_Btn onClick={()=>setModal(null)} variant="ghost">Annuler</RH_Btn>
           </div>
-        </Modal>
+        </RH_Modal>
       )}
     </div>
   );
@@ -13527,44 +13527,44 @@ const Employees = ({companies}) => {
                     padding:"8px 12px",color:G.text,fontSize:"13px",fontFamily:"inherit",boxShadow:"0 1px 3px rgba(0,0,0,0.08)"}}>
             {companies.map(c=><option key={c.id} value={c.id}>{c.raison_sociale}</option>)}
           </select>
-          <Btn onClick={()=>open()}>+ Ajouter</Btn>
+          <RH_Btn onClick={()=>open()}>+ Ajouter</RH_Btn>
         </div>
       </div>
-      <Card>
+      <RH_Card>
         <Table cols={[
           {key:"matricule",label:"Matricule",dim:true},
           {label:"Nom complet",render:r=>`${r.nom} ${r.prenoms}`},
           {key:"emploi",label:"Emploi"},
           {key:"categorie",label:"Catégorie",dim:true},
           {label:"Salaire base",render:r=>fmt(r.salaire_base)},
-          {label:"Statut",render:r=><Badge label={r.actif?"Actif":"Inactif"} color={r.actif?G.accent:G.red}/>},
+          {label:"Statut",render:r=><RH_Badge label={r.actif?"Actif":"Inactif"} color={r.actif?G.accent:G.red}/>},
           {label:"Actions",render:r=>(
             <div className="rh-btn-group">
-              <Btn small onClick={e=>{e.stopPropagation();open(r)}} variant="secondary">Modifier</Btn>
-              <Btn small onClick={e=>{e.stopPropagation();del(r.id)}} variant="danger">Suppr.</Btn>
+              <RH_Btn small onClick={e=>{e.stopPropagation();open(r)}} variant="secondary">Modifier</RH_Btn>
+              <RH_Btn small onClick={e=>{e.stopPropagation();del(r.id)}} variant="danger">Suppr.</RH_Btn>
             </div>
           )}
         ]} rows={employees}/>
-      </Card>
+      </RH_Card>
       {modal&&(
-        <Modal title={modal==="new"?"Nouvel employé":"Modifier employé"} onClose={()=>setModal(null)} width="600px">
+        <RH_Modal title={modal==="new"?"Nouvel employé":"Modifier employé"} onClose={()=>setModal(null)} width="600px">
           <Alert msg={msg} type="error"/>
           <div className="rh-form-grid-2">
-            <Input label="Matricule" value={form.matricule} onChange={v=>f("matricule",v)}/>
-            <Input label="Nom *" value={form.nom} onChange={v=>f("nom",v)} required/>
-            <Input label="Prénoms *" value={form.prenoms} onChange={v=>f("prenoms",v)} required/>
-            <Input label="Emploi" value={form.emploi} onChange={v=>f("emploi",v)}/>
-            <Input label="Catégorie" value={form.categorie} onChange={v=>f("categorie",v)}/>
+            <RH_Input label="Matricule" value={form.matricule} onChange={v=>f("matricule",v)}/>
+            <RH_Input label="Nom *" value={form.nom} onChange={v=>f("nom",v)} required/>
+            <RH_Input label="Prénoms *" value={form.prenoms} onChange={v=>f("prenoms",v)} required/>
+            <RH_Input label="Emploi" value={form.emploi} onChange={v=>f("emploi",v)}/>
+            <RH_Input label="Catégorie" value={form.categorie} onChange={v=>f("categorie",v)}/>
             <Select label="Situation matrimoniale" value={form.situation_matrimoniale}
               onChange={v=>f("situation_matrimoniale",v)}
               options={["Célibataire","Marié(e)","Divorcé(e)","Veuf/Veuve"].map(x=>({value:x,label:x}))}/>
-            <Input label="Nb enfants" value={form.nb_enfants} onChange={v=>f("nb_enfants",v)} type="number"/>
-            <Input label="N° CNSS" value={form.cnss} onChange={v=>f("cnss",v)}/>
-            <Input label="N° IFU" value={form.ifu} onChange={v=>f("ifu",v)}/>
-            <Input label="Salaire de base (FCFA)" value={form.salaire_base} onChange={v=>f("salaire_base",v)} type="number"/>
-            <Input label="Date d'embauche" value={form.date_embauche} onChange={v=>f("date_embauche",v)} type="date"/>
-            <Input label="Nationalité" value={form.nationalite} onChange={v=>f("nationalite",v)}/>
-            <Input label="Email" value={form.email} onChange={v=>f("email",v)} type="email"/>
+            <RH_Input label="Nb enfants" value={form.nb_enfants} onChange={v=>f("nb_enfants",v)} type="number"/>
+            <RH_Input label="N° CNSS" value={form.cnss} onChange={v=>f("cnss",v)}/>
+            <RH_Input label="N° IFU" value={form.ifu} onChange={v=>f("ifu",v)}/>
+            <RH_Input label="Salaire de base (FCFA)" value={form.salaire_base} onChange={v=>f("salaire_base",v)} type="number"/>
+            <RH_Input label="Date d'embauche" value={form.date_embauche} onChange={v=>f("date_embauche",v)} type="date"/>
+            <RH_Input label="Nationalité" value={form.nationalite} onChange={v=>f("nationalite",v)}/>
+            <RH_Input label="Email" value={form.email} onChange={v=>f("email",v)} type="email"/>
           </div>
           <div className="rh-checkbox-row">
             <label style={{display:"flex",alignItems:"center",gap:"8px",color:G.textDim,fontSize:"13px",cursor:"pointer"}}>
@@ -13577,10 +13577,10 @@ const Employees = ({companies}) => {
             </label>
           </div>
           <div className="rh-actions-row">
-            <Btn onClick={save}>Enregistrer</Btn>
-            <Btn onClick={()=>setModal(null)} variant="ghost">Annuler</Btn>
+            <RH_Btn onClick={save}>Enregistrer</RH_Btn>
+            <RH_Btn onClick={()=>setModal(null)} variant="ghost">Annuler</RH_Btn>
           </div>
-        </Modal>
+        </RH_Modal>
       )}
     </div>
   );
@@ -13865,14 +13865,14 @@ ${lienCasse}
       <div className="rh-page-header">
         <h2 style={{fontSize:"22px",fontWeight:700,color:"#1a3a6b"}}>Fiches de Paie</h2>
         <div className="rh-btn-group">
-          <Btn onClick={genererTout} variant="secondary" small>⚡ Générer tout le mois</Btn>
-          <Btn onClick={envoyerTout} variant="ghost" small>📱 Envoyer via WhatsApp</Btn>
-          <Btn onClick={()=>{setForm(initForm);setCalc(null);setMsg("");setModal("new")}}>+ Nouvelle fiche</Btn>
+          <RH_Btn onClick={genererTout} variant="secondary" small>⚡ Générer tout le mois</RH_Btn>
+          <RH_Btn onClick={envoyerTout} variant="ghost" small>📱 Envoyer via WhatsApp</RH_Btn>
+          <RH_Btn onClick={()=>{setForm(initForm);setCalc(null);setMsg("");setModal("new")}}>+ Nouvelle fiche</RH_Btn>
         </div>
       </div>
 
       {/* Filtres */}
-      <Card style={{marginBottom:"16px",padding:"16px"}}>
+      <RH_Card style={{marginBottom:"16px",padding:"16px"}}>
         <div className="rh-flex-filters">
           <select className="rh-control" value={compId} onChange={e=>setCompId(e.target.value)}
             style={{background:"#fff",border:`1px solid ${G.border}`,borderRadius:"8px",
@@ -13897,9 +13897,9 @@ ${lienCasse}
             <option value="moderne">✨ Moderne</option>
           </select>
         </div>
-      </Card>
+      </RH_Card>
 
-      <Card>
+      <RH_Card>
         {/* Totaux */}
         {payrolls.length>0&&(
           <div className="rh-summary-grid-4" style={{marginBottom:"16px",paddingBottom:"16px",borderBottom:`1px solid ${G.border}`}}>
@@ -13925,18 +13925,18 @@ ${lienCasse}
           {label:"Net à payer",render:r=><span style={{color:G.accent,fontWeight:700}}>{fmt(r.remuneration_due)}</span>},
           {label:"Actions",render:r=>(
             <div style={{display:"flex",gap:"6px"}}>
-              <Btn small onClick={e=>{e.stopPropagation();setViewModal(r)}} variant="secondary">Voir</Btn>
-              <Btn small onClick={e=>{e.stopPropagation();printPdf(r)}} variant="ghost" title="Télécharger">⬇️</Btn>
-              <Btn small onClick={e=>{e.stopPropagation();printPdfWindow(r)}} variant="ghost" title="Imprimer">🖨</Btn>
-              <Btn small onClick={e=>{e.stopPropagation();del(r.id)}} variant="danger">✕</Btn>
+              <RH_Btn small onClick={e=>{e.stopPropagation();setViewModal(r)}} variant="secondary">Voir</RH_Btn>
+              <RH_Btn small onClick={e=>{e.stopPropagation();printPdf(r)}} variant="ghost" title="Télécharger">⬇️</RH_Btn>
+              <RH_Btn small onClick={e=>{e.stopPropagation();printPdfWindow(r)}} variant="ghost" title="Imprimer">🖨</RH_Btn>
+              <RH_Btn small onClick={e=>{e.stopPropagation();del(r.id)}} variant="danger">✕</RH_Btn>
             </div>
           )}
         ]} rows={payrolls}/>
-      </Card>
+      </RH_Card>
 
-      {/* Modal génération fiche */}
+      {/* RH_Modal génération fiche */}
       {modal&&(
-        <Modal title="Générer une fiche de paie" onClose={()=>setModal(null)} width="700px">
+        <RH_Modal title="Générer une fiche de paie" onClose={()=>setModal(null)} width="700px">
           <Alert msg={msg} type="error"/>
           <div className="rh-form-grid-2">
             <Select label="Employé *" value={form.employee_id} onChange={v=>f("employee_id",v)}
@@ -13945,16 +13945,16 @@ ${lienCasse}
               options={MOIS.slice(1).map((m,i)=>({value:String(i+1),label:m}))}/>
             <Select label="Année" value={form.annee} onChange={v=>f("annee",v)}
               options={years.map(y=>({value:y,label:y}))}/>
-            <Input label="Salaire base (FCFA)" value={form.salaire_base} onChange={v=>f("salaire_base",v)} type="number"/>
+            <RH_Input label="Salaire base (FCFA)" value={form.salaire_base} onChange={v=>f("salaire_base",v)} type="number"/>
             <div style={{gridColumn:"1/-1",background:G.bg,borderRadius:"8px",padding:"12px",marginBottom:"4px"}}>
               <div style={{fontSize:"12px",fontWeight:600,color:G.accent,marginBottom:"10px"}}>
                 Heures supplémentaires (taux horaire = salaire base ÷ 173,33)
               </div>
               <div className="rh-grid-4">
-                <Input label="+12% (nb h)" value={form.h_sup_12} onChange={v=>f("h_sup_12",v)} type="number" small/>
-                <Input label="+35% (nb h)" value={form.h_sup_35} onChange={v=>f("h_sup_35",v)} type="number" small/>
-                <Input label="+50% (nb h)" value={form.h_sup_50} onChange={v=>f("h_sup_50",v)} type="number" small/>
-                <Input label="+100% (nb h)" value={form.h_sup_100} onChange={v=>f("h_sup_100",v)} type="number" small/>
+                <RH_Input label="+12% (nb h)" value={form.h_sup_12} onChange={v=>f("h_sup_12",v)} type="number" small/>
+                <RH_Input label="+35% (nb h)" value={form.h_sup_35} onChange={v=>f("h_sup_35",v)} type="number" small/>
+                <RH_Input label="+50% (nb h)" value={form.h_sup_50} onChange={v=>f("h_sup_50",v)} type="number" small/>
+                <RH_Input label="+100% (nb h)" value={form.h_sup_100} onChange={v=>f("h_sup_100",v)} type="number" small/>
               </div>
               {calc&&calc.montant_heures_sup>0&&(
                 <div style={{fontSize:"11px",color:G.textDim,marginTop:"6px"}}>
@@ -13966,11 +13966,11 @@ ${lienCasse}
                 </div>
               )}
             </div>
-            <Input label="Primes (FCFA)" value={form.primes} onChange={v=>f("primes",v)} type="number"/>
-            <Input label="Indemnités (FCFA)" value={form.indemnites} onChange={v=>f("indemnites",v)} type="number"/>
-            <Input label="Avances (FCFA)" value={form.avances} onChange={v=>f("avances",v)} type="number"/>
-            <Input label="Saisie-arrêt (FCFA)" value={form.saisie_arret} onChange={v=>f("saisie_arret",v)} type="number"/>
-            <Input label="Assurance santé (FCFA)" value={form.assurance_sante} onChange={v=>f("assurance_sante",v)} type="number"/>
+            <RH_Input label="Primes (FCFA)" value={form.primes} onChange={v=>f("primes",v)} type="number"/>
+            <RH_Input label="Indemnités (FCFA)" value={form.indemnites} onChange={v=>f("indemnites",v)} type="number"/>
+            <RH_Input label="Avances (FCFA)" value={form.avances} onChange={v=>f("avances",v)} type="number"/>
+            <RH_Input label="Saisie-arrêt (FCFA)" value={form.saisie_arret} onChange={v=>f("saisie_arret",v)} type="number"/>
+            <RH_Input label="Assurance santé (FCFA)" value={form.assurance_sante} onChange={v=>f("assurance_sante",v)} type="number"/>
           </div>
 
           {/* Aperçu calcul */}
@@ -14004,26 +14004,26 @@ ${lienCasse}
             </div>
           )}
           <div className="rh-actions-row">
-            <Btn onClick={save} disabled={!calc||loading}>{loading?"...":"Enregistrer"}</Btn>
-            <Btn onClick={()=>setModal(null)} variant="ghost">Annuler</Btn>
+            <RH_Btn onClick={save} disabled={!calc||loading}>{loading?"...":"Enregistrer"}</RH_Btn>
+            <RH_Btn onClick={()=>setModal(null)} variant="ghost">Annuler</RH_Btn>
           </div>
-        </Modal>
+        </RH_Modal>
       )}
 
-      {/* Modal détail fiche */}
+      {/* RH_Modal détail fiche */}
       {viewModal&&(
-        <Modal title={`Fiche — ${viewModal.employees?.nom} ${viewModal.employees?.prenoms}`}
+        <RH_Modal title={`Fiche — ${viewModal.employees?.nom} ${viewModal.employees?.prenoms}`}
                onClose={()=>setViewModal(null)} width="600px">
           <PayrollDetail p={viewModal} comp={comp}/>
           <div className="rh-actions-row" style={{marginTop:"16px"}}>
             <div className="rh-btn-group">
-              <Btn onClick={()=>printPdf(viewModal,"officiel")} variant="secondary" small>📄 Officiel</Btn>
-              <Btn onClick={()=>printPdf(viewModal,"simple")} variant="secondary" small>📋 Simple</Btn>
-              <Btn onClick={()=>printPdf(viewModal,"moderne")} variant="primary" small>✨ Moderne</Btn>
+              <RH_Btn onClick={()=>printPdf(viewModal,"officiel")} variant="secondary" small>📄 Officiel</RH_Btn>
+              <RH_Btn onClick={()=>printPdf(viewModal,"simple")} variant="secondary" small>📋 Simple</RH_Btn>
+              <RH_Btn onClick={()=>printPdf(viewModal,"moderne")} variant="primary" small>✨ Moderne</RH_Btn>
             </div>
-            <Btn onClick={()=>setViewModal(null)} variant="ghost">Fermer</Btn>
+            <RH_Btn onClick={()=>setViewModal(null)} variant="ghost">Fermer</RH_Btn>
           </div>
-        </Modal>
+        </RH_Modal>
       )}
     </div>
   );
@@ -14345,7 +14345,7 @@ const generateFromTemplate = async (template, variables) => {
 const TemplateRow = ({t,onGen,onDel,userId}) => {
   const icons={xlsx:"📊",xls:"📊",pdf:"📄"};
   return (
-    <Card style={{marginBottom:"8px",padding:"14px"}}>
+    <RH_Card style={{marginBottom:"8px",padding:"14px"}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
         <div style={{display:"flex",alignItems:"center",gap:"12px"}}>
           <span style={{fontSize:"24px"}}>{icons[t.file_type]||"📁"}</span>
@@ -14353,17 +14353,17 @@ const TemplateRow = ({t,onGen,onDel,userId}) => {
             <div style={{fontWeight:600,fontSize:"14px",color:G.text}}>{t.name}</div>
             <div style={{fontSize:"11px",color:G.textDim,marginTop:"2px",display:"flex",alignItems:"center",gap:"6px"}}>
               {t.file_name} • {(t.file_type||"").toUpperCase()}
-              {t.is_global&&<Badge label="Global" color={G.accent}/>}
+              {t.is_global&&<RH_Badge label="Global" color={G.accent}/>}
             </div>
             {t.description&&<div style={{fontSize:"12px",color:G.textDim,marginTop:"3px"}}>{t.description}</div>}
           </div>
         </div>
         <div style={{display:"flex",gap:"8px"}}>
-          <Btn small onClick={onGen} variant="primary">⚡ Générer</Btn>
-          {t.user_id===userId&&<Btn small onClick={onDel} variant="danger">🗑</Btn>}
+          <RH_Btn small onClick={onGen} variant="primary">⚡ Générer</RH_Btn>
+          {t.user_id===userId&&<RH_Btn small onClick={onDel} variant="danger">🗑</RH_Btn>}
         </div>
       </div>
-    </Card>
+    </RH_Card>
   );
 };
 
@@ -14447,10 +14447,10 @@ const TemplateManager = ({companies, user, compId, mois, annee, data}) => {
         <div style={{fontSize:"13px",color:G.textDim}}>
           Stockez vos modèles Excel/PDF et générez des fiches pré-remplies avec les données du mois sélectionné.
         </div>
-        <Btn onClick={()=>setShowUpload(true)} small>📤 Uploader un modèle</Btn>
+        <RH_Btn onClick={()=>setShowUpload(true)} small>📤 Uploader un modèle</RH_Btn>
       </div>
 
-      <Card style={{marginBottom:"16px",padding:"14px",background:"#f0f4ff"}}>
+      <RH_Card style={{marginBottom:"16px",padding:"14px",background:"#f0f4ff"}}>
         <div style={{fontSize:"11px",fontWeight:700,color:G.accent,marginBottom:"8px",textTransform:"uppercase",letterSpacing:"0.5px"}}>
           Variables disponibles dans vos modèles Excel
         </div>
@@ -14462,7 +14462,7 @@ const TemplateManager = ({companies, user, compId, mois, annee, data}) => {
                                    padding:"2px 7px",fontSize:"11px",color:G.accent,fontFamily:"monospace"}}>{v}</code>
           ))}
         </div>
-      </Card>
+      </RH_Card>
 
       {loading&&<div style={{textAlign:"center",color:G.textDim,padding:"24px"}}>Chargement…</div>}
 
@@ -14481,9 +14481,9 @@ const TemplateManager = ({companies, user, compId, mois, annee, data}) => {
         <div style={{fontSize:"12px",fontWeight:700,color:G.textDim,textTransform:"uppercase",
                      letterSpacing:"0.5px",marginBottom:"8px"}}>📁 Mes modèles</div>
         {myTmpl.length===0&&!loading&&(
-          <Card><div style={{color:G.textDim,textAlign:"center",padding:"24px",fontSize:"13px"}}>
+          <RH_Card><div style={{color:G.textDim,textAlign:"center",padding:"24px",fontSize:"13px"}}>
             Aucun modèle — uploadez votre premier modèle Excel ou PDF.
-          </div></Card>
+          </div></RH_Card>
         )}
         {myTmpl.map(t=>(
           <TemplateRow key={t.id} t={t} onGen={()=>generateFromTemplate(t,buildVariables())}
@@ -14492,10 +14492,10 @@ const TemplateManager = ({companies, user, compId, mois, annee, data}) => {
       </div>
 
       {showUpload&&(
-        <Modal title="📤 Uploader un modèle" onClose={()=>setShowUpload(false)} width="480px">
-          <Input label="Nom du modèle *" value={form.name} onChange={v=>setForm(p=>({...p,name:v}))}
+        <RH_Modal title="📤 Uploader un modèle" onClose={()=>setShowUpload(false)} width="480px">
+          <RH_Input label="Nom du modèle *" value={form.name} onChange={v=>setForm(p=>({...p,name:v}))}
                  placeholder="ex: Déclaration CNSS mensuelle"/>
-          <Input label="Description (optionnel)" value={form.description}
+          <RH_Input label="Description (optionnel)" value={form.description}
                  onChange={v=>setForm(p=>({...p,description:v}))} placeholder="ex: Formulaire officiel CNSS"/>
           <div style={{marginBottom:"14px"}}>
             <label style={{display:"block",fontSize:"12px",color:"#1a3a6b",marginBottom:"5px",fontWeight:600}}>
@@ -14528,8 +14528,8 @@ const TemplateManager = ({companies, user, compId, mois, annee, data}) => {
           {uploading&&<div style={{textAlign:"center",color:G.accent,fontSize:"13px",padding:"8px"}}>
             ⏳ Upload en cours…
           </div>}
-          <Btn onClick={()=>setShowUpload(false)} variant="ghost" small>Annuler</Btn>
-        </Modal>
+          <RH_Btn onClick={()=>setShowUpload(false)} variant="ghost" small>Annuler</RH_Btn>
+        </RH_Modal>
       )}
     </div>
   );
@@ -14589,9 +14589,9 @@ const Declarations = ({companies, user}) => {
           <div style={{fontSize:"18px",fontWeight:800,color,marginTop:"4px"}}>{fmt(montant)}</div>
         </div>
         <div style={{display:"flex",gap:"8px",alignItems:"center"}}>
-          <Badge label={st} color={st==="Déclaré"?G.accent:G.yellow}/>
+          <RH_Badge label={st} color={st==="Déclaré"?G.accent:G.yellow}/>
           {st!=="Déclaré"
-            ?<Btn small onClick={()=>updateStatut(field,"Déclaré")} variant="primary">Marquer déclaré</Btn>
+            ?<RH_Btn small onClick={()=>updateStatut(field,"Déclaré")} variant="primary">Marquer déclaré</RH_Btn>
             :decl?.[field.replace("statut_","date_declaration_")]&&(
               <span style={{fontSize:"11px",color:G.textDim}}>
                 le {decl[field.replace("statut_","date_declaration_")]}
@@ -14645,8 +14645,8 @@ const Declarations = ({companies, user}) => {
         <h2 style={{fontSize:"22px",fontWeight:700,color:"#1a3a6b"}}>Déclarations CNSS / VPS / ITS</h2>
         {data?.nb_fiches>0&&(
           <div className="rh-btn-group">
-            <Btn onClick={printDecl} variant="secondary" small>🖨 Imprimer</Btn>
-            <Btn onClick={async()=>{
+            <RH_Btn onClick={printDecl} variant="secondary" small>🖨 Imprimer</RH_Btn>
+            <RH_Btn onClick={async()=>{
               const comp=companies.find(c=>c.id===compId);
               const emps=(data?.payrolls_detail||[]).map(p=>({
                 ...p,...(p.employees||{}),
@@ -14656,8 +14656,8 @@ const Declarations = ({companies, user}) => {
               }));
               await genDeclarationCNSS(comp,emps,mois,annee);
               rhToast.success("✅ Déclaration CNSS téléchargée !");
-            }} variant="primary" small>📊 CNSS Excel</Btn>
-            <Btn onClick={async()=>{
+            }} variant="primary" small>📊 CNSS Excel</RH_Btn>
+            <RH_Btn onClick={async()=>{
               const comp=companies.find(c=>c.id===compId);
               const emps=(data?.payrolls_detail||[]).map(p=>({
                 ...p,...(p.employees||{}),
@@ -14665,11 +14665,11 @@ const Declarations = ({companies, user}) => {
               }));
               await genDeclarationITS(comp,emps,mois,annee);
               rhToast.success("✅ Déclaration ITS téléchargée !");
-            }} variant="ghost" small>📊 ITS Excel</Btn>
+            }} variant="ghost" small>📊 ITS Excel</RH_Btn>
           </div>
         )}
       </div>
-      <Card style={{marginBottom:"16px",padding:"16px"}}>
+      <RH_Card style={{marginBottom:"16px",padding:"16px"}}>
         <div className="rh-flex-filters">
           <select className="rh-control" value={compId} onChange={e=>setCompId(e.target.value)}
             style={{background:"#fff",border:`1px solid ${G.border}`,borderRadius:"8px",
@@ -14687,7 +14687,7 @@ const Declarations = ({companies, user}) => {
             {years.map(y=><option key={y} value={y}>{y}</option>)}
           </select>
         </div>
-      </Card>
+      </RH_Card>
       <Alert msg={msg} type="error"/>
 
       {/* Onglets */}
@@ -14710,10 +14710,10 @@ const Declarations = ({companies, user}) => {
 
       {tab==="suivi"&&data&&(
         data.nb_fiches===0
-          ?<Card><div style={{color:G.textDim,textAlign:"center",padding:"24px"}}>
+          ?<RH_Card><div style={{color:G.textDim,textAlign:"center",padding:"24px"}}>
             Aucune fiche de paie pour {MOIS[parseInt(mois)]} {annee}
-          </div></Card>
-          :<Card>
+          </div></RH_Card>
+          :<RH_Card>
             <div style={{marginBottom:"16px",fontSize:"13px",color:G.textDim}}>
               {data.nb_fiches} fiche(s) de paie — {MOIS[parseInt(mois)]} {annee}
             </div>
@@ -14745,7 +14745,7 @@ const Declarations = ({companies, user}) => {
                 ))}
               </div>
             </div>
-          </Card>
+          </RH_Card>
       )}
     </div>
   );
@@ -14909,11 +14909,11 @@ const RapportCabinet = ({companies}) => {
       <div className="rh-page-header">
         <h2 style={{fontSize:"22px",fontWeight:700,color:"#1a3a6b"}}>Rapport Cabinet</h2>
         <div className="rh-btn-group">
-          <Btn onClick={printRapport} variant="secondary" small>🖨 Rapport PDF</Btn>
-          <Btn onClick={exportCSV} variant="ghost" small>📊 Export Excel/CSV</Btn>
+          <RH_Btn onClick={printRapport} variant="secondary" small>🖨 Rapport PDF</RH_Btn>
+          <RH_Btn onClick={exportCSV} variant="ghost" small>📊 Export Excel/CSV</RH_Btn>
         </div>
       </div>
-      <Card style={{marginBottom:"16px",padding:"16px"}}>
+      <RH_Card style={{marginBottom:"16px",padding:"16px"}}>
         <div className="rh-inline-actions">
           <select value={mois} onChange={e=>setMois(e.target.value)}
             style={{background:"#fff",border:`1px solid ${G.border}`,borderRadius:"8px",
@@ -14926,7 +14926,7 @@ const RapportCabinet = ({companies}) => {
             {years.map(y=><option key={y} value={y}>{y}</option>)}
           </select>
         </div>
-      </Card>
+      </RH_Card>
 
       {/* Totaux globaux */}
       {rapports.length>0&&(
@@ -14937,12 +14937,12 @@ const RapportCabinet = ({companies}) => {
             {l:"Total CNSS",v:totaux.cnss,c:"#6366f1",unit:" FCFA"},
             {l:"Total à verser",v:totaux.cnss+totaux.vps+totaux.its,c:G.red,unit:" FCFA"},
           ].map(x=>(
-            <Card key={x.l} style={{padding:"14px"}}>
+            <RH_Card key={x.l} style={{padding:"14px"}}>
               <div style={{fontSize:"11px",color:G.textDim,marginBottom:"4px"}}>{x.l}</div>
               <div style={{fontSize:"16px",fontWeight:800,color:x.c}}>
                 {x.unit?fmt(x.v):x.v}
               </div>
-            </Card>
+            </RH_Card>
           ))}
         </div>
       )}
@@ -14950,18 +14950,18 @@ const RapportCabinet = ({companies}) => {
       {loading&&<div style={{color:G.textDim,padding:"24px",textAlign:"center"}}>Chargement...</div>}
       
       {rapports.map((r,i)=>(
-        <Card key={i} style={{marginBottom:"10px",padding:"16px"}}>
+        <RH_Card key={i} style={{marginBottom:"10px",padding:"16px"}}>
           <div className="rh-item-header" style={{marginBottom:"10px"}}>
             <div>
               <div style={{fontWeight:700,fontSize:"14px"}}>{r.comp.raison_sociale}</div>
               <div style={{fontSize:"12px",color:G.textDim}}>{r.nb} fiche(s) — {MOIS[parseInt(mois)]} {annee}</div>
             </div>
             <div className="rh-badges">
-              <Badge label={"CNSS: "+(r.decl?.statut_cnss||"Non déclaré")}
+              <RH_Badge label={"CNSS: "+(r.decl?.statut_cnss||"Non déclaré")}
                      color={r.decl?.statut_cnss==="Déclaré"?G.accent:G.yellow}/>
-              <Badge label={"VPS: "+(r.decl?.statut_vps||"Non déclaré")}
+              <RH_Badge label={"VPS: "+(r.decl?.statut_vps||"Non déclaré")}
                      color={r.decl?.statut_vps==="Déclaré"?G.accent:G.yellow}/>
-              <Badge label={"ITS: "+(r.decl?.statut_its||"Non déclaré")}
+              <RH_Badge label={"ITS: "+(r.decl?.statut_its||"Non déclaré")}
                      color={r.decl?.statut_its==="Déclaré"?G.accent:G.yellow}/>
             </div>
           </div>
@@ -14985,13 +14985,13 @@ const RapportCabinet = ({companies}) => {
               Total à verser : {fmt(r.cnss_salarie+r.cnss_patronale+r.vps+r.its)}
             </div>
           </div>
-        </Card>
+        </RH_Card>
       ))}
 
       {!loading&&rapports.every(r=>r.nb===0)&&(
-        <Card><div style={{color:G.textDim,textAlign:"center",padding:"24px"}}>
+        <RH_Card><div style={{color:G.textDim,textAlign:"center",padding:"24px"}}>
           Aucune fiche pour {MOIS[parseInt(mois)]} {annee}
-        </div></Card>
+        </div></RH_Card>
       )}
     </div>
   );
@@ -15045,7 +15045,7 @@ const Historique = ({companies}) => {
       <div className="rh-page-header">
         <h2 style={{fontSize:"22px",fontWeight:700,color:"#1a3a6b"}}>Historique des Fiches de Paie</h2>
       </div>
-      <Card style={{marginBottom:"16px",padding:"16px"}}>
+      <RH_Card style={{marginBottom:"16px",padding:"16px"}}>
         <div className="rh-flex-filters">
           <select className="rh-control" value={compId} onChange={e=>setCompId(e.target.value)}
             style={{background:"#fff",border:`1px solid ${G.border}`,borderRadius:"8px",
@@ -15065,10 +15065,10 @@ const Historique = ({companies}) => {
             <option value="moderne">✨ Moderne</option>
           </select>
         </div>
-      </Card>
+      </RH_Card>
       {loading&&<div style={{color:G.textDim,padding:"24px",textAlign:"center"}}>Chargement...</div>}
       {Object.keys(byMois).sort((a,b)=>parseInt(a)-parseInt(b)).map(m=>(
-        <Card key={m} style={{marginBottom:"12px"}}>
+        <RH_Card key={m} style={{marginBottom:"12px"}}>
           <div className="rh-item-header" style={{marginBottom:"12px",paddingBottom:"12px",borderBottom:`1px solid ${G.border}`}}>
             <div>
               <div style={{fontSize:"16px",fontWeight:700,color:G.accent}}>{MOIS[parseInt(m)]} {annee}</div>
@@ -15077,8 +15077,8 @@ const Historique = ({companies}) => {
               </div>
             </div>
             <div className="rh-btn-group">
-              <Badge label={"CNSS : "+fmt(byMois[m].cnss)} color={G.accent}/>
-              <Badge label={"ITS : "+fmt(byMois[m].its)} color={G.yellow}/>
+              <RH_Badge label={"CNSS : "+fmt(byMois[m].cnss)} color={G.accent}/>
+              <RH_Badge label={"ITS : "+fmt(byMois[m].its)} color={G.yellow}/>
             </div>
           </div>
           <Table cols={[
@@ -15088,16 +15088,16 @@ const Historique = ({companies}) => {
             {label:"Net à payer",render:r=><span style={{color:G.accent,fontWeight:700}}>{fmt(r.remuneration_due)}</span>},
             {label:"",render:r=>(
               <div style={{display:"flex",gap:"6px"}}>
-                <Btn small onClick={e=>{e.stopPropagation();printFiche(r);}} variant="ghost">🖨 PDF</Btn>
+                <RH_Btn small onClick={e=>{e.stopPropagation();printFiche(r);}} variant="ghost">🖨 PDF</RH_Btn>
               </div>
             )}
           ]} rows={byMois[m].fiches}/>
-        </Card>
+        </RH_Card>
       ))}
       {!loading&&Object.keys(byMois).length===0&&(
-        <Card><div style={{color:G.textDim,textAlign:"center",padding:"24px"}}>
+        <RH_Card><div style={{color:G.textDim,textAlign:"center",padding:"24px"}}>
           Aucune fiche pour {annee}
-        </div></Card>
+        </div></RH_Card>
       )}
     </div>
   );
@@ -15137,7 +15137,7 @@ const Settings = ({user}) => {
       <h2 style={{marginBottom:"24px",fontSize:"22px",fontWeight:700,color:"#1a3a6b"}}>Paramètres</h2>
 
       {/* Config WhatsApp expéditeur */}
-      <Card style={{maxWidth:"520px",marginBottom:"20px"}}>
+      <RH_Card style={{maxWidth:"520px",marginBottom:"20px"}}>
         <div style={{fontSize:"14px",fontWeight:600,marginBottom:"16px",color:G.accent}}>
           ⚙️ Configuration WhatsApp — Expéditeur
         </div>
@@ -15145,26 +15145,26 @@ const Settings = ({user}) => {
                      fontSize:"12px",color:G.textDim,border:"1px solid #d0dff5"}}>
           💡 Renseignez les coordonnées de l'expéditeur qui apparaîtront dans les messages WhatsApp envoyés aux employés.
         </div>
-        <Input label="Numéro WhatsApp expéditeur (avec indicatif pays)"
+        <RH_Input label="Numéro WhatsApp expéditeur (avec indicatif pays)"
           value={form.smtp_host} onChange={v=>f("smtp_host",v)}
           placeholder="22997000000"/>
-        <Input label="Nom affiché (expéditeur)"
+        <RH_Input label="Nom affiché (expéditeur)"
           value={form.smtp_user} onChange={v=>f("smtp_user",v)}
           placeholder="PSARIZ SARL - Service RH"/>
-        <Input label="Message personnalisé (optionnel)"
+        <RH_Input label="Message personnalisé (optionnel)"
           value={form.smtp_pass} onChange={v=>f("smtp_pass",v)}
           placeholder="Pour toute question, contactez le service RH."/>
         <div style={{background:"#f0f4ff",borderRadius:"8px",padding:"12px",marginBottom:"16px",
                      fontSize:"12px",color:"#1a3a6b",border:"1px solid #d0dff5"}}>
           📱 <strong>Numéro employé :</strong> renseignez le numéro WhatsApp de chaque employé dans le champ <strong>"Email"</strong> de sa fiche (ex: 22997000000).
         </div>
-        <Btn onClick={save} disabled={saving}>
+        <RH_Btn onClick={save} disabled={saving}>
           {saving ? "⏳ Enregistrement…" : "💾 Enregistrer"}
-        </Btn>
-      </Card>
+        </RH_Btn>
+      </RH_Card>
 
       {/* Contact administrateur */}
-      <Card style={{maxWidth:"520px"}}>
+      <RH_Card style={{maxWidth:"520px"}}>
         <div style={{fontSize:"14px",fontWeight:600,marginBottom:"4px",color:G.accent}}>
           🆘 Contacter l'Administrateur
         </div>
@@ -15205,7 +15205,7 @@ const Settings = ({user}) => {
                      fontSize:"11px",color:G.textDim,border:"1px solid #e2e8f0"}}>
           ⏰ Disponible du lundi au vendredi, 8h–18h (heure de Cotonou)
         </div>
-      </Card>
+      </RH_Card>
     </div>
   );
 };
@@ -16004,11 +16004,11 @@ function SuperAdminDashboard({ companies, onSelect, toast }) {
           {icon:'💰',label:'CA total (toutes sociétés)',val:fcfa(totalCA),color:'#16a34a'},
           {icon:'📦',label:'Lots de production',val:totalLots,color:'#ea580c'},
         ].map(k=>(
-          <Card key={k.label} style={{padding:'18px 20px'}}>
+          <RH_Card key={k.label} style={{padding:'18px 20px'}}>
             <div style={{fontSize:28,marginBottom:6}}>{k.icon}</div>
             <div style={{fontSize:12,color:'#64748b',marginBottom:4}}>{k.label}</div>
             <div style={{fontSize:22,fontWeight:800,color:k.color}}>{k.val}</div>
-          </Card>
+          </RH_Card>
         ))}
       </div>
 
@@ -16180,7 +16180,7 @@ export default function ComptaPro() {
       </div>
     </div>
   )
-  if (!user) return <LoginPage onLogin={setUser} />
+  if (!user) return <RH_LoginPage onLogin={setUser} />
 
   // Écran de changement de mot de passe après réinitialisation
   if (needsPasswordChange) return <PasswordChangePage onDone={async(newPwd)=>{
@@ -16389,7 +16389,7 @@ export default function ComptaPro() {
   return (
     <div style={{ fontFamily:"'Segoe UI',system-ui,sans-serif", background:'#f1f5f9', color:'#1e293b', minHeight:'100vh' }}>
       <Toasts toasts={toast.toasts} />
-      <Sidebar page={page} setPage={setPage} user={user} profile={profile} onLogout={logout}
+      <RH_Sidebar page={page} setPage={setPage} user={user} profile={profile} onLogout={logout}
         open={sidebarOpen} onClose={()=>setSidebarOpen(false)} />
       <div style={{ marginLeft:sidebarCollapsed ? 0 : 260, minHeight:'100vh', display:'flex', flexDirection:'column', transition:'margin-left 0.2s ease' }}>
         {/* Topbar */}
