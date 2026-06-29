@@ -291,7 +291,7 @@ function buildCommercialDocHtml(doc, lignes) {
       <td>${i+1}</td>
       <td>${l.designation||''}</td>
       <td class="r">${l.unite||''}</td>
-      <td class="r">${(+(l.quantite)||0).toFixed(3)}</td>
+      <td class="r">${((+(l.quantite)||0) % 1 === 0 ? (+(l.quantite)||0).toLocaleString('fr-FR') : parseFloat((+(l.quantite)||0).toFixed(3)).toLocaleString('fr-FR'))}</td>
       ${estBL ? '' : `<td class="r">${Math.round(+(l.prix_unitaire)||0).toLocaleString('fr-FR')}</td><td class="r"><strong>${Math.round(+(l.montant_ligne)||0).toLocaleString('fr-FR')}</strong></td>`}
     </tr>`).join('')
     : `<tr><td colspan="${nbCols}" style="text-align:center;color:#888;padding:16px">Aucune ligne enregistrée</td></tr>`
@@ -479,7 +479,7 @@ function printExpressionBesoin(fiche, lignes, budgets, companyInfo, sigImg=null,
     return `<tr style="${rowStyle}">
       <td>${l.numero_ordre||i+1}</td>
       <td>${l.description||''}${isValidee?' '+badge:''}</td>
-      <td class="r">${qty}</td>
+      <td class="r">${qty % 1 === 0 ? qty.toLocaleString('fr-FR') : parseFloat(qty.toFixed(3)).toLocaleString('fr-FR')}</td>
       <td class="r">${pu.toLocaleString('fr-FR')}</td>
       <td class="r">${tva}%</td>
       <td class="r">${montant.toLocaleString('fr-FR')}</td>
