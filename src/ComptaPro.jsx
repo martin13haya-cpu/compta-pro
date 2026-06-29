@@ -3591,7 +3591,7 @@ function CommercialViewPage({ docId, setPage, toast }) {
                 <tr key={l.id} style={{background:i%2===0?'white':'#f9f9f9'}}>
                   <td style={{padding:'6px 10px',border:'1px solid #e2e8f0'}}>{l.designation}</td>
                   <td style={{padding:'6px 10px',border:'1px solid #e2e8f0',textAlign:'center'}}>{l.unite}</td>
-                  <td style={{padding:'6px 10px',border:'1px solid #e2e8f0',textAlign:'right'}}>{(l.quantite||0).toFixed(3)}</td>
+                  <td style={{padding:'6px 10px',border:'1px solid #e2e8f0',textAlign:'right'}}>{((l.quantite||0) % 1 === 0 ? (l.quantite||0).toLocaleString('fr-FR') : parseFloat((l.quantite||0).toFixed(3)).toLocaleString('fr-FR'))}</td>
                   <td style={{padding:'6px 10px',border:'1px solid #e2e8f0',textAlign:'right'}}>{fcfa(l.prix_unitaire)}</td>
                   <td style={{padding:'6px 10px',border:'1px solid #e2e8f0',textAlign:'right',fontWeight:600}}>{fcfa(l.montant_ligne)}</td>
                 </tr>
