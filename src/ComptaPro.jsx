@@ -1,4 +1,4 @@
-﻿import { createClient } from '@supabase/supabase-js'
+import { createClient } from '@supabase/supabase-js'
 import { useState, useEffect, useCallback, useRef, Fragment, useMemo } from 'react'
 
 // ── CONFIG ─────────────────────────────────────────────────────────────────
@@ -291,7 +291,7 @@ function buildCommercialDocHtml(doc, lignes) {
       <td>${i+1}</td>
       <td>${l.designation||''}</td>
       <td class="r">${l.unite||''}</td>
-      <td class="r">${((+(l.quantite)||0) % 1 === 0 ? (+(l.quantite)||0).toLocaleString('fr-FR') : parseFloat(((+(l.quantite)||0) % 1 === 0 ? (+(l.quantite)||0).toLocaleString('fr-FR') : parseFloat((+(l.quantite)||0).toFixed(3)).toLocaleString('fr-FR'))).toLocaleString('fr-FR'))}</td>
+      <td class="r">${((+(l.quantite)||0) % 1 === 0 ? (+(l.quantite)||0).toLocaleString('fr-FR') : parseFloat((+(l.quantite)||0).toFixed(3)).toLocaleString('fr-FR'))}</td>
       ${estBL ? '' : `<td class="r">${Math.round(+(l.prix_unitaire)||0).toLocaleString('fr-FR')}</td><td class="r"><strong>${Math.round(+(l.montant_ligne)||0).toLocaleString('fr-FR')}</strong></td>`}
     </tr>`).join('')
     : `<tr><td colspan="${nbCols}" style="text-align:center;color:#888;padding:16px">Aucune ligne enregistrée</td></tr>`
@@ -3591,7 +3591,7 @@ function CommercialViewPage({ docId, setPage, toast }) {
                 <tr key={l.id} style={{background:i%2===0?'white':'#f9f9f9'}}>
                   <td style={{padding:'6px 10px',border:'1px solid #e2e8f0'}}>{l.designation}</td>
                   <td style={{padding:'6px 10px',border:'1px solid #e2e8f0',textAlign:'center'}}>{l.unite}</td>
-                  <td style={{padding:'6px 10px',border:'1px solid #e2e8f0',textAlign:'right'}}>{((l.quantite||0) % 1 === 0 ? (l.quantite||0).toLocaleString('fr-FR') : parseFloat(((l.quantite||0) % 1 === 0 ? (l.quantite||0).toLocaleString('fr-FR') : parseFloat((l.quantite||0).toFixed(3)).toLocaleString('fr-FR'))).toLocaleString('fr-FR'))}</td>
+                  <td style={{padding:'6px 10px',border:'1px solid #e2e8f0',textAlign:'right'}}>{((l.quantite||0) % 1 === 0 ? (l.quantite||0).toLocaleString('fr-FR') : parseFloat((l.quantite||0).toFixed(3)).toLocaleString('fr-FR'))}</td>
                   <td style={{padding:'6px 10px',border:'1px solid #e2e8f0',textAlign:'right'}}>{fcfa(l.prix_unitaire)}</td>
                   <td style={{padding:'6px 10px',border:'1px solid #e2e8f0',textAlign:'right',fontWeight:600}}>{fcfa(l.montant_ligne)}</td>
                 </tr>
