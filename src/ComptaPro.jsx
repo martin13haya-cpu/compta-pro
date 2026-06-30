@@ -334,7 +334,7 @@ function buildCommercialDocHtml(doc, lignes) {
     </div>`}
     ${doc.notes ? `<div class="notes"><strong>Notes :</strong> ${doc.notes}</div>` : ''}
     <div class="signatures">
-      <div class="sig-box">Signature du vendeur</div>
+      <div class="sig-box">Signature de l'acheteur${comp?.raison_sociale?`<br><small>${comp.raison_sociale}</small>`:''}</div>
       <div class="sig-box">Signature du ${partLabel.toLowerCase()}${cliNom?`<br><small>${cliNom}</small>`:''}</div>
     </div>
   </body></html>`
