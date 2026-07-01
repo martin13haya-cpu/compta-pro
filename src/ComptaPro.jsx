@@ -1670,7 +1670,8 @@ function CompaniesPage({ companies, refresh, toast, isSuperAdmin=false, currentU
       toast.error('Vous ne pouvez pas modifier la société d\'un autre utilisateur.')
       return
     }
-    setForm(c?{...c}:{raison_sociale:'',rccm:'',adresse:'',tel:'',email:'',logo_url:'',type_activite:'industrielle'})
+    setForm(c?{...c}:{raison_sociale:'',rccm:'',adresse:'',tel:'',email:'',logo_url:'',type_activite:'industrielle',
+      taux_cnss_patronale:'0.194',cnss_employeur:'',nouvelle_entreprise:false,date_premier_exercice:'',signataire:'',fonction_signataire:''})
     setModal(c?'edit':'add')
   }
   const close = () => setModal(null)
@@ -1678,7 +1679,13 @@ function CompaniesPage({ companies, refresh, toast, isSuperAdmin=false, currentU
   const save = async e => {
     e.preventDefault(); setSaving(true)
     const uid = (await supabase.auth.getUser()).data?.user?.id
-    const pay = { raison_sociale:form.raison_sociale, rccm:form.rccm, adresse:form.adresse, tel:form.tel, email:form.email, logo_url:form.logo_url||null, type_activite:form.type_activite||'industrielle' }
+    const pay = { raison_sociale:form.raison_sociale, rccm:form.rccm, adresse:form.adresse, tel:form.tel, email:form.email, logo_url:form.logo_url||null, type_activite:form.type_activite||'industrielle',
+      taux_cnss_patronale: parseFloat(form.taux_cnss_patronale||0.194),
+      cnss_employeur: form.cnss_employeur||null,
+      nouvelle_entreprise: !!form.nouvelle_entreprise,
+      date_premier_exercice: form.date_premier_exercice||null,
+      signataire: form.signataire||null,
+      fonction_signataire: form.fonction_signataire||null }
     const { error } = modal==='add'
       ? await supabase.from('compta_companies').insert({...pay,user_id:uid})
       : await supabase.from('compta_companies').update(pay).eq('id',form.id)
@@ -1767,6 +1774,40 @@ function CompaniesPage({ companies, refresh, toast, isSuperAdmin=false, currentU
               </div>
             </Span2>
           </Grid>
+
+          <div style={{ fontSize:13, fontWeight:700, color:'#0f2044', margin:'18px 0 4px', textTransform:'uppercase' }}>
+            Paramétrage RH & Paie (calcul CNSS / VPS / ITS)
+          </div>
+          <div style={{ fontSize:12, color:'#64748b', marginBottom:12 }}>
+            Ces paramètres, conformes à la législation du travail béninoise, servent au calcul automatique
+            des fiches de paie et des déclarations sociales/fiscales de cette société.
+          </div>
+          <Grid cols={2} gap={14} style={{marginBottom:16}}>
+            <Sel label="Catégorie de risque professionnel (CNSS patronale)" name="taux_cnss_patronale"
+              value={String(form.taux_cnss_patronale||'0.194')}
+              onChange={e=>setForm(f=>({...f,taux_cnss_patronale:e.target.value}))}
+              options={[
+                {value:'0.164',label:'Catégorie 1 — Risque faible (16,4 %)'},
+                {value:'0.174',label:'Catégorie 2 — Risque moyen (17,4 %)'},
+                {value:'0.184',label:'Catégorie 3 — Risque élevé (18,4 %)'},
+                {value:'0.194',label:'Catégorie 4 — Risque très élevé (19,4 %)'},
+              ]} />
+            <Input label="N° CNSS Employeur" name="cnss_employeur" value={form.cnss_employeur} onChange={set} placeholder="ex : RB/NAT/2020-B-321" />
+            <Input label="Signataire (bulletins de paie)" name="signataire" value={form.signataire} onChange={set} />
+            <Input label="Fonction du signataire" name="fonction_signataire" value={form.fonction_signataire} onChange={set} />
+            <Span2>
+              <label style={{ display:'flex', alignItems:'center', gap:8, fontSize:13, color:'#374151', cursor:'pointer' }}>
+                <input type="checkbox" checked={!!form.nouvelle_entreprise}
+                  onChange={e=>setForm(f=>({...f,nouvelle_entreprise:e.target.checked}))} />
+                Nouvelle entreprise — exonération VPS de la 1ère année d'exercice (Art. 192 CGI)
+              </label>
+            </Span2>
+            {form.nouvelle_entreprise && (
+              <Input label="Date du 1er exercice" name="date_premier_exercice" type="date"
+                value={form.date_premier_exercice} onChange={set} />
+            )}
+          </Grid>
+
           <Row><Btn variant="secondary" onClick={close}>Annuler</Btn><Btn type="submit" disabled={saving}>{saving?'...':'Enregistrer'}</Btn></Row>
         </form>
       </Modal>
@@ -15931,40 +15972,26 @@ function RH_ChatPage({ user }) {
 }
 
 // ── WRAPPERS RH ───────────────────────────────────────────────────────────────
-function useRHCompanies(user) {
-  const [rhCompanies, setRhCompanies] = useState([])
-  useEffect(() => {
-    if (!user?.id) return
-    // Inject RH CSS once
-    if (typeof injectCSS === 'function') injectCSS()
-    supabaseRH.from('companies').select('*').eq('user_id', user.id).order('raison_sociale')
-      .then(({ data }) => setRhCompanies(data || []))
-  }, [user?.id])
-  return rhCompanies
-}
-
-function RH_EmployeesWrapper({ user }) {
-  const companies = useRHCompanies(user)
+// Les pages RH réutilisent désormais les sociétés de Compta Pro (compta_companies)
+// au lieu de la table "companies" séparée de l'ancienne appli RH-Paie Pro autonome,
+// afin que les paramètres CNSS/VPS/ITS saisis dans "Sociétés" soient bien pris en compte.
+function RH_EmployeesWrapper({ companies }) {
   return <><RH_ToastContainer /><Employees companies={companies} /></>
 }
 
-function RH_PayrollWrapper({ user }) {
-  const companies = useRHCompanies(user)
+function RH_PayrollWrapper({ companies }) {
   return <><RH_ToastContainer /><Payroll companies={companies} /></>
 }
 
-function RH_HistoriqueWrapper({ user }) {
-  const companies = useRHCompanies(user)
+function RH_HistoriqueWrapper({ companies }) {
   return <><RH_ToastContainer /><Historique companies={companies} /></>
 }
 
-function RH_DeclarationsWrapper({ user }) {
-  const companies = useRHCompanies(user)
+function RH_DeclarationsWrapper({ user, companies }) {
   return <><RH_ToastContainer /><Declarations companies={companies} user={user} /></>
 }
 
-function RH_RapportWrapper({ user }) {
-  const companies = useRHCompanies(user)
+function RH_RapportWrapper({ companies }) {
   return <><RH_ToastContainer /><RapportCabinet companies={companies} /></>
 }
 
@@ -16370,11 +16397,11 @@ export default function ComptaPro() {
       case 'parametres':     return (isSuperAdmin||profile?.role!=='utilisateur_simple') ? <ParametresPage toast={toast} companies={companies} companyId={companyId} /> : <Dashboard {...sp} setPage={setPage} />
       case 'mes_utilisateurs': return (isSuperAdmin||profile?.role!=='utilisateur_simple') ? <MesUtilisateursPage toast={toast} companies={companies} companyId={companyId} profile={profile} /> : <Dashboard {...sp} setPage={setPage} />
       // ── RH & PAIE ────────────────────────────────────────────────────────
-      case 'rh_employes':     return <RH_EmployeesWrapper user={user} />
-      case 'rh_fiches_paie':  return <RH_PayrollWrapper user={user} />
-      case 'rh_historique':   return <RH_HistoriqueWrapper user={user} />
-      case 'rh_declarations': return <RH_DeclarationsWrapper user={user} />
-      case 'rh_rapport':      return <RH_RapportWrapper user={user} />
+      case 'rh_employes':     return <RH_EmployeesWrapper user={user} companies={companies} />
+      case 'rh_fiches_paie':  return <RH_PayrollWrapper user={user} companies={companies} />
+      case 'rh_historique':   return <RH_HistoriqueWrapper user={user} companies={companies} />
+      case 'rh_declarations': return <RH_DeclarationsWrapper user={user} companies={companies} />
+      case 'rh_rapport':      return <RH_RapportWrapper user={user} companies={companies} />
     }
   }
 
