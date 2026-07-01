@@ -1,4 +1,4 @@
-﻿{
+{
   "name": "compta-pro",
   "private": true,
   "version": "2.1.0",
@@ -32,4 +32,3 @@
     "workbox-window": "^7.3.0"
   }
 }
-
