@@ -4847,6 +4847,8 @@ const ALL_SECTIONS = [
   ['achats','Achats semi-finis'],['lots_semi_finis','Lots Semi-finis'],
   ['epierrage','Épierrage'],['etuvage_paiements','Paiements étuvage'],
   ['docs_admin','Documents administratifs'],
+  ['rh_employes','Employés'],['rh_fiches_paie','Fiches de Paie'],['rh_historique','Historique Paie'],
+  ['rh_declarations','Déclarations CNSS/ITS'],['rh_rapport','Rapport Cabinet'],
   ['journal_caisse','Journal Caisse'],['journal_banque','Journal Banque'],
   ['journal_mobile','Journal Mobile Money'],['plan_comptable','Plan Comptable'],['grand_livre','Grand-Livre'],['ecritures','Saisie Comptable'],['balance','Balance'],['etats_financiers','États Financiers'],
 ]
