@@ -16183,7 +16183,7 @@ export default function ComptaPro() {
       </div>
     </div>
   )
-  if (!user) return <RH_LoginPage onLogin={setUser} />
+  if (!user) return <LoginPage onLogin={setUser} />
 
   // Écran de changement de mot de passe après réinitialisation
   if (needsPasswordChange) return <PasswordChangePage onDone={async(newPwd)=>{
