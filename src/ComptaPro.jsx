@@ -958,9 +958,9 @@ function printFilteredList({ title, subtitle='', headers, rows, companyName='', 
       body { font-size: 9.5pt; }
       h1 { font-size: 14pt; color: #0f2044; margin-bottom: 3px; }
       .meta { font-size: 9.5pt; color: #555; margin-bottom: 14px; border-bottom: 1px solid #e2e8f0; padding-bottom: 8px; }
-      table { font-size: 8.5pt; }
-      th { font-size: 8pt; white-space: nowrap; padding: 6px 8px; }
-      td { padding: 5px 8px; white-space: nowrap; }
+      table { font-size: 8.5pt; table-layout: fixed; width: 100%; }
+      th { font-size: 8pt; padding: 6px 6px; overflow-wrap: break-word; word-break: break-word; }
+      td { padding: 5px 6px; overflow-wrap: break-word; word-break: break-word; white-space: normal; }
       .totals-wrap { margin-top: 16px; margin-left: auto; width: 320px; border: 1px solid #e2e8f0; border-radius: 4px; overflow: hidden; }
     </style></head><body>
     <button class="print-btn" onclick="window.print()">🖨️ Imprimer / PDF</button>
@@ -972,6 +972,7 @@ function printFilteredList({ title, subtitle='', headers, rows, companyName='', 
       ${subtitle ? `<br>${subtitle}` : ''}
     </div>
     <table>
+      <colgroup>${headers.map(h=>`<col${h.w?` style="width:${h.w}%"`:''}>`).join('')}</colgroup>
       <thead><tr>${headers.map(h=>`<th style="text-align:${h.r?'right':'left'}">${h.label}</th>`).join('')}</tr></thead>
       <tbody>${rowsHtml}</tbody>
     </table>
@@ -2445,11 +2446,14 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
   }
 
   const printListeTiers = () => {
-    const headers = [
-      {label:'Type'},{label:'Nom'},{label:'Téléphone'},{label:'Provenance'},
-      ...(isFourn?[{label:'Coopérative'},{label:'N° Contrat'}]:[]),
-      {label:'IFU'},{label:'CIP'},
-      ...(isFourn?[{label:'Total avance'},{label:'Prix/contrat'},{label:'Riz paddy (kg)'}]:[]),
+    const headers = isFourn ? [
+      {label:'Type', w:6},{label:'Nom', w:18},{label:'Téléphone', w:10},{label:'Provenance', w:9},
+      {label:'Coopérative', w:9},{label:'N° Contrat', w:7},
+      {label:'IFU', w:8},{label:'CIP', w:7},
+      {label:'Total avance', w:9},{label:'Prix/contrat', w:9},{label:'Riz paddy (kg)', w:8},
+    ] : [
+      {label:'Type', w:10},{label:'Nom', w:28},{label:'Téléphone', w:16},{label:'Provenance', w:16},
+      {label:'IFU', w:16},{label:'CIP', w:14},
     ]
     const rows = filtered.map(it=>[
       it.type==='morale'?'Société':'Physique',
