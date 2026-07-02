@@ -831,6 +831,83 @@ function Sel({ label, name, value, onChange, options, required }) {
   )
 }
 
+// ── SÉLECTEUR DE COMPTE TIERS (client/fournisseur) ───────────────────────────
+// Champ filtrable par numéro de compte (411x clients / 401x fournisseurs) qui résout
+// automatiquement le tiers correspondant, pour fiabiliser le lien avec Grand Livre / Balance
+// (remplace la saisie libre du nom, source d'erreurs de rapprochement).
+function useTiersComptes(type, companyId) {
+  const [rows, setRows] = useState([])
+  const load = useCallback(async () => {
+    const { data: ad } = await supabase.auth.getUser()
+    const uid = ad?.user?.id; const isAdmin = ad?.user?.email === SUPER_ADMIN_EMAIL
+    const tables = type === 'client' ? ['compta_clients'] : type === 'fournisseur' ? ['compta_fournisseurs'] : ['compta_clients', 'compta_fournisseurs']
+    const results = await Promise.all(tables.map(async t => {
+      let q = supabase.from(t).select('id,type,nom,nom_societe,numero_compte').eq('actif', true)
+      if (isAdmin) { if (companyId) q = q.eq('company_id', companyId) }
+      else { q = q.eq('user_id', uid); if (companyId) q = q.eq('company_id', companyId) }
+      const { data } = await q
+      return (data || []).map(r => ({ ...r, _table: t }))
+    }))
+    setRows(results.flat().filter(r => r.numero_compte))
+  }, [type, companyId])
+  useEffect(() => { load() }, [load])
+  return rows
+}
+
+function TiersAccountField({ type='client', companyId, numeroCompte, onMatch, onCreateNew, label, required=true }) {
+  const rows = useTiersComptes(type, companyId)
+  const nomTiers = r => r.type === 'morale' ? (r.nom_societe || '') : (r.nom || '')
+  const norm = s => String(s || '').trim().toUpperCase()
+  const [typed, setTyped] = useState(numeroCompte || '')
+  useEffect(() => { setTyped(numeroCompte || '') }, [numeroCompte])
+
+  const matched = typed ? rows.find(r => norm(r.numero_compte) === norm(typed)) : null
+
+  const handleChange = e => {
+    const v = toUpperNoAccent(e.target.value)
+    setTyped(v)
+    const m = rows.find(r => norm(r.numero_compte) === norm(v))
+    onMatch({ numero_compte: v, id: m?.id || null, nom: m ? nomTiers(m) : '', table: m?._table || null, matched: !!m })
+  }
+
+  const listId = `tiers-compte-list-${type}-${companyId || 'all'}`
+  const labelDefault = type === 'fournisseur' ? 'N° compte fournisseur' : type === 'both' ? 'N° compte tiers' : 'N° compte client'
+  const createLabel = type === 'fournisseur' ? 'fournisseur' : 'client'
+
+  return (
+    <div>
+      <label style={{ display:'block', fontSize:12.5, fontWeight:600, color:'#374151', marginBottom:5 }}>
+        {label || labelDefault}{required && ' *'}
+      </label>
+      <input list={listId} value={typed} onChange={handleChange}
+        placeholder="Saisir ou choisir un numéro de compte (ex: 41112)"
+        required={required}
+        style={{ width:'100%', padding:'9px 12px', borderRadius:8, border:'1px solid #d1d5db',
+          fontSize:13.5, boxSizing:'border-box', background:'white' }} />
+      <datalist id={listId}>
+        {rows.map(r => <option key={r._table+r.id} value={r.numero_compte}>{nomTiers(r)}</option>)}
+      </datalist>
+      <div style={{ marginTop:6, padding:'8px 12px', borderRadius:8, fontSize:13,
+        background: matched ? '#f0fdf4' : typed ? '#fef2f2' : '#f8fafc',
+        border: '1px solid '+(matched ? '#bbf7d0' : typed ? '#fecaca' : '#e2e8f0'),
+        display:'flex', alignItems:'center', justifyContent:'space-between', gap:8 }}>
+        {matched
+          ? <span style={{ fontWeight:600, color:'#0f2044' }}>{nomTiers(matched)}</span>
+          : typed
+            ? <span style={{ color:'#dc2626', fontWeight:600 }}>⚠️ Compte introuvable</span>
+            : <span style={{ color:'#94a3b8' }}>—</span>}
+        {onCreateNew && !matched && (
+          <button type="button" onClick={onCreateNew}
+            style={{ background:'none', border:'none', color:ACCENT, fontWeight:600, fontSize:12,
+              cursor:'pointer', textDecoration:'underline', whiteSpace:'nowrap' }}>
+            + Créer ce {createLabel}
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function Badge({ children, type='info' }) {
   const C = {
     success:   { bg:'#dcfce7', c:'#16a34a' },
@@ -4250,9 +4327,10 @@ function PrestationPreviewModal({ open, onClose, row, companyName }) {
   )
 }
 
-function PrestationPage({ companies, companyId, toast, readOnly=false }) {
+function PrestationPage({ companies, companyId, toast, readOnly=false, setPage }) {
   const [items,  setItems]  = useState([])
   const [modal,  setModal]  = useState(false)
+  const [editItem, setEditItem] = useState(null)
   const [form,   setForm]   = useState({})
   const [saving, setSaving] = useState(false)
   const [preview, setPreview] = useState(null)
@@ -4262,7 +4340,7 @@ function PrestationPage({ companies, companyId, toast, readOnly=false }) {
   const load = useCallback(async()=>{
     const uid = (await supabase.auth.getUser()).data?.user?.id
     const { data:adons } = await supabase.auth.getUser(); const uidons=adons?.user?.id; const isAdmons=adons?.user?.email===SUPER_ADMIN_EMAIL
-    let q = supabase.from('compta_prestations').select('*,compta_companies(raison_sociale)').order('date_prestation',{ascending:false})
+    let q = supabase.from('compta_prestations').select('*,compta_companies(raison_sociale),compta_clients(numero_compte)').order('date_prestation',{ascending:false})
     q = isAdmons&&companyId ? q.eq('company_id',companyId) : q.eq('user_id',uidons); if(companyId&&!isAdmons) q=q.eq('company_id',companyId)
     if (dateFrom)  q=q.gte('date_prestation',dateFrom)
     if (dateTo)    q=q.lte('date_prestation',dateTo)
@@ -4284,20 +4362,33 @@ function PrestationPage({ companies, companyId, toast, readOnly=false }) {
     const uid = (await supabase.auth.getUser()).data?.user?.id
     const { count } = await supabase.from('compta_prestations').select('id',{count:'exact',head:true}).eq('user_id',uid)
     const numero = `PREST-${new Date().getFullYear()}-${String((count||0)+1).padStart(4,'0')}`
-    setForm({ company_id:companyId||companies[0]?.id||'', numero_facture:numero, date_prestation:today(), nom_client:'', description:'', quantite:1, prix:0, montant:0 })
+    setEditItem(null)
+    setForm({ company_id:companyId||companies[0]?.id||'', numero_facture:numero, date_prestation:today(), client_id:null, numero_compte:'', nom_client:'', description:'', quantite:1, prix:0, montant:0 })
     setModal(true)
   }
-  const close = ()=>setModal(false)
+  const openEdit = (r)=>{
+    setEditItem(r)
+    setForm({...r, numero_compte:r.compta_clients?.numero_compte||''})
+    setModal(true)
+  }
+  const close = ()=>{ setModal(false); setEditItem(null) }
+
+  const onMatchClient = (m) => setForm(f=>({...f, numero_compte:m.numero_compte, client_id:m.id, nom_client:m.nom||f.nom_client}))
 
   const save = async e=>{
-    e.preventDefault(); setSaving(true)
+    e.preventDefault()
+    if (!form.client_id) { toast.error('Sélectionnez un compte client existant (par son numéro de compte).'); return }
+    setSaving(true)
     const uid = (await supabase.auth.getUser()).data?.user?.id
-    const { company_id,numero_facture,date_prestation,nom_client,description,quantite,prix } = form
+    const { company_id,numero_facture,date_prestation,client_id,nom_client,description,quantite,prix } = form
     const montant = Math.round((parseFloat(quantite)||0)*(parseFloat(prix)||0))
-    const { error } = await supabase.from('compta_prestations').insert({ company_id,user_id:uid,numero_facture,date_prestation,nom_client,description,quantite:+quantite,prix:+prix,montant })
+    const pay = { company_id,numero_facture,date_prestation,client_id,nom_client,description,quantite:+quantite,prix:+prix,montant }
+    const { error } = editItem
+      ? await supabase.from('compta_prestations').update(pay).eq('id', editItem.id)
+      : await supabase.from('compta_prestations').insert({...pay,user_id:uid})
     setSaving(false)
     if (error) { toast.error(error.message); return }
-    toast.success('Prestation enregistrée !'); close(); load()
+    toast.success(editItem ? 'Prestation modifiée !' : 'Prestation enregistrée !'); close(); load()
   }
 
   const del = async id=>{
@@ -4380,7 +4471,8 @@ function PrestationPage({ companies, companyId, toast, readOnly=false }) {
                     <div style={{display:'flex',gap:6}}>
                       <Btn sm variant="info" onClick={()=>setPreview(r)}>👁️ Aperçu</Btn>
                       <Btn sm variant="danger" onClick={()=>{ const html=buildPrestationHtml(r,companyName); openPrintWindow(html) }}>🖨️ PDF</Btn>
-                      <Btn sm variant="danger" onClick={()=>del(r.id)}>🗑️ Sup</Btn>
+                      {!readOnly && <Btn sm variant="secondary" onClick={()=>openEdit(r)}>✏️ Modifier</Btn>}
+                      {!readOnly && <Btn sm variant="danger" onClick={()=>del(r.id)}>🗑️ Sup</Btn>}
                     </div>
                   </TD>
                 </TR>
@@ -4393,12 +4485,14 @@ function PrestationPage({ companies, companyId, toast, readOnly=false }) {
 
       <PrestationPreviewModal open={!!preview} onClose={()=>setPreview(null)} row={preview} companyName={companyName} />
 
-      <Modal open={modal} onClose={close} title="Nouvelle Prestation" size="lg">
+      <Modal open={modal} onClose={close} title={editItem?'Modifier la Prestation':'Nouvelle Prestation'} size="lg">
         <form onSubmit={save}>
           <Grid cols={2} gap={14} style={{marginBottom:16}}>
             <Input label="N° Facture" name="numero_facture" value={form.numero_facture} onChange={set} />
             <Input label="Date *" name="date_prestation" type="date" value={form.date_prestation} onChange={set} required />
-            <Input label="Nom du client *" name="nom_client" value={form.nom_client} onChange={set} required />
+            <TiersAccountField type="client" companyId={form.company_id||companyId} numeroCompte={form.numero_compte}
+              onMatch={onMatchClient} onCreateNew={()=>setPage && setPage('clients')} required />
+            <Input label="Nom du client" name="nom_client" value={form.nom_client} readOnly />
             <Span2>
               <Input label="Description du produit / service *" name="description" value={form.description} onChange={set} required placeholder="Ex: Réparation moteur, Consultation, Formation..." />
             </Span2>
@@ -4462,14 +4556,14 @@ function AchatsSemisPage({ companies, companyId, toast, readOnly=false }) {
       return nf
     })
   }
-  const openAdd = ()=>{ setForm({company_id:companyId||companies[0]?.id||'',numero_fact:'',date_achat:today(),entite:'',nom_fournisseur:'',provenance:'',nom_acheteur:'',id_produit:'',nature_produit:'',quantite:0,prix_unitaire:0,montant:0,statut:'en_cours',modalite_paiement:'total',montant_paye:0,compte_paiement:''}); setModal(true) }
+  const openAdd = ()=>{ setForm({company_id:companyId||companies[0]?.id||'',numero_fact:'',date_achat:today(),entite:'',fournisseur_id:null,numero_compte:'',nom_fournisseur:'',provenance:'',nom_acheteur:'',id_produit:'',nature_produit:'',quantite:0,prix_unitaire:0,montant:0,statut:'en_cours',modalite_paiement:'total',montant_paye:0,compte_paiement:''}); setModal(true) }
   const close = ()=>setModal(false)
 
-  // Ouvre le formulaire d'ajout fournisseur (pré-rempli avec le nom tapé)
+  const onMatchFourn = (m) => setForm(f=>({...f, numero_compte:m.numero_compte, fournisseur_id:m.id, nom_fournisseur:m.nom||f.nom_fournisseur}))
+
+  // Ouvre le formulaire d'ajout fournisseur (compte non trouvé dans le sélecteur)
   const openFournModal = () => {
-    const nom = (form.nom_fournisseur||'').trim()
-    if (nom && fournsNames.some(n=>n.toLowerCase()===nom.toLowerCase())) { toast.error('Ce fournisseur existe déjà.'); return }
-    setFournForm({ type:'physique', nom, nom_societe:'', telephone:'', provenance:form.provenance||'', cooperative_affiliee:'', numero_contrat:'', cip:'', ifu:'', email:'', adresse:'' })
+    setFournForm({ type:'physique', nom:'', nom_societe:'', telephone:'', provenance:form.provenance||'', cooperative_affiliee:'', numero_contrat:'', cip:'', ifu:'', email:'', adresse:'' })
     setFournModal(true)
   }
   const setFourn = e => setFournForm(f=>({...f,[e.target.name]:e.target.value}))
@@ -4493,14 +4587,15 @@ function AchatsSemisPage({ companies, companyId, toast, readOnly=false }) {
       cip:fournForm.cip||null, ifu:fournForm.ifu||null, email:fournForm.email||null, adresse:fournForm.adresse||null,
     }).select('id').single()
     if (error) { setFournSaving(false); toast.error(error.message); return }
+    let numero = null
     try {
-      await attribuerCompteTiers({ tableTiers:'compta_fournisseurs', tiersId:ins.id,
+      numero = await attribuerCompteTiers({ tableTiers:'compta_fournisseurs', tiersId:ins.id,
         collectif:COLLECTIF_FOURNISSEUR, libelleCollectif:'Fournisseurs', libelleCompte:nomAff, cid, uid })
     } catch(_) {}
     setFournSaving(false)
     toast.success(`Fournisseur « ${nomAff} » enregistré.`)
     setFournModal(false)
-    setForm(f=>({...f, nom_fournisseur:nomAff}))
+    setForm(f=>({...f, nom_fournisseur:nomAff, fournisseur_id:ins.id, numero_compte:numero||f.numero_compte}))
     loadFourns()
   }
 
@@ -4514,8 +4609,9 @@ function AchatsSemisPage({ companies, companyId, toast, readOnly=false }) {
 
   const save = async e=>{
     e.preventDefault()
+    if (!form.fournisseur_id) { toast.error('Sélectionnez un compte fournisseur existant (par son numéro de compte).'); return }
     const uid = (await supabase.auth.getUser()).data?.user?.id
-    const { company_id,numero_fact,date_achat,entite,nom_fournisseur,provenance,nom_acheteur,id_produit,nature_produit,quantite,prix_unitaire,statut,compte_paiement,modalite_paiement } = form
+    const { company_id,numero_fact,date_achat,entite,fournisseur_id,nom_fournisseur,provenance,nom_acheteur,id_produit,nature_produit,quantite,prix_unitaire,statut,compte_paiement,modalite_paiement } = form
     const modalite = modalite_paiement || 'total'
     const compte = compte_paiement
     const montant = Math.round((parseFloat(quantite)||0)*(parseFloat(prix_unitaire)||0))
@@ -4539,15 +4635,14 @@ function AchatsSemisPage({ companies, companyId, toast, readOnly=false }) {
         return
       }
     }
-    const { data:ins, error } = await supabase.from('compta_achats_semi_finis').insert({ company_id:cid,user_id:uid,numero_fact,date_achat,entite,nom_fournisseur,provenance,nom_acheteur,id_produit,nature_produit,quantite:+quantite,prix_unitaire:+prix_unitaire,montant,montant_paye:montantSortie,statut,modalite_paiement:modalite,compte_paiement:aCredit?null:compte }).select('id').single()
+    const { data:ins, error } = await supabase.from('compta_achats_semi_finis').insert({ company_id:cid,user_id:uid,numero_fact,date_achat,entite,fournisseur_id,nom_fournisseur,provenance,nom_acheteur,id_produit,nature_produit,quantite:+quantite,prix_unitaire:+prix_unitaire,montant,montant_paye:montantSortie,statut,modalite_paiement:modalite,compte_paiement:aCredit?null:compte }).select('id').single()
     if (error) { setSaving(false); toast.error(error.message); return }
     if (!aCredit) {
-      const numCpt = await numeroCompteParNom('compta_fournisseurs', nom_fournisseur, cid)
       const { error:errJ } = await creerSortieJournal({
         compte, cid, uid, date:date_achat, montant:montantSortie,
         libelle:`Achat semi-fini ${nom_fournisseur||''}${numero_fact?(' — '+numero_fact):''}${partiel?' (paiement partiel)':''}`.trim(),
         tiers:nom_fournisseur, reference:numero_fact,
-        sourceType:'achat_semi_fini', sourceId:ins.id, numeroCompte:numCpt,
+        sourceType:'achat_semi_fini', sourceId:ins.id, numeroCompte:form.numero_compte||null,
       })
       setSaving(false)
       if (errJ) { toast.error('Achat enregistré, mais erreur sur le journal : '+errJ.message); close(); load(); return }
@@ -4648,21 +4743,9 @@ function AchatsSemisPage({ companies, companyId, toast, readOnly=false }) {
             <Input label="N° Facture" name="numero_fact" value={form.numero_fact} onChange={set} />
             <Input label="Date *" name="date_achat" type="date" value={form.date_achat} onChange={set} required />
             <Input label="Entité" name="entite" value={form.entite} onChange={set} />
-            <div>
-              <label style={{display:'block',fontSize:12.5,fontWeight:600,color:'#374151',marginBottom:5}}>Nom fournisseur</label>
-              <input name="nom_fournisseur" value={form.nom_fournisseur||''} onChange={set} list="achat-fourn-list"
-                placeholder="Saisir / choisir un fournisseur"
-                style={{width:'100%',padding:'9px 12px',borderRadius:8,border:'1px solid #d1d5db',fontSize:13.5,boxSizing:'border-box',background:'white'}} />
-              <datalist id="achat-fourn-list">
-                {fournsNames.map((n,i)=><option key={i} value={n} />)}
-              </datalist>
-              {(form.nom_fournisseur||'').trim()!=='' && !fournsNames.some(n=>n.toLowerCase()===(form.nom_fournisseur||'').trim().toLowerCase()) && (
-                <button type="button" onClick={openFournModal}
-                  style={{marginTop:6,padding:'6px 10px',background:'#ecfdf5',border:'1px solid #86efac',borderRadius:8,cursor:'pointer',fontSize:12.5,fontWeight:600,color:'#16a34a'}}>
-                  ➕ Ce fournisseur n'existe pas — l'ajouter
-                </button>
-              )}
-            </div>
+            <TiersAccountField type="fournisseur" companyId={form.company_id||companyId} numeroCompte={form.numero_compte}
+              onMatch={onMatchFourn} onCreateNew={openFournModal} required />
+            <Input label="Nom fournisseur" name="nom_fournisseur" value={form.nom_fournisseur} readOnly />
             <Input label="Provenance" name="provenance" value={form.provenance} onChange={set} />
             <Input label="Nom acheteur" name="nom_acheteur" value={form.nom_acheteur} onChange={set} />
             <Input label="ID Produit" name="id_produit" value={form.id_produit} onChange={set} />
@@ -7256,6 +7339,7 @@ function GrandLivrePage({ companies, companyId, toast, readOnly=false }) {
   const [fourns, setFourns]     = useState([])
   const [clis, setClis]         = useState([])
   const [achats, setAchats]     = useState([])
+  const [prestations, setPrestations] = useState([])
   const [regls, setRegls]       = useState([])
   const [factures, setFactures] = useState([])
   const [mouv, setMouv]         = useState([])
@@ -7273,11 +7357,12 @@ function GrandLivrePage({ companies, companyId, toast, readOnly=false }) {
     const { data:ad } = await supabase.auth.getUser()
     const uid=ad?.user?.id; const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
     const scope = (q) => { if (isAdmin) { if(companyId) q=q.eq('company_id',companyId) } else { q=q.eq('user_id',uid); if(companyId) q=q.eq('company_id',companyId) } return q }
-    const [pc, fo, cl, ac, rg, fa, jc, jb, jm, ec] = await Promise.all([
+    const [pc, fo, cl, ac, ps, rg, fa, jc, jb, jm, ec] = await Promise.all([
       scope(supabase.from('compta_plan_comptable').select('numero,libelle,est_collectif')),
       scope(supabase.from('compta_fournisseurs').select('id,type,nom,nom_societe,numero_compte')),
       scope(supabase.from('compta_clients').select('id,type,nom,nom_societe,numero_compte')),
-      scope(supabase.from('compta_achats_semi_finis').select('date_achat,nom_fournisseur,numero_fact,montant,montant_paye,compte_paiement')),
+      scope(supabase.from('compta_achats_semi_finis').select('date_achat,fournisseur_id,nom_fournisseur,numero_fact,montant,montant_paye,compte_paiement')),
+      scope(supabase.from('compta_prestations').select('date_prestation,client_id,numero_facture,description,montant')),
       scope(supabase.from('compta_reglements').select('date_paiement,tiers_type,tiers_nom,montant_paye,numero_facture,mode_paiement')),
       scope(supabase.from('compta_documents').select('date_doc,client_id,montant_ttc,montant_paye,numero,type_doc').eq('type_doc','facture')),
       scope(supabase.from('compta_journal_caisse').select('date_operation,libelle,tiers,type_operation,montant,numero_compte')),
@@ -7286,7 +7371,7 @@ function GrandLivrePage({ companies, companyId, toast, readOnly=false }) {
       scope(supabase.from('compta_ecritures').select('date_ecriture,journal,numero_piece,libelle,numero_compte,debit,credit')),
     ])
     setComptes((pc.data||[]).sort((a,b)=>String(a.numero).localeCompare(String(b.numero),undefined,{numeric:true})))
-    setFourns(fo.data||[]); setClis(cl.data||[]); setAchats(ac.data||[]); setRegls(rg.data||[]); setFactures(fa.data||[])
+    setFourns(fo.data||[]); setClis(cl.data||[]); setAchats(ac.data||[]); setPrestations(ps.data||[]); setRegls(rg.data||[]); setFactures(fa.data||[])
     const mv = []
     ;(jc.data||[]).forEach(r=>mv.push({...r, jkey:'caisse'}))
     ;(jb.data||[]).forEach(r=>mv.push({...r, jkey:'banque'}))
@@ -7324,8 +7409,8 @@ function GrandLivrePage({ companies, companyId, toast, readOnly=false }) {
     }))
 
     if (isCollFourn || fourn) {
-      // Dette : achats (crédit)
-      achats.filter(a=>inPeriode(a.date_achat) && (isCollFourn?true:norm(a.nom_fournisseur)===norm(nomTiers(fourn))))
+      // Dette : achats (crédit) — rapproché par fournisseur_id (fiable), avec repli par nom pour l'historique non rattaché
+      achats.filter(a=>inPeriode(a.date_achat) && (isCollFourn?true: a.fournisseur_id ? a.fournisseur_id===fourn.id : norm(a.nom_fournisseur)===norm(nomTiers(fourn))))
         .forEach(a=>lignes.push({ date:a.date_achat, libelle:`Achat${a.numero_fact?(' '+a.numero_fact):''}${a.nom_fournisseur?(' — '+a.nom_fournisseur):''}`, debit:0, credit:a.montant||0 }))
       // Paiements : mouvements des journaux (sortie=débit)
       pushMvts()
@@ -7334,6 +7419,9 @@ function GrandLivrePage({ companies, companyId, toast, readOnly=false }) {
       // Créance : factures (débit)
       factures.filter(f=>inPeriode(f.date_doc) && (isCollCli?true:f.client_id===cli.id))
         .forEach(f=>lignes.push({ date:f.date_doc, libelle:`Facture${f.numero?(' '+f.numero):''}`, debit:f.montant_ttc||0, credit:0 }))
+      // Créance : prestations (débit)
+      prestations.filter(p=>inPeriode(p.date_prestation) && (isCollCli?true:p.client_id===cli.id))
+        .forEach(p=>lignes.push({ date:p.date_prestation, libelle:`Prestation${p.numero_facture?(' '+p.numero_facture):''}${p.description?(' — '+p.description):''}`, debit:p.montant||0, credit:0 }))
       // Encaissements : mouvements des journaux (entrée=crédit) — règlements clients désormais journalisés
       pushMvts()
     }
@@ -8860,6 +8948,7 @@ function BalancePage({ companies, companyId, toast }) {
   const [fourns, setFourns]     = useState([])
   const [clis, setClis]         = useState([])
   const [achats, setAchats]     = useState([])
+  const [prestations, setPrestations] = useState([])
   const [regls, setRegls]       = useState([])
   const [factures, setFactures] = useState([])
   const [mouv, setMouv]         = useState([])
@@ -8877,11 +8966,12 @@ function BalancePage({ companies, companyId, toast }) {
     const { data:ad } = await supabase.auth.getUser()
     const uid=ad?.user?.id; const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
     const scope = (q) => { if (isAdmin) { if(companyId) q=q.eq('company_id',companyId) } else { q=q.eq('user_id',uid); if(companyId) q=q.eq('company_id',companyId) } return q }
-    const [pc, fo, cl, ac, rg, fa, jc, jb, jm, ec] = await Promise.all([
+    const [pc, fo, cl, ac, ps, rg, fa, jc, jb, jm, ec] = await Promise.all([
       scope(supabase.from('compta_plan_comptable').select('numero,libelle,est_collectif')),
       scope(supabase.from('compta_fournisseurs').select('id,type,nom,nom_societe,numero_compte')),
       scope(supabase.from('compta_clients').select('id,type,nom,nom_societe,numero_compte')),
-      scope(supabase.from('compta_achats_semi_finis').select('date_achat,nom_fournisseur,montant')),
+      scope(supabase.from('compta_achats_semi_finis').select('date_achat,fournisseur_id,nom_fournisseur,montant')),
+      scope(supabase.from('compta_prestations').select('date_prestation,client_id,montant')),
       scope(supabase.from('compta_reglements').select('date_paiement,tiers_type,tiers_nom,montant_paye')),
       scope(supabase.from('compta_documents').select('date_doc,client_id,montant_ttc,type_doc').eq('type_doc','facture')),
       scope(supabase.from('compta_journal_caisse').select('date_operation,type_operation,montant,numero_compte')),
@@ -8894,7 +8984,7 @@ function BalancePage({ companies, companyId, toast }) {
       if(pa!==pb) return pa.localeCompare(pb)
       return String(a.numero).localeCompare(String(b.numero),undefined,{numeric:true})
     }))
-    setFourns(fo.data||[]); setClis(cl.data||[]); setAchats(ac.data||[]); setRegls(rg.data||[]); setFactures(fa.data||[])
+    setFourns(fo.data||[]); setClis(cl.data||[]); setAchats(ac.data||[]); setPrestations(ps.data||[]); setRegls(rg.data||[]); setFactures(fa.data||[])
     const mv=[]
     ;(jc.data||[]).forEach(r=>mv.push(r)); ;(jb.data||[]).forEach(r=>mv.push(r)); ;(jm.data||[]).forEach(r=>mv.push(r))
     setMouv(mv); setEcr(ec.data||[])
@@ -8918,10 +9008,11 @@ function BalancePage({ companies, companyId, toast }) {
       : (m.numero_compte && m.numero_compte===numero)))
     const addMvts = ()=>mvts.forEach(m=>{ if(m.type_operation==='sortie') debit+=m.montant||0; else credit+=m.montant||0 })
     if (isCollFourn || fourn) {
-      achats.filter(a=>inPeriode(a.date_achat) && (isCollFourn?true:norm(a.nom_fournisseur)===norm(nomTiers(fourn)))).forEach(a=>credit+=a.montant||0)
+      achats.filter(a=>inPeriode(a.date_achat) && (isCollFourn?true: a.fournisseur_id ? a.fournisseur_id===fourn.id : norm(a.nom_fournisseur)===norm(nomTiers(fourn)))).forEach(a=>credit+=a.montant||0)
       addMvts()
     } else if (isCollCli || cli) {
       factures.filter(f=>inPeriode(f.date_doc) && (isCollCli?true:f.client_id===cli.id)).forEach(f=>debit+=f.montant_ttc||0)
+      prestations.filter(p=>inPeriode(p.date_prestation) && (isCollCli?true:p.client_id===cli.id)).forEach(p=>debit+=p.montant||0)
       addMvts()
     } else { addMvts() }
     ecr.filter(x=>inPeriode(x.date_ecriture) && (
@@ -10998,19 +11089,6 @@ async function creerEntreeJournal({ compte, cid, uid, date, montant, libelle, ti
   })
 }
 
-// Retrouve le N° de compte d'un tiers à partir de son nom
-async function numeroCompteParNom(tableTiers, nom, cid) {
-  if (!nom) return null
-  const { data:ad } = await supabase.auth.getUser()
-  const uid=ad?.user?.id; const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
-  let q = supabase.from(tableTiers).select('type,nom,nom_societe,numero_compte')
-  if (isAdmin) { if(cid) q=q.eq('company_id',cid) } else { q=q.eq('user_id',uid); if(cid) q=q.eq('company_id',cid) }
-  const { data } = await q
-  const n = String(nom).trim().toLowerCase()
-  const t = (data||[]).find(x=>String(x.type==='morale'?x.nom_societe:x.nom||'').trim().toLowerCase()===n)
-  return t?.numero_compte || null
-}
-
 // Supprime la sortie liée (quel que soit le journal) quand la source est supprimée
 async function supprimerSortiesJournal(sourceType, sourceId) {
   for (const t of Object.values(JOURNAL_TABLE)) {
@@ -11018,7 +11096,7 @@ async function supprimerSortiesJournal(sourceType, sourceId) {
   }
 }
 
-function ReglementsPage({ companies, companyId, toast, readOnly=false, mode='clients' }) {
+function ReglementsPage({ companies, companyId, toast, readOnly=false, mode='clients', setPage }) {
   const isClients = mode==='clients'
   const title     = isClients ? 'Règlements Clients' : 'Règlements Fournisseurs'
   const filterKey = isClients ? 'client' : 'fournisseur'
@@ -11030,13 +11108,7 @@ function ReglementsPage({ companies, companyId, toast, readOnly=false, mode='cli
   const [dateFrom, setDateFrom]= useState('')
   const [dateTo,   setDateTo]  = useState('')
   const [factures, setFactures]= useState([])
-  const [fournsList, setFournsList] = useState([])
-  const [comptesTiers, setComptesTiers] = useState([])
-  const onCompteTiersChange = e => {
-    const v = e.target.value
-    const m = comptesTiers.find(c=>c.numero===v)
-    setForm(f=>({...f, numero_compte:v, ...(m?{tiers_nom:m.nom}:{})}))
-  }
+  const onMatchTiers = (m) => setForm(f=>({...f, numero_compte:m.numero_compte, tiers_id:m.id, tiers_nom:m.nom||f.tiers_nom}))
   const [viewItem, setViewItem]= useState(null)
 
   const load = useCallback(async()=>{
@@ -11059,7 +11131,7 @@ function ReglementsPage({ companies, companyId, toast, readOnly=false, mode='cli
     const { data:ad }=await supabase.auth.getUser()
     const uid=ad?.user?.id; const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
     let q = supabase.from('compta_documents')
-      .select('id,numero,type_doc,statut,montant_ttc,client_id,compta_clients(nom,prenom,nom_societe,type)')
+      .select('id,numero,type_doc,statut,montant_ttc,client_id,compta_clients(nom,prenom,nom_societe,type,numero_compte)')
       .order('created_at',{ascending:false})
     q = isAdmin&&companyId ? q.eq('company_id',companyId) : q.eq('user_id',uid)
     if(companyId&&!isAdmin) q=q.eq('company_id',companyId)
@@ -11068,21 +11140,6 @@ function ReglementsPage({ companies, companyId, toast, readOnly=false, mode='cli
 
   useEffect(()=>{ load() },[load])
   useEffect(()=>{ loadFactures() },[loadFactures])
-
-  // Charger les tiers (clients OU fournisseurs) pour l'autocomplétion du nom
-  const loadFourns = useCallback(async()=>{
-    const { data:ad }=await supabase.auth.getUser()
-    const uid=ad?.user?.id; const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
-    const tableTiers = isClients ? 'compta_clients' : 'compta_fournisseurs'
-    let q = supabase.from(tableTiers).select('id,type,nom,nom_societe,numero_compte')
-    if (companyId) q = q.eq('company_id', companyId)
-    else q = q.eq('user_id', uid)
-    const { data }=await q
-    const noms = (data||[]).map(f=> f.type==='morale' ? (f.nom_societe||'') : (f.nom||'')).filter(n=>n.trim()!=='')
-    setFournsList([...new Set(noms)].sort((a,b)=>a.localeCompare(b)))
-    setComptesTiers((data||[]).filter(f=>f.numero_compte).map(f=>({ numero:String(f.numero_compte), nom: f.type==='morale'?(f.nom_societe||''):(f.nom||'') })).sort((a,b)=>a.numero.localeCompare(b.numero,undefined,{numeric:true})))
-  },[companyId,isClients])
-  useEffect(()=>{ loadFourns() },[loadFourns])
 
   const total = items.reduce((s,r)=>s+(r.montant_paye||0),0)
   const set = e=>setForm(f=>({...f,[e.target.name]:e.target.value}))
@@ -11101,6 +11158,8 @@ function ReglementsPage({ companies, companyId, toast, readOnly=false, mode='cli
     setForm(f=>({...f,
       numero_facture:   fac.numero,
       tiers_nom:        getClientName(fac),
+      tiers_id:         fac.client_id||null,
+      numero_compte:    fac.compta_clients?.numero_compte||'',
       provenance:       '',
       acheteur_vendeur: '',
       nature_produit:   '',
@@ -11121,7 +11180,7 @@ function ReglementsPage({ companies, companyId, toast, readOnly=false, mode='cli
   const emptyForm = {
     company_id:companyId||companies[0]?.id||'',
     numero_facture:'', date_paiement:today(),
-    tiers_type: filterKey, tiers_nom:'', provenance:'',
+    tiers_type: filterKey, tiers_id:null, numero_compte:'', tiers_nom:'', provenance:'',
     acheteur_vendeur:'', nature_produit:'',
     montant_paye:0, solde:0,
     mode_paiement: '', modalite_paiement:'total', reference_paiement:'', notes:''
@@ -11140,8 +11199,9 @@ function ReglementsPage({ companies, companyId, toast, readOnly=false, mode='cli
 
   const save = async e=>{
     e.preventDefault()
+    if (!form.tiers_id) { toast.error(`Sélectionnez un compte ${isClients?'client':'fournisseur'} existant (par son numéro de compte).`); return }
     const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
-    const { company_id,numero_facture,date_paiement,tiers_nom,provenance,acheteur_vendeur,nature_produit,montant_paye,solde,mode_paiement,reference_paiement,notes } = form
+    const { company_id,numero_facture,date_paiement,tiers_id,numero_compte,tiers_nom,provenance,acheteur_vendeur,nature_produit,montant_paye,solde,mode_paiement,reference_paiement,notes } = form
     const cid = company_id || companyId || companies[0]?.id
 
     // Règlements fournisseurs : mode_paiement = journal (caisse/banque/mobile) → sortie de trésorerie
@@ -11163,17 +11223,16 @@ function ReglementsPage({ companies, companyId, toast, readOnly=false, mode='cli
       }
       const { data:ins, error } = await supabase.from('compta_reglements').insert({
         company_id:cid,user_id:uid,numero_facture,date_paiement,
-        tiers_type:filterKey, tiers_nom,provenance,acheteur_vendeur,nature_produit,
+        tiers_type:filterKey, tiers_id,numero_compte,tiers_nom,provenance,acheteur_vendeur,nature_produit,
         montant_paye:montant,solde:+solde,mode_paiement:aCredit?null:compte,modalite_paiement:modalite,reference_paiement,notes
       }).select('id').single()
       if (error) { setSaving(false); toast.error(error.message); return }
       if (!aCredit) {
-        const numCpt = await numeroCompteParNom('compta_fournisseurs', tiers_nom, cid)
         const { error:errJ } = await creerSortieJournal({
           compte, cid, uid, date:date_paiement, montant,
           libelle:`Règlement fournisseur ${tiers_nom||''}${numero_facture?(' — '+numero_facture):''}`.trim(),
           tiers:tiers_nom, reference:reference_paiement,
-          sourceType:'reglement_fournisseur', sourceId:ins.id, numeroCompte:numCpt,
+          sourceType:'reglement_fournisseur', sourceId:ins.id, numeroCompte:numero_compte||null,
         })
         setSaving(false)
         if (errJ) toast.error('Règlement enregistré, mais erreur sur le journal : '+errJ.message)
@@ -11192,17 +11251,16 @@ function ReglementsPage({ companies, companyId, toast, readOnly=false, mode='cli
     setSaving(true)
     const { data:insC, error:errC }=await supabase.from('compta_reglements').insert({
       company_id:cid,user_id:uid,numero_facture,date_paiement,
-      tiers_type:filterKey, tiers_nom,provenance,acheteur_vendeur,nature_produit,
+      tiers_type:filterKey, tiers_id,numero_compte,tiers_nom,provenance,acheteur_vendeur,nature_produit,
       montant_paye:montantC,solde:+solde,mode_paiement:aCreditC?null:compteC,modalite_paiement:modaliteC,reference_paiement,notes
     }).select('id').single()
     if(errC){ setSaving(false); toast.error(errC.message); return }
     if (!aCreditC) {
-      const numCptC = await numeroCompteParNom('compta_clients', tiers_nom, cid)
       const { error:errJC } = await creerEntreeJournal({
         compte:compteC, cid, uid, date:date_paiement, montant:montantC,
         libelle:`Encaissement client ${tiers_nom||''}${numero_facture?(' — '+numero_facture):''}`.trim(),
         tiers:tiers_nom, reference:reference_paiement,
-        sourceType:'reglement_client', sourceId:insC.id, numeroCompte:numCptC,
+        sourceType:'reglement_client', sourceId:insC.id, numeroCompte:numero_compte||null,
       })
       setSaving(false)
       if (errJC) toast.error('Règlement enregistré, mais erreur sur le journal : '+errJC.message)
@@ -11347,25 +11405,17 @@ function ReglementsPage({ companies, companyId, toast, readOnly=false, mode='cli
             <div /> {/* spacer */}
 
             {/* N° Compte du tiers */}
-            <div>
-              <label style={{display:'block',fontSize:12.5,fontWeight:600,color:'#374151',marginBottom:5}}>
-                N° Compte {isClients?'client (4111…)':'fournisseur (4011…)'}
-              </label>
-              <input list="regl-compte-list" value={form.numero_compte||''} onChange={onCompteTiersChange}
-                placeholder="Taper / choisir un compte → remplit le nom"
-                style={{width:'100%',padding:'9px 12px',borderRadius:8,border:'1px solid #d1d5db',fontSize:13.5,boxSizing:'border-box',background:'white'}} />
-              <datalist id="regl-compte-list">
-                {comptesTiers.map(c=><option key={c.numero} value={c.numero}>{c.nom}</option>)}
-              </datalist>
-            </div>
+            <TiersAccountField type={isClients?'client':'fournisseur'} companyId={form.company_id||companyId}
+              numeroCompte={form.numero_compte} onMatch={onMatchTiers}
+              onCreateNew={()=>setPage && setPage(isClients?'clients':'fournisseurs')} required />
 
             {/* Nom du tiers — verrouillé, rempli par le N° compte */}
             <div>
               <label style={{display:'block',fontSize:12.5,fontWeight:600,color:'#374151',marginBottom:5}}>
-                {isClients?'Nom du client':'Nom du fournisseur'} *
+                {isClients?'Nom du client':'Nom du fournisseur'}
                 <span style={{marginLeft:6,fontSize:10,color:'#94a3b8',fontWeight:600}}>(auto — verrouillé)</span>
               </label>
-              <input name="tiers_nom" value={form.tiers_nom||''} readOnly required
+              <input name="tiers_nom" value={form.tiers_nom||''} readOnly
                 placeholder={isClients?'Sélectionnez le N° compte client':'Sélectionnez le N° compte fournisseur'}
                 style={{width:'100%',padding:'9px 12px',borderRadius:8,border:'1px solid #d1d5db',fontSize:13.5,boxSizing:'border-box',background:'#f1f5f9',color:'#0f172a',cursor:'not-allowed'}} />
             </div>
@@ -16409,9 +16459,9 @@ export default function ComptaPro() {
       case 'lots_semi_finis': return <LotsSemiFinisPage {...sp} />
       case 'epierrage':      return <EpierragePage {...sp} lots={lots} />
       case 'docs_admin':     return <DocsAdminPage {...sp} profile={profile} />
-      case 'reglements_clients': return <ReglementsPage {...sp} mode="clients" />
-      case 'reglements_fourn':    return <ReglementsPage {...sp} mode="fournisseurs" />
-      case 'prestations':   return <PrestationPage {...sp} />
+      case 'reglements_clients': return <ReglementsPage {...sp} mode="clients" setPage={setPage} />
+      case 'reglements_fourn':    return <ReglementsPage {...sp} mode="fournisseurs" setPage={setPage} />
+      case 'prestations':   return <PrestationPage {...sp} setPage={setPage} />
       case 'etuvage_paiements': return <PaiementsEtuvagePage {...sp} lots={lots} />
       case 'journal_caisse':    return <JournalPage table="compta_journal_caisse" title="Journal Caisse" icon="🏦" journalType="caisse" {...sp} />
       case 'journal_banque':    return <JournalPage table="compta_journal_banque" title="Journal Banque" icon="🏛️" journalType="banque" {...sp} />
