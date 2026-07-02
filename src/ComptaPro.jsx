@@ -4316,11 +4316,37 @@ function PrestationPage({ companies, companyId, toast, readOnly=false }) {
       totals:[{label:'Total', value:Math.round(total).toLocaleString('fr-FR')+' FCFA'}]})
   }
 
+  const exportExcelPrestations = () => {
+    const cols = ['N° Facture','Date','Client','Description','Quantité','Prix unitaire (FCFA)','Montant (FCFA)']
+    const thead = cols.map(c=>`<th style="background:#eceff3;color:#1a1a1a;padding:6px 10px;white-space:nowrap">${c}</th>`).join('')
+    const tbody = items.map((r,i)=>`<tr style="background:${i%2===0?'#f8fafc':'white'}">
+      <td>${r.numero_facture||'—'}</td><td>${r.date_prestation||'—'}</td><td>${r.nom_client||'—'}</td>
+      <td>${r.description||'—'}</td><td>${(r.quantite||0).toFixed(2)}</td>
+      <td>${Math.round(r.prix||0).toLocaleString('fr-FR')}</td><td>${Math.round(r.montant||0).toLocaleString('fr-FR')}</td>
+    </tr>`).join('')
+    const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+      <head><meta charset="UTF-8"><style>
+        table{border-collapse:collapse;width:100%}
+        th,td{border:1px solid #d1d5db;padding:5px 8px;font-size:10pt}
+        h2{font-family:Arial;color:#0f2044}p{font-family:Arial;font-size:9pt;color:#555}
+      </style></head><body>
+      <h2>Prestations</h2>
+      <p>${companyName} — ${items.length} enregistrement(s) — Exporté le ${new Date().toLocaleDateString('fr-FR')}</p>
+      <table><thead><tr>${thead}</tr></thead><tbody>${tbody}</tbody></table>
+      </body></html>`
+    const blob = new Blob(['\uFEFF'+html], {type:'application/vnd.ms-excel;charset=utf-8'})
+    const url  = URL.createObjectURL(blob)
+    const a    = document.createElement('a')
+    a.href=url; a.download='prestations.xls'; a.click()
+    URL.revokeObjectURL(url)
+  }
+
   return (
     <div>
       <PageHeader title="Prestations" subtitle={`${items.length} prestation(s) — Total : ${fcfa(total)}`}
         actions={<>
           <Btn sm variant="danger" onClick={printFilteredP}>🖨️ PDF liste</Btn>
+          {items.length>0 && <Btn sm variant="success" onClick={exportExcelPrestations}>📊 Excel</Btn>}
           {!readOnly && <Btn onClick={openAdd}>+ Nouvelle Prestation</Btn>}
         </>}
       />
