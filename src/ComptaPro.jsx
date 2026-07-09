@@ -22,7 +22,7 @@ async function getEffectiveCompanyId(companyId, companies) {
   if (!uid) return null
   if (companyId) return companyId
   if (companies?.length > 0) return companies[0].id
-  const { data } = await supabase.from('compta_profiles').select('company_id').eq('id', uid).single()
+  const { data } = await supabase.from('compta_profiles').select('company_id').eq('id', uid).maybeSingle()
   return data?.company_id || null
 }
 
@@ -34,7 +34,7 @@ async function getEffectiveCompanyId(companyId, companies) {
 async function buildQuery(q, uid, companyId, isAdmin) {
   if (isAdmin) {
     if (!companyId) return q // super admin sans filtre = voit tout
-    const { data: comp } = await supabase.from('compta_companies').select('user_id').eq('id', companyId).single()
+    const { data: comp } = await supabase.from('compta_companies').select('user_id').eq('id', companyId).maybeSingle()
     const ownerUid = comp?.user_id
     if (ownerUid) return q.or(`company_id.eq.${companyId},user_id.eq.${ownerUid}`)
     return q.eq('company_id', companyId)
@@ -94,9 +94,54 @@ function useResponsive() {
 const fcfa    = v => Math.round(v || 0).toLocaleString('fr-FR') + ' FCFA'
 const today   = () => new Date().toISOString().slice(0, 10)
 
+// Validation des identifiants numériques (CIP, IFU, Téléphone) — un champ vide est
+// considéré valide (ces champs restent facultatifs), seul un contenu mal formé est rejeté.
+const onlyDigits  = v => String(v||'').replace(/\D/g,'')
+const isValidCIP  = v => !v || onlyDigits(v).length===10
+const isValidIFU  = v => !v || onlyDigits(v).length===13
+const isValidTel  = v => !v || onlyDigits(v).length===10
+// Formate un numéro de téléphone en paires de deux chiffres au fil de la saisie (ex : 01 96 07 86 96)
+const formatTelPairs = v => onlyDigits(v).slice(0,10).replace(/(\d{2})(?=\d)/g,'$1 ')
+
+// Lit un fichier texte (CSV) en gérant correctement les accents français : Excel enregistre
+// souvent les CSV en Windows-1252 (ANSI), pas en UTF-8. file.text() suppose toujours l'UTF-8,
+// ce qui déforme les accents (é, è, à, ç...) venant d'un export Excel classique.
+async function readTextFileFR(file) {
+  const bytes = new Uint8Array(await file.arrayBuffer())
+  if (bytes.length>=3 && bytes[0]===0xEF && bytes[1]===0xBB && bytes[2]===0xBF) {
+    return new TextDecoder('utf-8').decode(bytes.slice(3)) // BOM UTF-8 explicite
+  }
+  try {
+    return new TextDecoder('utf-8', { fatal:true }).decode(bytes)
+  } catch {
+    // Pas de l'UTF-8 valide : très probablement du Windows-1252 (export Excel FR)
+    return new TextDecoder('windows-1252').decode(bytes)
+  }
+}
+
+// Supabase/PostgREST plafonne par défaut une requête à 1000 lignes, même sans .limit() explicite.
+// Cette fonction répète la requête par pages de 1000 (via .range()) jusqu'à tout récupérer.
+// buildQuery doit être une fonction qui construit une NOUVELLE requête à chaque appel
+// (un query builder Supabase ne peut pas être réutilisé après exécution).
+async function fetchAllRows(buildQuery, pageSize=1000) {
+  let rows = []
+  let from = 0
+  while (true) {
+    const { data, error } = await buildQuery().range(from, from+pageSize-1)
+    if (error) return { data: rows, error }
+    rows = rows.concat(data||[])
+    if (!data || data.length < pageSize) break
+    from += pageSize
+  }
+  return { data: rows, error: null }
+}
+
 // Injecte une barre d'actions (Retour, Télécharger PDF, Imprimer) dans le HTML
 function buildPrintDocument(html, filename) {
   const fname = (filename || 'document').replace(/[^a-zA-Z0-9_-]/g,'_')
+  // Le contenu peut être mis en page en paysage (CSS_PRINT_LANDSCAPE) : si on force quand même
+  // un PDF portrait via html2pdf, le tableau large est écrasé et on obtient des pages vides.
+  const orientation = /landscape/i.test(html) ? 'landscape' : 'portrait'
   const scriptTag = '<scr'+'ipt src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></scr'+'ipt>'
   const pdfScript = '<scr'+'ipt>' + `
     if(window.AndroidPrint && typeof window.AndroidPrint.printPage==='function'){
@@ -119,7 +164,7 @@ function buildPrintDocument(html, filename) {
       var tb=document.getElementById('__toolbar'); if(tb) tb.style.display='none';
       var __hidden=[];
       document.querySelectorAll('.print-btn').forEach(function(el){ __hidden.push([el, el.style.display]); el.style.display='none'; });
-      var opt={ margin:[6,6,6,6], filename:'${fname}.pdf', image:{type:'jpeg',quality:0.98}, html2canvas:{scale:2,useCORS:true,logging:false}, jsPDF:{unit:'mm',format:'a4',orientation:'portrait'} };
+      var opt={ margin:[6,6,6,6], filename:'${fname}.pdf', image:{type:'jpeg',quality:0.98}, html2canvas:{scale:2,useCORS:true,logging:false}, jsPDF:{unit:'mm',format:'a4',orientation:'${orientation}'} };
       var content=document.getElementById('__content')||document.body;
       function __resetBtn(){ if(tb) tb.style.display='flex'; __hidden.forEach(function(h){ h[0].style.display=h[1]; }); btn.textContent='📥 PDF'; btn.disabled=false; }
       if(__hasAndroidSave()){
@@ -1018,7 +1063,7 @@ function PeriodFilter({ dateFrom, dateTo, onFrom, onTo, onReset }) {
 }
 
 // ── PRINT FILTERED LIST — fonction générique ──────────────────────────────────
-function printFilteredList({ title, subtitle='', headers, rows, companyName='', dateFrom='', dateTo='', totals=[] }) {
+function printFilteredList({ title, subtitle='', headers, rows, companyName='', dateFrom='', dateTo='', totals=[], filename }) {
   const period = dateFrom||dateTo
     ? `Période : ${dateFrom||'—'} → ${dateTo||'—'}`
     : 'Toutes dates'
@@ -1040,7 +1085,6 @@ function printFilteredList({ title, subtitle='', headers, rows, companyName='', 
       td { padding: 5px 6px; overflow-wrap: break-word; word-break: break-word; white-space: normal; }
       .totals-wrap { margin-top: 16px; margin-left: auto; width: 320px; border: 1px solid #e2e8f0; border-radius: 4px; overflow: hidden; }
     </style></head><body>
-    <button class="print-btn" onclick="window.print()">🖨️ Imprimer / PDF</button>
     <h1>${title}</h1>
     <div class="meta">
       ${companyName ? `<strong>${companyName}</strong> &mdash; ` : ''}${period}
@@ -1055,7 +1099,7 @@ function printFilteredList({ title, subtitle='', headers, rows, companyName='', 
     </table>
     ${totals.length>0?`<div class="totals-wrap">${totalsHtml}</div>`:''}
   </body></html>`
-  openPrintWindow(html)
+  openPrintWindow(html, filename || `${title}_${companyName}`)
 }
 
 // ── AUTH PAGES ──────────────────────────────────────────────────────────────
@@ -1282,15 +1326,22 @@ function PendingPage({ onLogout }) {
 
 // ── GESTION UTILISATEURS (Super Admin) ───────────────────────────────────────
 function UsersManagementPage({ toast }) {
-  const [users,   setUsers]   = useState([])
-  const [loading, setLoading] = useState(true)
-  const [search,  setSearch]  = useState('')
+  const [users,     setUsers]     = useState([])
+  const [companies, setCompanies] = useState([])
+  const [loading,   setLoading]   = useState(true)
+  const [search,    setSearch]    = useState('')
 
   const load = useCallback(async()=>{
     setLoading(true)
-    const { data } = await supabase.from('compta_profiles').select('*').order('created_at', { ascending:false })
-    setUsers(data||[]); setLoading(false)
+    const [{ data:us }, { data:cos }] = await Promise.all([
+      supabase.from('compta_profiles').select('*').order('created_at', { ascending:false }),
+      supabase.from('compta_companies').select('id,raison_sociale,user_id').order('raison_sociale'),
+    ])
+    setUsers(us||[]); setCompanies(cos||[]); setLoading(false)
   },[])
+
+  // Sociétés créées par cet utilisateur (rattachées à son compte via user_id)
+  const societesDe = uid => companies.filter(c=>c.user_id===uid)
 
   useEffect(()=>{ load() },[load])
 
@@ -1304,6 +1355,57 @@ function UsersManagementPage({ toast }) {
   const updateRole = async (id, role) => {
     await supabase.from('compta_profiles').update({ role }).eq('id', id)
     toast.success('Rôle mis à jour !'); load()
+  }
+
+  const deleteUser = async (u) => {
+    if (!confirm(`⚠️ Supprimer définitivement le compte « ${u.email} » ?\n\nCela retire son profil de cette liste (il ne pourra plus se connecter normalement à l'application), mais ne supprime pas ses sociétés/données déjà enregistrées.`)) return
+    const { error } = await supabase.from('compta_profiles').delete().eq('id', u.id)
+    if (error) { toast.error(error.message); return }
+    toast.success('Compte supprimé.'); load()
+  }
+
+  // ── DIAGNOSTIC : retrouver des données (fournisseurs, clients...) rattachées
+  // à un company_id qui ne correspond à aucune société actuelle de l'utilisateur
+  // (ex : société supprimée/recréée, ou ancien bug d'affectation à la mauvaise société).
+  const DIAG_TABLES = [
+    { key:'compta_fournisseurs', label:'Fournisseurs' },
+    { key:'compta_clients',      label:'Clients' },
+    { key:'compta_articles',     label:'Articles' },
+    { key:'compta_documents',    label:'Documents' },
+  ]
+  const [diagUser,    setDiagUser]    = useState(null)
+  const [diagRows,    setDiagRows]    = useState([])
+  const [diagLoading, setDiagLoading] = useState(false)
+
+  const cidKey = cid => (cid===null || cid===undefined) ? 'null' : (cid==='' ? 'empty' : cid)
+
+  const runDiagnostic = async (u) => {
+    setDiagUser(u); setDiagLoading(true); setDiagRows([])
+    const mine = societesDe(u.id)
+    const rows = []
+    for (const t of DIAG_TABLES) {
+      const { data } = await supabase.from(t.key).select('company_id').eq('user_id', u.id)
+      const counts = {}
+      ;(data||[]).forEach(r => { const k = cidKey(r.company_id); counts[k] = (counts[k]||0)+1 })
+      Object.entries(counts).forEach(([k,count]) => {
+        const known = k!=='null' && k!=='empty' ? mine.find(c=>c.id===k) : null
+        rows.push({ table:t.key, label:t.label, cidKey:k, count, companyName: known?.raison_sociale||null })
+      })
+    }
+    setDiagRows(rows); setDiagLoading(false)
+  }
+
+  const reassignRow = async (row) => {
+    const mine = societesDe(diagUser.id)
+    if (mine.length !== 1) { toast.error('Réattribution automatique possible uniquement si le compte a exactement une société.'); return }
+    const target = mine[0]
+    if (!confirm(`Réattribuer ${row.count} ligne(s) de ${row.label} vers « ${target.raison_sociale} » ?`)) return
+    let q = supabase.from(row.table).update({ company_id: target.id }).eq('user_id', diagUser.id)
+    q = row.cidKey==='null' ? q.is('company_id', null) : row.cidKey==='empty' ? q.eq('company_id','') : q.eq('company_id', row.cidKey)
+    const { error } = await q
+    if (error) { toast.error(error.message); return }
+    toast.success('Données réattribuées !')
+    runDiagnostic(diagUser)
   }
 
   const formatDate = dt => {
@@ -1380,7 +1482,7 @@ function UsersManagementPage({ toast }) {
           <div style={{overflowX:'auto'}}>
           <table style={{width:'100%',borderCollapse:'collapse',minWidth:900}}>
             <thead><tr>
-              <TH>Email</TH><TH>Nom</TH><TH>WhatsApp</TH><TH>Rôle</TH>
+              <TH>Email</TH><TH>Sociétés créées</TH><TH>Nom</TH><TH>WhatsApp</TH><TH>Rôle</TH>
               <TH>Statut</TH><TH>Inscrit le</TH><TH>Dernière connexion</TH><TH>Actions</TH>
             </tr></thead>
             <tbody>
@@ -1388,9 +1490,23 @@ function UsersManagementPage({ toast }) {
                 const s = STATUT_STYLE[u.statut] || STATUT_STYLE.pending
                 const isSelf = u.email === SUPER_ADMIN_EMAIL
                 const isActive = u.statut === 'active'
+                const societes = societesDe(u.id)
                 return (
                   <TR key={u.id}>
                     <TD bold sm>{u.email}</TD>
+                    <TD>
+                      {societes.length===0 ? (
+                        <span style={{color:'#94a3b8',fontSize:11,fontStyle:'italic'}}>Aucune</span>
+                      ) : (
+                        <div style={{display:'flex',flexDirection:'column',gap:3}}>
+                          {societes.map(c=>(
+                            <span key={c.id} style={{background:'#eff6ff',color:'#1d4ed8',padding:'2px 8px',borderRadius:10,fontSize:11,fontWeight:600,whiteSpace:'nowrap'}}>
+                              🏢 {c.raison_sociale||'(sans nom)'}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </TD>
                     <TD>{u.nom||'—'}</TD>
                     <TD>
                       {u.whatsapp ? (
@@ -1439,6 +1555,10 @@ function UsersManagementPage({ toast }) {
                             style={{background:u.whatsapp?'#25d366':'#e2e8f0',color:u.whatsapp?'white':'#94a3b8',border:'none',padding:'4px 10px',borderRadius:6,fontSize:12,fontWeight:600,cursor:u.whatsapp?'pointer':'not-allowed',display:'flex',alignItems:'center',gap:4}}>
                             📱 WA
                           </button>
+                          {/* Diagnostic données égarées */}
+                          <Btn sm variant="secondary" onClick={()=>runDiagnostic(u)}>🔍 Diagnostiquer</Btn>
+                          {/* Suppression */}
+                          <Btn sm variant="danger" onClick={()=>deleteUser(u)}>🗑️ Supprimer</Btn>
                         </div>
                       )}
                       {isSelf && <span style={{fontSize:11,color:'#94a3b8',fontStyle:'italic'}}>Votre compte</span>}
@@ -1449,6 +1569,635 @@ function UsersManagementPage({ toast }) {
             </tbody>
           </table>
           </div>
+        </div>
+      )}
+
+      <Modal open={!!diagUser} onClose={()=>setDiagUser(null)} title={`Diagnostic — ${diagUser?.email||''}`} size="lg">
+        {diagLoading ? <div style={{padding:16}}>Analyse…</div> : (
+          <>
+            <p style={{fontSize:13,color:'#64748b',marginBottom:16}}>
+              Répartition des données de ce compte par société. Une ligne « ⚠️ Société introuvable » signifie que ces
+              enregistrements sont rattachés à un identifiant de société qui n'existe plus ou n'a jamais correspondu à
+              une société valide (le motif le plus fréquent est une société supprimée/recréée, ou l'ancien bug qui
+              affectait parfois une fiche à une mauvaise société).
+            </p>
+            {diagRows.length===0 ? (
+              <div style={{textAlign:'center',padding:24,color:'#94a3b8'}}>Aucune donnée trouvée pour ce compte.</div>
+            ) : (
+              <div style={{display:'flex',flexDirection:'column',gap:8}}>
+                {diagRows.map((row,i)=>(
+                  <div key={i} style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:10,padding:'10px 14px',borderRadius:8,border:'1px solid #e2e8f0',background:row.companyName?'#f8fafc':'#fff7ed'}}>
+                    <div>
+                      <strong style={{fontSize:13}}>{row.label}</strong>
+                      <span style={{fontSize:12,color:'#64748b'}}> — {row.count} enregistrement(s)</span>
+                      <div style={{fontSize:12,marginTop:2}}>
+                        {row.companyName
+                          ? <span style={{color:'#16a34a'}}>✅ {row.companyName}</span>
+                          : <span style={{color:'#ea580c',fontWeight:600}}>⚠️ Société introuvable {row.cidKey!=='null'&&row.cidKey!=='empty' ? `(id: ${row.cidKey.slice(0,8)}…)` : '(champ vide)'}</span>}
+                      </div>
+                    </div>
+                    {!row.companyName && societesDe(diagUser.id).length===1 && (
+                      <Btn sm variant="success" onClick={()=>reassignRow(row)}>🔧 Réattribuer</Btn>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+      </Modal>
+    </div>
+  )
+}
+
+// ── CONSOLIDATION MULTI-SOCIÉTÉS (Super Admin) ───────────────────────────────
+// Colonnes des fiches Clients/Fournisseurs, identiques à celles de TiersPage
+// (dupliquées ici volontairement : cette page vit indépendamment de TiersPage).
+const CONSOL_TIERS_COLUMNS = (isFourn) => [
+  {key:'Type'},{key:'Nom'},{key:'Téléphone'},{key:'Provenance'},
+  ...(isFourn?[{key:'Coopérative'},{key:'N° Contrat'}]:[]),
+  {key:'N° IFU'},{key:'N° CIP'},{key:'Email'},{key:'Adresse'},{key:'Genre'},{key:'Handicap'},
+  ...(isFourn?[
+    {key:'Mentor - Nom'},{key:'Mentor - Téléphone'},{key:'Mentor - CIP'},
+    {key:'Département'},{key:'Commune'},{key:'Arrondissement'},{key:'Village'},
+    {key:'Bas-fonds'},{key:'Superficie (ha)'},
+    {key:'Total avance (FCFA)'},{key:'Prix/contrat (FCFA)'},{key:'Riz paddy équiv. (kg)'},{key:'Détail avances'},
+  ]:[]),
+]
+const consolTiersVal = (it,c) => ({
+  'Type': it.type==='morale'?'Société':'Physique',
+  'Nom': it.type==='morale' ? (it.nom_societe||'') : (it.nom||''),
+  'Téléphone': it.telephone||'',
+  'Provenance': it.provenance||'',
+  'Coopérative': it.cooperative_affiliee||'',
+  'N° Contrat': it.numero_contrat||'',
+  'N° IFU': it.ifu||'',
+  'N° CIP': it.cip||'',
+  'Email': it.email||'',
+  'Adresse': it.adresse||'',
+  'Genre': it.genre||'',
+  'Handicap': it.handicap ? 'Oui' : 'Non',
+  'Mentor - Nom': it.mentor_nom||'',
+  'Mentor - Téléphone': it.mentor_telephone||'',
+  'Mentor - CIP': it.mentor_cip||'',
+  'Département': it.departement||'',
+  'Commune': it.commune||'',
+  'Arrondissement': it.arrondissement||'',
+  'Village': it.village||'',
+  'Bas-fonds': it.nom_bas_fonds||'',
+  'Superficie (ha)': it.superficie_bas_fonds||'',
+  'Total avance (FCFA)': (Array.isArray(it._avances)?it._avances:[]).reduce((sm,a)=>sm+(Number(a.valeur_remboursement)||0),0) || '',
+  'Prix/contrat (FCFA)': it.prix_contrat||'',
+  'Riz paddy équiv. (kg)': (()=>{ const tt=(Array.isArray(it._avances)?it._avances:[]).reduce((sm,a)=>sm+(Number(a.valeur_remboursement)||0),0); const pp=Number(it.prix_contrat)||0; return pp>0?(tt/pp).toFixed(2):'' })(),
+  'Détail avances': (Array.isArray(it._avances)?it._avances:[]).map(a=>`${a.type_avance}: ${Number(a.quantite_recue)||0} = ${Number(a.valeur_remboursement)||0}`).join(' | '),
+}[c] ?? '')
+
+const CONSOL_ARTICLES_COLUMNS = [
+  {key:'Code'},{key:'Désignation'},{key:'Catégorie'},{key:'Unité'},
+  {key:'Stock actuel'},{key:'Stock min'},{key:'Prix achat'},{key:'Prix vente'},
+  {key:'Valeur stock (FCFA)'},{key:'Statut'},
+]
+const consolArticleVal = (a,c) => ({
+  'Code': a.code||'',
+  'Désignation': a.designation||'',
+  'Catégorie': CAT_LABELS[a.categorie]||a.categorie||'',
+  'Unité': a.unite||'',
+  'Stock actuel': a.stock_actuel??'',
+  'Stock min': a.stock_min??'',
+  'Prix achat': a.prix_achat??'',
+  'Prix vente': a.prix_vente??'',
+  'Valeur stock (FCFA)': Math.round((a.stock_actuel||0)*(a.prix_achat||0)),
+  'Statut': (a.stock_actuel||0)<=(a.stock_min||0) ? 'Alerte' : 'OK',
+}[c] ?? '')
+
+const CONSOL_TYPES = {
+  fournisseurs: { label:'Fournisseurs',     table:'compta_fournisseurs', icon:'🚚', columns:CONSOL_TIERS_COLUMNS(true),  val:consolTiersVal },
+  clients:      { label:'Clients',          table:'compta_clients',      icon:'👥', columns:CONSOL_TIERS_COLUMNS(false), val:consolTiersVal },
+  articles:     { label:'Articles & Stock', table:'compta_articles',     icon:'📦', columns:CONSOL_ARTICLES_COLUMNS,     val:consolArticleVal },
+}
+
+function ConsolidationPage({ toast }) {
+  const [dataType,      setDataType]      = useState('fournisseurs')
+  const [allCompanies,  setAllCompanies]  = useState([])
+  const [ownerEmails,   setOwnerEmails]   = useState({})
+  const [selectedIds,   setSelectedIds]   = useState([])
+  const [companySearch, setCompanySearch] = useState('')
+  const [selectedCols,  setSelectedCols]  = useState(null) // null = toutes les colonnes
+  const [generating,    setGenerating]    = useState(false)
+  const [lastResult,    setLastResult]    = useState(null)
+
+  useEffect(()=>{
+    (async()=>{
+      const [{ data:cos },{ data:profs }] = await Promise.all([
+        supabase.from('compta_companies').select('id,raison_sociale,user_id').order('raison_sociale'),
+        supabase.from('compta_profiles').select('id,email'),
+      ])
+      setAllCompanies(cos||[])
+      const map={}; (profs||[]).forEach(p=>{ map[p.id]=p.email })
+      setOwnerEmails(map)
+    })()
+  },[])
+
+  // Changer de type de données repart sur une sélection de colonnes neutre (toutes cochées)
+  const changeDataType = key => { setDataType(key); setSelectedCols(null) }
+
+  const cfg = CONSOL_TYPES[dataType]
+  const allColumns = cfg.columns
+  const visibleColumns = allColumns.filter(c => selectedCols===null || selectedCols.includes(c.key))
+  const toggleCol = key => setSelectedCols(prev => {
+    const base = prev===null ? allColumns.map(c=>c.key) : prev
+    return base.includes(key) ? base.filter(k=>k!==key) : [...base, key]
+  })
+  const selectAllCols   = () => setSelectedCols(allColumns.map(c=>c.key))
+  const deselectAllCols = () => setSelectedCols([])
+
+  const filteredCompanies = allCompanies.filter(c => !companySearch
+    || (c.raison_sociale||'').toLowerCase().includes(companySearch.toLowerCase())
+    || (ownerEmails[c.user_id]||'').toLowerCase().includes(companySearch.toLowerCase()))
+  const toggleCompany = id => setSelectedIds(prev => prev.includes(id) ? prev.filter(x=>x!==id) : [...prev, id])
+  const selectAllCompanies   = () => setSelectedIds(filteredCompanies.map(c=>c.id))
+  const deselectAllCompanies = () => setSelectedIds([])
+
+  const generate = async () => {
+    if (selectedIds.length===0)   { toast.error('Sélectionnez au moins une société.'); return }
+    if (visibleColumns.length===0){ toast.error('Sélectionnez au moins une colonne.'); return }
+    setGenerating(true)
+    try {
+      const { data, error } = await fetchAllRows(() => supabase.from(cfg.table).select('*,compta_companies(raison_sociale)')
+        .eq('actif',true).in('company_id', selectedIds))
+      if (error) { toast.error(error.message); return }
+      let rows = data||[]
+      if (dataType==='fournisseurs' && rows.length) {
+        const ids = rows.map(r=>r.id)
+        // Récupération par lots : une seule requête avec des centaines d'identifiants dans
+        // l'URL peut être rejetée ("Bad Request") par le serveur.
+        const CHUNK = 150
+        let av = []
+        for (let i=0; i<ids.length; i+=CHUNK) {
+          const { data:batch } = await supabase.from('compta_avances_fournisseur')
+            .select('fournisseur_id,type_avance,quantite_recue,valeur_remboursement').in('fournisseur_id', ids.slice(i,i+CHUNK))
+          av = av.concat(batch||[])
+        }
+        const byF = {}
+        av.forEach(a=>{ (byF[a.fournisseur_id]=byF[a.fournisseur_id]||[]).push(a) })
+        rows = rows.map(r=>({ ...r, _avances: byF[r.id]||[] }))
+      }
+      const cols = ['Société', ...visibleColumns.map(c=>c.key)]
+      const thead = cols.map(c=>`<th style="background:#eceff3;color:#1a1a1a;padding:6px 10px;white-space:nowrap">${c}</th>`).join('')
+      const tbody = rows.map((it,i)=>{
+        const cells = [it.compta_companies?.raison_sociale||'—', ...visibleColumns.map(c=>cfg.val(it,c.key))]
+        return `<tr style="background:${i%2===0?'#f8fafc':'white'}">${cells.map(v=>`<td>${v}</td>`).join('')}</tr>`
+      }).join('')
+      const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+        <head><meta charset="UTF-8"><style>
+          table{border-collapse:collapse;width:100%}
+          th,td{border:1px solid #d1d5db;padding:5px 8px;font-size:10pt}
+          h2{font-family:Arial;color:#0f2044}p{font-family:Arial;font-size:9pt;color:#555}
+        </style></head><body>
+        <h2>Consolidation ${cfg.label}</h2>
+        <p>${selectedIds.length} société(s) — ${rows.length} enregistrement(s) — Exporté le ${new Date().toLocaleDateString('fr-FR')}</p>
+        <table><thead><tr>${thead}</tr></thead><tbody>${tbody}</tbody></table>
+        </body></html>`
+      const blob = new Blob(['﻿'+html], {type:'application/vnd.ms-excel;charset=utf-8'})
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href=url; a.download=`consolidation_${dataType}_${new Date().toISOString().slice(0,10)}.xls`; a.click()
+      URL.revokeObjectURL(url)
+      setLastResult({ total: rows.length, nbSocietes: selectedIds.length })
+      toast.success(`Export généré : ${rows.length} ligne(s) sur ${selectedIds.length} société(s).`)
+    } finally {
+      setGenerating(false)
+    }
+  }
+
+  return (
+    <div>
+      <PageHeader title="Consolidation multi-sociétés" subtitle="Exporter les données de plusieurs sociétés dans un seul fichier Excel" />
+
+      <Card style={{marginBottom:16,padding:'16px 20px'}}>
+        <div style={{fontSize:12,fontWeight:700,color:'#0f2044',marginBottom:8,textTransform:'uppercase'}}>1. Type de données</div>
+        <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+          {Object.entries(CONSOL_TYPES).map(([key,c])=>(
+            <button key={key} onClick={()=>changeDataType(key)}
+              style={{padding:'8px 16px',borderRadius:8,border:'1.5px solid '+(dataType===key?'#0f2044':'#e2e8f0'),background:dataType===key?'#0f2044':'white',color:dataType===key?'white':'#374151',fontSize:13,fontWeight:600,cursor:'pointer'}}>
+              {c.icon} {c.label}
+            </button>
+          ))}
+        </div>
+      </Card>
+
+      <Card style={{marginBottom:16,padding:'16px 20px'}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8,flexWrap:'wrap',gap:8}}>
+          <div style={{fontSize:12,fontWeight:700,color:'#0f2044',textTransform:'uppercase'}}>2. Sociétés à consolider ({selectedIds.length} sélectionnée(s))</div>
+          <div style={{display:'flex',gap:12}}>
+            <button onClick={selectAllCompanies} style={{fontSize:12,color:'#2563eb',background:'none',border:'none',cursor:'pointer',fontWeight:600}}>Tout cocher</button>
+            <button onClick={deselectAllCompanies} style={{fontSize:12,color:'#64748b',background:'none',border:'none',cursor:'pointer',fontWeight:600}}>Tout décocher</button>
+          </div>
+        </div>
+        <input value={companySearch} onChange={e=>setCompanySearch(e.target.value)} placeholder="🔍 Filtrer par société ou email du compte..."
+          style={{padding:'8px 14px',borderRadius:8,border:'1px solid #d1d5db',fontSize:13,width:'100%',marginBottom:10,boxSizing:'border-box'}} />
+        <div style={{maxHeight:280,overflowY:'auto',border:'1px solid #e2e8f0',borderRadius:8}}>
+          {filteredCompanies.length===0 ? (
+            <div style={{padding:16,color:'#94a3b8',fontSize:13,textAlign:'center'}}>Aucune société.</div>
+          ) : filteredCompanies.map(c=>(
+            <label key={c.id} style={{display:'flex',alignItems:'center',gap:10,padding:'8px 14px',borderBottom:'1px solid #f1f5f9',cursor:'pointer'}}>
+              <input type="checkbox" checked={selectedIds.includes(c.id)} onChange={()=>toggleCompany(c.id)} />
+              <div>
+                <div style={{fontSize:13,fontWeight:600,color:'#0f2044'}}>{c.raison_sociale||'(sans nom)'}</div>
+                <div style={{fontSize:11,color:'#94a3b8'}}>{ownerEmails[c.user_id]||'—'}</div>
+              </div>
+            </label>
+          ))}
+        </div>
+      </Card>
+
+      <Card style={{marginBottom:16,padding:'16px 20px'}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+          <div style={{fontSize:12,fontWeight:700,color:'#0f2044',textTransform:'uppercase'}}>3. Colonnes à inclure</div>
+          <div style={{display:'flex',gap:12}}>
+            <button onClick={selectAllCols} style={{fontSize:12,color:'#2563eb',background:'none',border:'none',cursor:'pointer',fontWeight:600}}>Tout cocher</button>
+            <button onClick={deselectAllCols} style={{fontSize:12,color:'#64748b',background:'none',border:'none',cursor:'pointer',fontWeight:600}}>Tout décocher</button>
+          </div>
+        </div>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(180px,1fr))',gap:8}}>
+          {allColumns.map(c=>(
+            <label key={c.key} style={{display:'flex',alignItems:'center',gap:8,fontSize:13,color:'#334155'}}>
+              <input type="checkbox" checked={selectedCols===null || selectedCols.includes(c.key)} onChange={()=>toggleCol(c.key)} />
+              {c.key}
+            </label>
+          ))}
+        </div>
+      </Card>
+
+      <div style={{display:'flex',alignItems:'center',gap:12,flexWrap:'wrap'}}>
+        <Btn onClick={generate} disabled={generating}>{generating?'⏳ Génération…':'📊 Télécharger Excel consolidé'}</Btn>
+        {lastResult && <span style={{fontSize:13,color:'#64748b'}}>Dernier export : {lastResult.total} ligne(s) sur {lastResult.nbSocietes} société(s).</span>}
+      </div>
+    </div>
+  )
+}
+
+// ── BORDEREAUX DE LIVRAISON (Super Admin) ────────────────────────────────────
+const bordereauDefaults = () => ({
+  client_id:'', client_nom:'', client_adresse:'', client_contact:'', client_email:'', client_ifu:'',
+  adresse_livraison_1:'', adresse_livraison_2:'', termes_livraison:'', contact_livraison:'',
+  numero_chauffeur:'', date_livraison:'', numero_commande:'', commentaire:'',
+  numero_vehicule:'', remorque:'', nom_chauffeur:'',
+  date_chargement:'', debut_chargement:'', heure_arrivee:'',
+  nom_receptionnaire:'', controleur:'', livreur:'',
+})
+const displayClientName = c => (c.type==='morale' ? (c.nom_societe||'') : (c.nom||''))
+
+function BordereauxLivraisonPage({ companies, companyId, toast }) {
+  const [subPage,  setSubPage]  = useState('liste') // 'liste' | 'form'
+  const [bordereaux, setBordereaux] = useState([])
+  const [clients,  setClients]  = useState([])
+  const [loading,  setLoading]  = useState(true)
+  const [search,   setSearch]   = useState('')
+  const [clientSearch, setClientSearch] = useState('')
+  const [editing,  setEditing]  = useState(null)
+  const [form,     setForm]     = useState(bordereauDefaults())
+  const [lignes,   setLignes]   = useState([{reference:'',description:'',quantite:''}])
+  const [saving,   setSaving]   = useState(false)
+
+  const company = companies.find(c=>c.id===companyId)
+
+  const load = useCallback(async()=>{
+    if (!companyId) { setBordereaux([]); setLoading(false); return }
+    setLoading(true)
+    const { data } = await supabase.from('compta_bordereaux_livraison').select('*')
+      .eq('company_id', companyId).eq('actif', true).order('created_at',{ascending:false})
+    setBordereaux(data||[])
+    setLoading(false)
+  },[companyId])
+
+  const loadClients = useCallback(async()=>{
+    if (!companyId) { setClients([]); return }
+    const { data } = await supabase.from('compta_clients').select('*').eq('company_id', companyId).eq('actif', true)
+    setClients(data||[])
+  },[companyId])
+
+  useEffect(()=>{ load(); loadClients() },[load, loadClients])
+
+  const filtered = bordereaux.filter(b => !search
+    || (b.numero||'').toLowerCase().includes(search.toLowerCase())
+    || (b.client_nom||'').toLowerCase().includes(search.toLowerCase())
+    || (b.numero_commande||'').toLowerCase().includes(search.toLowerCase()))
+
+  const filteredClients = clients.filter(c => !clientSearch
+    || displayClientName(c).toLowerCase().includes(clientSearch.toLowerCase()))
+
+  const prochainNumero = async () => {
+    const year = new Date().getFullYear()
+    const prefix = `BL-${year}-`
+    const { data } = await supabase.from('compta_bordereaux_livraison')
+      .select('numero').eq('company_id', companyId).ilike('numero', `${prefix}%`)
+    const nums = (data||[]).map(d => parseInt((d.numero||'').replace(prefix,''),10)).filter(n=>!isNaN(n))
+    const next = (nums.length ? Math.max(...nums) : 0) + 1
+    return prefix + String(next).padStart(3,'0')
+  }
+
+  const onSelectClient = (clientId) => {
+    const c = clients.find(x=>x.id===clientId)
+    if (!c) { setForm(f=>({...f, client_id:'' })); return }
+    setForm(f=>({
+      ...f,
+      client_id: c.id,
+      client_nom: displayClientName(c),
+      client_adresse: c.adresse||'',
+      client_contact: c.telephone||'',
+      client_email: c.email||'',
+      client_ifu: c.ifu||'',
+      adresse_livraison_1: f.adresse_livraison_1 || c.adresse || '',
+    }))
+  }
+
+  const openNew = () => {
+    if (!companyId) { toast.error('Sélectionnez une société avant de créer un bordereau.'); return }
+    setEditing(null)
+    setForm(bordereauDefaults())
+    setLignes([{reference:'',description:'',quantite:''}])
+    setClientSearch('')
+    setSubPage('form')
+  }
+
+  const openEdit = async (b) => {
+    setEditing(b)
+    setForm({...bordereauDefaults(), ...b})
+    setClientSearch('')
+    const { data } = await supabase.from('compta_bordereau_lignes').select('*').eq('bordereau_id', b.id).order('ordre')
+    setLignes(data && data.length ? data : [{reference:'',description:'',quantite:''}])
+    setSubPage('form')
+  }
+
+  const set = e => setForm(f=>({...f,[e.target.name]:e.target.value}))
+  const addLigne = () => setLignes(l=>[...l,{reference:'',description:'',quantite:''}])
+  const delLigne = (i) => setLignes(l=>l.filter((_,j)=>j!==i))
+  const setLigne = (i,field,val) => setLignes(l=>{ const n=[...l]; n[i]={...n[i],[field]:val}; return n })
+
+  const save = async (e) => {
+    e.preventDefault(); setSaving(true)
+    const uid = (await supabase.auth.getUser()).data?.user?.id
+    const fields = Object.keys(bordereauDefaults())
+    const pay = { company_id: companyId, user_id: uid }
+    fields.forEach(k => { pay[k] = form[k] })
+    let bordereauId = editing?.id
+
+    if (!editing) {
+      pay.numero = await prochainNumero()
+      const { data:ins, error } = await supabase.from('compta_bordereaux_livraison').insert(pay).select('id').single()
+      if (error) { toast.error(error.message); setSaving(false); return }
+      bordereauId = ins.id
+    } else {
+      const { error } = await supabase.from('compta_bordereaux_livraison').update(pay).eq('id', editing.id)
+      if (error) { toast.error(error.message); setSaving(false); return }
+      await supabase.from('compta_bordereau_lignes').delete().eq('bordereau_id', editing.id)
+    }
+
+    const lignesPayload = lignes.filter(l=>l.reference||l.description||l.quantite).map((l,i)=>({
+      bordereau_id: bordereauId, reference:l.reference||'', description:l.description||'',
+      quantite: l.quantite!=='' && l.quantite!=null ? Number(l.quantite) : null, ordre:i,
+    }))
+    if (lignesPayload.length) await supabase.from('compta_bordereau_lignes').insert(lignesPayload)
+
+    setSaving(false)
+    toast.success(editing ? 'Bordereau mis à jour !' : 'Bordereau créé !')
+    setSubPage('liste'); load()
+  }
+
+  const archive = async (b) => {
+    if (!confirm(`Archiver le bordereau ${b.numero} ?`)) return
+    const { error } = await supabase.from('compta_bordereaux_livraison').update({actif:false}).eq('id', b.id)
+    if (error) { toast.error(error.message); return }
+    toast.success('Archivé.'); load()
+  }
+
+  const printBordereau = async (b) => {
+    const { data:lignesData } = await supabase.from('compta_bordereau_lignes').select('*').eq('bordereau_id', b.id).order('ordre')
+    const realRows = (lignesData||[]).map(l=>`<tr><td>${l.reference||''}</td><td><div class="desc-clamp">${l.description||''}</div></td><td style="text-align:right">${l.quantite??''}</td></tr>`)
+    // Au moins 4 lignes (même vides), sans dépasser ce qui est nécessaire, pour que le tableau
+    // des articles reste compact et que le bordereau tienne sur une seule page.
+    const blankRow = '<tr><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr>'
+    while (realRows.length < 4) realRows.push(blankRow)
+    const rows = realRows.join('')
+    const html = `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><title>Bordereau ${b.numero}</title>
+      <style>
+        @page{size:A4;margin:8mm}
+        *{margin:0;padding:0;box-sizing:border-box}
+        html,body{width:190mm}
+        body{font-family:'Times New Roman',serif;font-size:11pt;color:#000;padding:6px 4px;margin:0 auto}
+        table{width:100%;border-collapse:collapse;margin-bottom:16px;page-break-inside:avoid}
+        td,th{border:1px solid #000;padding:5px 8px;font-size:10pt;vertical-align:top;height:20px}
+        tr{height:26px}
+        .header{display:grid;grid-template-columns:110px 1fr 110px;align-items:center;gap:14px;margin-bottom:10px}
+        .company-text{text-align:center}
+        .company-name{font-size:13pt;font-weight:bold}
+        .company-info{font-size:9pt}
+        .titre{text-align:center;font-weight:bold;font-size:14pt;margin:8px 0 14px}
+        .blue{background:#B4C6E7;font-weight:bold;text-align:center}
+        .lbl{font-weight:bold;white-space:nowrap}
+        .no-border td{border:none;padding:5px 10px}
+        .signatures td{height:44px}
+        .desc-clamp{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:4;overflow:hidden}
+      </style></head><body>
+      <div class="header">
+        <div></div>
+        <div class="company-text">
+          <div class="company-name">${company?.raison_sociale||''}</div>
+          <div class="company-info">
+            ${company?.rccm?`RCCM : ${company.rccm} &nbsp; `:''}${company?.ifu?`IFU : ${company.ifu} &nbsp; `:''}${company?.tel?`TEL : ${company.tel}`:''}<br>
+            ${company?.email?`Email : ${company.email}`:''}
+          </div>
+        </div>
+        <div style="text-align:right">${company?.logo_url?`<img src="${company.logo_url}" style="max-height:60px;max-width:110px;object-fit:contain">`:''}</div>
+      </div>
+      <div class="titre">BORDEREAU DE LIVRAISON N° ${b.numero}</div>
+      <table class="no-border">
+        <tr><td class="lbl" width="15%">NOM :</td><td width="35%">${b.client_nom||''}</td>
+            <td class="lbl" width="15%">Adresse livraison 1 :</td><td width="35%">${b.adresse_livraison_1||''}</td></tr>
+        <tr><td class="lbl">ADRESSE :</td><td>${b.client_adresse||''}</td>
+            <td class="lbl">Termes de livraison :</td><td>${b.termes_livraison||''}</td></tr>
+        <tr><td class="lbl">CONTACT :</td><td>${b.client_contact||''}</td>
+            <td class="lbl">Adresse livraison 2 :</td><td>${b.adresse_livraison_2||''}</td></tr>
+        <tr><td class="lbl">Email :</td><td>${b.client_email||''}</td>
+            <td class="lbl">Contact livraison :</td><td>${b.contact_livraison||''}</td></tr>
+        <tr><td class="lbl">N° IFU :</td><td colspan="3">${b.client_ifu||''}</td></tr>
+      </table>
+      <table>
+        <tr class="blue"><td>Numéro du chauffeur</td><td>Date de livraison</td><td>N° de commande</td><td>Commentaire</td></tr>
+        <tr><td>${b.numero_chauffeur||''}</td><td>${b.date_livraison||''}</td><td>${b.numero_commande||''}</td><td>${b.commentaire||''}</td></tr>
+        <tr><td>N° Véhicule : ${b.numero_vehicule||''}</td><td>Remorque : ${b.remorque||''}</td><td colspan="2">Nom chauffeur : ${b.nom_chauffeur||''}</td></tr>
+      </table>
+      <table>
+        <tr class="blue"><td>RÉFÉRENCE</td><td>DESCRIPTION</td><td>QUANTITÉ</td></tr>
+        ${rows}
+      </table>
+      <table>
+        <tr><td>DATE : ${b.date_chargement||''}</td><td>DÉBUT DE CHARGEMENT : ${b.debut_chargement||''}</td><td>HEURE D'ARRIVÉE : ${b.heure_arrivee||''}</td></tr>
+      </table>
+      <table class="signatures">
+        <tr class="blue"><td>NOM DU RÉCEPTIONNAIRE</td><td>CONTRÔLEUR</td><td>LIVREUR</td><td>SIGNATURE</td></tr>
+        <tr><td>${b.nom_receptionnaire||''}</td><td>${b.controleur||''}</td><td>${b.livreur||''}</td><td>&nbsp;</td></tr>
+      </table>
+      </body></html>`
+    openPrintWindow(html, `bordereau_${b.numero}`)
+  }
+
+  if (subPage==='form') {
+    return (
+      <div>
+        <PageHeader title={editing?`Modifier ${editing.numero}`:'Nouveau bordereau de livraison'}
+          subtitle={company?.raison_sociale||''}
+          actions={<Btn variant="secondary" onClick={()=>setSubPage('liste')}>← Retour à la liste</Btn>} />
+        <form onSubmit={save}>
+          <Card style={{marginBottom:16}}>
+            <div style={{fontSize:12,fontWeight:700,color:'#0f2044',marginBottom:10,textTransform:'uppercase'}}>Client</div>
+            <Grid cols={2} gap={14} style={{marginBottom:14}}>
+              <div>
+                <label style={{display:'block',fontSize:12.5,fontWeight:600,color:'#374151',marginBottom:5}}>Sélectionner un client</label>
+                <input value={clientSearch} onChange={e=>setClientSearch(e.target.value)} placeholder="🔍 Filtrer par nom..."
+                  style={{width:'100%',padding:'8px 12px',borderRadius:8,border:'1px solid #d1d5db',fontSize:13,marginBottom:6,boxSizing:'border-box'}} />
+                <select value={form.client_id} onChange={e=>onSelectClient(e.target.value)}
+                  style={{width:'100%',padding:'9px 12px',borderRadius:8,border:'1px solid #d1d5db',fontSize:13.5,background:'white'}}>
+                  <option value=''>— Choisir un client —</option>
+                  {filteredClients.map(c=><option key={c.id} value={c.id}>{displayClientName(c)}</option>)}
+                </select>
+              </div>
+            </Grid>
+            <Grid cols={2} gap={14}>
+              <Input label="Nom du client" name="client_nom" value={form.client_nom} onChange={set} />
+              <Input label="Adresse du client" name="client_adresse" value={form.client_adresse} onChange={set} />
+              <Input label="Contact (téléphone)" name="client_contact" value={form.client_contact} onChange={set} />
+              <Input label="Email" name="client_email" type="email" value={form.client_email} onChange={set} />
+              <Input label="N° IFU" name="client_ifu" value={form.client_ifu} onChange={set} />
+            </Grid>
+          </Card>
+
+          <Card style={{marginBottom:16}}>
+            <div style={{fontSize:12,fontWeight:700,color:'#0f2044',marginBottom:10,textTransform:'uppercase'}}>Livraison</div>
+            <Grid cols={2} gap={14}>
+              <Input label="Adresse de livraison ligne 1" name="adresse_livraison_1" value={form.adresse_livraison_1} onChange={set} />
+              <Input label="Adresse de livraison ligne 2" name="adresse_livraison_2" value={form.adresse_livraison_2} onChange={set} />
+              <Input label="Termes de livraison" name="termes_livraison" value={form.termes_livraison} onChange={set} />
+              <Input label="Contact livraison" name="contact_livraison" value={form.contact_livraison} onChange={set} />
+              <Input label="N° du chauffeur" name="numero_chauffeur" value={form.numero_chauffeur} onChange={set} />
+              <Input label="Date de livraison" name="date_livraison" type="date" value={form.date_livraison} onChange={set} />
+              <Input label="N° de commande" name="numero_commande" value={form.numero_commande} onChange={set} />
+              <Input label="Commentaire" name="commentaire" value={form.commentaire} onChange={set} />
+            </Grid>
+          </Card>
+
+          <Card style={{marginBottom:16}}>
+            <div style={{fontSize:12,fontWeight:700,color:'#0f2044',marginBottom:10,textTransform:'uppercase'}}>Véhicule</div>
+            <Grid cols={3} gap={14}>
+              <Input label="N° Véhicule" name="numero_vehicule" value={form.numero_vehicule} onChange={set} />
+              <Input label="Remorque" name="remorque" value={form.remorque} onChange={set} />
+              <Input label="Nom du chauffeur" name="nom_chauffeur" value={form.nom_chauffeur} onChange={set} />
+            </Grid>
+          </Card>
+
+          <Card style={{marginBottom:16}}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
+              <div style={{fontSize:12,fontWeight:700,color:'#0f2044',textTransform:'uppercase'}}>Articles livrés</div>
+              <Btn sm type="button" variant="secondary" onClick={addLigne}>+ Ajouter une ligne</Btn>
+            </div>
+            <div style={{border:'1px solid #e2e8f0',borderRadius:8,overflowX:'auto'}}>
+              <table style={{width:'100%',minWidth:480,borderCollapse:'collapse',fontSize:13}}>
+                <thead><tr style={{background:'#f8fafc'}}>
+                  <th style={{width:'30%',padding:'8px 10px',textAlign:'left',fontSize:12,color:'#475569'}}>Référence</th>
+                  <th style={{width:'50%',padding:'8px 10px',textAlign:'left',fontSize:12,color:'#475569'}}>Description</th>
+                  <th style={{width:'15%',padding:'8px 10px',textAlign:'right',fontSize:12,color:'#475569'}}>Quantité</th>
+                  <th style={{width:44}}></th>
+                </tr></thead>
+                <tbody>
+                  {lignes.map((l,i)=>(
+                    <tr key={i} style={{borderTop:'1px solid #e2e8f0'}}>
+                      <td style={{padding:6}}><input value={l.reference} onChange={e=>setLigne(i,'reference',e.target.value)}
+                        style={{width:'100%',padding:'7px 9px',border:'1px solid #e2e8f0',borderRadius:6,fontSize:13,boxSizing:'border-box'}} /></td>
+                      <td style={{padding:6}}><input value={l.description} onChange={e=>setLigne(i,'description',e.target.value)}
+                        style={{width:'100%',padding:'7px 9px',border:'1px solid #e2e8f0',borderRadius:6,fontSize:13,boxSizing:'border-box'}} /></td>
+                      <td style={{padding:6}}><input value={l.quantite} onChange={e=>setLigne(i,'quantite',e.target.value)} inputMode="decimal"
+                        style={{width:'100%',padding:'7px 9px',border:'1px solid #e2e8f0',borderRadius:6,fontSize:13,textAlign:'right',boxSizing:'border-box'}} /></td>
+                      <td style={{textAlign:'center'}}>
+                        {lignes.length>1 && <button type="button" onClick={()=>delLigne(i)} style={{background:'none',border:'none',color:'#dc2626',cursor:'pointer',fontSize:15}}>✕</button>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+
+          <Card style={{marginBottom:16}}>
+            <div style={{fontSize:12,fontWeight:700,color:'#0f2044',marginBottom:10,textTransform:'uppercase'}}>Chargement</div>
+            <Grid cols={3} gap={14}>
+              <Input label="Date" name="date_chargement" type="date" value={form.date_chargement} onChange={set} />
+              <Input label="Début de chargement" name="debut_chargement" value={form.debut_chargement} onChange={set} />
+              <Input label="Heure d'arrivée" name="heure_arrivee" value={form.heure_arrivee} onChange={set} />
+            </Grid>
+          </Card>
+
+          <Card style={{marginBottom:16}}>
+            <div style={{fontSize:12,fontWeight:700,color:'#0f2044',marginBottom:10,textTransform:'uppercase'}}>Signatures</div>
+            <Grid cols={3} gap={14}>
+              <Input label="Nom du réceptionnaire" name="nom_receptionnaire" value={form.nom_receptionnaire} onChange={set} />
+              <Input label="Contrôleur" name="controleur" value={form.controleur} onChange={set} />
+              <Input label="Livreur" name="livreur" value={form.livreur} onChange={set} />
+            </Grid>
+          </Card>
+
+          <div style={{display:'flex',gap:10}}>
+            <Btn type="submit" disabled={saving}>{saving?'⏳ Enregistrement…':(editing?'💾 Mettre à jour':'💾 Créer le bordereau')}</Btn>
+            <Btn type="button" variant="secondary" onClick={()=>setSubPage('liste')}>Annuler</Btn>
+          </div>
+        </form>
+      </div>
+    )
+  }
+
+  return (
+    <div>
+      <PageHeader title="Bordereaux de livraison" subtitle={company?.raison_sociale ? `${company.raison_sociale} — ${bordereaux.length} bordereau(x)` : 'Sélectionnez une société en haut de l\'écran'}
+        actions={<Btn onClick={openNew}>+ Nouveau bordereau</Btn>} />
+      <Card style={{marginBottom:16,padding:'10px 16px'}}>
+        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="🔍 Rechercher par numéro, client ou n° de commande..."
+          style={{padding:'8px 14px',borderRadius:8,border:'1px solid #d1d5db',fontSize:13,width:'100%',boxSizing:'border-box'}} />
+      </Card>
+      {loading ? <div style={{padding:24}}>Chargement...</div> : (
+        <div style={{background:'white',borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
+          {filtered.length===0 ? (
+            <div style={{textAlign:'center',padding:'48px 24px',color:'#64748b'}}>
+              <div style={{fontSize:40,marginBottom:8}}>🚚</div>
+              <p>Aucun bordereau de livraison</p>
+              <Btn onClick={openNew}>+ Créer le premier bordereau</Btn>
+            </div>
+          ) : (
+            <TableWrap>
+              <table style={{width:'100%',borderCollapse:'collapse',minWidth:700}}>
+                <thead><tr>
+                  <TH>N° Bordereau</TH><TH>Client</TH><TH>Date livraison</TH><TH>N° Commande</TH><TH>Chauffeur</TH><TH>Actions</TH>
+                </tr></thead>
+                <tbody>
+                  {filtered.map(b=>(
+                    <TR key={b.id}>
+                      <TD bold>{b.numero}</TD>
+                      <TD>{b.client_nom||'—'}</TD>
+                      <TD sm>{b.date_livraison||'—'}</TD>
+                      <TD sm>{b.numero_commande||'—'}</TD>
+                      <TD sm>{b.nom_chauffeur||'—'}</TD>
+                      <TD>
+                        <div style={{display:'flex',gap:6}}>
+                          <Btn sm variant="info" onClick={()=>printBordereau(b)}>📥 PDF</Btn>
+                          <Btn sm variant="secondary" onClick={()=>openEdit(b)}>Edit</Btn>
+                          <Btn sm variant="danger" onClick={()=>archive(b)}>🗑️</Btn>
+                        </div>
+                      </TD>
+                    </TR>
+                  ))}
+                </tbody>
+              </table>
+            </TableWrap>
+          )}
         </div>
       )}
     </div>
@@ -1518,6 +2267,8 @@ const NAV = [
 const NAV_ADMIN = [
   { section:'Administration' },
   { id:'users',              icon:'👤', label:'Utilisateurs' },
+  { id:'consolidation',      icon:'📊', label:'Consolidation' },
+  { id:'bordereaux_livraison', icon:'🚚', label:'Bordereaux de livraison' },
   { id:'mes_utilisateurs',   icon:'👥', label:'Mes utilisateurs' },
   { id:'parametres',         icon:'⚙️', label:'Paramètres' },
 ]
@@ -1734,6 +2485,7 @@ function CompaniesPage({ companies, refresh, toast, isSuperAdmin=false, currentU
   const [form,  setForm]  = useState({})
   const [saving,setSaving]= useState(false)
   const set = e => setForm(f=>({...f,[e.target.name]:e.target.value}))
+  const setTel = e => setForm(f=>({...f,[e.target.name]:formatTelPairs(e.target.value)}))
 
   // Vérifie si la société appartient à l'utilisateur courant
   const isOwn = c => !c || c.user_id === currentUserId
@@ -1749,13 +2501,15 @@ function CompaniesPage({ companies, refresh, toast, isSuperAdmin=false, currentU
       return
     }
     setForm(c?{...c}:{raison_sociale:'',rccm:'',adresse:'',tel:'',email:'',logo_url:'',type_activite:'industrielle',
-      taux_cnss_patronale:'0.194',cnss_employeur:'',nouvelle_entreprise:false,date_premier_exercice:'',signataire:'',fonction_signataire:''})
+      taux_cnss_patronale:'0.194',cnss_employeur:'',nouvelle_entreprise:false,date_premier_exercice:'',signataire:'',fonction_signataire:'',
+      intitule_projet:'',financement:'',structure_pilote:'',campagne_agricole:''})
     setModal(c?'edit':'add')
   }
   const close = () => setModal(null)
 
   const save = async e => {
     e.preventDefault(); setSaving(true)
+    if (!isValidTel(form.tel)) { toast.error('Numéro de téléphone invalide : il doit contenir exactement 10 chiffres.'); setSaving(false); return }
     const uid = (await supabase.auth.getUser()).data?.user?.id
     const pay = { raison_sociale:form.raison_sociale, rccm:form.rccm, adresse:form.adresse, tel:form.tel, email:form.email, logo_url:form.logo_url||null, type_activite:form.type_activite||'industrielle',
       taux_cnss_patronale: parseFloat(form.taux_cnss_patronale||0.194),
@@ -1763,7 +2517,11 @@ function CompaniesPage({ companies, refresh, toast, isSuperAdmin=false, currentU
       nouvelle_entreprise: !!form.nouvelle_entreprise,
       date_premier_exercice: form.date_premier_exercice||null,
       signataire: form.signataire||null,
-      fonction_signataire: form.fonction_signataire||null }
+      fonction_signataire: form.fonction_signataire||null,
+      intitule_projet: form.intitule_projet||null,
+      financement: form.financement||null,
+      structure_pilote: form.structure_pilote||null,
+      campagne_agricole: form.campagne_agricole||null }
     const { error } = modal==='add'
       ? await supabase.from('compta_companies').insert({...pay,user_id:uid})
       : await supabase.from('compta_companies').update(pay).eq('id',form.id)
@@ -1822,7 +2580,7 @@ function CompaniesPage({ companies, refresh, toast, isSuperAdmin=false, currentU
           <Grid cols={2} gap={14} style={{marginBottom:16}}>
             <Span2><Input label="Raison sociale" name="raison_sociale" value={form.raison_sociale} onChange={set} required /></Span2>
             <Input label="RCCM" name="rccm" value={form.rccm} onChange={set} />
-            <Input label="Téléphone" name="tel" value={form.tel} onChange={set} />
+            <Input label="Téléphone" name="tel" type="tel" value={form.tel} onChange={setTel} />
             <Span2><Input label="Adresse" name="adresse" value={form.adresse} onChange={set} /></Span2>
             <Input label="Email" name="email" type="email" value={form.email} onChange={set} />
             <Sel label="Type d'activité (pour l'IS)" name="type_activite" value={form.type_activite||'industrielle'} onChange={set}
@@ -1886,6 +2644,19 @@ function CompaniesPage({ companies, refresh, toast, isSuperAdmin=false, currentU
             )}
           </Grid>
 
+          <div style={{ fontSize:13, fontWeight:700, color:'#0f2044', margin:'18px 0 4px', textTransform:'uppercase' }}>
+            Informations projet (fiches mentors)
+          </div>
+          <div style={{ fontSize:12, color:'#64748b', marginBottom:12 }}>
+            Reprises automatiquement en en-tête des fiches mentors imprimées depuis la page Fournisseurs.
+          </div>
+          <Grid cols={2} gap={14} style={{marginBottom:16}}>
+            <Input label="Intitulé du projet" name="intitule_projet" value={form.intitule_projet} onChange={set} placeholder="ex : RIZAO / Pilier 2" />
+            <Input label="Financement" name="financement" value={form.financement} onChange={set} placeholder="ex : RIZAO / MEDA" />
+            <Input label="Structure de pilotage" name="structure_pilote" value={form.structure_pilote} onChange={set} placeholder="ex : PSARIZ" />
+            <Input label="Campagne agricole" name="campagne_agricole" value={form.campagne_agricole} onChange={set} placeholder="ex : 2026-2027" />
+          </Grid>
+
           <Row><Btn variant="secondary" onClick={close}>Annuler</Btn><Btn type="submit" disabled={saving}>{saving?'...':'Enregistrer'}</Btn></Row>
         </form>
       </Modal>
@@ -1913,6 +2684,7 @@ function printFicheTiers(it, kind='fournisseur') {
     type:'Type de personne', nom:'Nom et prénom(s)', prenom:'Prénom', nom_societe:'Raison sociale',
     telephone:'Téléphone', email:'Email', adresse:'Adresse', provenance:'Provenance',
     cooperative_affiliee:'Coopérative affiliée', numero_contrat:'N° Contrat', ifu:'N° IFU', cip:'N° CIP',
+    genre:'Genre', handicap:'Handicap',
     mentor_nom:'Mentor — Nom', mentor_telephone:'Mentor — Téléphone', mentor_cip:'Mentor — CIP',
     departement:'Département', commune:'Commune', arrondissement:'Arrondissement', village:'Village',
     nom_bas_fonds:'Nom du bas-fonds', superficie_bas_fonds:'Superficie (ha)',
@@ -1921,7 +2693,7 @@ function printFicheTiers(it, kind='fournisseur') {
   const SKIP = new Set([
     'id','user_id','company_id','actif','archive','created_at','updated_at','compta_companies',
     'type','nom','prenom','nom_societe','telephone','email','adresse','provenance',
-    'cooperative_affiliee','numero_contrat','ifu','cip',
+    'cooperative_affiliee','numero_contrat','ifu','cip','genre','handicap',
     'mentor_nom','mentor_telephone','mentor_cip',
     'departement','commune','arrondissement','village','nom_bas_fonds','superficie_bas_fonds',
     '_avances','prix_contrat',
@@ -1987,6 +2759,8 @@ function printFicheTiers(it, kind='fournisseur') {
       ...(isFourn ? [['Coopérative affiliée', it.cooperative_affiliee], ['N° Contrat', it.numero_contrat]] : []),
       ['N° IFU', it.ifu],
       ['N° CIP', it.cip],
+      ['Genre', it.genre],
+      ['Handicap', it.handicap ? 'Oui' : 'Non'],
     ])}</tbody></table>
 
     ${mentorBloc}
@@ -2230,40 +3004,87 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
   const [search,     setSearch]    = useState('')
   const [filterType, setFilterType]= useState('')   // clients: physique|morale
   const [filterProv, setFilterProv]= useState('')   // provenance
+  const [filterGenre, setFilterGenre] = useState('') // Homme|Femme
+  const [filterHandicap, setFilterHandicap] = useState('') // oui|non
   const [avances, setAvances] = useState([])
+  const [colModalOpen, setColModalOpen] = useState(false)
+  const [selectedCols, setSelectedCols] = useState(null) // null = toutes les colonnes
+  const [loadError, setLoadError] = useState(false)
+  const [loading, setLoading] = useState(true)
 
   const load = useCallback(async()=>{
+    setLoadError(false)
     const uid = (await supabase.auth.getUser()).data?.user?.id
-    let q = supabase.from(table).select('*,compta_companies(raison_sociale)').eq('actif',true).order('created_at',{ascending:false})
-    // Fix: quand une société est sélectionnée (super admin ou user), filtrer par company_id
-    // sinon fallback sur user_id
-    if (companyId) q = q.eq('company_id', companyId)
-    else q = q.eq('user_id', uid)
-    const { data } = await q
-    let rowsF = data||[]
+    const buildQuery = () => {
+      let q = supabase.from(table).select('*,compta_companies(raison_sociale)').eq('actif',true).order('created_at',{ascending:false})
+      // Fix: quand une société est sélectionnée (super admin ou user), filtrer par company_id
+      // sinon fallback sur user_id
+      if (companyId) q = q.eq('company_id', companyId)
+      else q = q.eq('user_id', uid)
+      return q
+    }
+    let result = await fetchAllRows(buildQuery)
+    if (result.error) {
+      // Coupure réseau ou erreur temporaire du serveur : on retente une fois automatiquement
+      // avant d'afficher une erreur, plutôt que de montrer silencieusement une liste vide.
+      await new Promise(r=>setTimeout(r,1200))
+      result = await fetchAllRows(buildQuery)
+    }
+    if (result.error) {
+      setLoadError(true); setItems([]); setLoading(false)
+      toast.error('Impossible de charger la liste (connexion instable). Cliquez sur Actualiser pour réessayer.')
+      return
+    }
+    let rowsF = result.data||[]
     if (table==='compta_fournisseurs' && rowsF.length) {
       const ids = rowsF.map(r=>r.id)
-      const { data:av } = await supabase.from('compta_avances_fournisseur')
-        .select('fournisseur_id,type_avance,quantite_recue,valeur_remboursement').in('fournisseur_id', ids)
+      // Récupération par lots : une seule requête avec des centaines d'identifiants dans l'URL
+      // peut être rejetée par le serveur (erreur silencieuse ici, "Bad Request" ailleurs).
+      const CHUNK = 150
+      let av = []
+      for (let i=0; i<ids.length; i+=CHUNK) {
+        const { data:batch } = await supabase.from('compta_avances_fournisseur')
+          .select('fournisseur_id,type_avance,quantite_recue,valeur_remboursement').in('fournisseur_id', ids.slice(i,i+CHUNK))
+        av = av.concat(batch||[])
+      }
       const byF = {}
-      ;(av||[]).forEach(a=>{ (byF[a.fournisseur_id]=byF[a.fournisseur_id]||[]).push(a) })
+      av.forEach(a=>{ (byF[a.fournisseur_id]=byF[a.fournisseur_id]||[]).push(a) })
       rowsF = rowsF.map(r=>({ ...r, _avances: byF[r.id]||[] }))
     }
     setItems(rowsF)
+    setLoading(false)
   },[table,companyId])
 
   useEffect(()=>{ load() },[load])
 
-  // Supprimer toute la liste (fournisseurs uniquement)
+  // Supprimer la liste (fournisseurs uniquement) — soit tout, soit seulement les lignes qui
+  // correspondent au filtre actif (recherche / type / provenance) si un filtre est appliqué.
   const deleteAll = async()=>{
     const cid = companyId || companies[0]?.id
     if(!cid){ toast.error('Aucune société sélectionnée.'); return }
-    if(items.length===0){ toast.error('La liste est déjà vide.'); return }
-    if(!confirm(`⚠️ Supprimer DÉFINITIVEMENT les ${items.length} fournisseur(s) de la liste ? Cette action est irréversible.`)) return
-    if(!confirm('Confirmez-vous une dernière fois la suppression totale ?')) return
-    const { error } = await supabase.from(table).delete().eq('company_id', cid)
-    if(error){ toast.error(error.message); return }
-    toast.success('Liste supprimée.'); load()
+    if(filtered.length===0){ toast.error('Aucun fournisseur ne correspond au filtre actuel.'); return }
+    const isFiltered = filtered.length !== items.length
+    const label = isFiltered ? `les ${filtered.length} fournisseur(s) correspondant au filtre actuel` : `les ${items.length} fournisseur(s) de la liste`
+    if(!confirm(`⚠️ Supprimer DÉFINITIVEMENT ${label} ? Cette action est irréversible.`)) return
+    if(!confirm('Confirmez-vous une dernière fois la suppression ?')) return
+
+    if (!isFiltered) {
+      // Pas de filtre actif : suppression en un seul appel simple (pas de liste d'identifiants
+      // dans l'URL, donc pas de limite de taille même avec des centaines de fiches).
+      const { error } = await supabase.from(table).delete().eq('company_id', cid)
+      if(error){ toast.error(error.message); return }
+      toast.success(`${items.length} fournisseur(s) supprimé(s).`); load(); return
+    }
+
+    // Filtre actif : suppression par lots pour éviter une URL trop longue (erreur "Bad Request")
+    // quand la liste d'identifiants à supprimer est très longue.
+    const ids = filtered.map(it=>it.id)
+    const CHUNK = 150
+    for (let i=0; i<ids.length; i+=CHUNK) {
+      const { error } = await supabase.from(table).delete().in('id', ids.slice(i, i+CHUNK))
+      if(error){ toast.error(error.message); return }
+    }
+    toast.success(`${ids.length} fournisseur(s) supprimé(s).`); load()
   }
 
   const provenances = [...new Set(items.map(i=>i.provenance).filter(Boolean))]
@@ -2275,13 +3096,26 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     }
     if (filterType && it.type !== filterType) return false
     if (filterProv && it.provenance !== filterProv) return false
+    if (filterGenre && it.genre !== filterGenre) return false
+    if (filterHandicap && (filterHandicap==='oui') !== !!it.handicap) return false
     return true
   })
 
   const set = e => setForm(f=>({...f,[e.target.name]:e.target.value}))
+  const setTel = e => setForm(f=>({...f,[e.target.name]:formatTelPairs(e.target.value)}))
 
-  const baseDefaults = { company_id:companyId||companies[0]?.id||'', nom:'', prenom:'', nom_societe:'', telephone:'', provenance:'', cip:'', ifu:'', email:'', adresse:'', mentor_nom:'', mentor_telephone:'', mentor_cip:'', departement:'', commune:'', arrondissement:'', village:'', nom_bas_fonds:'', superficie_bas_fonds:'', cooperative_affiliee:'', numero_contrat:'', prix_contrat:'' }
+  const baseDefaults = { company_id:companyId||'', nom:'', prenom:'', nom_societe:'', telephone:'', provenance:'', cip:'', ifu:'', email:'', adresse:'', genre:'', handicap:false, mentor_nom:'', mentor_telephone:'', mentor_cip:'', mentor_age:'', departement:'', commune:'', arrondissement:'', village:'', nom_bas_fonds:'', superficie_bas_fonds:'', cooperative_affiliee:'', numero_contrat:'', prix_contrat:'',
+    date_naissance:'', age:'', tranche_age:'', nationalite:'', niveau_instruction:'',
+    reside_localite:false, disponible_formation:false, accepte_bonnes_pratiques:false, accepte_partenariat:false, a_deja_cultive_riz:false,
+    nombre_jeunes_femmes:'', nombre_jeunes_hommes:'', acces_garanti_terre:'', propriete_terre:false, mode_acces_terre:'', decision:'' }
   const open = (it=null) => {
+    // Si "Toutes les sociétés" est sélectionné et qu'il existe plusieurs sociétés, on refuse
+    // d'ajouter une fiche : impossible de deviner à quelle société elle doit être rattachée
+    // (c'était la cause des fournisseurs/clients qui se retrouvaient affectés à la mauvaise société).
+    if (!it && !companyId && companies.length>1) {
+      toast.error(`Sélectionnez une société précise (en haut de l'écran) avant d'ajouter un(e) ${titleSingle.toLowerCase()} — "Toutes les sociétés" ne suffit pas.`)
+      return
+    }
     const defaults = extraFields ? extraFields.defaults : {}
     setForm(it?{...it}:{...baseDefaults,...defaults}); setModal(it?'edit':'add')
     setAvances([])
@@ -2310,21 +3144,33 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     e.preventDefault(); setSaving(true)
     const uid = (await supabase.auth.getUser()).data?.user?.id
     const isPhysique = (form.type||'physique')!=='morale'
-    const mentorFields = table==='compta_fournisseurs' && isPhysique ? ['mentor_nom','mentor_telephone','mentor_cip'] : []
+    const mentorFields = table==='compta_fournisseurs' && isPhysique ? ['mentor_nom','mentor_telephone','mentor_cip','mentor_age'] : []
     const locFields = table==='compta_fournisseurs' ? ['departement','commune','arrondissement','village','nom_bas_fonds','superficie_bas_fonds','cooperative_affiliee','numero_contrat'] : []
     const fournExtra = table==='compta_fournisseurs' ? ['prix_contrat'] : []
-    const fields = ['company_id','nom','telephone','provenance','cip','ifu','email','adresse', ...mentorFields, ...locFields, ...fournExtra, ...(extraFields?.names||[])]
+    const jeuneFields = table==='compta_fournisseurs' ? [
+      'date_naissance','age','tranche_age','nationalite','niveau_instruction',
+      'reside_localite','disponible_formation','accepte_bonnes_pratiques','accepte_partenariat','a_deja_cultive_riz',
+      'nombre_jeunes_femmes','nombre_jeunes_hommes','acces_garanti_terre','propriete_terre','mode_acces_terre','decision',
+    ] : []
+    const fields = ['company_id','nom','telephone','provenance','cip','ifu','email','adresse','genre','handicap', ...mentorFields, ...locFields, ...fournExtra, ...jeuneFields, ...(extraFields?.names||[])]
     const pay = {}; fields.forEach(k=>{ if(form[k]!==undefined) pay[k]=form[k] })
     // Normaliser les champs numériques (accepter les décimales avec virgule : 0,5)
-    ;['superficie_bas_fonds','prix_contrat'].forEach(k=>{
+    ;['superficie_bas_fonds','prix_contrat','mentor_age','age','nombre_jeunes_femmes','nombre_jeunes_hommes'].forEach(k=>{
       if (!(k in pay)) return
       pay[k] = (pay[k]===''||pay[k]==null) ? null : numFR(pay[k])
     })
-    // Fix: ensure company_id is a valid non-empty value
+    // Validation bloquante des identifiants numériques (facultatifs, mais mal formés = refusés)
+    if (!isValidCIP(pay.cip)) { toast.error('N° CIP invalide : il doit contenir exactement 10 chiffres.'); setSaving(false); return }
+    if (!isValidIFU(pay.ifu)) { toast.error('N° IFU invalide : il doit contenir exactement 13 chiffres.'); setSaving(false); return }
+    if (!isValidTel(pay.telephone)) { toast.error('Numéro de téléphone invalide : il doit contenir exactement 10 chiffres.'); setSaving(false); return }
+    if ('mentor_cip' in pay && !isValidCIP(pay.mentor_cip)) { toast.error('N° CIP du mentor invalide : il doit contenir exactement 10 chiffres.'); setSaving(false); return }
+    if ('mentor_telephone' in pay && !isValidTel(pay.mentor_telephone)) { toast.error('Téléphone du mentor invalide : il doit contenir exactement 10 chiffres.'); setSaving(false); return }
+    // Fix: ensure company_id is a valid non-empty value — ne JAMAIS deviner une société au hasard
+    // (companies[0] a été retiré : cela affectait parfois la fiche à la mauvaise société).
     if (!pay.company_id) {
-      const prof = (await supabase.from('compta_profiles').select('company_id').eq('id', uid).single()).data
-      const cid = companyId || prof?.company_id || companies[0]?.id
-      if (!cid) { toast.error('Veuillez sélectionner une société avant d\'enregistrer.'); setSaving(false); return }
+      const prof = (await supabase.from('compta_profiles').select('company_id').eq('id', uid).maybeSingle()).data
+      const cid = companyId || prof?.company_id
+      if (!cid) { toast.error('Veuillez sélectionner une société précise (en haut de l\'écran) avant d\'enregistrer.'); setSaving(false); return }
       pay.company_id = cid
     }
     if (table==='compta_clients' || table==='compta_fournisseurs') {
@@ -2368,14 +3214,73 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     ? (it.type==='morale' ? it.nom_societe : (it.nom||''))
     : (it.nom||'')
 
+  // ── DÉTECTION & SUPPRESSION DES DOUBLONS (fournisseurs) ───────────────────
+  // Deux fiches sont considérées comme doublons si elles partagent : le même
+  // nom/raison sociale + téléphone, OU le même IFU, OU le même CIP (non vides).
+  const normalizeStr = s => (s||'').toString().trim().toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/\s+/g,' ')
+  const normalizePhone = s => (s||'').toString().replace(/\D/g,'')
+
+  const findDuplicateGroups = () => {
+    const parent = {}
+    const find = id => { while(parent[id]!==id) id = parent[id] = parent[parent[id]]; return id }
+    const union = (a,b) => { const ra=find(a), rb=find(b); if(ra!==rb) parent[rb]=ra }
+    items.forEach(it=>{ parent[it.id]=it.id })
+
+    const byKey = {}
+    items.forEach(it=>{
+      const nameKey = normalizeStr(displayName(it)) && normalizePhone(it.telephone)
+        ? 'nt|'+normalizeStr(displayName(it))+'|'+normalizePhone(it.telephone) : null
+      const ifuKey = it.ifu ? 'ifu|'+normalizeStr(it.ifu) : null
+      const cipKey = it.cip ? 'cip|'+normalizeStr(it.cip) : null
+      ;[nameKey, ifuKey, cipKey].filter(Boolean).forEach(k=>{
+        if (!(k in byKey)) byKey[k] = it.id
+        else union(byKey[k], it.id)
+      })
+    })
+
+    const groups = {}
+    items.forEach(it=>{ const r=find(it.id); (groups[r]=groups[r]||[]).push(it) })
+    return Object.values(groups).filter(g=>g.length>1)
+  }
+
+  const removeDuplicates = async () => {
+    const groups = findDuplicateGroups()
+    if (groups.length===0) { toast.success('Aucun doublon trouvé.'); return }
+    const totalToRemove = groups.reduce((s,g)=>s+g.length-1,0)
+    const preview = groups.slice(0,10).map(g=>`• ${displayName(g[0])||'(sans nom)'} (${g.length} fiches)`).join('\n')
+    if (!confirm(`🔎 ${groups.length} groupe(s) de doublons détecté(s), soit ${totalToRemove} fiche(s) en trop.\n\n${preview}${groups.length>10?'\n…':''}\n\nLa fiche la plus complète de chaque groupe sera conservée, les autres seront archivées. Continuer ?`)) return
+
+    const idsToRemove = []
+    groups.forEach(g=>{
+      const scoreOf = it => Object.entries(it).filter(([k,v])=>k!=='_avances' && k!=='compta_companies' && v!==null && v!=='' && v!==undefined).length
+      const sorted = [...g].sort((a,b)=>{
+        const sd = scoreOf(b) - scoreOf(a)
+        if (sd !== 0) return sd
+        return new Date(a.created_at||0) - new Date(b.created_at||0)
+      })
+      idsToRemove.push(...sorted.slice(1).map(it=>it.id))
+    })
+
+    // Suppression par lots pour éviter une URL trop longue (erreur "Bad Request") si beaucoup
+    // de doublons sont détectés d'un coup.
+    const CHUNK = 150
+    for (let i=0; i<idsToRemove.length; i+=CHUNK) {
+      const { error } = await supabase.from(table).update({actif:false}).in('id', idsToRemove.slice(i, i+CHUNK))
+      if (error) { toast.error(error.message); return }
+    }
+    toast.success(`${idsToRemove.length} doublon(s) supprimé(s).`)
+    load()
+  }
+
   // ── IMPORT / EXPORT CSV (fournisseurs & clients) ──────────────────────────
   const [importing, setImporting] = useState(false)
   const canImport = table==='compta_fournisseurs' || table==='compta_clients'
 
   const downloadTemplate = () => {
-    const headers = ['type','nom','nom_societe','telephone','provenance','cooperative_affiliee','numero_contrat','cip','ifu','email','adresse','mentor_nom','mentor_telephone','mentor_cip','departement','commune','arrondissement','village','nom_bas_fonds','superficie_bas_fonds','prix_contrat','labour_qte','labour_montant','semences_qte','semences_montant','engrais_qte','engrais_montant','herbicide_qte','herbicide_montant','credits_qte','credits_montant']
-    const ex1 = ['physique','HAYA Martin','','22997000000','Tanguiéta','Coop PINGOU','CTR-2026-001','','3202012190967','martin@exemple.com','BP 707','KOUDORO Jean','22995000000','CIP9988','Atacora','Tanguiéta','Cotiakou','Pingou','Bas-fonds Pingou','2.5','150000','2.5','50000','10','30000','','','1.5','15000','','']
-    const ex2 = ['morale','','SARL EXEMPLE','22996000000','Natitingou','','','','3201998877665','contact@exemple.com','Cotonou','','','','','','','','','','','','','','','','','','','','']
+    const headers = ['type','nom','nom_societe','telephone','provenance','cooperative_affiliee','numero_contrat','cip','ifu','email','adresse','genre','handicap','mentor_nom','mentor_telephone','mentor_cip','mentor_age','departement','commune','arrondissement','village','nom_bas_fonds','superficie_bas_fonds','date_naissance','age','tranche_age','nationalite','niveau_instruction','reside_localite','disponible_formation','accepte_bonnes_pratiques','accepte_partenariat','a_deja_cultive_riz','nombre_jeunes_femmes','nombre_jeunes_hommes','acces_garanti_terre','propriete_terre','mode_acces_terre','decision','prix_contrat','labour_qte','labour_montant','semences_qte','semences_montant','engrais_qte','engrais_montant','herbicide_qte','herbicide_montant','credits_qte','credits_montant']
+    const ex1 = ['physique','HAYA Martin','','22997000000','Tanguiéta','Coop PINGOU','CTR-2026-001','','3202012190967','martin@exemple.com','BP 707','Homme','Non','KOUDORO Jean','22995000000','CIP9988','45','Atacora','Tanguiéta','Cotiakou','Pingou','Bas-fonds Pingou','2.5','2002-05-14','24','18-25','Béninoise','Secondaire','Oui','Oui','Oui','Oui','Non','1','2','3-5 ans','Non','Héritage familial','Accepté','150000','2.5','50000','10','30000','','','1.5','15000','','']
+    const ex2 = ['morale','','SARL EXEMPLE','22996000000','Natitingou','','','','3201998877665','contact@exemple.com','Cotonou','','','','','','','','','','','','','','','','','','','','','','','','','','','','','','','','','','','','','','','']
     const csv = [headers.join(';'), ex1.join(';'), ex2.join(';')].join('\n')
     const blob = new Blob(['\ufeff'+csv], {type:'text/csv;charset=utf-8;'})
     const url = URL.createObjectURL(blob)
@@ -2390,15 +3295,15 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     if(!file) return
     setImporting(true)
     try {
-      const text = await file.text()
+      const text = await readTextFileFR(file)
       const lines = text.replace(/^\ufeff/,'').split(/\r?\n/).filter(l=>l.trim())
       if(lines.length<2){ toast.error('Fichier vide ou sans données'); setImporting(false); return }
       const delim = lines[0].includes(';') ? ';' : ','
       const headers = lines[0].split(delim).map(h=>h.trim().toLowerCase())
       const uid = (await supabase.auth.getUser()).data?.user?.id
-      const prof = (await supabase.from('compta_profiles').select('company_id').eq('id',uid).single()).data
-      const cid = companyId || prof?.company_id || companies[0]?.id
-      if(!cid){ toast.error('Aucune société active'); setImporting(false); return }
+      const prof = (await supabase.from('compta_profiles').select('company_id').eq('id',uid).maybeSingle()).data
+      const cid = companyId || prof?.company_id
+      if(!cid){ toast.error('Sélectionnez une société précise (en haut de l\'écran) avant d\'importer — "Toutes les sociétés" ne suffit pas.'); setImporting(false); return }
 
       const rows = []
       const avancesPerRow = []
@@ -2420,6 +3325,8 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
           telephone: obj.telephone||null, provenance: obj.provenance||null,
           cip: obj.cip||null, ifu: obj.ifu||null,
           email: obj.email||null, adresse: obj.adresse||null,
+          genre: obj.genre||null,
+          handicap: /^(oui|o|yes|y|1|true|vrai)$/i.test((obj.handicap||'').trim()),
           mentor_nom: obj.mentor_nom||null,
           mentor_telephone: obj.mentor_telephone||null,
           mentor_cip: obj.mentor_cip||null,
@@ -2433,6 +3340,23 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
             nom_bas_fonds: obj.nom_bas_fonds||null,
             superficie_bas_fonds: obj.superficie_bas_fonds ? parseFloat(obj.superficie_bas_fonds.replace(',','.'))||null : null,
             prix_contrat: obj.prix_contrat ? parseFloat(String(obj.prix_contrat).replace(',','.'))||null : null,
+            mentor_age: obj.mentor_age ? parseInt(obj.mentor_age,10)||null : null,
+            date_naissance: obj.date_naissance||null,
+            age: obj.age ? parseInt(obj.age,10)||null : null,
+            tranche_age: obj.tranche_age||null,
+            nationalite: obj.nationalite||null,
+            niveau_instruction: obj.niveau_instruction||null,
+            reside_localite: /^(oui|o|yes|y|1|true|vrai)$/i.test((obj.reside_localite||'').trim()),
+            disponible_formation: /^(oui|o|yes|y|1|true|vrai)$/i.test((obj.disponible_formation||'').trim()),
+            accepte_bonnes_pratiques: /^(oui|o|yes|y|1|true|vrai)$/i.test((obj.accepte_bonnes_pratiques||'').trim()),
+            accepte_partenariat: /^(oui|o|yes|y|1|true|vrai)$/i.test((obj.accepte_partenariat||'').trim()),
+            a_deja_cultive_riz: /^(oui|o|yes|y|1|true|vrai)$/i.test((obj.a_deja_cultive_riz||'').trim()),
+            nombre_jeunes_femmes: obj.nombre_jeunes_femmes ? parseInt(obj.nombre_jeunes_femmes,10)||null : null,
+            nombre_jeunes_hommes: obj.nombre_jeunes_hommes ? parseInt(obj.nombre_jeunes_hommes,10)||null : null,
+            acces_garanti_terre: obj.acces_garanti_terre||null,
+            propriete_terre: /^(oui|o|yes|y|1|true|vrai)$/i.test((obj.propriete_terre||'').trim()),
+            mode_acces_terre: obj.mode_acces_terre||null,
+            decision: obj.decision||null,
           } : {})
         })
         avancesPerRow.push(table==='compta_fournisseurs' ? avsImp : [])
@@ -2470,8 +3394,124 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
   }
 
   // Export Excel + PDF de la liste (clients & fournisseurs) — dispo aussi en lecture seule (super admin)
-  const companyName = companies.find(c=>c.id===companyId)?.raison_sociale || ''
+  const company = companies.find(c=>c.id===companyId)
+  const companyName = company?.raison_sociale || ''
   const isFourn = table==='compta_fournisseurs'
+
+  // ── FICHES MENTORS (fournisseurs uniquement) ──────────────────────────────
+  const [mentorModalOpen, setMentorModalOpen] = useState(false)
+  const [mentorBatchMode, setMentorBatchMode] = useState(false)
+  const [selectedMentor, setSelectedMentor] = useState('')
+  const [mentorInfo, setMentorInfo] = useState({ intitule_projet:'', financement:'', structure_pilote:'', campagne_agricole:'', numero_contrat:'' })
+  const setMentorInfoField = e => setMentorInfo(f=>({...f,[e.target.name]:e.target.value}))
+  const mentors = isFourn ? [...new Set(items.map(i=>i.mentor_nom).filter(Boolean))].sort() : []
+
+  const openMentorModal = () => {
+    if (mentors.length===0) { toast.error('Aucun fournisseur n\'a de mentor renseigné.'); return }
+    setSelectedMentor(mentors[0])
+    setMentorInfo({ intitule_projet:company?.intitule_projet||'', financement:company?.financement||'', structure_pilote:company?.structure_pilote||'', campagne_agricole:company?.campagne_agricole||'', numero_contrat:'' })
+    setMentorBatchMode(false)
+    setMentorModalOpen(true)
+  }
+
+  const openMentorModalAll = () => {
+    if (mentors.length===0) { toast.error('Aucun fournisseur n\'a de mentor renseigné.'); return }
+    setMentorInfo({ intitule_projet:company?.intitule_projet||'', financement:company?.financement||'', structure_pilote:company?.structure_pilote||'', campagne_agricole:company?.campagne_agricole||'', numero_contrat:'' })
+    setMentorBatchMode(true)
+    setMentorModalOpen(true)
+  }
+
+  const buildFicheMentorHTML = (mentorName, info) => {
+    const producteurs = items.filter(i => i.mentor_nom === mentorName)
+    if (producteurs.length===0) return null
+    const premier = producteurs[0]
+    const rows = producteurs.map((p,i)=>`<tr><td style="text-align:center">${i+1}</td><td>${displayName(p)||''}</td><td>${p.telephone||''}</td><td>${p.numero_contrat||''}</td></tr>`).join('')
+    return `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><title>Fiche mentor ${mentorName}</title>
+      <style>
+        *{margin:0;padding:0;box-sizing:border-box}
+        body{font-family:'Times New Roman',serif;font-size:11pt;color:#000;padding:10px}
+        table{width:100%;border-collapse:collapse;margin-bottom:16px}
+        td,th{border:1px solid #000;padding:6px 8px;font-size:10pt;vertical-align:top}
+        .titre{text-align:center;font-weight:bold;font-size:14pt;margin:6px 0 16px}
+        .lbl{font-weight:bold;width:40%}
+        .blue{background:#B4C6E7;font-weight:bold;text-align:center}
+      </style></head><body>
+      <div class="titre">FICHE MENTOR</div>
+      <table class="no-border">
+        <tr><td class="lbl">Intitulé du projet</td><td>${info?.intitule_projet||''}</td></tr>
+        <tr><td class="lbl">Financement</td><td>${info?.financement||''}</td></tr>
+        <tr><td class="lbl">Structure de pilotage</td><td>${info?.structure_pilote||''}</td></tr>
+        <tr><td class="lbl">Campagne Agricole</td><td>${info?.campagne_agricole||''}</td></tr>
+        <tr><td class="lbl">Nom et prénom du Mentor</td><td>${mentorName||''}</td></tr>
+        <tr><td class="lbl">Téléphone</td><td>${premier.mentor_telephone||''}</td></tr>
+        <tr><td class="lbl">N° contrat</td><td>${info?.numero_contrat||''}</td></tr>
+        <tr><td class="lbl">Commune</td><td>${premier.commune||''}</td></tr>
+        <tr><td class="lbl">Arrondissement</td><td>${premier.arrondissement||''}</td></tr>
+        <tr><td class="lbl">Village</td><td>${premier.village||''}</td></tr>
+      </table>
+      <div style="font-weight:bold;margin-bottom:8px">Liste des producteurs à la charge du Mentor :</div>
+      <table>
+        <tr class="blue"><td style="width:8%">N°</td><td>Nom et Prénom</td><td>Contact</td><td>N° du Contrat</td></tr>
+        ${rows}
+      </table>
+      </body></html>`
+  }
+
+  const printFicheMentor = () => {
+    const html = buildFicheMentorHTML(selectedMentor, mentorInfo)
+    if (!html) { toast.error('Aucun producteur pour ce mentor.'); return }
+    openPrintWindow(html, `fiche_mentor_${selectedMentor.replace(/\s+/g,'_')}`)
+    setMentorModalOpen(false)
+  }
+
+  const printFichesMentorsTout = () => {
+    if (mentors.length===0) { toast.error('Aucun fournisseur n\'a de mentor renseigné.'); return }
+    const docs = mentors.map(m=>buildFicheMentorHTML(m, mentorInfo)).filter(Boolean)
+    if (docs.length===0) { toast.error('Aucun producteur pour les mentors.'); return }
+    const styleMatch = docs[0].match(/<style[^>]*>([\s\S]*?)<\/style>/i)
+    const styles = styleMatch ? styleMatch[1] : ''
+    const allBodies = docs.map((html,i)=>{
+      const bodyMatch = html.match(/<body[^>]*>([\s\S]*)<\/body>/i)
+      const bodyContent = bodyMatch ? bodyMatch[1] : html
+      const pageBreak = i<docs.length-1 ? '<div style="page-break-after:always;"></div>' : ''
+      return `<div class="fiche-page">${bodyContent}</div>${pageBreak}`
+    }).join('')
+    const fullHtml = `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><title>Fiches mentors — ${companyName}</title>
+      <style>
+        ${styles}
+        .fiche-page{page-break-inside:avoid}
+        @media print { @page { margin:10mm 12mm; size:A4 portrait } }
+      </style></head><body>${allBodies}</body></html>`
+    openPrintWindow(fullHtml, `fiches_mentors_${companyName.replace(/\s+/g,'_')}`)
+    setMentorModalOpen(false)
+  }
+
+  const exportExcelMentors = () => {
+    if (mentors.length===0) { toast.error('Aucun fournisseur n\'a de mentor renseigné.'); return }
+    const rows = mentors.map(m => {
+      const producteurs = items.filter(i=>i.mentor_nom===m)
+      const premier = producteurs[0] || {}
+      return { nom:m, telephone:premier.mentor_telephone||'', cip:premier.mentor_cip||'', age:premier.mentor_age||'', nb:producteurs.length }
+    })
+    const cols = ['Nom','Téléphone','CIP','Âge','Nb. producteurs']
+    const thead = cols.map(c=>`<th style="background:#eceff3;color:#1a1a1a;padding:6px 10px;white-space:nowrap">${c}</th>`).join('')
+    const tbody = rows.map((m,i)=>`<tr style="background:${i%2===0?'#f8fafc':'white'}"><td>${m.nom}</td><td>${m.telephone}</td><td>${m.cip}</td><td>${m.age}</td><td>${m.nb}</td></tr>`).join('')
+    const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+      <head><meta charset="UTF-8"><style>
+        table{border-collapse:collapse;width:100%}
+        th,td{border:1px solid #d1d5db;padding:5px 8px;font-size:10pt}
+        h2{font-family:Arial;color:#0f2044}p{font-family:Arial;font-size:9pt;color:#555}
+      </style></head><body>
+      <h2>Liste des Mentors</h2>
+      <p>${companyName} — ${rows.length} mentor(s) — Exporté le ${new Date().toLocaleDateString('fr-FR')}</p>
+      <table><thead><tr>${thead}</tr></thead><tbody>${tbody}</tbody></table>
+      </body></html>`
+    const blob = new Blob(['\uFEFF'+html], {type:'application/vnd.ms-excel;charset=utf-8'})
+    const url  = URL.createObjectURL(blob)
+    const a    = document.createElement('a')
+    a.href=url; a.download=`liste_mentors_${companyName.replace(/\s+/g,'_')}.xls`; a.click()
+    URL.revokeObjectURL(url)
+  }
 
   const tiersVal = (it,c) => ({
     'Type': it.type==='morale'?'Société':'Physique',
@@ -2484,6 +3524,11 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     'N° CIP': it.cip||'',
     'Email': it.email||'',
     'Adresse': it.adresse||'',
+    'Genre': it.genre||'',
+    'Handicap': it.handicap ? 'Oui' : 'Non',
+    'Mentor - Nom': it.mentor_nom||'',
+    'Mentor - Téléphone': it.mentor_telephone||'',
+    'Mentor - CIP': it.mentor_cip||'',
     'Département': it.departement||'',
     'Commune': it.commune||'',
     'Arrondissement': it.arrondissement||'',
@@ -2496,13 +3541,32 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     'Détail avances': (Array.isArray(it._avances)?it._avances:[]).map(a=>`${a.type_avance}: ${Number(a.quantite_recue)||0} = ${Number(a.valeur_remboursement)||0}`).join(' | '),
   }[c] ?? '')
 
+  // ── Colonnes disponibles pour les exports PDF & Excel (filtrables) ────────
+  const allColumns = [
+    {key:'Type', w:6},{key:'Nom', w:16},{key:'Téléphone', w:9},{key:'Provenance', w:9},
+    ...(isFourn?[{key:'Coopérative', w:8},{key:'N° Contrat', w:7}]:[]),
+    {key:'N° IFU', w:8},{key:'N° CIP', w:7},{key:'Email', w:10},{key:'Adresse', w:10},
+    {key:'Genre', w:7},{key:'Handicap', w:6},
+    ...(isFourn?[
+      {key:'Mentor - Nom', w:10},{key:'Mentor - Téléphone', w:9},{key:'Mentor - CIP', w:7},
+      {key:'Département', w:7},{key:'Commune', w:7},{key:'Arrondissement', w:8},{key:'Village', w:7},
+      {key:'Bas-fonds', w:8},{key:'Superficie (ha)', w:6},
+      {key:'Total avance (FCFA)', w:8},{key:'Prix/contrat (FCFA)', w:8},{key:'Riz paddy équiv. (kg)', w:7},
+      {key:'Détail avances', w:14},
+    ]:[]),
+  ]
+  const visibleColumns = allColumns.filter(c => selectedCols===null || selectedCols.includes(c.key))
+  const isColSelected = key => selectedCols===null || selectedCols.includes(key)
+  const toggleCol = key => setSelectedCols(prev => {
+    const base = prev===null ? allColumns.map(c=>c.key) : prev
+    return base.includes(key) ? base.filter(k=>k!==key) : [...base, key]
+  })
+  const selectAllCols = () => setSelectedCols(allColumns.map(c=>c.key))
+  const deselectAllCols = () => setSelectedCols([])
+
   const exportExcelTiers = () => {
-    const cols = [
-      'Type','Nom','Téléphone','Provenance',
-      ...(isFourn?['Coopérative','N° Contrat']:[]),
-      'N° IFU','N° CIP','Email','Adresse',
-      ...(isFourn?['Département','Commune','Arrondissement','Village','Bas-fonds','Superficie (ha)','Total avance (FCFA)','Prix/contrat (FCFA)','Riz paddy équiv. (kg)','Détail avances']:[]),
-    ]
+    if (visibleColumns.length===0) { toast.error('Sélectionnez au moins une colonne à exporter.'); return }
+    const cols = visibleColumns.map(c=>c.key)
     const thead = cols.map(c=>`<th style="background:#eceff3;color:#1a1a1a;padding:6px 10px;white-space:nowrap">${c}</th>`).join('')
     const tbody = filtered.map((it,i)=>`<tr style="background:${i%2===0?'#f8fafc':'white'}">${cols.map(c=>`<td>${tiersVal(it,c)}</td>`).join('')}</tr>`).join('')
     const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
@@ -2523,30 +3587,12 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
   }
 
   const printListeTiers = () => {
-    const headers = isFourn ? [
-      {label:'Type', w:6},{label:'Nom', w:18},{label:'Téléphone', w:10},{label:'Provenance', w:9},
-      {label:'Coopérative', w:9},{label:'N° Contrat', w:7},
-      {label:'IFU', w:8},{label:'CIP', w:7},
-      {label:'Total avance', w:9},{label:'Prix/contrat', w:9},{label:'Riz paddy (kg)', w:8},
-    ] : [
-      {label:'Type', w:10},{label:'Nom', w:28},{label:'Téléphone', w:16},{label:'Provenance', w:16},
-      {label:'IFU', w:16},{label:'CIP', w:14},
-    ]
-    const rows = filtered.map(it=>[
-      it.type==='morale'?'Société':'Physique',
-      displayName(it),
-      it.telephone||'—',
-      it.provenance||'—',
-      ...(isFourn?[it.cooperative_affiliee||'—', it.numero_contrat||'—']:[]),
-      it.ifu||'—',
-      it.cip||'—',
-      ...(isFourn?[
-        (()=>{ const tt=(Array.isArray(it._avances)?it._avances:[]).reduce((sm,a)=>sm+(Number(a.valeur_remboursement)||0),0); return tt?Math.round(tt).toLocaleString('fr-FR'):'—' })(),
-        it.prix_contrat?Number(it.prix_contrat).toLocaleString('fr-FR'):'—',
-        (()=>{ const tt=(Array.isArray(it._avances)?it._avances:[]).reduce((sm,a)=>sm+(Number(a.valeur_remboursement)||0),0); const pp=Number(it.prix_contrat)||0; return pp>0?(tt/pp).toLocaleString('fr-FR',{maximumFractionDigits:2}):'—' })(),
-      ]:[]),
-    ])
-    printFilteredList({ title, companyName, headers, rows })
+    if (visibleColumns.length===0) { toast.error('Sélectionnez au moins une colonne à imprimer.'); return }
+    const totalW = visibleColumns.reduce((s,c)=>s+c.w,0) || 1
+    const headers = visibleColumns.map(c=>({label:c.key, w:c.w/totalW*100}))
+    const rows = filtered.map(it => visibleColumns.map(c=>tiersVal(it,c.key) || '—'))
+    const filename = `liste_${isFourn?'frs':'clients'}_${companyName}`
+    printFilteredList({ title, companyName, headers, rows, filename })
   }
 
   return (
@@ -2556,8 +3602,16 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
           <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
             {items.length>0 && (
               <>
+                <Btn sm variant="secondary" onClick={()=>setColModalOpen(true)}>🧮 Colonnes</Btn>
                 <Btn sm variant="info" onClick={printListeTiers}>🖨️ PDF liste</Btn>
                 <Btn sm variant="success" onClick={exportExcelTiers}>📊 Excel</Btn>
+              </>
+            )}
+            {isFourn && items.length>0 && (
+              <>
+                <Btn sm variant="secondary" onClick={openMentorModal}>🎓 Fiches Mentors</Btn>
+                <Btn sm variant="info" onClick={openMentorModalAll}>🖨️ Toutes les fiches Mentors</Btn>
+                <Btn sm variant="success" onClick={exportExcelMentors}>📊 Liste Mentors</Btn>
               </>
             )}
             {!readOnly && (
@@ -2574,10 +3628,17 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
                 </label>
               </>
             )}
+            {table==='compta_fournisseurs' && items.length>1 && (
+              <button onClick={removeDuplicates} title="Détecter et supprimer les doublons (même nom+téléphone, IFU ou CIP)"
+                style={{padding:'9px 14px',background:'#eff6ff',border:'1px solid #93c5fd',borderRadius:8,cursor:'pointer',fontSize:13,fontWeight:600,color:'#1d4ed8',display:'flex',alignItems:'center',gap:6}}>
+                🧹 Doublons
+              </button>
+            )}
             {table==='compta_fournisseurs' && items.length>0 && (
-              <button onClick={deleteAll} title="Supprimer toute la liste"
+              <button onClick={deleteAll}
+                title={filtered.length!==items.length ? `Supprimer uniquement les ${filtered.length} fournisseur(s) correspondant au filtre actif` : 'Supprimer toute la liste'}
                 style={{padding:'9px 14px',background:'#fef2f2',border:'1px solid #fca5a5',borderRadius:8,cursor:'pointer',fontSize:13,fontWeight:600,color:'#dc2626',display:'flex',alignItems:'center',gap:6}}>
-                🗑️ Vider la liste
+                🗑️ {filtered.length!==items.length ? `Supprimer filtrés (${filtered.length})` : 'Vider la liste'}
               </button>
             )}
             <Btn onClick={()=>open()}>+ Nouveau(elle)</Btn>
@@ -2604,8 +3665,24 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
               {provenances.map(p=><option key={p} value={p}>{p}</option>)}
             </select>
           )}
-          {(search||filterType||filterProv) && (
-            <button onClick={()=>{setSearch('');setFilterType('');setFilterProv('')}}
+          {(table==='compta_clients'||table==='compta_fournisseurs') && (
+            <select value={filterGenre} onChange={e=>setFilterGenre(e.target.value)}
+              style={{padding:'8px 12px',borderRadius:8,border:'1px solid #d1d5db',fontSize:13,background:'white'}}>
+              <option value=''>Tous genres</option>
+              <option value='Homme'>Homme</option>
+              <option value='Femme'>Femme</option>
+            </select>
+          )}
+          {(table==='compta_clients'||table==='compta_fournisseurs') && (
+            <select value={filterHandicap} onChange={e=>setFilterHandicap(e.target.value)}
+              style={{padding:'8px 12px',borderRadius:8,border:'1px solid #d1d5db',fontSize:13,background:'white'}}>
+              <option value=''>Handicap : tous</option>
+              <option value='oui'>Handicap : Oui</option>
+              <option value='non'>Handicap : Non</option>
+            </select>
+          )}
+          {(search||filterType||filterProv||filterGenre||filterHandicap) && (
+            <button onClick={()=>{setSearch('');setFilterType('');setFilterProv('');setFilterGenre('');setFilterHandicap('')}}
               style={{padding:'8px 12px',borderRadius:8,border:'1px solid #e2e8f0',fontSize:12,cursor:'pointer',background:'#f8fafc',color:'#64748b'}}>
               ✕ Réinitialiser
             </button>
@@ -2614,7 +3691,15 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
         </div>
       </Card>
       <div style={{background:'white',borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
-        {filtered.length===0 ? (
+        {loading ? (
+          <div style={{textAlign:'center',padding:'48px 24px',color:'#64748b'}}>Chargement...</div>
+        ) : loadError ? (
+          <div style={{textAlign:'center',padding:'48px 24px',color:'#dc2626'}}>
+            <div style={{fontSize:40,marginBottom:8}}>⚠️</div>
+            <p>Le chargement a échoué (connexion instable).</p>
+            <Btn onClick={()=>{setLoading(true);load()}}>🔄 Actualiser</Btn>
+          </div>
+        ) : filtered.length===0 ? (
           <div style={{textAlign:'center',padding:'48px 24px',color:'#64748b'}}>
             <div style={{fontSize:40,marginBottom:8}}>{icon}</div>
             <p>Aucun(e) {titleSingle}</p>
@@ -2670,7 +3755,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
             {(table==='compta_fournisseurs') && (form.type||'physique')==='morale' && (
               <Span2><Input label="Nom et Prénom(s) du représentant" name="nom" value={form.nom||''} onChange={set} /></Span2>
             )}
-            <Input label="Téléphone" name="telephone" value={form.telephone} onChange={set} />
+            <Input label="Téléphone" name="telephone" type="tel" value={form.telephone} onChange={setTel} />
             <Input label="Provenance" name="provenance" value={form.provenance} onChange={set} />
             {table==='compta_fournisseurs' && <Input label="Coopérative affiliée" name="cooperative_affiliee" value={form.cooperative_affiliee||''} onChange={set} />}
             {table==='compta_fournisseurs' && <Input label="N° Contrat" name="numero_contrat" value={form.numero_contrat||''} onChange={set} />}
@@ -2689,12 +3774,25 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
             )}
             <Input label="Email" name="email" type="email" value={form.email} onChange={set} />
             <Input label="Adresse" name="adresse" value={form.adresse} onChange={set} />
+            {(table==='compta_clients'||table==='compta_fournisseurs') && (
+              <Sel label="Genre" name="genre" value={form.genre||''} onChange={set}
+                options={[{value:'',label:'— Non renseigné —'},{value:'Homme',label:'Homme'},{value:'Femme',label:'Femme'}]} />
+            )}
+            {(table==='compta_clients'||table==='compta_fournisseurs') && (
+              <div style={{display:'flex',alignItems:'center',gap:8,paddingTop:22}}>
+                <input type="checkbox" id="handicap" checked={!!form.handicap}
+                  onChange={e=>setForm(f=>({...f,handicap:e.target.checked}))}
+                  style={{width:16,height:16,cursor:'pointer'}} />
+                <label htmlFor="handicap" style={{fontSize:13.5,color:'#374151',cursor:'pointer'}}>Personne en situation de handicap</label>
+              </div>
+            )}
             {table==='compta_fournisseurs' && (form.type||'physique')!=='morale' && (
               <>
                 <Span2><div style={{borderTop:'1px solid #e2e8f0',paddingTop:10,marginTop:4,fontSize:12,fontWeight:700,color:'#64748b'}}>👤 INFORMATIONS DU MENTOR (facultatif)</div></Span2>
                 <Span2><Input label="Nom et Prénom(s) du mentor" name="mentor_nom" value={form.mentor_nom||''} onChange={set} /></Span2>
-                <Input label="Téléphone du mentor" name="mentor_telephone" value={form.mentor_telephone||''} onChange={set} />
+                <Input label="Téléphone du mentor" name="mentor_telephone" type="tel" value={form.mentor_telephone||''} onChange={setTel} />
                 <Input label="CIP du mentor" name="mentor_cip" value={form.mentor_cip||''} onChange={set} />
+                <Input label="Âge du mentor" name="mentor_age" type="text" inputMode="numeric" value={form.mentor_age||''} onChange={set} />
               </>
             )}
             {table==='compta_fournisseurs' && (
@@ -2706,6 +3804,40 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
                 <Input label="Village" name="village" value={form.village||''} onChange={set} />
                 <Input label="Nom du bas-fonds" name="nom_bas_fonds" value={form.nom_bas_fonds||''} onChange={set} />
                 <Input label="Superficie bas-fonds (ha)" name="superficie_bas_fonds" type="text" inputMode="decimal" value={form.superficie_bas_fonds||''} onChange={set} />
+              </>
+            )}
+            {table==='compta_fournisseurs' && (
+              <>
+                <Span2><div style={{borderTop:'1px solid #e2e8f0',paddingTop:10,marginTop:4,fontSize:12,fontWeight:700,color:'#64748b'}}>🌾 PROFIL DU JEUNE & ÉLIGIBILITÉ (facultatif)</div></Span2>
+                <Input label="Date de naissance" name="date_naissance" type="date" value={form.date_naissance||''} onChange={set} />
+                <Input label="Âge" name="age" type="text" inputMode="numeric" value={form.age||''} onChange={set} />
+                <Input label="Tranche d'âge" name="tranche_age" value={form.tranche_age||''} onChange={set} placeholder="ex : 18-25" />
+                <Input label="Nationalité" name="nationalite" value={form.nationalite||''} onChange={set} />
+                <Input label="Niveau d'instruction" name="niveau_instruction" value={form.niveau_instruction||''} onChange={set} />
+                <Input label="Nombre de jeunes femmes (ménage)" name="nombre_jeunes_femmes" type="text" inputMode="numeric" value={form.nombre_jeunes_femmes||''} onChange={set} />
+                <Input label="Nombre de jeunes hommes (ménage)" name="nombre_jeunes_hommes" type="text" inputMode="numeric" value={form.nombre_jeunes_hommes||''} onChange={set} />
+                <Input label="Accès garanti à la terre (durée)" name="acces_garanti_terre" value={form.acces_garanti_terre||''} onChange={set} placeholder="ex : 3-5 ans" />
+                {!form.propriete_terre && (
+                  <Input label="Si non propriétaire, mode d'accès" name="mode_acces_terre" value={form.mode_acces_terre||''} onChange={set} />
+                )}
+                <Input label="Décision" name="decision" value={form.decision||''} onChange={set} placeholder="ex : Accepté, Rejeté, En attente" />
+                <Span2>
+                  <div style={{display:'flex',flexWrap:'wrap',gap:18}}>
+                    {[
+                      ['reside_localite','Réside dans la localité'],
+                      ['disponible_formation','Disponible pour formation'],
+                      ['accepte_bonnes_pratiques','Accepte les Bonnes Pratiques'],
+                      ['accepte_partenariat','Accepte le partenariat (rizerie)'],
+                      ['a_deja_cultive_riz','A déjà cultivé du riz'],
+                      ['propriete_terre','Propriétaire de la terre'],
+                    ].map(([k,label])=>(
+                      <label key={k} style={{display:'flex',alignItems:'center',gap:8,fontSize:13.5,color:'#374151',cursor:'pointer'}}>
+                        <input type="checkbox" checked={!!form[k]} onChange={e=>setForm(f=>({...f,[k]:e.target.checked}))} style={{width:16,height:16,cursor:'pointer'}} />
+                        {label}
+                      </label>
+                    ))}
+                  </div>
+                </Span2>
               </>
             )}
           </Grid>
@@ -2786,6 +3918,51 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
 
           <Row><Btn variant="secondary" onClick={close}>Annuler</Btn><Btn type="submit" disabled={saving}>{saving?'...':'Enregistrer'}</Btn></Row>
         </form>
+      </Modal>
+
+      <Modal open={colModalOpen} onClose={()=>setColModalOpen(false)} title="Colonnes à afficher (PDF & Excel)" size="sm">
+        <div style={{display:'flex',gap:8,marginBottom:14}}>
+          <Btn sm type="button" variant="secondary" onClick={selectAllCols}>Tout cocher</Btn>
+          <Btn sm type="button" variant="secondary" onClick={deselectAllCols}>Tout décocher</Btn>
+        </div>
+        <div style={{display:'flex',flexDirection:'column',gap:10,maxHeight:360,overflowY:'auto'}}>
+          {allColumns.map(c=>(
+            <label key={c.key} style={{display:'flex',alignItems:'center',gap:8,fontSize:13.5,color:'#334155',cursor:'pointer'}}>
+              <input type="checkbox" checked={isColSelected(c.key)} onChange={()=>toggleCol(c.key)} />
+              {c.key}
+            </label>
+          ))}
+        </div>
+        <Row><Btn onClick={()=>setColModalOpen(false)}>Fermer</Btn></Row>
+      </Modal>
+
+      <Modal open={mentorModalOpen} onClose={()=>setMentorModalOpen(false)}
+        title={mentorBatchMode ? 'Toutes les fiches Mentors' : 'Fiche Mentor'} size="sm">
+        {!mentorBatchMode && (
+          <div style={{marginBottom:16}}>
+            <label style={{display:'block',fontSize:12.5,fontWeight:600,color:'#374151',marginBottom:5}}>Mentor</label>
+            <select value={selectedMentor} onChange={e=>setSelectedMentor(e.target.value)}
+              style={{width:'100%',padding:'9px 12px',borderRadius:8,border:'1px solid #d1d5db',fontSize:13.5,background:'white'}}>
+              {mentors.map(m=><option key={m} value={m}>{m}</option>)}
+            </select>
+            <div style={{fontSize:12,color:'#64748b',marginTop:8}}>
+              {items.filter(i=>i.mentor_nom===selectedMentor).length} producteur(s) à la charge de ce mentor.
+            </div>
+          </div>
+        )}
+        <div style={{ fontSize:12.5, fontWeight:600, color:'#374151', margin:'0 0 8px' }}>
+          Informations à reporter sur {mentorBatchMode ? 'les fiches' : 'la fiche'}
+        </div>
+        <Grid cols={2} gap={12} style={{marginBottom:16}}>
+          <Input label="Intitulé du projet" name="intitule_projet" value={mentorInfo.intitule_projet} onChange={setMentorInfoField} placeholder="ex : RIZAO / Pilier 2" />
+          <Input label="Financement" name="financement" value={mentorInfo.financement} onChange={setMentorInfoField} placeholder="ex : RIZAO / MEDA" />
+          <Input label="Structure de pilotage" name="structure_pilote" value={mentorInfo.structure_pilote} onChange={setMentorInfoField} placeholder="ex : PSARIZ" />
+          <Input label="Campagne agricole" name="campagne_agricole" value={mentorInfo.campagne_agricole} onChange={setMentorInfoField} placeholder="ex : 2026-2027" />
+          <Input label="N° contrat" name="numero_contrat" value={mentorInfo.numero_contrat} onChange={setMentorInfoField} />
+        </Grid>
+        <Row><Btn variant="secondary" onClick={()=>setMentorModalOpen(false)}>Annuler</Btn>
+          <Btn onClick={mentorBatchMode ? printFichesMentorsTout : printFicheMentor}>📥 {mentorBatchMode?'Générer toutes les fiches':'Générer la fiche'}</Btn>
+        </Row>
       </Modal>
     </div>
   )
@@ -4567,6 +5744,7 @@ function AchatsSemisPage({ companies, companyId, toast, readOnly=false }) {
     setFournModal(true)
   }
   const setFourn = e => setFournForm(f=>({...f,[e.target.name]:e.target.value}))
+  const setFournTel = e => setFournForm(f=>({...f,[e.target.name]:formatTelPairs(e.target.value)}))
 
   // Enregistre le fournisseur dans la table (avec sécurité anti-doublon)
   const saveFourn = async e => {
@@ -4575,6 +5753,9 @@ function AchatsSemisPage({ companies, companyId, toast, readOnly=false }) {
     const nomAff = (isMorale ? fournForm.nom_societe : fournForm.nom || '').trim()
     if (!nomAff) { toast.error(isMorale?'Saisissez la raison sociale.':'Saisissez le nom du fournisseur.'); return }
     if (fournsNames.some(n=>n.toLowerCase()===nomAff.toLowerCase())) { toast.error('Ce fournisseur existe déjà.'); return }
+    if (!isValidTel(fournForm.telephone)) { toast.error('Numéro de téléphone invalide : il doit contenir exactement 10 chiffres.'); return }
+    if (!isValidCIP(fournForm.cip)) { toast.error('N° CIP invalide : il doit contenir exactement 10 chiffres.'); return }
+    if (!isValidIFU(fournForm.ifu)) { toast.error('N° IFU invalide : il doit contenir exactement 13 chiffres.'); return }
     const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
     const cid = form.company_id||companyId||companies[0]?.id
     if (!cid) { toast.error('Veuillez sélectionner une société.'); return }
@@ -4777,7 +5958,7 @@ function AchatsSemisPage({ companies, companyId, toast, readOnly=false }) {
             {fournForm.type==='morale'
               ? <Input label="Raison sociale *" name="nom_societe" value={fournForm.nom_societe||''} onChange={setFourn} required />
               : <Input label="Nom et prénom(s) *" name="nom" value={fournForm.nom||''} onChange={setFourn} required />}
-            <Input label="Téléphone" name="telephone" value={fournForm.telephone||''} onChange={setFourn} />
+            <Input label="Téléphone" name="telephone" type="tel" value={fournForm.telephone||''} onChange={setFournTel} />
             <Input label="Provenance" name="provenance" value={fournForm.provenance||''} onChange={setFourn} />
             <Input label="Coopérative affiliée" name="cooperative_affiliee" value={fournForm.cooperative_affiliee||''} onChange={setFourn} />
             <Input label="N° Contrat" name="numero_contrat" value={fournForm.numero_contrat||''} onChange={setFourn} />
@@ -5334,7 +6515,7 @@ function EtvRepertoirePage({ companies, companyId, toast, readOnly=false }) {
       const isAdmin = email===SUPER_ADMIN_EMAIL
       let ownerUid = uid
       if(isAdmin && companyId){
-        const { data:comp }=await supabase.from('compta_companies').select('user_id').eq('id',companyId).single()
+        const { data:comp }=await supabase.from('compta_companies').select('user_id').eq('id',companyId).maybeSingle()
         if(comp?.user_id) ownerUid = comp.user_id
       }
       let qF=supabase.from('compta_fournisseurs').select('id,nom,prenom,nom_societe,type,telephone,ifu')
@@ -6774,7 +7955,7 @@ function EtvTresoreriePage({ companies, companyId, toast }) {
       const isAdmin = sess.data.session.user.email === SUPER_ADMIN_EMAIL
       let ownerUid = uid
       if(isAdmin && companyId){
-        const { data:comp } = await supabase.from('compta_companies').select('user_id').eq('id',companyId).single()
+        const { data:comp } = await supabase.from('compta_companies').select('user_id').eq('id',companyId).maybeSingle()
         if(comp?.user_id) ownerUid = comp.user_id
       }
 
@@ -8429,14 +9610,17 @@ function EtatsFinanciersPage({ companies, companyId, toast }) {
   // Chargement de la fiche d'identification depuis compta_companies
   const chargerIdent = useCallback(async () => {
     if (!companyId) { setIdent(null); return }
-    const { data } = await supabase.from('compta_companies').select('*').eq('id', companyId).single()
+    const { data } = await supabase.from('compta_companies').select('*').eq('id', companyId).maybeSingle()
     setIdent(data || {})
   }, [companyId])
   useEffect(() => { chargerIdent() }, [chargerIdent])
 
-  const setI = (k, v) => setIdent(p => ({ ...(p || {}), [k]: v }))
+  const setI = (k, v) => setIdent(p => ({ ...(p || {}), [k]: (k==='tel'||k==='dirigeant_tel') ? formatTelPairs(v) : v }))
   const saveIdent = async () => {
     if (!companyId) { toast.error('Sélectionnez une société.'); return }
+    if (!isValidIFU(ident?.ifu)) { toast.error('N° IFU invalide : il doit contenir exactement 13 chiffres.'); return }
+    if (!isValidTel(ident?.tel)) { toast.error('Numéro de téléphone invalide : il doit contenir exactement 10 chiffres.'); return }
+    if (!isValidTel(ident?.dirigeant_tel)) { toast.error('Téléphone du dirigeant invalide : il doit contenir exactement 10 chiffres.'); return }
     const champs = ['raison_sociale', 'sigle', 'forme_juridique', 'adresse', 'ville', 'tel', 'email', 'ifu', 'rccm', 'code_activite', 'activite_principale', 'capital_social', 'date_creation', 'regime', 'centre_impots', 'dirigeant_nom', 'dirigeant_fonction', 'dirigeant_tel', 'comptable_nom']
     const payload = {}; champs.forEach(k => { if (ident?.[k] !== undefined) payload[k] = ident[k] === '' ? null : ident[k] })
     if (payload.capital_social != null) payload.capital_social = numFR(payload.capital_social)
@@ -10434,7 +11618,7 @@ function DocsAdminPage({ companies, companyId, toast, readOnly=false, profile })
       const uid=ad?.user?.id; if(!uid) return
       let q=supabase.from('compta_expression_besoin').select('id',{count:'exact',head:true})
         .eq('statut_validation','traitee').eq('vu_par_admin',false)
-      const prof=(await supabase.from('compta_profiles').select('company_id').eq('id',uid).single()).data
+      const prof=(await supabase.from('compta_profiles').select('company_id').eq('id',uid).maybeSingle()).data
       if(prof?.company_id) q=q.eq('company_id',prof.company_id)
       const { count }=await q
       setNbNonVus(count||0)
@@ -16186,13 +17370,23 @@ export default function ComptaPro() {
   const isUtilisateurSimple = profile?.role === 'utilisateur_simple'
 
   // Auth + Profile
+  const loadProfile = useCallback(async (u) => {
+    if (!u) { setProfile(null); setLoading(false); return }
+    const { data } = await supabase.from('compta_profiles').select('*').eq('id', u.id).maybeSingle()
+    if (data) { setProfile(data); setLoading(false); return }
+    // Profil manquant (ex : inscription interrompue avant que la fiche ne soit créée) —
+    // on tente de la recréer nous-même, avec les mêmes valeurs par défaut qu'une inscription normale.
+    const { data:created } = await supabase.from('compta_profiles')
+      .insert({ id:u.id, email:u.email, role:'admin_societe', statut:'pending' })
+      .select('*').maybeSingle()
+    if (created) { setProfile(created); setLoading(false); return }
+    // L'insertion a pu échouer parce que le profil vient d'être créé entre-temps (trigger en retard) : on relit.
+    const { data:retry } = await supabase.from('compta_profiles').select('*').eq('id', u.id).maybeSingle()
+    setProfile(retry || null)
+    setLoading(false)
+  },[])
+
   useEffect(()=>{
-    const loadProfile = async (u) => {
-      if (!u) { setProfile(null); setLoading(false); return }
-      const { data } = await supabase.from('compta_profiles').select('*').eq('id', u.id).single()
-      setProfile(data || null)
-      setLoading(false)
-    }
     // Détecter immédiatement un token recovery dans l'URL
     const hash = window.location.hash
     const params = new URLSearchParams(hash.replace('#',''))
@@ -16253,7 +17447,7 @@ export default function ComptaPro() {
     let q = supabase.from('compta_companies').select('*').order('raison_sociale')
     if (!isAdmin) {
       // Récupérer le profil pour savoir si utilisateur_simple
-      const { data:prof } = await supabase.from('compta_profiles').select('role,company_id').eq('id',uid).single()
+      const { data:prof } = await supabase.from('compta_profiles').select('role,company_id').eq('id',uid).maybeSingle()
       if (prof?.role === 'utilisateur_simple' && prof?.company_id) {
         // Charger uniquement la société rattachée au profil
         q = q.eq('id', prof.company_id)
@@ -16300,6 +17494,21 @@ export default function ComptaPro() {
     loadProfile(user)
     return null
   }} />
+  // Compte authentifié mais sans profil en base (ex: inscription interrompue) — évite de
+  // laisser l'utilisateur naviguer dans une app "vide" (0 société, 0 fournisseur) sans explication.
+  if (!profile) return (
+    <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',background:'#f1f5f9'}}>
+      <div style={{background:'white',borderRadius:16,padding:'48px 40px',maxWidth:440,textAlign:'center'}}>
+        <div style={{fontSize:64,marginBottom:16}}>⚠️</div>
+        <h2 style={{color:'#dc2626'}}>Profil introuvable</h2>
+        <p style={{color:'#64748b',marginBottom:24}}>Votre compte est authentifié mais aucun profil n'a été trouvé pour cet email. Contactez l'administrateur pour faire vérifier votre compte.</p>
+        <button onClick={()=>{ supabase.auth.signOut(); setUser(null); setProfile(null) }}
+          style={{background:'#f1f5f9',border:'1px solid #e2e8f0',borderRadius:8,padding:'10px 24px',cursor:'pointer',fontWeight:600}}>
+          Se déconnecter
+        </button>
+      </div>
+    </div>
+  )
   if (profile?.statut === 'pending') return <PendingPage onLogout={()=>{ supabase.auth.signOut(); setUser(null); setProfile(null) }} />
   if (profile?.statut === 'suspended') return (
     <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',background:'#f1f5f9'}}>
@@ -16472,6 +17681,8 @@ export default function ComptaPro() {
       case 'balance':           return <BalancePage {...sp} />
       case 'etats_financiers':  return <EtatsFinanciersPage {...sp} />
       case 'users':          return isSuperAdmin ? <UsersManagementPage toast={toast} /> : <Dashboard {...sp} setPage={setPage} />
+      case 'consolidation':  return isSuperAdmin ? <ConsolidationPage toast={toast} /> : <Dashboard {...sp} setPage={setPage} />
+      case 'bordereaux_livraison': return isSuperAdmin ? <BordereauxLivraisonPage companies={companies} companyId={effectiveCompanyId} toast={toast} /> : <Dashboard {...sp} setPage={setPage} />
       case 'controle_budget': return <ControleBudgetairePage {...sp} readOnly={getReadOnly('controle_budget')} />
       case 'chat':           return <ChatPage profile={profile} toast={toast} />
       case 'parametres':     return (isSuperAdmin||profile?.role!=='utilisateur_simple') ? <ParametresPage toast={toast} companies={companies} companyId={companyId} /> : <Dashboard {...sp} setPage={setPage} />
