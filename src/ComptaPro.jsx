@@ -3003,7 +3003,8 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
   const [saving,     setSaving]    = useState(false)
   const [search,     setSearch]    = useState('')
   const [filterType, setFilterType]= useState('')   // clients: physique|morale
-  const [filterProv, setFilterProv]= useState('')   // provenance
+  const [filterProv, setFilterProv]= useState('')   // provenance (clients)
+  const [filterCommune, setFilterCommune]= useState('')   // commune (fournisseurs)
   const [filterGenre, setFilterGenre] = useState('') // Homme|Femme
   const [filterHandicap, setFilterHandicap] = useState('') // oui|non
   const [avances, setAvances] = useState([])
@@ -3088,6 +3089,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
   }
 
   const provenances = [...new Set(items.map(i=>i.provenance).filter(Boolean))]
+  const communes = [...new Set(items.map(i=>i.commune).filter(Boolean))].sort()
 
   const filtered = items.filter(it => {
     if (search) {
@@ -3095,7 +3097,9 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
       if (!s.toLowerCase().includes(search.toLowerCase())) return false
     }
     if (filterType && it.type !== filterType) return false
-    if (filterProv && it.provenance !== filterProv) return false
+    if (table==='compta_fournisseurs') {
+      if (filterCommune && it.commune !== filterCommune) return false
+    } else if (filterProv && it.provenance !== filterProv) return false
     if (filterGenre && it.genre !== filterGenre) return false
     if (filterHandicap && (filterHandicap==='oui') !== !!it.handicap) return false
     return true
@@ -3868,12 +3872,22 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
               <option value='morale'>Personne morale</option>
             </select>
           )}
-          {provenances.length > 0 && (
-            <select value={filterProv} onChange={e=>setFilterProv(e.target.value)}
-              style={{padding:'8px 12px',borderRadius:8,border:'1px solid #d1d5db',fontSize:13,background:'white'}}>
-              <option value=''>Toutes provenances</option>
-              {provenances.map(p=><option key={p} value={p}>{p}</option>)}
-            </select>
+          {table==='compta_fournisseurs' ? (
+            communes.length > 0 && (
+              <select value={filterCommune} onChange={e=>setFilterCommune(e.target.value)}
+                style={{padding:'8px 12px',borderRadius:8,border:'1px solid #d1d5db',fontSize:13,background:'white'}}>
+                <option value=''>Toutes communes</option>
+                {communes.map(c=><option key={c} value={c}>{c}</option>)}
+              </select>
+            )
+          ) : (
+            provenances.length > 0 && (
+              <select value={filterProv} onChange={e=>setFilterProv(e.target.value)}
+                style={{padding:'8px 12px',borderRadius:8,border:'1px solid #d1d5db',fontSize:13,background:'white'}}>
+                <option value=''>Toutes provenances</option>
+                {provenances.map(p=><option key={p} value={p}>{p}</option>)}
+              </select>
+            )
           )}
           {(table==='compta_clients'||table==='compta_fournisseurs') && (
             <select value={filterGenre} onChange={e=>setFilterGenre(e.target.value)}
@@ -3891,8 +3905,8 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
               <option value='non'>Handicap : Non</option>
             </select>
           )}
-          {(search||filterType||filterProv||filterGenre||filterHandicap) && (
-            <button onClick={()=>{setSearch('');setFilterType('');setFilterProv('');setFilterGenre('');setFilterHandicap('')}}
+          {(search||filterType||filterProv||filterCommune||filterGenre||filterHandicap) && (
+            <button onClick={()=>{setSearch('');setFilterType('');setFilterProv('');setFilterCommune('');setFilterGenre('');setFilterHandicap('')}}
               style={{padding:'8px 12px',borderRadius:8,border:'1px solid #e2e8f0',fontSize:12,cursor:'pointer',background:'#f8fafc',color:'#64748b'}}>
               ✕ Réinitialiser
             </button>
