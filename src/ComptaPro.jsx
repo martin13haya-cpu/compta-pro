@@ -3290,6 +3290,66 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     toast.success('Modèle téléchargé !')
   }
 
+  // Reconnait aussi bien les en-tetes techniques du modele (telephone,
+  // numero_contrat...) que les intitules lisibles utilises a l'export
+  // (Téléphone, N° Contrat, Coopérative...), pour qu'un fichier exporté puis
+  // corrigé/complété se réimporte sans perte de colonnes.
+  const normalizeHeader = (s) => String(s||'')
+    .normalize('NFD').replace(/[̀-ͯ]/g,'')
+    .toLowerCase()
+    .replace(/[°'’./()]/g,' ')
+    .replace(/[-_]/g,' ')
+    .replace(/\s+/g,' ')
+    .trim()
+  const HEADER_ALIASES = {
+    type: ['type'], nom: ['nom'],
+    nom_societe: ['nom_societe','nom societe','raison sociale'],
+    telephone: ['telephone','tel'], provenance: ['provenance'],
+    cooperative_affiliee: ['cooperative_affiliee','cooperative','cooperative affiliee'],
+    numero_contrat: ['numero_contrat','n contrat','no contrat','numero contrat'],
+    ifu: ['ifu','n ifu','no ifu'], cip: ['cip','n cip','no cip'],
+    email: ['email'], adresse: ['adresse'], genre: ['genre'], handicap: ['handicap'],
+    mentor_nom: ['mentor_nom','mentor nom'],
+    mentor_telephone: ['mentor_telephone','mentor telephone'],
+    mentor_cip: ['mentor_cip','mentor cip'],
+    mentor_age: ['mentor_age','mentor age'],
+    departement: ['departement'], commune: ['commune'], arrondissement: ['arrondissement'], village: ['village'],
+    nom_bas_fonds: ['nom_bas_fonds','bas fonds','nom du bas fonds'],
+    superficie_bas_fonds: ['superficie_bas_fonds','superficie','superficie ha','superficie bas fonds ha'],
+    date_naissance: ['date_naissance','date de naissance'],
+    age: ['age'],
+    tranche_age: ['tranche_age','tranche age','tranche d age'],
+    nationalite: ['nationalite'],
+    niveau_instruction: ['niveau_instruction','niveau instruction','niveau d instruction'],
+    reside_localite: ['reside_localite','reside localite','reside localement'],
+    disponible_formation: ['disponible_formation','disponible formation'],
+    accepte_bonnes_pratiques: ['accepte_bonnes_pratiques','accepte bonnes pratiques'],
+    accepte_partenariat: ['accepte_partenariat','accepte partenariat'],
+    a_deja_cultive_riz: ['a_deja_cultive_riz','a deja cultive riz','a deja cultive le riz'],
+    nombre_jeunes_femmes: ['nombre_jeunes_femmes','nb jeunes femmes','nombre jeunes femmes'],
+    nombre_jeunes_hommes: ['nombre_jeunes_hommes','nb jeunes hommes','nombre jeunes hommes'],
+    acces_garanti_terre: ['acces_garanti_terre','acces garanti terre'],
+    propriete_terre: ['propriete_terre','propriete terre'],
+    mode_acces_terre: ['mode_acces_terre','mode acces terre'],
+    decision: ['decision'],
+    prix_contrat: ['prix_contrat','prix contrat','prix contrat fcfa'],
+    labour_qte: ['labour_qte','labour qte'],
+    labour_montant: ['labour_montant','labour montant','labour montant fcfa'],
+    semences_qte: ['semences_qte','semences qte'],
+    semences_montant: ['semences_montant','semences montant','semences montant fcfa'],
+    engrais_qte: ['engrais_qte','engrais qte'],
+    engrais_montant: ['engrais_montant','engrais montant','engrais montant fcfa'],
+    herbicide_qte: ['herbicide_qte','herbicide qte'],
+    herbicide_montant: ['herbicide_montant','herbicide montant','herbicide montant fcfa'],
+    credits_qte: ['credits_qte','credits qte'],
+    credits_montant: ['credits_montant','credits montant','credits montant fcfa'],
+  }
+  const HEADER_LOOKUP = {}
+  Object.entries(HEADER_ALIASES).forEach(([key,aliases])=>{
+    aliases.forEach(a=>{ HEADER_LOOKUP[normalizeHeader(a)] = key })
+  })
+  const resolveHeaderKey = (h) => HEADER_LOOKUP[normalizeHeader(h)] || null
+
   const handleImport = async (e) => {
     const file = e.target.files[0]
     if(!file) return
@@ -3299,7 +3359,10 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
       const lines = text.replace(/^\ufeff/,'').split(/\r?\n/).filter(l=>l.trim())
       if(lines.length<2){ toast.error('Fichier vide ou sans données'); setImporting(false); return }
       const delim = lines[0].includes(';') ? ';' : ','
-      const headers = lines[0].split(delim).map(h=>h.trim().toLowerCase())
+      const rawHeaders = lines[0].split(delim).map(h=>h.trim())
+      const headers = rawHeaders.map(h=>resolveHeaderKey(h) || normalizeHeader(h).replace(/ /g,'_'))
+      const nonReconnus = rawHeaders.filter(h=>!resolveHeaderKey(h) && h.trim())
+      if (nonReconnus.length) console.warn('Colonnes CSV non reconnues (ignorées) :', nonReconnus.join(', '))
       const uid = (await supabase.auth.getUser()).data?.user?.id
       const prof = (await supabase.from('compta_profiles').select('company_id').eq('id',uid).maybeSingle()).data
       const cid = companyId || prof?.company_id
