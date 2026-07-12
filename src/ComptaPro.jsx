@@ -3513,6 +3513,113 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     URL.revokeObjectURL(url)
   }
 
+  // ── PV DE RÉCEPTION INDIVIDUEL DE KIT AGRICOLE (fournisseurs physiques) ───
+  const buildPvReceptionHTML = (it) => {
+    if (!it || it.type==='morale') return null
+    const nomBeneficiaire = displayName(it) || ''
+    const localite = [it.village, it.arrondissement, it.commune].filter(Boolean).join(', ')
+    return `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><title>PV réception — ${nomBeneficiaire}</title>
+      <style>
+        *{margin:0;padding:0;box-sizing:border-box}
+        body{font-family:'Times New Roman',Times,serif;font-size:11.5pt;color:#000;padding:16px 20px;line-height:1.55}
+        .pv-titre{text-align:center;font-weight:bold;font-size:13pt;margin-bottom:12px}
+        .pv-entete{display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;font-weight:600;margin-bottom:4px}
+        .pv-champ{margin:3px 0}
+        .pv-blanc{display:inline-block;border-bottom:1px dotted #000;min-width:160px;height:14px;vertical-align:bottom}
+        h2.pv-section{font-size:11.5pt;font-weight:bold;margin:16px 0 6px}
+        ul.pv-liste{margin:0 0 0 18px}
+        ul.pv-liste li{margin:5px 0}
+        p.pv-certif{margin-top:12px}
+        .pv-signatures{display:flex;justify-content:space-between;margin-top:44px;gap:16px}
+        .pv-sig-col{width:47%}
+        .pv-sig-col .pv-nom{margin-top:26px}
+        .pv-sig-col .pv-sig{margin-top:26px}
+        .pv-mentor{margin-top:44px;width:47%}
+        .pv-mentor .pv-nom,.pv-mentor .pv-sig{margin-top:26px}
+        @media print { @page { size:A4; margin:16mm } }
+      </style></head><body>
+      <div class="pv-titre">PROCÈS-VERBAL DE RÉCEPTION INDIVIDUEL DE KIT AGRICOLE</div>
+      <div class="pv-entete">
+        <span>Projet : RIZAO / Pilier 2</span>
+        <span>Numéro de PV : <span class="pv-blanc" style="min-width:120px"></span></span>
+      </div>
+      <div class="pv-champ">Lieu : <span class="pv-blanc" style="min-width:280px"></span></div>
+      <div class="pv-champ">Date : <span class="pv-blanc" style="min-width:280px"></span></div>
+
+      <h2 class="pv-section">1. Identification du bénéficiaire</h2>
+      <ul class="pv-liste">
+        <li><b>Nom et Prénom :</b> ${nomBeneficiaire}</li>
+        <li><b>Numéro CNI :</b> ${it.cip||''}</li>
+        <li><b>Téléphone :</b> ${it.telephone||''}</li>
+        <li><b>Localité / Village :</b> ${localite}</li>
+        <li><b>N° contrat de production :</b> ${it.numero_contrat||''}</li>
+        <li><b>Contact du mentor :</b> ${it.mentor_telephone||''}</li>
+      </ul>
+
+      <h2 class="pv-section">2. Détails du kit reçu (veuillez préciser les quantités)</h2>
+      <p>Je soussigné(e), reconnais avoir reçu ce jour le kit agricole composé de :</p>
+      <ul class="pv-liste">
+        <li><b>Semences IR841 :</b> <span class="pv-blanc"></span></li>
+        <li><b>NPK :</b> <span class="pv-blanc"></span></li>
+        <li><b>UREE :</b> <span class="pv-blanc"></span></li>
+        <li><b>Produit Phyto :</b> <span class="pv-blanc"></span></li>
+      </ul>
+      <p class="pv-certif">Je certifie avoir reçu l'intégralité du kit en bon état et conforme aux spécifications.</p>
+
+      <div class="pv-signatures">
+        <div class="pv-sig-col">
+          <div>Le bénéficiaire</div>
+          <div class="pv-nom">Nom : ${nomBeneficiaire}</div>
+          <div class="pv-sig">Signature :</div>
+        </div>
+        <div class="pv-sig-col">
+          <div>L'Agro processeur, PSARIZ</div>
+          <div class="pv-nom">Nom :</div>
+          <div class="pv-sig">Signature :</div>
+        </div>
+      </div>
+
+      <div class="pv-mentor">
+        <div>Le mentor</div>
+        <div class="pv-nom">Nom : ${it.mentor_nom||''}</div>
+        <div class="pv-sig">Signature :</div>
+      </div>
+      </body></html>`
+  }
+
+  const printPvReception = (it) => {
+    const html = buildPvReceptionHTML(it)
+    if (!html) { toast.error('Le PV de réception est disponible uniquement pour les fournisseurs individuels (personnes physiques).'); return }
+    openPrintWindow(html, `pv_reception_${(displayName(it)||'fournisseur').replace(/\s+/g,'_')}`)
+  }
+
+  const printPvReceptionTout = () => {
+    const producteurs = (isFourn?items:[]).filter(i=>i.type!=='morale')
+    if (producteurs.length===0) { toast.error('Aucun fournisseur individuel pour générer les PV.'); return }
+    const docs = producteurs.map(p=>buildPvReceptionHTML(p)).filter(Boolean)
+    const styleMatch = docs[0].match(/<style[^>]*>([\s\S]*?)<\/style>/i)
+    const styles = styleMatch ? styleMatch[1] : ''
+    const allBodies = docs.map((html,i)=>{
+      const bodyMatch = html.match(/<body[^>]*>([\s\S]*)<\/body>/i)
+      const bodyContent = bodyMatch ? bodyMatch[1] : html
+      const pageBreak = i<docs.length-1 ? '<div style="page-break-after:always;"></div>' : ''
+      return `<div class="pv-page">${bodyContent}</div>${pageBreak}`
+    }).join('')
+    const fullHtml = `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><title>PV de réception — ${companyName}</title>
+      <style>
+        ${styles}
+        .pv-page{page-break-inside:avoid}
+        @media print { @page { margin:16mm; size:A4 portrait } }
+      </style></head><body>${allBodies}</body></html>`
+    openPrintWindow(fullHtml, `pv_reception_tous_${companyName.replace(/\s+/g,'_')}`)
+  }
+
+  // Lit un type d'avance precis dans it._avances (ex: Labour, Semences...)
+  const avVal = (it, type, field) => {
+    const a = (Array.isArray(it._avances)?it._avances:[]).find(x=>x.type_avance===type)
+    return a ? (Number(a[field])||'') : ''
+  }
+
   const tiersVal = (it,c) => ({
     'Type': it.type==='morale'?'Société':'Physique',
     'Nom': displayName(it),
@@ -3529,15 +3636,42 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     'Mentor - Nom': it.mentor_nom||'',
     'Mentor - Téléphone': it.mentor_telephone||'',
     'Mentor - CIP': it.mentor_cip||'',
+    'Mentor - Âge': it.mentor_age||'',
     'Département': it.departement||'',
     'Commune': it.commune||'',
     'Arrondissement': it.arrondissement||'',
     'Village': it.village||'',
     'Bas-fonds': it.nom_bas_fonds||'',
     'Superficie (ha)': it.superficie_bas_fonds||'',
+    'Date de naissance': it.date_naissance ? new Date(it.date_naissance).toLocaleDateString('fr-FR') : '',
+    'Âge': it.age||'',
+    'Tranche d\'âge': it.tranche_age||'',
+    'Nationalité': it.nationalite||'',
+    'Niveau d\'instruction': it.niveau_instruction||'',
+    'Réside localement': it.reside_localite ? 'Oui' : 'Non',
+    'Disponible formation': it.disponible_formation ? 'Oui' : 'Non',
+    'Accepte bonnes pratiques': it.accepte_bonnes_pratiques ? 'Oui' : 'Non',
+    'Accepte partenariat': it.accepte_partenariat ? 'Oui' : 'Non',
+    'A déjà cultivé le riz': it.a_deja_cultive_riz ? 'Oui' : 'Non',
+    'Nb. jeunes femmes': it.nombre_jeunes_femmes||'',
+    'Nb. jeunes hommes': it.nombre_jeunes_hommes||'',
+    'Accès garanti terre': it.acces_garanti_terre||'',
+    'Propriété terre': it.propriete_terre ? 'Oui' : 'Non',
+    'Mode accès terre': it.mode_acces_terre||'',
+    'Décision': it.decision||'',
     'Total avance (FCFA)': (Array.isArray(it._avances)?it._avances:[]).reduce((sm,a)=>sm+(Number(a.valeur_remboursement)||0),0) || '',
     'Prix/contrat (FCFA)': it.prix_contrat||'',
     'Riz paddy équiv. (kg)': (()=>{ const tt=(Array.isArray(it._avances)?it._avances:[]).reduce((sm,a)=>sm+(Number(a.valeur_remboursement)||0),0); const pp=Number(it.prix_contrat)||0; return pp>0?(tt/pp).toFixed(2):'' })(),
+    'Labour - Qté': avVal(it,'Labour','quantite_recue'),
+    'Labour - Montant (FCFA)': avVal(it,'Labour','valeur_remboursement'),
+    'Semences - Qté': avVal(it,'Semences','quantite_recue'),
+    'Semences - Montant (FCFA)': avVal(it,'Semences','valeur_remboursement'),
+    'Engrais - Qté': avVal(it,'Engrais','quantite_recue'),
+    'Engrais - Montant (FCFA)': avVal(it,'Engrais','valeur_remboursement'),
+    'Herbicide - Qté': avVal(it,'Herbicide','quantite_recue'),
+    'Herbicide - Montant (FCFA)': avVal(it,'Herbicide','valeur_remboursement'),
+    'Crédits - Qté': avVal(it,'Crédits','quantite_recue'),
+    'Crédits - Montant (FCFA)': avVal(it,'Crédits','valeur_remboursement'),
     'Détail avances': (Array.isArray(it._avances)?it._avances:[]).map(a=>`${a.type_avance}: ${Number(a.quantite_recue)||0} = ${Number(a.valeur_remboursement)||0}`).join(' | '),
   }[c] ?? '')
 
@@ -3548,10 +3682,21 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     {key:'N° IFU', w:8},{key:'N° CIP', w:7},{key:'Email', w:10},{key:'Adresse', w:10},
     {key:'Genre', w:7},{key:'Handicap', w:6},
     ...(isFourn?[
-      {key:'Mentor - Nom', w:10},{key:'Mentor - Téléphone', w:9},{key:'Mentor - CIP', w:7},
+      {key:'Mentor - Nom', w:10},{key:'Mentor - Téléphone', w:9},{key:'Mentor - CIP', w:7},{key:'Mentor - Âge', w:5},
       {key:'Département', w:7},{key:'Commune', w:7},{key:'Arrondissement', w:8},{key:'Village', w:7},
       {key:'Bas-fonds', w:8},{key:'Superficie (ha)', w:6},
+      {key:'Date de naissance', w:7},{key:'Âge', w:5},{key:'Tranche d\'âge', w:6},
+      {key:'Nationalité', w:7},{key:'Niveau d\'instruction', w:8},
+      {key:'Réside localement', w:6},{key:'Disponible formation', w:6},
+      {key:'Accepte bonnes pratiques', w:6},{key:'Accepte partenariat', w:6},{key:'A déjà cultivé le riz', w:6},
+      {key:'Nb. jeunes femmes', w:6},{key:'Nb. jeunes hommes', w:6},
+      {key:'Accès garanti terre', w:8},{key:'Propriété terre', w:6},{key:'Mode accès terre', w:9},{key:'Décision', w:6},
       {key:'Total avance (FCFA)', w:8},{key:'Prix/contrat (FCFA)', w:8},{key:'Riz paddy équiv. (kg)', w:7},
+      {key:'Labour - Qté', w:5},{key:'Labour - Montant (FCFA)', w:7},
+      {key:'Semences - Qté', w:5},{key:'Semences - Montant (FCFA)', w:7},
+      {key:'Engrais - Qté', w:5},{key:'Engrais - Montant (FCFA)', w:7},
+      {key:'Herbicide - Qté', w:5},{key:'Herbicide - Montant (FCFA)', w:7},
+      {key:'Crédits - Qté', w:5},{key:'Crédits - Montant (FCFA)', w:7},
       {key:'Détail avances', w:14},
     ]:[]),
   ]
@@ -3612,6 +3757,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
                 <Btn sm variant="secondary" onClick={openMentorModal}>🎓 Fiches Mentors</Btn>
                 <Btn sm variant="info" onClick={openMentorModalAll}>🖨️ Toutes les fiches Mentors</Btn>
                 <Btn sm variant="success" onClick={exportExcelMentors}>📊 Liste Mentors</Btn>
+                <Btn sm variant="info" onClick={printPvReceptionTout}>📄 Toutes les PV de réception</Btn>
               </>
             )}
             {!readOnly && (
@@ -3728,6 +3874,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
                   <TD>
                     <div style={{display:'flex',gap:6}}>
                       <Btn sm variant="info" onClick={()=>printFicheTiers(it, isFourn?'fournisseur':'client')}>📥 PDF</Btn>
+                      {isFourn && it.type!=='morale' && <Btn sm variant="secondary" onClick={()=>printPvReception(it)}>📄 PV</Btn>}
                       {!readOnly && <Btn sm variant="secondary" onClick={()=>open(it)}>Edit</Btn>}
                       {!readOnly && <Btn sm variant="danger" onClick={()=>archive(it.id)}>🗑️</Btn>}
                     </div>
@@ -9597,7 +9744,10 @@ function EtatsFinanciersPage({ companies, companyId, toast }) {
   const [soldesN1, setSoldesN1]   = useState([])
   const [etats, setEtats]         = useState(null)
   const [loading, setLoading]     = useState(false)
-  const [nbN1, setNbN1]           = useState(0)     // nb de comptes N-1 importés
+  const [nbN1, setNbN1]           = useState(0)     // nb de comptes N-1 saisis
+  const [n1Rows, setN1Rows]       = useState([])    // lignes compta_balance_n1 (saisie manuelle)
+  const [n1Form, setN1Form]       = useState({ id: null, numero_compte: '', intitule: '', solde_debiteur: '', solde_crediteur: '' })
+  const [planComptes, setPlanComptes] = useState([])
   const [ident, setIdent]         = useState(null)  // fiche d'identification de l'entité
 
   // Champs obligatoires de la fiche d'identification
@@ -9695,8 +9845,9 @@ function EtatsFinanciersPage({ companies, companyId, toast }) {
     const { data: ad } = await supabase.auth.getUser()
     const uid = ad?.user?.id; const isAdmin = ad?.user?.email === SUPER_ADMIN_EMAIL
     const scope = (q) => { if (isAdmin) { if (companyId) q = q.eq('company_id', companyId) } else { q = q.eq('user_id', uid); if (companyId) q = q.eq('company_id', companyId) } return q }
-    const { data: bn1 } = await scope(supabase.from('compta_balance_n1').select('numero_compte,solde_debiteur,solde_crediteur').eq('exercice', exercice))
+    const { data: bn1 } = await scope(supabase.from('compta_balance_n1').select('id,numero_compte,intitule,solde_debiteur,solde_crediteur').eq('exercice', exercice))
     setSoldesN1((bn1 || []).map(r => ({ numero: r.numero_compte, soldeD: r.solde_debiteur || 0, soldeC: r.solde_crediteur || 0 })))
+    setN1Rows((bn1 || []).sort((a, b) => String(a.numero_compte).localeCompare(String(b.numero_compte), undefined, { numeric: true })))
     setNbN1((bn1 || []).length)
     const { data: ran } = await scope(supabase.from('compta_report_a_nouveau').select('exercice,montant').in('exercice', [exercice, exercice - 1]))
     setRanN((ran || []).find(r => r.exercice === exercice)?.montant || 0)
@@ -9704,6 +9855,17 @@ function EtatsFinanciersPage({ companies, companyId, toast }) {
   }, [companyId, exercice])
 
   useEffect(() => { chargerN1etRAN() }, [chargerN1etRAN])
+
+  // ── Plan comptable (pour le sélecteur de compte du formulaire N-1) ──────────
+  const chargerPlanComptes = useCallback(async () => {
+    const { data: ad } = await supabase.auth.getUser()
+    const uid = ad?.user?.id; const isAdmin = ad?.user?.email === SUPER_ADMIN_EMAIL
+    let q = supabase.from('compta_plan_comptable').select('numero,libelle')
+    if (isAdmin) { if (companyId) q = q.eq('company_id', companyId) } else { q = q.eq('user_id', uid); if (companyId) q = q.eq('company_id', companyId) }
+    const { data } = await q
+    setPlanComptes((data || []).sort((a, b) => String(a.numero).localeCompare(String(b.numero), undefined, { numeric: true })))
+  }, [companyId])
+  useEffect(() => { chargerPlanComptes() }, [chargerPlanComptes])
 
   // ── Génération des états ────────────────────────────────────────────────────
   const generer = async () => {
@@ -9733,38 +9895,46 @@ function EtatsFinanciersPage({ companies, companyId, toast }) {
     else { toast.success(`Report à nouveau ${annee} enregistré.`); chargerN1etRAN() }
   }
 
-  // ── Import balance N-1 (gabarit MODELE DE BALANCE.xlsx) ─────────────────────
-  const importerN1 = async (file) => {
-    if (!file) return
-    if (!companyId) { toast.error('Sélectionnez une société avant d’importer.'); return }
-    try {
-      const XLSX = await import('https://cdn.sheetjs.com/xlsx-0.20.0/package/xlsx.mjs')
-      const buf = await file.arrayBuffer()
-      const wb = XLSX.read(buf, { type: 'array' })
-      const ws = wb.Sheets[wb.SheetNames[0]]
-      const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' })
-      // Repère la ligne d'en-tête (contient « N_CPTE »)
-      let hi = rows.findIndex(r => r.some(c => String(c).toUpperCase().includes('N_CPTE')))
-      if (hi < 0) hi = 1
-      // Colonnes attendues : N_CPTE | INTITULES | SOLDE N-1 DEB | SOLDE N-1 CRED | ...
-      const dataRows = rows.slice(hi + 1).filter(r => String(r[0] || '').trim())
-      const num = v => { const n = parseFloat(String(v).replace(/\s/g, '').replace(',', '.')); return isNaN(n) ? 0 : n }
-      const { data: ad } = await supabase.auth.getUser(); const uid = ad?.user?.id
-      const payload = dataRows.map(r => ({
-        company_id: companyId, user_id: uid, exercice,
-        numero_compte: String(r[0]).trim(),
-        intitule: String(r[1] || '').trim(),
-        solde_debiteur: num(r[2]),
-        solde_crediteur: num(r[3]),
-      })).filter(r => r.numero_compte && (r.solde_debiteur || r.solde_crediteur))
-      if (!payload.length) { toast.error('Aucune ligne exploitable (colonnes attendues : N_CPTE, INTITULES, Solde N-1 Débiteur, Créditeur).'); return }
-      // Remplace l'import précédent du même exercice
-      await supabase.from('compta_balance_n1').delete().eq('company_id', companyId).eq('exercice', exercice)
-      const { error } = await supabase.from('compta_balance_n1').insert(payload)
-      if (error) { toast.error('Import N-1 : ' + error.message); return }
-      toast.success(`${payload.length} comptes N-1 importés pour l’exercice ${exercice}.`)
-      chargerN1etRAN()
-    } catch (e) { toast.error('Lecture du fichier impossible : ' + e.message) }
+  // ── Saisie manuelle de la balance N-1 (solde à nouveau, compte par compte) ──
+  const resetN1Form = () => setN1Form({ id: null, numero_compte: '', intitule: '', solde_debiteur: '', solde_crediteur: '' })
+  const setN1F = (k, v) => setN1Form(f => ({ ...f, [k]: v }))
+  const onN1CompteChange = (numero) => {
+    const c = planComptes.find(p => String(p.numero) === String(numero).trim())
+    setN1Form(f => ({ ...f, numero_compte: numero, intitule: c ? c.libelle : f.intitule }))
+  }
+  const editerLigneN1 = (row) => setN1Form({
+    id: row.id, numero_compte: row.numero_compte, intitule: row.intitule || '',
+    solde_debiteur: row.solde_debiteur || '', solde_crediteur: row.solde_crediteur || '',
+  })
+
+  const saveLigneN1 = async () => {
+    if (!companyId) { toast.error('Sélectionnez une société.'); return }
+    const numero = (n1Form.numero_compte || '').trim()
+    if (!numero) { toast.error('Sélectionnez un compte.'); return }
+    const soldeD = numFR(n1Form.solde_debiteur) || 0
+    const soldeC = numFR(n1Form.solde_crediteur) || 0
+    if (!soldeD && !soldeC) { toast.error('Saisissez un solde débiteur ou créditeur.'); return }
+    if (soldeD && soldeC) { toast.error('Un compte ne peut avoir qu’un solde débiteur OU créditeur, pas les deux.'); return }
+    const { data: ad } = await supabase.auth.getUser(); const uid = ad?.user?.id
+    const existant = n1Form.id ? null : n1Rows.find(r => String(r.numero_compte) === numero)
+    const payload = {
+      company_id: companyId, user_id: uid, exercice, numero_compte: numero,
+      intitule: n1Form.intitule || '', solde_debiteur: soldeD, solde_crediteur: soldeC,
+    }
+    const idCible = n1Form.id || existant?.id
+    const { error } = idCible
+      ? await supabase.from('compta_balance_n1').update(payload).eq('id', idCible)
+      : await supabase.from('compta_balance_n1').insert(payload)
+    if (error) { toast.error('Solde à nouveau : ' + error.message); return }
+    toast.success(`Compte ${numero} enregistré pour l’exercice ${exercice}.`)
+    resetN1Form(); chargerN1etRAN()
+  }
+
+  const supprimerLigneN1 = async (row) => {
+    if (!window.confirm(`Supprimer le solde à nouveau du compte ${row.numero_compte} ?`)) return
+    const { error } = await supabase.from('compta_balance_n1').delete().eq('id', row.id)
+    if (error) { toast.error(error.message); return }
+    toast.success('Ligne supprimée.'); resetN1Form(); chargerN1etRAN()
   }
 
   // ── Export Excel officiel (multi-feuilles) ──────────────────────────────────
@@ -10023,19 +10193,54 @@ function EtatsFinanciersPage({ companies, companyId, toast }) {
         <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 8 }}>Ces informations alimentent la Page de garde, la Fiche R1 et l’en-tête de toutes les feuilles. Champs marqués * obligatoires avant génération.</div>
       </Card>
 
-      {/* Comparatif N-1 + Report à nouveau */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(280px,1fr))', gap: 14, marginTop: 14 }}>
-        <Card>
-          <div style={{ fontWeight: 700, marginBottom: 8 }}>📥 Balance N-1 (comparatif {exercice - 1})</div>
-          <div style={{ fontSize: 12.5, color: '#64748b', marginBottom: 10 }}>
-            Format attendu : <b>MODELE DE BALANCE.xlsx</b> (colonnes N_CPTE · INTITULES · Solde N-1 Débiteur · Créditeur).
+      {/* Solde à nouveau (balance N-1), saisie manuelle compte par compte */}
+      <Card style={{ marginTop: 14 }}>
+        <div style={{ fontWeight: 700, marginBottom: 8 }}>✍️ Solde à nouveau — comptes N-1 (exercice {exercice - 1})</div>
+        <div style={{ fontSize: 12.5, color: '#64748b', marginBottom: 10 }}>
+          Saisissez le solde de clôture de chaque compte à la fin de l’exercice {exercice - 1} : il sert de solde d’ouverture pour {exercice}
+          (colonne N-1 de la Balance et des États Financiers).
+        </div>
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: 12 }}>
+          <div style={{ minWidth: 220 }}>
+            <label style={lbl}>Compte</label>
+            <input list="n1-compte-list" value={n1Form.numero_compte} onChange={e => onN1CompteChange(e.target.value)}
+              placeholder="N° ou libellé du compte" style={{ ...inp, width: '100%', background: 'white' }} />
+            <datalist id="n1-compte-list">{planComptes.map(c => <option key={c.numero} value={c.numero}>{c.libelle || ''}</option>)}</datalist>
           </div>
-          <input type="file" accept=".xlsx,.xls" onChange={e => importerN1(e.target.files?.[0])} style={{ fontSize: 13 }} />
-          <div style={{ marginTop: 8, fontSize: 13, color: nbN1 ? '#15803d' : '#b45309' }}>
-            {nbN1 ? `✅ ${nbN1} comptes N-1 importés.` : '⚠️ Aucune balance N-1 importée — la colonne N-1 restera à 0.'}
-          </div>
-        </Card>
+          <div><label style={lbl}>Solde débiteur</label>
+            <input type="text" inputMode="decimal" value={n1Form.solde_debiteur} onChange={e => setN1F('solde_debiteur', e.target.value)} style={{ ...inp, width: 130 }} /></div>
+          <div><label style={lbl}>Solde créditeur</label>
+            <input type="text" inputMode="decimal" value={n1Form.solde_crediteur} onChange={e => setN1F('solde_crediteur', e.target.value)} style={{ ...inp, width: 130 }} /></div>
+          <Btn variant="primary" onClick={saveLigneN1}>{n1Form.id ? '💾 Enregistrer' : '➕ Ajouter'}</Btn>
+          {n1Form.id && <Btn variant="secondary" onClick={resetN1Form}>Annuler</Btn>}
+        </div>
 
+        {n1Rows.length > 0 && (
+          <div style={{ overflowX: 'auto', marginBottom: 8 }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 520, fontSize: 12.5 }}>
+              <thead><tr><TH>N° Compte</TH><TH>Intitulé</TH><TH right>Solde Débiteur</TH><TH right>Solde Créditeur</TH><TH></TH></tr></thead>
+              <tbody>
+                {n1Rows.map(r => (
+                  <TR key={r.id}>
+                    <TD bold sm>{r.numero_compte}</TD><TD>{r.intitule || '—'}</TD>
+                    <TD right>{r.solde_debiteur ? fmt(r.solde_debiteur) : ''}</TD>
+                    <TD right>{r.solde_crediteur ? fmt(r.solde_crediteur) : ''}</TD>
+                    <TD right>
+                      <Btn sm variant="secondary" onClick={() => editerLigneN1(r)}>✏️</Btn>{' '}
+                      <Btn sm variant="danger" onClick={() => supprimerLigneN1(r)}>🗑️</Btn>
+                    </TD>
+                  </TR>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <div style={{ fontSize: 13, color: nbN1 ? '#15803d' : '#b45309' }}>
+          {nbN1 ? `✅ ${nbN1} comptes N-1 saisis.` : '⚠️ Aucun solde à nouveau saisi — la colonne N-1 restera à 0.'}
+        </div>
+      </Card>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(280px,1fr))', gap: 14, marginTop: 14 }}>
         <Card>
           <div style={{ fontWeight: 700, marginBottom: 8 }}>✍️ Report à nouveau (poste CH)</div>
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
@@ -10141,9 +10346,13 @@ function BalancePage({ companies, companyId, toast }) {
   const [dateTo, setDateTo]     = useState('')
   const [compteSearch, setCompteSearch] = useState('')
   const [loading, setLoading]   = useState(true)
+  const [exercice, setExercice] = useState(new Date().getFullYear())
+  const [soldeN1, setSoldeN1]   = useState({}) // { [numero]: { soldeD, soldeC } }
 
   const norm = s => String(s||'').trim().toLowerCase()
   const companyNameB = companies.find(c=>c.id===companyId)?.raison_sociale||''
+  const anneeCourante = new Date().getFullYear()
+  const annees = []; for (let y = anneeCourante + 1; y >= anneeCourante - 6; y--) annees.push(y)
 
   const load = useCallback(async()=>{
     setLoading(true)
@@ -10175,6 +10384,20 @@ function BalancePage({ companies, companyId, toast }) {
     setLoading(false)
   },[companyId])
   useEffect(()=>{ load() },[load])
+
+  // Solde à nouveau (compta_balance_n1) : solde d'ouverture de l'exercice sélectionné,
+  // saisi via le formulaire de la page États Financiers.
+  const chargerSoldeN1 = useCallback(async()=>{
+    const { data:ad } = await supabase.auth.getUser()
+    const uid=ad?.user?.id; const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
+    let q = supabase.from('compta_balance_n1').select('numero_compte,solde_debiteur,solde_crediteur').eq('exercice', exercice)
+    if (isAdmin) { if(companyId) q=q.eq('company_id',companyId) } else { q=q.eq('user_id',uid); if(companyId) q=q.eq('company_id',companyId) }
+    const { data } = await q
+    const map = {}
+    ;(data||[]).forEach(r=>{ map[r.numero_compte] = { soldeD: r.solde_debiteur||0, soldeC: r.solde_crediteur||0 } })
+    setSoldeN1(map)
+  },[companyId, exercice])
+  useEffect(()=>{ chargerSoldeN1() },[chargerSoldeN1])
 
   const inPeriode = d => (!dateFrom || (d||'')>=dateFrom) && (!dateTo || (d||'')<=dateTo)
   const nomTiers = t => t.type==='morale' ? (t.nom_societe||'') : (t.nom||'')
@@ -10216,18 +10439,28 @@ function BalancePage({ companies, companyId, toast }) {
   }
   const balanceAll = comptes.filter(matchCompte).map(c=>{
     const { debit, credit } = totauxCompte(c.numero)
-    return { ...c, debit, credit, soldeD:Math.max(0,debit-credit), soldeC:Math.max(0,credit-debit) }
+    const an = soldeN1[c.numero] || { soldeD:0, soldeC:0 }
+    const net = (an.soldeD - an.soldeC) + (debit - credit)
+    return {
+      ...c, debit, credit,
+      anD: an.soldeD, anC: an.soldeC,
+      soldeD: Math.max(0, net), soldeC: Math.max(0, -net),
+    }
   })
-  const balance = (searchTerm && !collectifSel) ? balanceAll : balanceAll.filter(c=>c.debit>0||c.credit>0)
+  const balance = (searchTerm && !collectifSel) ? balanceAll : balanceAll.filter(c=>c.debit>0||c.credit>0||c.anD>0||c.anC>0)
 
-  const tot = balance.reduce((a,c)=>({d:a.d+c.debit,cr:a.cr+c.credit,sd:a.sd+c.soldeD,sc:a.sc+c.soldeC}),{d:0,cr:0,sd:0,sc:0})
+  const tot = balance.reduce((a,c)=>({
+    d:a.d+c.debit, cr:a.cr+c.credit, sd:a.sd+c.soldeD, sc:a.sc+c.soldeC,
+    and:a.and+c.anD, anc:a.anc+c.anC,
+  }),{d:0,cr:0,sd:0,sc:0,and:0,anc:0})
 
   const telechargerPDF = () => {
     if (balance.length===0) { toast.error('Aucun mouvement à afficher.'); return }
     const periode = (dateFrom||dateTo) ? `du ${dateFrom||'…'} au ${dateTo||'…'}` : `au ${today()}`
     const rows = balance.map(c=>`<tr>
       <td>${c.numero}</td><td>${c.libelle||''}</td>
-      <td class="r"></td><td class="r"></td>
+      <td class="r">${c.anD?Math.round(c.anD).toLocaleString('fr-FR'):''}</td>
+      <td class="r">${c.anC?Math.round(c.anC).toLocaleString('fr-FR'):''}</td>
       <td class="r">${c.debit?Math.round(c.debit).toLocaleString('fr-FR'):''}</td>
       <td class="r">${c.credit?Math.round(c.credit).toLocaleString('fr-FR'):''}</td>
       <td class="r">${c.soldeD?Math.round(c.soldeD).toLocaleString('fr-FR'):''}</td>
@@ -10240,14 +10473,15 @@ function BalancePage({ companies, companyId, toast }) {
         th{background:#eceff3;color:#1a1a1a;font-size:8.5pt}
         td.r{text-align:right}
       </style></head><body>
-      <div class="header"><div><div class="company-name">BALANCE GÉNÉRALE ${periode}</div><div class="doc-numero" style="margin-top:4px">${companyNameB}</div></div></div>
+      <div class="header"><div><div class="company-name">BALANCE GÉNÉRALE ${periode}</div><div class="doc-numero" style="margin-top:4px">${companyNameB} — Exercice ${exercice}</div></div></div>
       <table>
         <thead>
-          <tr><th rowspan="2">N° Compte</th><th rowspan="2">Intitulé</th><th colspan="2">Solde N-1</th><th colspan="2">Mouvements période</th><th colspan="2">Solde N</th></tr>
+          <tr><th rowspan="2">N° Compte</th><th rowspan="2">Intitulé</th><th colspan="2">Solde à Nouveau</th><th colspan="2">Mouvements période</th><th colspan="2">Solde Final</th></tr>
           <tr><th class="r">Débiteur</th><th class="r">Créditeur</th><th class="r">Débit</th><th class="r">Crédit</th><th class="r">Débiteur</th><th class="r">Créditeur</th></tr>
         </thead>
         <tbody>${rows}
-          <tr style="font-weight:800;background:#eceff3"><td colspan="2" style="text-align:right">TOTAUX</td><td class="r"></td><td class="r"></td>
+          <tr style="font-weight:800;background:#eceff3"><td colspan="2" style="text-align:right">TOTAUX</td>
+            <td class="r">${Math.round(tot.and).toLocaleString('fr-FR')}</td><td class="r">${Math.round(tot.anc).toLocaleString('fr-FR')}</td>
             <td class="r">${Math.round(tot.d).toLocaleString('fr-FR')}</td><td class="r">${Math.round(tot.cr).toLocaleString('fr-FR')}</td>
             <td class="r">${Math.round(tot.sd).toLocaleString('fr-FR')}</td><td class="r">${Math.round(tot.sc).toLocaleString('fr-FR')}</td></tr>
         </tbody>
@@ -10258,7 +10492,7 @@ function BalancePage({ companies, companyId, toast }) {
 
   return (
     <div>
-      <PageHeader title="⚖️ Balance Générale" subtitle="Mouvements et soldes par compte (dérivés des opérations et écritures)"
+      <PageHeader title="⚖️ Balance Générale (6 colonnes)" subtitle="Solde à nouveau, mouvements de la période et solde final, par compte"
         actions={<Btn variant="info" onClick={telechargerPDF}>📥 Imprimer / PDF</Btn>} />
 
       <div style={{display:'flex',gap:10,flexWrap:'wrap',alignItems:'flex-end',marginBottom:14}}>
@@ -10268,6 +10502,12 @@ function BalancePage({ companies, companyId, toast }) {
             placeholder="Tous les comptes — taper un n° ou libellé…"
             style={{width:'100%',padding:'8px 10px',borderRadius:8,border:'1px solid #d1d5db',fontSize:13.5,background:'white',boxSizing:'border-box'}} />
           <datalist id="bal-compte-list">{comptes.map(c=><option key={c.numero} value={c.numero}>{c.libelle||''}</option>)}</datalist>
+        </div>
+        <div><label style={{display:'block',fontSize:12,color:'#64748b',marginBottom:4}}>Exercice</label>
+          <select value={exercice} onChange={e=>setExercice(parseInt(e.target.value,10))}
+            style={{padding:'8px 10px',borderRadius:8,border:'1px solid #d1d5db',background:'white'}}>
+            {annees.map(y=><option key={y} value={y}>{y}</option>)}
+          </select>
         </div>
         <div><label style={{display:'block',fontSize:12,color:'#64748b',marginBottom:4}}>Du</label>
           <input type="date" value={dateFrom} onChange={e=>setDateFrom(e.target.value)} style={{padding:'8px 10px',borderRadius:8,border:'1px solid #d1d5db'}} /></div>
@@ -10281,20 +10521,28 @@ function BalancePage({ companies, companyId, toast }) {
       : (
         <div style={{background:'white',borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
           <div style={{overflowX:'auto'}}>
-            <table style={{width:'100%',borderCollapse:'collapse',minWidth:760,fontSize:12.5}}>
+            <table style={{width:'100%',borderCollapse:'collapse',minWidth:960,fontSize:12.5}}>
               <thead>
-                <tr><TH>N° Compte</TH><TH>Intitulé</TH><TH right>Mvt Débit</TH><TH right>Mvt Crédit</TH><TH right>Solde Débiteur</TH><TH right>Solde Créditeur</TH></tr>
+                <tr>
+                  <TH>N° Compte</TH><TH>Intitulé</TH>
+                  <TH right>Solde à Nouveau Débiteur</TH><TH right>Solde à Nouveau Créditeur</TH>
+                  <TH right>Mvt Débit</TH><TH right>Mvt Crédit</TH>
+                  <TH right>Solde Final Débiteur</TH><TH right>Solde Final Créditeur</TH>
+                </tr>
               </thead>
               <tbody>
                 {balance.map(c=>(
                   <TR key={c.numero}>
                     <TD bold sm>{c.numero}</TD><TD>{c.libelle||'—'}</TD>
+                    <TD right>{c.anD?fcfa(c.anD):''}</TD><TD right>{c.anC?fcfa(c.anC):''}</TD>
                     <TD right>{c.debit?fcfa(c.debit):''}</TD><TD right>{c.credit?fcfa(c.credit):''}</TD>
                     <TD right>{c.soldeD?fcfa(c.soldeD):''}</TD><TD right>{c.soldeC?fcfa(c.soldeC):''}</TD>
                   </TR>
                 ))}
                 <tr style={{fontWeight:800,background:'#fff7ed'}}>
                   <td colSpan={2} style={{padding:'10px',textAlign:'right'}}>TOTAUX</td>
+                  <td style={{textAlign:'right',padding:'10px'}}>{fcfa(tot.and)}</td>
+                  <td style={{textAlign:'right',padding:'10px'}}>{fcfa(tot.anc)}</td>
                   <td style={{textAlign:'right',padding:'10px'}}>{fcfa(tot.d)}</td>
                   <td style={{textAlign:'right',padding:'10px'}}>{fcfa(tot.cr)}</td>
                   <td style={{textAlign:'right',padding:'10px'}}>{fcfa(tot.sd)}</td>
