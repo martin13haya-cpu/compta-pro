@@ -1857,7 +1857,7 @@ function BordereauxLivraisonPage({ companies, companyId, toast }) {
   const [clientSearch, setClientSearch] = useState('')
   const [editing,  setEditing]  = useState(null)
   const [form,     setForm]     = useState(bordereauDefaults())
-  const [lignes,   setLignes]   = useState([{reference:'',description:'',quantite:'',tonnage:''}])
+  const [lignes,   setLignes]   = useState([{reference:'',description:'',quantite:'',tonnage:'',unite:''}])
   const [saving,   setSaving]   = useState(false)
 
   const company = companies.find(c=>c.id===companyId)
@@ -1916,7 +1916,7 @@ function BordereauxLivraisonPage({ companies, companyId, toast }) {
     if (!companyId) { toast.error('Sélectionnez une société avant de créer un bordereau.'); return }
     setEditing(null)
     setForm(bordereauDefaults())
-    setLignes([{reference:'',description:'',quantite:'',tonnage:''}])
+    setLignes([{reference:'',description:'',quantite:'',tonnage:'',unite:''}])
     setClientSearch('')
     setSubPage('form')
   }
@@ -1926,7 +1926,7 @@ function BordereauxLivraisonPage({ companies, companyId, toast }) {
     setForm({...bordereauDefaults(), ...b})
     setClientSearch('')
     const { data } = await supabase.from('compta_bordereau_lignes').select('*').eq('bordereau_id', b.id).order('ordre')
-    setLignes(data && data.length ? data : [{reference:'',description:'',quantite:'',tonnage:''}])
+    setLignes(data && data.length ? data : [{reference:'',description:'',quantite:'',tonnage:'',unite:''}])
     setSubPage('form')
   }
 
@@ -1954,10 +1954,11 @@ function BordereauxLivraisonPage({ companies, companyId, toast }) {
       await supabase.from('compta_bordereau_lignes').delete().eq('bordereau_id', editing.id)
     }
 
-    const lignesPayload = lignes.filter(l=>l.reference||l.description||l.quantite||l.tonnage).map((l,i)=>({
+    const lignesPayload = lignes.filter(l=>l.reference||l.description||l.quantite||l.tonnage||l.unite).map((l,i)=>({
       bordereau_id: bordereauId, reference:l.reference||'', description:l.description||'',
       quantite: l.quantite!=='' && l.quantite!=null ? String(l.quantite) : null,
-      tonnage: l.tonnage!=='' && l.tonnage!=null ? String(l.tonnage) : null, ordre:i,
+      tonnage: l.tonnage!=='' && l.tonnage!=null ? String(l.tonnage) : null,
+      unite: l.unite!=='' && l.unite!=null ? String(l.unite) : null, ordre:i,
     }))
     if (lignesPayload.length) await supabase.from('compta_bordereau_lignes').insert(lignesPayload)
 
@@ -1975,10 +1976,10 @@ function BordereauxLivraisonPage({ companies, companyId, toast }) {
 
   const printBordereau = async (b) => {
     const { data:lignesData } = await supabase.from('compta_bordereau_lignes').select('*').eq('bordereau_id', b.id).order('ordre')
-    const realRows = (lignesData||[]).map(l=>`<tr><td>${l.reference||''}</td><td><div class="desc-clamp">${l.description||''}</div></td><td style="text-align:right">${l.quantite??''}</td><td style="text-align:right">${l.tonnage??''}</td></tr>`)
+    const realRows = (lignesData||[]).map(l=>`<tr><td>${l.reference||''}</td><td><div class="desc-clamp">${l.description||''}</div></td><td style="text-align:right">${l.quantite??''}</td><td style="text-align:right">${l.tonnage??''}</td><td style="text-align:right">${l.unite??''}</td></tr>`)
     // Au moins 4 lignes (même vides), sans dépasser ce qui est nécessaire, pour que le tableau
     // des articles reste compact et que le bordereau tienne sur une seule page.
-    const blankRow = '<tr><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr>'
+    const blankRow = '<tr><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr>'
     while (realRows.length < 4) realRows.push(blankRow)
     const rows = realRows.join('')
     const html = `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><title>Bordereau ${b.numero}</title>
@@ -2030,7 +2031,7 @@ function BordereauxLivraisonPage({ companies, companyId, toast }) {
         <tr><td>N° Véhicule : ${b.numero_vehicule||''}</td><td>Remorque : ${b.remorque||''}</td><td colspan="2">Nom chauffeur : ${b.nom_chauffeur||''}</td></tr>
       </table>
       <table>
-        <tr class="blue"><td>RÉFÉRENCE</td><td>DESCRIPTION</td><td>QUANTITÉ</td><td>TONNAGE</td></tr>
+        <tr class="blue"><td>RÉFÉRENCE</td><td>DESCRIPTION</td><td>QUANTITÉ</td><td>TONNAGE</td><td>UNITÉ</td></tr>
         ${rows}
       </table>
       <table>
@@ -2103,12 +2104,13 @@ function BordereauxLivraisonPage({ companies, companyId, toast }) {
               <Btn sm type="button" variant="secondary" onClick={addLigne}>+ Ajouter une ligne</Btn>
             </div>
             <div style={{border:'1px solid #e2e8f0',borderRadius:8,overflowX:'auto'}}>
-              <table style={{width:'100%',minWidth:560,borderCollapse:'collapse',fontSize:13}}>
+              <table style={{width:'100%',minWidth:640,borderCollapse:'collapse',fontSize:13}}>
                 <thead><tr style={{background:'#f8fafc'}}>
-                  <th style={{width:'26%',padding:'8px 10px',textAlign:'left',fontSize:12,color:'#475569'}}>Référence</th>
-                  <th style={{width:'40%',padding:'8px 10px',textAlign:'left',fontSize:12,color:'#475569'}}>Description</th>
-                  <th style={{width:'15%',padding:'8px 10px',textAlign:'right',fontSize:12,color:'#475569'}}>Quantité</th>
-                  <th style={{width:'15%',padding:'8px 10px',textAlign:'right',fontSize:12,color:'#475569'}}>Tonnage</th>
+                  <th style={{width:'22%',padding:'8px 10px',textAlign:'left',fontSize:12,color:'#475569'}}>Référence</th>
+                  <th style={{width:'34%',padding:'8px 10px',textAlign:'left',fontSize:12,color:'#475569'}}>Description</th>
+                  <th style={{width:'14%',padding:'8px 10px',textAlign:'right',fontSize:12,color:'#475569'}}>Quantité</th>
+                  <th style={{width:'14%',padding:'8px 10px',textAlign:'right',fontSize:12,color:'#475569'}}>Tonnage</th>
+                  <th style={{width:'14%',padding:'8px 10px',textAlign:'right',fontSize:12,color:'#475569'}}>Unité</th>
                   <th style={{width:44}}></th>
                 </tr></thead>
                 <tbody>
@@ -2121,6 +2123,8 @@ function BordereauxLivraisonPage({ companies, companyId, toast }) {
                       <td style={{padding:6}}><input value={l.quantite} onChange={e=>setLigne(i,'quantite',e.target.value)} placeholder="ex: 44 000 KG"
                         style={{width:'100%',padding:'7px 9px',border:'1px solid #e2e8f0',borderRadius:6,fontSize:13,textAlign:'right',boxSizing:'border-box'}} /></td>
                       <td style={{padding:6}}><input value={l.tonnage||''} onChange={e=>setLigne(i,'tonnage',e.target.value)} placeholder="ex: 44 T"
+                        style={{width:'100%',padding:'7px 9px',border:'1px solid #e2e8f0',borderRadius:6,fontSize:13,textAlign:'right',boxSizing:'border-box'}} /></td>
+                      <td style={{padding:6}}><input value={l.unite||''} onChange={e=>setLigne(i,'unite',e.target.value)} placeholder="ex: Sac"
                         style={{width:'100%',padding:'7px 9px',border:'1px solid #e2e8f0',borderRadius:6,fontSize:13,textAlign:'right',boxSizing:'border-box'}} /></td>
                       <td style={{textAlign:'center'}}>
                         {lignes.length>1 && <button type="button" onClick={()=>delLigne(i)} style={{background:'none',border:'none',color:'#dc2626',cursor:'pointer',fontSize:15}}>✕</button>}
