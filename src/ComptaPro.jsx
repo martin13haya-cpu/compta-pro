@@ -1956,7 +1956,7 @@ function BordereauxLivraisonPage({ companies, companyId, toast }) {
 
     const lignesPayload = lignes.filter(l=>l.reference||l.description||l.quantite).map((l,i)=>({
       bordereau_id: bordereauId, reference:l.reference||'', description:l.description||'',
-      quantite: l.quantite!=='' && l.quantite!=null ? Number(l.quantite) : null, ordre:i,
+      quantite: l.quantite!=='' && l.quantite!=null ? String(l.quantite) : null, ordre:i,
     }))
     if (lignesPayload.length) await supabase.from('compta_bordereau_lignes').insert(lignesPayload)
 
@@ -1986,9 +1986,9 @@ function BordereauxLivraisonPage({ companies, companyId, toast }) {
         *{margin:0;padding:0;box-sizing:border-box}
         html,body{width:190mm}
         body{font-family:'Times New Roman',serif;font-size:11pt;color:#000;padding:6px 4px;margin:0 auto}
-        table{width:100%;border-collapse:collapse;margin-bottom:16px;page-break-inside:avoid}
-        td,th{border:1px solid #000;padding:5px 8px;font-size:10pt;vertical-align:top;height:20px}
-        tr{height:26px}
+        table{width:100%;border-collapse:collapse;margin-bottom:22px;page-break-inside:avoid}
+        td,th{border:1px solid #000;padding:10px 10px;font-size:10.5pt;vertical-align:top;height:30px}
+        tr{height:40px}
         .header{display:grid;grid-template-columns:110px 1fr 110px;align-items:center;gap:14px;margin-bottom:10px}
         .company-text{text-align:center}
         .company-name{font-size:13pt;font-weight:bold}
@@ -1997,7 +1997,7 @@ function BordereauxLivraisonPage({ companies, companyId, toast }) {
         .blue{background:#B4C6E7;font-weight:bold;text-align:center}
         .lbl{font-weight:bold;white-space:nowrap}
         .no-border td{border:none;padding:5px 10px}
-        .signatures td{height:44px}
+        .signatures td{height:80px}
         .desc-clamp{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:4;overflow:hidden}
       </style></head><body>
       <div class="header">
