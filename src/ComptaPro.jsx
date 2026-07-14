@@ -2500,7 +2500,7 @@ function CompaniesPage({ companies, refresh, toast, isSuperAdmin=false, currentU
       toast.error('Vous ne pouvez pas modifier la société d\'un autre utilisateur.')
       return
     }
-    setForm(c?{...c}:{raison_sociale:'',rccm:'',adresse:'',tel:'',email:'',logo_url:'',type_activite:'industrielle',
+    setForm(c?{...c}:{raison_sociale:'',rccm:'',ifu:'',adresse:'',tel:'',email:'',logo_url:'',type_activite:'industrielle',
       taux_cnss_patronale:'0.194',cnss_employeur:'',nouvelle_entreprise:false,date_premier_exercice:'',signataire:'',fonction_signataire:'',
       intitule_projet:'',financement:'',structure_pilote:'',campagne_agricole:''})
     setModal(c?'edit':'add')
@@ -2511,7 +2511,7 @@ function CompaniesPage({ companies, refresh, toast, isSuperAdmin=false, currentU
     e.preventDefault(); setSaving(true)
     if (!isValidTel(form.tel)) { toast.error('Numéro de téléphone invalide : il doit contenir exactement 10 chiffres.'); setSaving(false); return }
     const uid = (await supabase.auth.getUser()).data?.user?.id
-    const pay = { raison_sociale:form.raison_sociale, rccm:form.rccm, adresse:form.adresse, tel:form.tel, email:form.email, logo_url:form.logo_url||null, type_activite:form.type_activite||'industrielle',
+    const pay = { raison_sociale:form.raison_sociale, rccm:form.rccm, ifu:form.ifu||null, adresse:form.adresse, tel:form.tel, email:form.email, logo_url:form.logo_url||null, type_activite:form.type_activite||'industrielle',
       taux_cnss_patronale: parseFloat(form.taux_cnss_patronale||0.194),
       cnss_employeur: form.cnss_employeur||null,
       nouvelle_entreprise: !!form.nouvelle_entreprise,
@@ -2580,6 +2580,7 @@ function CompaniesPage({ companies, refresh, toast, isSuperAdmin=false, currentU
           <Grid cols={2} gap={14} style={{marginBottom:16}}>
             <Span2><Input label="Raison sociale" name="raison_sociale" value={form.raison_sociale} onChange={set} required /></Span2>
             <Input label="RCCM" name="rccm" value={form.rccm} onChange={set} />
+            <Input label="N° IFU" name="ifu" value={form.ifu||''} onChange={set} />
             <Input label="Téléphone" name="tel" type="tel" value={form.tel} onChange={setTel} />
             <Span2><Input label="Adresse" name="adresse" value={form.adresse} onChange={set} /></Span2>
             <Input label="Email" name="email" type="email" value={form.email} onChange={set} />
