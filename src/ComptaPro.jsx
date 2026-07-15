@@ -3005,6 +3005,11 @@ const TYPES_AVANCE = ['Labour','Semences','Engrais','Herbicide','Crédits']
 const numFR = (v) => parseFloat(String(v==null?'':v).replace(/\s/g,'').replace(',','.')) || 0
 const UNITES_AVANCE = { Labour:'ha', Semences:'kg', Engrais:'sac', Herbicide:'L', 'Crédits':'FCFA' }
 
+// N° de boîte postale des CEPEA (Centres de Promotion de l'Entreprenariat Agricole Féminin),
+// repris du modèle "LES CONTRAT VIDES.docx" — utilisés en en-tête du contrat de production
+// quand la commune du fournisseur correspond à l'une de ces 5 communes du projet.
+const CEPEA_BP = { kouande:'208', natitingou:'106', tanguieta:'838', ouake:'413', kerou:'834' }
+
 function TiersPage({ table, title, titleSingle, icon, companies, companyId, toast, extraFields, readOnly=false }) {
   const [items,      setItems]     = useState([])
   const [modal,      setModal]     = useState(null)
@@ -3474,6 +3479,12 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
   const companyName = company?.raison_sociale || ''
   const isFourn = table==='compta_fournisseurs'
 
+  // ── CONTRAT DE PRODUCTION (fournisseurs physiques uniquement) ─────────────
+  const [contratModalOpen, setContratModalOpen] = useState(false)
+  const [contratItem, setContratItem] = useState(null)
+  const [contratInfo, setContratInfo] = useState({ variete:'', superficie:'', prix_contrat:'', campagne_agricole:'', lieu_signature:'', date_signature:'', date_limite_livraison:'' })
+  const setContratInfoField = e => setContratInfo(f=>({...f,[e.target.name]:e.target.value}))
+
   // ── FICHES MENTORS (fournisseurs uniquement) ──────────────────────────────
   const [mentorModalOpen, setMentorModalOpen] = useState(false)
   const [mentorBatchMode, setMentorBatchMode] = useState(false)
@@ -3729,6 +3740,161 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
   const avVal = (it, type, field) => {
     const a = (Array.isArray(it._avances)?it._avances:[]).find(x=>x.type_avance===type)
     return a ? (Number(a[field])||'') : ''
+  }
+
+  // Réf. de contrat séquentielle et stable par fournisseur, format "007/2026/CEPEA KOUANDE".
+  // Si le fournisseur a déjà un numero_contrat renseigné (saisi à la main ou par import CSV),
+  // on le réutilise tel quel. Sinon on parcourt TOUS les fournisseurs de la société (pas
+  // seulement ceux de la même commune) pour trouver le prochain numéro de séquence libre de
+  // l'année en cours, exactement comme obtenirNumeroPv() le fait déjà pour les PV de réception.
+  const obtenirNumeroContrat = async (fournisseurId, cid, commune) => {
+    const { data: current } = await supabase.from('compta_fournisseurs').select('numero_contrat').eq('id', fournisseurId).maybeSingle()
+    if (current?.numero_contrat) return current.numero_contrat
+    const exercice = new Date().getFullYear()
+    const { data: existants } = await supabase.from('compta_fournisseurs').select('numero_contrat').eq('company_id', cid)
+    const reSeq = new RegExp(`^(\\d+)\\s*/\\s*${exercice}\\b`)
+    const seqs = (existants||[]).map(r=>{ const m = reSeq.exec(r.numero_contrat||''); return m ? parseInt(m[1],10) : NaN }).filter(n=>!isNaN(n))
+    const next = (seqs.length ? Math.max(...seqs) : 0) + 1
+    const suffixe = commune ? ` / CEPEA ${commune.toUpperCase()}` : ''
+    const numero = `${String(next).padStart(3,'0')} / ${exercice}${suffixe}`
+    await supabase.from('compta_fournisseurs').update({ numero_contrat: numero }).eq('id', fournisseurId)
+    return numero
+  }
+
+  const openContratModal = (it) => {
+    if (!it || it.type==='morale') { toast.error('Le contrat de production est disponible uniquement pour les fournisseurs individuels (personnes physiques).'); return }
+    setContratItem(it)
+    setContratInfo({
+      variete: '',
+      superficie: it.superficie_bas_fonds || '',
+      prix_contrat: it.prix_contrat || '',
+      campagne_agricole: company?.campagne_agricole || '',
+      lieu_signature: it.commune || '',
+      date_signature: today(),
+      date_limite_livraison: '',
+    })
+    setContratModalOpen(true)
+  }
+
+  const buildContratHTML = (it, info, numero) => {
+    const nomProd = displayName(it) || ''
+    const commune = it.commune || ''
+    const communeKey = normalizeStr(commune).replace(/\s+/g,'')
+    const bp = CEPEA_BP[communeKey] || ''
+    const cepea = commune ? `CENTRE DE PROMOTION DE L'ENTREPRENARIAT AGRICOLE FEMININ DE ${commune.toUpperCase()}` : ''
+    const structurePilote = company?.structure_pilote || ''
+    const raisonSociale = company?.raison_sociale || ''
+    const blanc = (val, min=140) => val ? val : `<span class="blanc" style="min-width:${min}px"></span>`
+    const superficieTxt = info.superficie ? `${info.superficie} hectare(s)` : blanc('', 60)
+    const prixTxt = info.prix_contrat ? `${Number(info.prix_contrat).toLocaleString('fr-FR')} FCFA/kg` : blanc('', 80)
+    const prixSac = info.prix_contrat ? `${Math.round(Number(info.prix_contrat)*100).toLocaleString('fr-FR')} FCFA` : blanc('', 80)
+
+    const obligations = [
+      ['Labour de la parcelle', avVal(it,'Labour','quantite_recue'), 'ha'],
+      ['Semence certifiée', avVal(it,'Semences','quantite_recue'), 'kg'],
+      ['Engrais', avVal(it,'Engrais','quantite_recue'), 'kg'],
+      ['Herbicide', avVal(it,'Herbicide','quantite_recue'), 'L'],
+      ['Crédits facilités (IMF Sian Son)', avVal(it,'Crédits','quantite_recue'), 'FCFA'],
+    ].map(([lbl,qte,unite])=>`<li>${lbl} (${qte!==''?`${Number(qte).toLocaleString('fr-FR')} ${unite}`:blanc('',70)})</li>`).join('')
+
+    return `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">
+    <title>Contrat_${nomProd.replace(/\s+/g,'_')}</title>
+    <style>${CSS_PRINT}
+      .blanc{display:inline-block;border-bottom:1px dotted #000;min-width:60px;height:12px;vertical-align:bottom}
+      .art{font-weight:700;margin:14px 0 4px;font-size:11pt}
+      .contrat-body ul{margin:4px 0 4px 20px}
+      .contrat-body p{margin:4px 0;text-align:justify}
+      .parties{margin:10px 0}
+    </style></head><body>
+    <button class="print-btn" onclick="window.print()">🖨️ Imprimer / PDF</button>
+    <div class="header">
+      <div>
+        ${company?.logo_url?`<img src="${company.logo_url}" class="company-logo" alt="logo" />`:''}
+        <div class="company-name">${cepea || raisonSociale}</div>
+        <div class="doc-numero">CONTRAT DE PRODUCTION DE RIZ PADDY</div>
+        ${bp?`<div class="company-info">${bp} ${commune.toUpperCase()}</div>`:''}
+      </div>
+      <div class="doc-title">
+        <div class="doc-numero">Réf. : N° ${numero}</div>
+        <div class="doc-date">Édité le : ${today()}</div>
+      </div>
+    </div>
+
+    <div class="contrat-body">
+    <p>Dans le cadre de la campagne de production agricole ${info.campagne_agricole||blanc('',100)}, les soussignés :</p>
+    <div class="parties">
+      <p><strong>L'Entreprise :</strong> ${raisonSociale||blanc('',200)}, ${company?.adresse?`domiciliée à ${company.adresse}`:blanc('',160)}${company?.ifu?`, IFU N° ${company.ifu}`:''}${company?.tel?`, Tél. ${company.tel}`:''}, ci-après désignée « l'Entreprise » ;</p>
+      <p><strong>Le Producteur :</strong> ${nomProd||blanc('',200)}${it.cip?`, N° CIP ${it.cip}`:''}${it.telephone?`, Tél. ${it.telephone}`:''}${it.cooperative_affiliee?`, membre de la coopérative ${it.cooperative_affiliee}`:''}, domicilié(e) à ${[it.village,it.commune].filter(Boolean).join(', ')||blanc('',160)}, ci-après désigné(e) « le Producteur » ;</p>
+      ${cepea?`<p><strong>${cepea}</strong>, agissant en qualité de structure d'encadrement et de suivi du Producteur${structurePilote?`, sous la supervision de ${structurePilote}`:''} ;</p>`:''}
+    </div>
+    <p>ont convenu ce qui suit :</p>
+
+    <div class="art">Article 1 : Objet</div>
+    <p>Le présent contrat a pour objet de définir les modalités de production de ${superficieTxt} de riz paddy de la variété ${info.variete||blanc('',120)}, par ${nomProd||blanc('',160)}, au profit de l'Entreprise.</p>
+
+    <div class="art">Article 2 : Lieu</div>
+    <p>La production de riz paddy visée à l'article 1 s'exécutera sur le site de production du Producteur sis dans le village/quartier de ${it.village||blanc('',140)}, commune de ${commune||blanc('',120)}${it.nom_bas_fonds?`, bas-fonds « ${it.nom_bas_fonds} »`:''}.</p>
+
+    <div class="art">Article 3 : Obligations de l'entreprise</div>
+    <p>L'Entreprise s'engage à mettre à la disposition du Producteur les facteurs de production et à faciliter les services ci-après :</p>
+    <ul>${obligations}</ul>
+    <p>L'Entreprise s'engage par ailleurs à suivre le Producteur tout au long du processus de production et à lui apporter les appuis/conseils nécessaires au respect des itinéraires techniques, et à acheter ou faire acheter l'intégralité de la production de riz paddy issue du présent contrat.</p>
+
+    <div class="art">Article 4 : Obligations du producteur</div>
+    <p>Le Producteur a pour principale obligation de conduire les travaux de production (labour/planage, semis en ligne, entretien, récolte, battage, vannage). Il/Elle s'engage à souscrire à une assurance agricole couvrant les risques liés à la production, à contribuer au Fonds Régional d'Intrants Agricoles (FRAI) selon les modalités convenues, à mettre scrupuleusement en pratique les appuis/conseils prodigués par l'Entreprise, et à livrer à l'Entreprise l'intégralité de sa production issue du présent contrat.</p>
+
+    <div class="art">Article 5 : Gouvernance et suivi</div>
+    <p>${cepea?`${cepea}${structurePilote?` et un(e) représentant(e) de ${structurePilote}`:''} veilleront`:'Les parties veilleront'} au bon fonctionnement, à la transparence et à la durabilité du dispositif d'accompagnement, et organiseront des réunions régulières pour évaluer les besoins et les réalisations.</p>
+
+    <div class="art">Article 6 : Outils de suivi et évaluation</div>
+    <p>L'Entreprise s'engage à mettre en place des outils adaptés pour évaluer le coût de production, la création d'emplois, le rendement agricole et le respect des itinéraires techniques.</p>
+
+    <div class="art">Article 7 : Qualité et prix du produit</div>
+    <p>Le Producteur s'engage à livrer du riz paddy de bonne qualité (mélange de variétés ≤ 2 %, humidité ≤ 14 %, grains immatures ≤ 5 %, matières organiques ≤ 1 %, souillures ≤ 0,5 %, masse pour masse), emballé dans des sacs PP de 100 kg portant nom du producteur, village et coopérative, produit dans la commune de ${commune||blanc('',100)} au cours de la campagne rizicole ${info.campagne_agricole||blanc('',80)}. Le prix de cession est fixé à ${prixTxt}.</p>
+
+    <div class="art">Article 8 : Livraison et paiement</div>
+    <p>La manutention et le transport se feront par l'Entreprise dans les différents magasins de la coopérative. La livraison se fera au plus tard le ${info.date_limite_livraison?new Date(info.date_limite_livraison).toLocaleDateString('fr-FR'):blanc('',100)}. Le paiement se fera au comptant, sur la base de Bon de Commande contre Bordereau de Livraison.</p>
+
+    <div class="art">Article 9 : Prix d'achat par l'entreprise</div>
+    <p>Les conditions de fourniture sont définies de commun accord entre les parties. Le prix convenu à la signature du présent contrat est de ${prixSac} le sac de 100 kg, soit ${prixTxt}. Le reste de la production sera acheté au prix du marché.</p>
+
+    <div class="art">Article 10 : Durée du contrat</div>
+    <p>Le présent contrat court du ${info.date_signature?new Date(info.date_signature).toLocaleDateString('fr-FR'):blanc('',100)} au ${info.date_limite_livraison?new Date(info.date_limite_livraison).toLocaleDateString('fr-FR'):blanc('',100)}.</p>
+
+    <div class="art">Article 11 : Supervision</div>
+    <p>La supervision est assurée par ${cepea||'l\'Entreprise'}${structurePilote?`, ou toute autre personne mandatée par ${structurePilote}`:''}.</p>
+
+    <div class="art">Article 12 : Conditions financières</div>
+    <p>Au long du processus de production, les parties tiendront un point financier des préfinancements faits par l'Entreprise. Le riz paddy produit sera acheté au prix de ${prixTxt}. Après pesée et vérification de la qualité, l'Entreprise procédera à l'enlèvement et au paiement de la somme due au Producteur, déduction faite des préfinancements éventuels.</p>
+
+    <div class="art">Article 13 : Résiliation du contrat</div>
+    <p>Le présent contrat peut être résilié avant terme en cas de non-respect par l'une des parties de ses obligations visées aux articles 3 et 4, de force majeure, ou d'accord des parties. La partie prenant l'initiative de la résiliation doit en informer l'autre partie par écrit motivé, au moins deux (2) semaines avant la prise d'effet de la rupture.</p>
+
+    <div class="art">Article 14 : Règlement des litiges</div>
+    <p>Pour tout litige né de l'exécution du présent contrat, les parties conviennent de rechercher un accord amiable. Au besoin, elles s'en remettent à l'arbitrage de l'autorité départementale compétente en matière agricole.</p>
+
+    <div class="art">Article 15 : Entrée en vigueur</div>
+    <p>Le présent contrat prend effet à compter de sa date de signature.</p>
+
+    <p style="margin-top:16px">Fait en deux (2) exemplaires à ${info.lieu_signature||blanc('',100)}, le ${info.date_signature?new Date(info.date_signature).toLocaleDateString('fr-FR'):blanc('',100)}.</p>
+    </div>
+
+    <div class="signatures" style="margin-top:26px">
+      <div class="sig-box">Pour le Producteur${it.mentor_nom?` / Mentor`:''}<br><small>${nomProd}${it.mentor_nom?` — Mentor : ${it.mentor_nom}`:''}</small></div>
+      <div class="sig-box">Pour l'Entreprise${structurePilote?` / ${structurePilote}`:''}<br><small>${raisonSociale}</small></div>
+    </div>
+  </body></html>`
+  }
+
+  const printContrat = async () => {
+    const it = contratItem
+    if (!it) return
+    const cid = it.company_id || companyId || companies[0]?.id
+    const numero = await obtenirNumeroContrat(it.id, cid, it.commune)
+    const html = buildContratHTML(it, contratInfo, numero)
+    openPrintWindow(html, `contrat_${(displayName(it)||'fournisseur').replace(/\s+/g,'_')}`)
+    setContratModalOpen(false)
+    load()
   }
 
   const tiersVal = (it,c) => ({
@@ -3996,6 +4162,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
                     <div style={{display:'flex',gap:6}}>
                       <Btn sm variant="info" onClick={()=>printFicheTiers(it, isFourn?'fournisseur':'client')}>📥 PDF</Btn>
                       {isFourn && it.type!=='morale' && <Btn sm variant="secondary" onClick={()=>printPvReception(it)}>📄 PV</Btn>}
+                      {isFourn && it.type!=='morale' && <Btn sm variant="success" onClick={()=>openContratModal(it)}>📝 Contrat</Btn>}
                       {!readOnly && <Btn sm variant="secondary" onClick={()=>open(it)}>Edit</Btn>}
                       {!readOnly && <Btn sm variant="danger" onClick={()=>archive(it.id)}>🗑️</Btn>}
                     </div>
@@ -4230,6 +4397,26 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
         </Grid>
         <Row><Btn variant="secondary" onClick={()=>setMentorModalOpen(false)}>Annuler</Btn>
           <Btn onClick={mentorBatchMode ? printFichesMentorsTout : printFicheMentor}>📥 {mentorBatchMode?'Générer toutes les fiches':'Générer la fiche'}</Btn>
+        </Row>
+      </Modal>
+
+      <Modal open={contratModalOpen} onClose={()=>setContratModalOpen(false)} title={`Contrat de production — ${contratItem?displayName(contratItem):''}`} size="sm">
+        <div style={{ fontSize:12, color:'#64748b', marginBottom:12 }}>
+          Les informations déjà présentes sur la fiche du fournisseur (nom, téléphone, CIP, coopérative, commune, village,
+          superficie, avances Labour/Semences/Engrais/Herbicide, prix contrat…) sont reprises automatiquement.
+          Complétez ici uniquement ce qui manque avant de générer le contrat.
+        </div>
+        <Grid cols={2} gap={12} style={{marginBottom:16}}>
+          <Input label="Variété de riz" name="variete" value={contratInfo.variete} onChange={setContratInfoField} placeholder="ex : IR841" />
+          <Input label="Superficie (ha)" name="superficie" value={contratInfo.superficie} onChange={setContratInfoField} />
+          <Input label="Prix contrat (FCFA/kg)" name="prix_contrat" value={contratInfo.prix_contrat} onChange={setContratInfoField} />
+          <Input label="Campagne agricole" name="campagne_agricole" value={contratInfo.campagne_agricole} onChange={setContratInfoField} placeholder="ex : 2026-2027" />
+          <Input label="Lieu de signature" name="lieu_signature" value={contratInfo.lieu_signature} onChange={setContratInfoField} />
+          <Input label="Date de signature" name="date_signature" type="date" value={contratInfo.date_signature} onChange={setContratInfoField} />
+          <Input label="Date limite de livraison" name="date_limite_livraison" type="date" value={contratInfo.date_limite_livraison} onChange={setContratInfoField} />
+        </Grid>
+        <Row><Btn variant="secondary" onClick={()=>setContratModalOpen(false)}>Annuler</Btn>
+          <Btn onClick={printContrat}>📝 Générer le contrat</Btn>
         </Row>
       </Modal>
     </div>
