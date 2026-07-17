@@ -2028,7 +2028,7 @@ function BordereauxLivraisonPage({ companies, companyId, toast }) {
       <table>
         <tr class="blue"><td>Numéro du chauffeur</td><td>Date de livraison</td><td>N° de commande</td><td>Commentaire</td></tr>
         <tr><td>${b.numero_chauffeur||''}</td><td>${b.date_livraison||''}</td><td>${b.numero_commande||''}</td><td>${b.commentaire||''}</td></tr>
-        <tr><td>N° Véhicule : ${b.numero_vehicule||''}</td><td>Remorque : ${b.remorque||''}</td><td>Nom chauffeur : ${b.nom_chauffeur||''}</td><td>Signature chauffeur : ${b.signature_chauffeur||'&nbsp;'}</td></tr>
+        <tr><td width="16%">N° Véhicule : ${b.numero_vehicule||''}</td><td width="16%">Remorque : ${b.remorque||''}</td><td width="24%">Nom chauffeur : ${b.nom_chauffeur||''}</td><td width="44%">Signature : ${b.signature_chauffeur||'&nbsp;'}</td></tr>
       </table>
       <table>
         <tr class="blue"><td>RÉFÉRENCE</td><td>DESCRIPTION</td><td>UNITÉ</td><td>QUANTITÉ</td><td>TONNAGE</td></tr>
@@ -3225,7 +3225,15 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
 
   const archive = async id => {
     if (!confirm(`Archiver ce(tte) ${titleSingle} ?`)) return
+    const it = items.find(x=>x.id===id)
     await supabase.from(table).update({actif:false}).eq('id',id)
+    // Le n° de compte attribué à ce tiers (sous-compte 4011xxx / 4111xxx) n'appartient
+    // qu'à lui seul (attribuerCompteTiers en crée un nouveau à chaque fois) : on peut donc
+    // le supprimer immédiatement du plan comptable, sans attendre le nettoyage manuel des orphelins.
+    if (it?.numero_compte) {
+      await supabase.from('compta_plan_comptable').delete()
+        .eq('company_id', it.company_id).eq('numero', it.numero_compte).eq('est_collectif', false)
+    }
     toast.success('Archivé.'); load()
   }
 
