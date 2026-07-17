@@ -2969,7 +2969,19 @@ async function numerosSousCompte(collectif, cid) {
   if (isAdmin) { if (cid) q = q.eq('company_id', cid) }
   else { q = q.eq('user_id', uid); if (cid) q = q.eq('company_id', cid) }
   const { data } = await q
-  return (data||[]).map(r=>String(r.numero))
+  const nums = new Set((data||[]).map(r=>String(r.numero)))
+  // Filet de sécurité anti-doublon : si un tiers porte déjà un numero_compte de ce collectif
+  // sans ligne correspondante dans le plan comptable (nettoyage antérieur, insertion manquée…),
+  // on l'inclut quand même pour ne jamais réattribuer un numéro déjà pris par quelqu'un d'autre.
+  const tiersTable = collectif===COLLECTIF_FOURNISSEUR ? 'compta_fournisseurs' : collectif===COLLECTIF_CLIENT ? 'compta_clients' : null
+  if (tiersTable) {
+    let qt = supabase.from(tiersTable).select('numero_compte').like('numero_compte', collectif+'%')
+    if (isAdmin) { if (cid) qt = qt.eq('company_id', cid) }
+    else { qt = qt.eq('user_id', uid); if (cid) qt = qt.eq('company_id', cid) }
+    const { data:dt } = await qt
+    ;(dt||[]).forEach(r=>{ if (r.numero_compte) nums.add(String(r.numero_compte)) })
+  }
+  return [...nums]
 }
 
 // Prochain sous-compte = collectif + (plus grande séquence existante + 1)
@@ -11015,6 +11027,67 @@ function PlanComptablePage({ companies, companyId, toast, readOnly=false }) {
     setGenerating(false)
   }
 
+  // Détecte les fournisseurs/clients actifs qui partagent le même numéro de sous-compte
+  // (bug historique de numérotation) et attribue un numéro neuf et unique à tous sauf
+  // le premier de chaque groupe, qui conserve son numéro actuel.
+  const corrigerDoublons = async () => {
+    if (!window.confirm('Détecter les fournisseurs/clients qui partagent le même numéro de compte et attribuer un nouveau numéro unique aux doublons (le premier de chaque groupe garde son numéro actuel) ?')) return
+    setGenerating(true)
+    try {
+      const { data:ad } = await supabase.auth.getUser(); const uid = ad?.user?.id
+      const cid = companyId || companies[0]?.id
+      if (!cid) { toast.error('Veuillez sélectionner une société.'); setGenerating(false); return }
+
+      let totalRenumerotes = 0
+      const detail = []
+
+      for (const conf of [
+        { tableTiers:'compta_fournisseurs', collectif:COLLECTIF_FOURNISSEUR, lib:'Fournisseurs' },
+        { tableTiers:'compta_clients',      collectif:COLLECTIF_CLIENT,      lib:'Clients' },
+      ]) {
+        const { data:tiers } = await supabase.from(conf.tableTiers)
+          .select('id,type,nom,nom_societe,numero_compte').eq('company_id', cid).eq('actif', true)
+        const libOf = t => t.type==='morale' ? (t.nom_societe||'') : (t.nom||'')
+
+        const groups = {}
+        ;(tiers||[]).forEach(t=>{
+          if (t.numero_compte && String(t.numero_compte).startsWith(conf.collectif))
+            (groups[t.numero_compte] = groups[t.numero_compte] || []).push(t)
+        })
+
+        const numSet = new Set(await numerosSousCompte(conf.collectif, cid))
+
+        for (const [numero, group] of Object.entries(groups)) {
+          if (group.length <= 1) continue
+          const keeper = group[0]
+          for (const t of group.slice(1)) {
+            const nouveauNumero = prochainSousCompte(conf.collectif, [...numSet])
+            numSet.add(nouveauNumero)
+            await supabase.from(conf.tableTiers).update({ numero_compte: nouveauNumero }).eq('id', t.id)
+            await supabase.from('compta_plan_comptable').insert({ company_id:cid, user_id:uid, numero:nouveauNumero, libelle:libOf(t), est_collectif:false })
+            totalRenumerotes++
+            detail.push(`${libOf(t)} : ${numero} → ${nouveauNumero}`)
+          }
+          // Il ne doit plus rester qu'une seule ligne du plan comptable pour l'ancien numéro,
+          // portant le libellé du tiers qui l'a conservé.
+          const { data:pcRows } = await supabase.from('compta_plan_comptable').select('id')
+            .eq('company_id',cid).eq('numero', numero).eq('est_collectif', false)
+          if (pcRows && pcRows.length) {
+            await supabase.from('compta_plan_comptable').update({ libelle: libOf(keeper) }).eq('id', pcRows[0].id)
+            for (const row of pcRows.slice(1)) await supabase.from('compta_plan_comptable').delete().eq('id', row.id)
+          } else {
+            await supabase.from('compta_plan_comptable').insert({ company_id:cid, user_id:uid, numero, libelle:libOf(keeper), est_collectif:false })
+          }
+        }
+      }
+
+      if (totalRenumerotes===0) { toast.success('Aucun doublon de numéro de compte trouvé.'); setGenerating(false); return }
+      toast.success(`${totalRenumerotes} fiche(s) renumérotée(s) : ${detail.slice(0,5).join(' · ')}${detail.length>5?'…':''}`)
+      load()
+    } catch(err) { toast.error('Erreur correction : '+(err.message||err)) }
+    setGenerating(false)
+  }
+
   const importerSyscohada = async () => {
     if (!window.confirm(`Importer le socle du plan SYSCOHADA révisé (${SYSCOHADA_SOCLE.length} comptes) ? Les comptes déjà présents seront ignorés.`)) return
     setGenerating(true)
@@ -11052,6 +11125,7 @@ function PlanComptablePage({ companies, companyId, toast, readOnly=false }) {
             <Btn sm variant="secondary" onClick={genererManquants} disabled={generating}>{generating?'Génération…':'⚙️ Générer les comptes manquants'}</Btn>
             <Btn sm variant="info" onClick={importerSyscohada} disabled={generating}>📥 Importer SYSCOHADA</Btn>
             <Btn sm variant="danger" onClick={nettoyerOrphelins} disabled={generating}>🧹 Nettoyer les orphelins</Btn>
+            <Btn sm variant="danger" onClick={corrigerDoublons} disabled={generating}>🔀 Corriger les doublons</Btn>
             <Btn onClick={openAdd}>+ Nouveau compte</Btn>
           </div>
         ) : null} />
