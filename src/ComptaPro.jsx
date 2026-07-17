@@ -4007,26 +4007,23 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
   const selectAllCols = () => setSelectedCols(allColumns.map(c=>c.key))
   const deselectAllCols = () => setSelectedCols([])
 
-  const exportExcelTiers = () => {
+  const exportExcelTiers = async () => {
     if (visibleColumns.length===0) { toast.error('Sélectionnez au moins une colonne à exporter.'); return }
+    const XLSX = await import('https://cdn.sheetjs.com/xlsx-0.20.0/package/xlsx.mjs')
     const cols = visibleColumns.map(c=>c.key)
-    const thead = cols.map(c=>`<th style="background:#eceff3;color:#1a1a1a;padding:6px 10px;white-space:nowrap">${c}</th>`).join('')
-    const tbody = filtered.map((it,i)=>`<tr style="background:${i%2===0?'#f8fafc':'white'}">${cols.map(c=>`<td>${tiersVal(it,c)}</td>`).join('')}</tr>`).join('')
-    const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
-      <head><meta charset="UTF-8"><style>
-        table{border-collapse:collapse;width:100%}
-        th,td{border:1px solid #d1d5db;padding:5px 8px;font-size:10pt}
-        h2{font-family:Arial;color:#0f2044}p{font-family:Arial;font-size:9pt;color:#555}
-      </style></head><body>
-      <h2>${title}</h2>
-      <p>${companyName} — ${filtered.length} enregistrement(s) — Exporté le ${new Date().toLocaleDateString('fr-FR')}</p>
-      <table><thead><tr>${thead}</tr></thead><tbody>${tbody}</tbody></table>
-      </body></html>`
-    const blob = new Blob(['\uFEFF'+html], {type:'application/vnd.ms-excel;charset=utf-8'})
-    const url  = URL.createObjectURL(blob)
-    const a    = document.createElement('a')
-    a.href=url; a.download=`${title.toLowerCase().replace(/\s/g,'_')}.xls`; a.click()
-    URL.revokeObjectURL(url)
+    const rows = [
+      [title],
+      [`${companyName} - ${filtered.length} enregistrement(s) - Exporte le ${new Date().toLocaleDateString('fr-FR')}`],
+      [],
+      cols,
+      ...filtered.map(it => cols.map(c => tiersVal(it,c))),
+    ]
+    const ws = XLSX.utils.aoa_to_sheet(rows)
+    ws['!cols'] = visibleColumns.map(c => ({ wch: Math.max(10, c.w||14) }))
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, title.slice(0,31))
+    XLSX.writeFile(wb, `${title.toLowerCase().replace(/\s/g,'_')}.xlsx`)
+    toast.success('Fichier Excel téléchargé !')
   }
 
   const printListeTiers = () => {
