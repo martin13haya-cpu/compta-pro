@@ -1842,7 +1842,7 @@ const bordereauDefaults = () => ({
   client_id:'', client_nom:'', client_adresse:'', client_contact:'', client_email:'', client_ifu:'',
   adresse_livraison_1:'', adresse_livraison_2:'', termes_livraison:'', contact_livraison:'',
   numero_chauffeur:'', date_livraison:'', numero_commande:'', commentaire:'',
-  numero_vehicule:'', remorque:'', nom_chauffeur:'',
+  numero_vehicule:'', remorque:'', nom_chauffeur:'', signature_chauffeur:'',
   date_chargement:'', debut_chargement:'', heure_arrivee:'',
   nom_receptionnaire:'', controleur:'', livreur:'',
 })
@@ -2028,7 +2028,7 @@ function BordereauxLivraisonPage({ companies, companyId, toast }) {
       <table>
         <tr class="blue"><td>Numéro du chauffeur</td><td>Date de livraison</td><td>N° de commande</td><td>Commentaire</td></tr>
         <tr><td>${b.numero_chauffeur||''}</td><td>${b.date_livraison||''}</td><td>${b.numero_commande||''}</td><td>${b.commentaire||''}</td></tr>
-        <tr><td>N° Véhicule : ${b.numero_vehicule||''}</td><td>Remorque : ${b.remorque||''}</td><td colspan="2">Nom chauffeur : ${b.nom_chauffeur||''}</td></tr>
+        <tr><td>N° Véhicule : ${b.numero_vehicule||''}</td><td>Remorque : ${b.remorque||''}</td><td>Nom chauffeur : ${b.nom_chauffeur||''}</td><td>Signature chauffeur : ${b.signature_chauffeur||'&nbsp;'}</td></tr>
       </table>
       <table>
         <tr class="blue"><td>RÉFÉRENCE</td><td>DESCRIPTION</td><td>UNITÉ</td><td>QUANTITÉ</td><td>TONNAGE</td></tr>
@@ -2095,6 +2095,7 @@ function BordereauxLivraisonPage({ companies, companyId, toast }) {
               <Input label="N° Véhicule" name="numero_vehicule" value={form.numero_vehicule} onChange={set} />
               <Input label="Remorque" name="remorque" value={form.remorque} onChange={set} />
               <Input label="Nom du chauffeur" name="nom_chauffeur" value={form.nom_chauffeur} onChange={set} />
+              <Input label="Signature du chauffeur" name="signature_chauffeur" value={form.signature_chauffeur} onChange={set} />
             </Grid>
           </Card>
 
