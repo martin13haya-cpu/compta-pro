@@ -3754,7 +3754,9 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
   }
 
   const printPvReceptionTout = async () => {
-    const producteurs = (isFourn?items:[]).filter(i=>i.type!=='morale')
+    // Respecte les filtres actifs (commune, recherche, genre...) : n'imprime que les
+    // fournisseurs actuellement visibles dans la liste, pas tous ceux de la société.
+    const producteurs = (isFourn?filtered:[]).filter(i=>i.type!=='morale')
     if (producteurs.length===0) { toast.error('Aucun fournisseur individuel pour générer les PV.'); return }
     const cid = companyId || companies[0]?.id
     const docs = []
@@ -4076,7 +4078,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
                 <Btn sm variant="secondary" onClick={openMentorModal}>🎓 Fiches Mentors</Btn>
                 <Btn sm variant="info" onClick={openMentorModalAll}>🖨️ Toutes les fiches Mentors</Btn>
                 <Btn sm variant="success" onClick={exportExcelMentors}>📊 Liste Mentors</Btn>
-                <Btn sm variant="info" onClick={printPvReceptionTout}>📄 Toutes les PV de réception</Btn>
+                <Btn sm variant="info" onClick={printPvReceptionTout}>📄 Toutes les PV de réception ({filtered.filter(i=>i.type!=='morale').length})</Btn>
               </>
             )}
             {!readOnly && (
