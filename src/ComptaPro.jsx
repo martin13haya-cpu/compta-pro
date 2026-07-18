@@ -3034,6 +3034,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
   const [filterCommune, setFilterCommune]= useState('')   // commune (fournisseurs)
   const [filterGenre, setFilterGenre] = useState('') // Homme|Femme
   const [filterHandicap, setFilterHandicap] = useState('') // oui|non
+  const [sortBy, setSortBy] = useState('') // ''=plus récents | 'alpha' | 'contrat'
   const [avances, setAvances] = useState([])
   const [colModalOpen, setColModalOpen] = useState(false)
   const [selectedCols, setSelectedCols] = useState(null) // null = toutes les colonnes
@@ -3252,6 +3253,20 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
   const displayName = it => (table==='compta_clients' || table==='compta_fournisseurs')
     ? (it.type==='morale' ? it.nom_societe : (it.nom||''))
     : (it.nom||'')
+
+  // Le n° de contrat peut être un simple entier ("157") ou, pour les contrats générés
+  // automatiquement, un format "007 / 2026 / CEPEA KOUANDE" — on trie sur le premier
+  // nombre trouvé, les fiches sans numéro passant en dernier.
+  const compareNumeroContrat = (a,b) => {
+    const na = parseInt(String(a.numero_contrat||'').match(/\d+/)?.[0] ?? '', 10)
+    const nb = parseInt(String(b.numero_contrat||'').match(/\d+/)?.[0] ?? '', 10)
+    if (!isNaN(na) && !isNaN(nb)) return na-nb
+    if (!isNaN(na)) return -1
+    if (!isNaN(nb)) return 1
+    return 0
+  }
+  if (sortBy==='alpha') filtered.sort((a,b)=>displayName(a).localeCompare(displayName(b),'fr',{sensitivity:'base'}))
+  else if (sortBy==='contrat') filtered.sort(compareNumeroContrat)
 
   // ── DÉTECTION & SUPPRESSION DES DOUBLONS (fournisseurs) ───────────────────
   // Deux fiches sont considérées comme doublons si elles partagent : le même
@@ -4100,6 +4115,14 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
         <div style={{display:'flex',gap:10,flexWrap:'wrap',alignItems:'center'}}>
           <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="🔍 Rechercher par nom..."
             style={{padding:'8px 14px',borderRadius:8,border:'1px solid #d1d5db',fontSize:13,flex:1,minWidth:180}} />
+          {(table==='compta_clients'||table==='compta_fournisseurs') && (
+            <select value={sortBy} onChange={e=>setSortBy(e.target.value)}
+              style={{padding:'8px 12px',borderRadius:8,border:'1px solid #d1d5db',fontSize:13,background:'white'}}>
+              <option value=''>Tri : plus récents</option>
+              <option value='alpha'>Tri : A → Z</option>
+              {table==='compta_fournisseurs' && <option value='contrat'>Tri : N° Contrat</option>}
+            </select>
+          )}
           {(table==='compta_clients'||table==='compta_fournisseurs') && (
             <select value={filterType} onChange={e=>setFilterType(e.target.value)}
               style={{padding:'8px 12px',borderRadius:8,border:'1px solid #d1d5db',fontSize:13,background:'white'}}>
