@@ -3398,7 +3398,16 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
       const lines = text.replace(/^\ufeff/,'').split(/\r?\n/).filter(l=>l.trim())
       if(lines.length<2){ toast.error('Fichier vide ou sans données'); setImporting(false); return }
       const delim = lines[0].includes(';') ? ';' : ','
-      const rawHeaders = lines[0].split(delim).map(h=>h.trim())
+      // Certains fichiers (export enrichi, titre ajouté à la main par l'utilisateur…) ont
+      // une ligne de titre avant la vraie ligne d'en-têtes ("Fournisseurs;;;;..."). On
+      // prend la première ligne, parmi les 5 premières, qui contient au moins 2 en-têtes
+      // reconnus — au lieu de supposer que la ligne 1 est toujours la bonne.
+      let headerLineIndex = 0
+      for (let i = 0; i < Math.min(lines.length, 5); i++) {
+        const nbReconnus = lines[i].split(delim).map(h=>h.trim()).filter(h=>resolveHeaderKey(h)).length
+        if (nbReconnus >= 2) { headerLineIndex = i; break }
+      }
+      const rawHeaders = lines[headerLineIndex].split(delim).map(h=>h.trim())
       const headers = rawHeaders.map(h=>resolveHeaderKey(h) || normalizeHeader(h).replace(/ /g,'_'))
       const nonReconnus = rawHeaders.filter(h=>!resolveHeaderKey(h) && h.trim())
       if (nonReconnus.length) console.warn('Colonnes CSV non reconnues (ignorées) :', nonReconnus.join(', '))
@@ -3409,7 +3418,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
 
       const rows = []
       const avancesPerRow = []
-      for(let i=1;i<lines.length;i++){
+      for(let i=headerLineIndex+1;i<lines.length;i++){
         const vals = lines[i].split(delim).map(v=>v.trim())
         const obj = {}
         headers.forEach((h,idx)=>{ obj[h]=vals[idx]||'' })
