@@ -3135,10 +3135,24 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
 
   const set = e => setForm(f=>({...f,[e.target.name]:e.target.value}))
   const setTel = e => setForm(f=>({...f,[e.target.name]:formatTelPairs(e.target.value)}))
+  // Age calcule a partir de la date de naissance (annees revolues), et tranche
+  // d'age deduite de l'age (<35 / >35) — utilises par les champs "Date de
+  // naissance" et "Age" du profil du jeune, pour eviter la saisie manuelle.
+  const calculerAge = (dateNaissance) => {
+    if (!dateNaissance) return ''
+    const n = new Date(dateNaissance)
+    if (isNaN(n)) return ''
+    const a = new Date()
+    let age = a.getFullYear()-n.getFullYear()
+    const m = a.getMonth()-n.getMonth()
+    if (m<0 || (m===0 && a.getDate()<n.getDate())) age--
+    return String(age)
+  }
+  const trancheDepuisAge = (age) => (age==='' || age==null || isNaN(age)) ? '' : (Number(age)<35 ? '<35' : '>35')
 
   const baseDefaults = { company_id:companyId||'', nom:'', prenom:'', nom_societe:'', telephone:'', provenance:'', cip:'', ifu:'', email:'', adresse:'', genre:'', handicap:false, mentor_nom:'', mentor_telephone:'', mentor_cip:'', mentor_age:'', departement:'', commune:'', arrondissement:'', village:'', nom_bas_fonds:'', superficie_bas_fonds:'', cooperative_affiliee:'', numero_contrat:'', prix_contrat:'',
     date_naissance:'', age:'', tranche_age:'', nationalite:'', niveau_instruction:'',
-    reside_localite:false, disponible_formation:false, accepte_bonnes_pratiques:false, accepte_partenariat:false, a_deja_cultive_riz:false,
+    reside_localite:false, disponible_formation:false, accepte_bonnes_pratiques:false, accepte_partenariat:false, a_deja_cultive_riz:false, cooperative_partenaire:false,
     nombre_jeunes_femmes:'', nombre_jeunes_hommes:'', acces_garanti_terre:'', propriete_terre:false, mode_acces_terre:'', decision:'' }
   const open = (it=null) => {
     // Si "Toutes les sociétés" est sélectionné et qu'il existe plusieurs sociétés, on refuse
@@ -3181,7 +3195,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     const fournExtra = table==='compta_fournisseurs' ? ['prix_contrat'] : []
     const jeuneFields = table==='compta_fournisseurs' ? [
       'date_naissance','age','tranche_age','nationalite','niveau_instruction',
-      'reside_localite','disponible_formation','accepte_bonnes_pratiques','accepte_partenariat','a_deja_cultive_riz',
+      'reside_localite','disponible_formation','accepte_bonnes_pratiques','accepte_partenariat','a_deja_cultive_riz','cooperative_partenaire',
       'nombre_jeunes_femmes','nombre_jeunes_hommes','acces_garanti_terre','propriete_terre','mode_acces_terre','decision',
     ] : []
     const fields = ['company_id','nom','telephone','provenance','cip','ifu','email','adresse','genre','handicap', ...mentorFields, ...locFields, ...fournExtra, ...jeuneFields, ...(extraFields?.names||[])]
@@ -3976,6 +3990,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     'Disponible formation': it.disponible_formation ? 'Oui' : 'Non',
     'Accepte bonnes pratiques': it.accepte_bonnes_pratiques ? 'Oui' : 'Non',
     'Accepte partenariat': it.accepte_partenariat ? 'Oui' : 'Non',
+    'Membre coop. partenaire': it.cooperative_partenaire ? 'Oui' : 'Non',
     'A déjà cultivé le riz': it.a_deja_cultive_riz ? 'Oui' : 'Non',
     'Nb. jeunes femmes': it.nombre_jeunes_femmes||'',
     'Nb. jeunes hommes': it.nombre_jeunes_hommes||'',
@@ -4012,7 +4027,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
       {key:'Date de naissance', w:7},{key:'Âge', w:5},{key:'Tranche d\'âge', w:6},
       {key:'Nationalité', w:7},{key:'Niveau d\'instruction', w:8},
       {key:'Réside localement', w:6},{key:'Disponible formation', w:6},
-      {key:'Accepte bonnes pratiques', w:6},{key:'Accepte partenariat', w:6},{key:'A déjà cultivé le riz', w:6},
+      {key:'Accepte bonnes pratiques', w:6},{key:'Accepte partenariat', w:6},{key:'Membre coop. partenaire', w:6},{key:'A déjà cultivé le riz', w:6},
       {key:'Nb. jeunes femmes', w:6},{key:'Nb. jeunes hommes', w:6},
       {key:'Accès garanti terre', w:8},{key:'Propriété terre', w:6},{key:'Mode accès terre', w:9},{key:'Décision', w:6},
       {key:'Total avance (FCFA)', w:8},{key:'Prix/contrat (FCFA)', w:8},{key:'Riz paddy équiv. (kg)', w:7},
@@ -4024,11 +4039,23 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
       {key:'Détail avances', w:14},
     ]:[]),
   ]
-  const visibleColumns = allColumns.filter(c => selectedCols===null || selectedCols.includes(c.key))
+  // L'ordre d'export (Excel & PDF) suit l'ordre de selectedCols, pas l'ordre fixe
+  // de allColumns — c'est ce qui permet a l'utilisateur de choisir l'ordre des
+  // entetes via les boutons ▲▼ de la modale "Colonnes".
+  const visibleColumns = (selectedCols===null ? allColumns.map(c=>c.key) : selectedCols)
+    .map(key => allColumns.find(c=>c.key===key)).filter(Boolean)
   const isColSelected = key => selectedCols===null || selectedCols.includes(key)
   const toggleCol = key => setSelectedCols(prev => {
     const base = prev===null ? allColumns.map(c=>c.key) : prev
     return base.includes(key) ? base.filter(k=>k!==key) : [...base, key]
+  })
+  const moveCol = (key, direction) => setSelectedCols(prev => {
+    const base = prev===null ? allColumns.map(c=>c.key) : [...prev]
+    const idx = base.indexOf(key)
+    const newIdx = idx + direction
+    if (idx===-1 || newIdx<0 || newIdx>=base.length) return base
+    ;[base[idx], base[newIdx]] = [base[newIdx], base[idx]]
+    return base
   })
   const selectAllCols = () => setSelectedCols(allColumns.map(c=>c.key))
   const deselectAllCols = () => setSelectedCols([])
@@ -4296,13 +4323,23 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
             {table==='compta_fournisseurs' && (
               <>
                 <Span2><div style={{borderTop:'1px solid #e2e8f0',paddingTop:10,marginTop:4,fontSize:12,fontWeight:700,color:'#64748b'}}>🌾 PROFIL DU JEUNE & ÉLIGIBILITÉ (facultatif)</div></Span2>
-                <Input label="Date de naissance" name="date_naissance" type="date" value={form.date_naissance||''} onChange={set} />
-                <Input label="Âge" name="age" type="text" inputMode="numeric" value={form.age||''} onChange={set} />
-                <Input label="Tranche d'âge" name="tranche_age" value={form.tranche_age||''} onChange={set} placeholder="ex : 18-25" />
+                <Input label="Date de naissance" name="date_naissance" type="date" value={form.date_naissance||''}
+                  onChange={e=>{
+                    const dateNaissance = e.target.value
+                    const ageCalcule = calculerAge(dateNaissance)
+                    setForm(f=>({...f, date_naissance:dateNaissance, age:ageCalcule, tranche_age:trancheDepuisAge(ageCalcule)}))
+                  }} />
+                <Input label="Âge" name="age" type="text" inputMode="numeric" value={form.age||''}
+                  onChange={e=>{
+                    const age = e.target.value
+                    setForm(f=>({...f, age, tranche_age:trancheDepuisAge(age)}))
+                  }} />
+                <Sel label="Tranche d'âge" name="tranche_age" value={form.tranche_age||''} onChange={set}
+                  options={[{value:'',label:'— Non renseigné —'},{value:'<35',label:'< 35 ans'},{value:'>35',label:'> 35 ans'}]} />
                 <Input label="Nationalité" name="nationalite" value={form.nationalite||''} onChange={set} />
                 <Input label="Niveau d'instruction" name="niveau_instruction" value={form.niveau_instruction||''} onChange={set} />
-                <Input label="Nombre de jeunes femmes (ménage)" name="nombre_jeunes_femmes" type="text" inputMode="numeric" value={form.nombre_jeunes_femmes||''} onChange={set} />
-                <Input label="Nombre de jeunes hommes (ménage)" name="nombre_jeunes_hommes" type="text" inputMode="numeric" value={form.nombre_jeunes_hommes||''} onChange={set} />
+                <Input label="Nombre de jeunes femmes ouvrières à engager" name="nombre_jeunes_femmes" type="text" inputMode="numeric" value={form.nombre_jeunes_femmes||''} onChange={set} />
+                <Input label="Nombre de jeunes hommes ouvriers à engager" name="nombre_jeunes_hommes" type="text" inputMode="numeric" value={form.nombre_jeunes_hommes||''} onChange={set} />
                 <Input label="Accès garanti à la terre (durée)" name="acces_garanti_terre" value={form.acces_garanti_terre||''} onChange={set} placeholder="ex : 3-5 ans" />
                 {!form.propriete_terre && (
                   <Input label="Si non propriétaire, mode d'accès" name="mode_acces_terre" value={form.mode_acces_terre||''} onChange={set} />
@@ -4315,6 +4352,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
                       ['disponible_formation','Disponible pour formation'],
                       ['accepte_bonnes_pratiques','Accepte les Bonnes Pratiques'],
                       ['accepte_partenariat','Accepte le partenariat (rizerie)'],
+                      ['cooperative_partenaire','Membre coopérative partenaire'],
                       ['a_deja_cultive_riz','A déjà cultivé du riz'],
                       ['propriete_terre','Propriétaire de la terre'],
                     ].map(([k,label])=>(
@@ -4412,6 +4450,26 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
           <Btn sm type="button" variant="secondary" onClick={selectAllCols}>Tout cocher</Btn>
           <Btn sm type="button" variant="secondary" onClick={deselectAllCols}>Tout décocher</Btn>
         </div>
+
+        {visibleColumns.length>0 && (
+          <div style={{marginBottom:14}}>
+            <p style={{fontSize:12.5,fontWeight:600,color:'#475569',marginBottom:6}}>
+              Ordre des colonnes (export Excel & PDF)
+            </p>
+            <div style={{display:'flex',flexDirection:'column',gap:4,maxHeight:180,overflowY:'auto',border:'1px solid #e2e8f0',borderRadius:6,padding:6}}>
+              {visibleColumns.map((c,i)=>(
+                <div key={c.key} style={{display:'flex',alignItems:'center',gap:6,fontSize:12.5,color:'#334155'}}>
+                  <span style={{flex:1}}>{i+1}. {c.key}</span>
+                  <button type="button" disabled={i===0} onClick={()=>moveCol(c.key,-1)}
+                    style={{border:'1px solid #cbd5e1',borderRadius:4,background:'#fff',cursor:i===0?'default':'pointer',opacity:i===0?0.4:1,width:22,height:22}}>▲</button>
+                  <button type="button" disabled={i===visibleColumns.length-1} onClick={()=>moveCol(c.key,1)}
+                    style={{border:'1px solid #cbd5e1',borderRadius:4,background:'#fff',cursor:i===visibleColumns.length-1?'default':'pointer',opacity:i===visibleColumns.length-1?0.4:1,width:22,height:22}}>▼</button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         <div style={{display:'flex',flexDirection:'column',gap:10,maxHeight:360,overflowY:'auto'}}>
           {allColumns.map(c=>(
             <label key={c.key} style={{display:'flex',alignItems:'center',gap:8,fontSize:13.5,color:'#334155',cursor:'pointer'}}>
