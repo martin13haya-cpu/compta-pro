@@ -3018,6 +3018,36 @@ async function attribuerCompteTiers({ tableTiers, tiersId, collectif, libelleCol
   return numero
 }
 
+// Verifie qu'aucun autre tiers actif de la meme table ne porte deja ce CIP (personne
+// physique) ou cet IFU (personne morale) - identifiants uniques, contrairement au nom.
+// Comparaison sur les chiffres seulement (le champ peut contenir des espaces de saisie).
+async function identifiantDejaUtilise({ table, isMorale, cip, ifu, cid, excludeId }) {
+  const valeur = onlyDigits(isMorale ? ifu : cip)
+  if (!valeur) return false
+  const champ = isMorale ? 'ifu' : 'cip'
+  const { data } = await supabase.from(table).select(`id,${champ}`).eq('company_id', cid).eq('actif', true)
+  return (data||[]).some(d => d.id !== excludeId && onlyDigits(d[champ]) === valeur)
+}
+
+// Un numero de compte n'existe que si l'identifiant requis pour ce type de tiers est
+// renseigne (CIP pour une personne physique, IFU pour une personne morale). A appeler
+// apres chaque creation/modification de fiche fournisseur/client.
+async function synchroniserNumeroCompte({ table, tiersId, isMorale, cip, ifu, numeroActuel, collectif, libelleCollectif, libelleCompte, cid, uid }) {
+  const identifiant = onlyDigits(isMorale ? ifu : cip)
+  if (!identifiant) {
+    // Pas d'identifiant : aucun numero. Retire celui deja attribue le cas echeant
+    // (ex : CIP efface apres avoir ete renseigne).
+    if (numeroActuel) {
+      await supabase.from('compta_plan_comptable').delete()
+        .eq('company_id', cid).eq('numero', numeroActuel).eq('est_collectif', false)
+      await supabase.from(table).update({ numero_compte: null }).eq('id', tiersId)
+    }
+    return
+  }
+  if (numeroActuel) return // deja attribue : le numero sequentiel ne change jamais de valeur
+  await attribuerCompteTiers({ tableTiers:table, tiersId, collectif, libelleCollectif, libelleCompte, cid, uid })
+}
+
 const TYPES_AVANCE = ['Labour','Semences','Engrais','Herbicide','Crédits']
 const numFR = (v) => parseFloat(String(v==null?'':v).replace(/\s/g,'').replace(',','.')) || 0
 const UNITES_AVANCE = { Labour:'ha', Semences:'kg', Engrais:'sac', Herbicide:'L', 'Crédits':'FCFA' }
@@ -3227,21 +3257,28 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
       pay.type = form.type||'physique'
       if (form.type==='morale') pay.nom_societe = form.nom_societe||''
     }
+    if (table==='compta_fournisseurs' || table==='compta_clients') {
+      const isMorale = form.type==='morale'
+      if (await identifiantDejaUtilise({ table, isMorale, cip:pay.cip, ifu:pay.ifu, cid:pay.company_id, excludeId: form.id||null })) {
+        setSaving(false)
+        toast.error(`Le ${isMorale?'N° IFU':'N° CIP'} saisi est déjà utilisé par un(e) autre ${titleSingle.toLowerCase()}.`)
+        return
+      }
+    }
     if (modal==='add') {
       const { data:ins, error } = await supabase.from(table).insert({...pay,user_id:uid}).select('id').single()
       if (error) { setSaving(false); toast.error(error.message); return }
-      // Attribution automatique du numéro de compte (fournisseur 4011… / client 4111…)
+      // Numero de compte (fournisseur 4011… / client 4111…) : n'existe que si le CIP
+      // (personne physique) ou l'IFU (personne morale) est renseigne.
       if (table==='compta_fournisseurs' || table==='compta_clients') {
         const isFourn = table==='compta_fournisseurs'
-        const libelleCompte = form.type==='morale' ? (form.nom_societe||'') : (form.nom||'')
-        try {
-          await attribuerCompteTiers({
-            tableTiers:table, tiersId:ins.id,
-            collectif: isFourn?COLLECTIF_FOURNISSEUR:COLLECTIF_CLIENT,
-            libelleCollectif: isFourn?'Fournisseurs':'Clients',
-            libelleCompte, cid:pay.company_id, uid,
-          })
-        } catch(_) {}
+        const isMorale = form.type==='morale'
+        const libelleCompte = isMorale ? (form.nom_societe||'') : (form.nom||'')
+        await synchroniserNumeroCompte({
+          table, tiersId: ins.id, isMorale, cip: pay.cip, ifu: pay.ifu, numeroActuel: null,
+          collectif: isFourn?COLLECTIF_FOURNISSEUR:COLLECTIF_CLIENT,
+          libelleCollectif: isFourn?'Fournisseurs':'Clients', libelleCompte, cid: pay.company_id, uid,
+        })
       }
       await persistAvances(ins.id, pay.company_id, uid)
       setSaving(false)
@@ -3249,6 +3286,16 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     }
     const { error } = await supabase.from(table).update(pay).eq('id',form.id)
     if (error) { setSaving(false); toast.error(error.message); return }
+    if (table==='compta_fournisseurs' || table==='compta_clients') {
+      const isFourn = table==='compta_fournisseurs'
+      const isMorale = form.type==='morale'
+      const libelleCompte = isMorale ? (form.nom_societe||'') : (form.nom||'')
+      await synchroniserNumeroCompte({
+        table, tiersId: form.id, isMorale, cip: pay.cip, ifu: pay.ifu, numeroActuel: form.numero_compte||null,
+        collectif: isFourn?COLLECTIF_FOURNISSEUR:COLLECTIF_CLIENT,
+        libelleCollectif: isFourn?'Fournisseurs':'Clients', libelleCompte, cid: pay.company_id, uid,
+      })
+    }
     await persistAvances(form.id, pay.company_id, uid)
     setSaving(false)
     toast.success(`${titleSingle} enregistré(e) !`); close(); load()
@@ -6273,22 +6320,9 @@ function AchatsSemisPage({ companies, companyId, toast, readOnly=false }) {
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo,   setDateTo]   = useState('')
   const [viewItem, setViewItem] = useState(null)
-  const [fournsRaw, setFournsRaw] = useState([])
   const [fournModal, setFournModal] = useState(false)
   const [fournForm, setFournForm]   = useState({})
   const [fournSaving, setFournSaving] = useState(false)
-
-  const loadFourns = useCallback(async()=>{
-    const { data:ad }=await supabase.auth.getUser()
-    const uid=ad?.user?.id; const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
-    let q = supabase.from('compta_fournisseurs').select('id,type,nom,nom_societe')
-    q = isAdmin&&companyId ? q.eq('company_id',companyId) : q.eq('user_id',uid)
-    if(companyId&&!isAdmin) q=q.eq('company_id',companyId)
-    const { data }=await q; setFournsRaw(data||[])
-  },[companyId])
-  useEffect(()=>{ loadFourns() },[loadFourns])
-
-  const fournsNames = [...new Set((fournsRaw||[]).map(f=> f.type==='morale' ? (f.nom_societe||'') : (f.nom||'')).filter(n=>n.trim()!==''))].sort((a,b)=>a.localeCompare(b))
 
   const load = useCallback(async()=>{
     const uid = (await supabase.auth.getUser()).data?.user?.id
@@ -6329,13 +6363,16 @@ function AchatsSemisPage({ companies, companyId, toast, readOnly=false }) {
     const isMorale = fournForm.type==='morale'
     const nomAff = (isMorale ? fournForm.nom_societe : fournForm.nom || '').trim()
     if (!nomAff) { toast.error(isMorale?'Saisissez la raison sociale.':'Saisissez le nom du fournisseur.'); return }
-    if (fournsNames.some(n=>n.toLowerCase()===nomAff.toLowerCase())) { toast.error('Ce fournisseur existe déjà.'); return }
     if (!isValidTel(fournForm.telephone)) { toast.error('Numéro de téléphone invalide : il doit contenir exactement 10 chiffres.'); return }
     if (!isValidCIP(fournForm.cip)) { toast.error('N° CIP invalide : il doit contenir exactement 10 chiffres.'); return }
     if (!isValidIFU(fournForm.ifu)) { toast.error('N° IFU invalide : il doit contenir exactement 13 chiffres.'); return }
     const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
     const cid = form.company_id||companyId||companies[0]?.id
     if (!cid) { toast.error('Veuillez sélectionner une société.'); return }
+    if (await identifiantDejaUtilise({ table:'compta_fournisseurs', isMorale, cip:fournForm.cip, ifu:fournForm.ifu, cid, excludeId:null })) {
+      toast.error(`Le ${isMorale?'N° IFU':'N° CIP'} saisi est déjà utilisé par un autre fournisseur.`)
+      return
+    }
     setFournSaving(true)
     const { data:ins, error } = await supabase.from('compta_fournisseurs').insert({
       company_id:cid, user_id:uid, type:fournForm.type,
@@ -6345,16 +6382,15 @@ function AchatsSemisPage({ companies, companyId, toast, readOnly=false }) {
       cip:fournForm.cip||null, ifu:fournForm.ifu||null, email:fournForm.email||null, adresse:fournForm.adresse||null,
     }).select('id').single()
     if (error) { setFournSaving(false); toast.error(error.message); return }
-    let numero = null
-    try {
-      numero = await attribuerCompteTiers({ tableTiers:'compta_fournisseurs', tiersId:ins.id,
-        collectif:COLLECTIF_FOURNISSEUR, libelleCollectif:'Fournisseurs', libelleCompte:nomAff, cid, uid })
-    } catch(_) {}
+    await synchroniserNumeroCompte({
+      table:'compta_fournisseurs', tiersId:ins.id, isMorale, cip:fournForm.cip, ifu:fournForm.ifu, numeroActuel:null,
+      collectif:COLLECTIF_FOURNISSEUR, libelleCollectif:'Fournisseurs', libelleCompte:nomAff, cid, uid,
+    })
+    const { data:insRefetch } = await supabase.from('compta_fournisseurs').select('numero_compte').eq('id',ins.id).single()
     setFournSaving(false)
     toast.success(`Fournisseur « ${nomAff} » enregistré.`)
     setFournModal(false)
-    setForm(f=>({...f, nom_fournisseur:nomAff, fournisseur_id:ins.id, numero_compte:numero||f.numero_compte}))
-    loadFourns()
+    setForm(f=>({...f, nom_fournisseur:nomAff, fournisseur_id:ins.id, numero_compte:insRefetch?.numero_compte||f.numero_compte}))
   }
 
   const deleteAchat = async (id) => {
@@ -11189,6 +11225,56 @@ function PlanComptablePage({ companies, companyId, toast, readOnly=false }) {
     setGenerating(false)
   }
 
+  // Le numero de compte d'un tiers n'existe que si son identifiant (CIP pour une
+  // personne physique, IFU pour une personne morale) est renseigne. Retire le numero
+  // des fiches qui n'ont pas cet identifiant, et signale (sans fusionner) les fiches
+  // qui partagent le meme CIP/IFU.
+  const verifierIdentifiantsTiers = async () => {
+    if (!window.confirm(
+      "Vérifier les CIP/IFU des fournisseurs et clients ?\n\n" +
+      "- Les fiches sans CIP (personne physique) ou sans IFU (personne morale) perdront leur numéro " +
+      "de compte actuel (aucune écriture ne référence encore ces numéros).\n" +
+      "- Les doublons de CIP/IFU entre plusieurs fiches seront signalés, à corriger manuellement.\n\n" +
+      "Continuer ?"
+    )) return
+    setGenerating(true)
+    try {
+      const cid = companyId || companies[0]?.id
+      if (!cid) { toast.error('Veuillez sélectionner une société.'); setGenerating(false); return }
+      let supprimes = 0
+      const doublons = []
+      for (const conf of [
+        { tableTiers:'compta_fournisseurs', lib:'Fournisseurs' },
+        { tableTiers:'compta_clients',      lib:'Clients' },
+      ]) {
+        const { data:tiers } = await supabase.from(conf.tableTiers)
+          .select('id,type,nom,nom_societe,cip,ifu,numero_compte').eq('company_id', cid).eq('actif', true)
+        const vus = new Map()
+        for (const t of (tiers||[])) {
+          const isMorale = t.type==='morale'
+          const libelleCompte = isMorale ? (t.nom_societe||'') : (t.nom||'')
+          const identifiant = onlyDigits(isMorale ? t.ifu : t.cip)
+          if (!identifiant) {
+            if (t.numero_compte) {
+              await supabase.from('compta_plan_comptable').delete()
+                .eq('company_id', cid).eq('numero', t.numero_compte).eq('est_collectif', false)
+              await supabase.from(conf.tableTiers).update({ numero_compte: null }).eq('id', t.id)
+              supprimes++
+            }
+            continue
+          }
+          const cle = (isMorale?'IFU:':'CIP:')+identifiant
+          if (vus.has(cle)) doublons.push(`${conf.lib} : "${libelleCompte}" et "${vus.get(cle)}" partagent le même ${isMorale?'IFU':'CIP'}`)
+          else vus.set(cle, libelleCompte)
+        }
+      }
+      toast.success(`${supprimes} numéro(s) de compte retiré(s) (sans CIP/IFU)${doublons.length?`, ${doublons.length} doublon(s) détecté(s)`:''}.`)
+      if (doublons.length) alert('Doublons CIP/IFU détectés :\n\n'+doublons.join('\n'))
+      load()
+    } catch(err) { toast.error('Erreur : '+(err.message||err)) }
+    setGenerating(false)
+  }
+
   const importerSyscohada = async () => {
     if (!window.confirm(`Importer le socle du plan SYSCOHADA révisé (${SYSCOHADA_SOCLE.length} comptes) ? Les comptes déjà présents seront ignorés.`)) return
     setGenerating(true)
@@ -11227,6 +11313,7 @@ function PlanComptablePage({ companies, companyId, toast, readOnly=false }) {
             <Btn sm variant="info" onClick={importerSyscohada} disabled={generating}>📥 Importer SYSCOHADA</Btn>
             <Btn sm variant="danger" onClick={nettoyerOrphelins} disabled={generating}>🧹 Nettoyer les orphelins</Btn>
             <Btn sm variant="danger" onClick={corrigerDoublons} disabled={generating}>🔀 Corriger les doublons</Btn>
+            <Btn sm variant="danger" onClick={verifierIdentifiantsTiers} disabled={generating}>🆔 Vérifier CIP/IFU</Btn>
             <Btn onClick={openAdd}>+ Nouveau compte</Btn>
           </div>
         ) : null} />
