@@ -1613,6 +1613,10 @@ function UsersManagementPage({ toast }) {
 // ── CONSOLIDATION MULTI-SOCIÉTÉS (Super Admin) ───────────────────────────────
 // Colonnes des fiches Clients/Fournisseurs, identiques à celles de TiersPage
 // (dupliquées ici volontairement : cette page vit indépendamment de TiersPage).
+const consolAvVal = (it, type, field) => {
+  const a = (Array.isArray(it._avances)?it._avances:[]).find(x=>x.type_avance===type)
+  return a ? (Number(a[field])||'') : ''
+}
 const CONSOL_TIERS_COLUMNS = (isFourn) => [
   {key:'Type'},{key:'Nom'},
   ...(isFourn?[{key:'Prénom'}]:[]),
@@ -1620,10 +1624,22 @@ const CONSOL_TIERS_COLUMNS = (isFourn) => [
   ...(isFourn?[{key:'Coopérative'},{key:'N° Contrat'}]:[]),
   {key:'N° IFU'},{key:'N° CIP'},{key:'Email'},{key:'Adresse'},{key:'Genre'},{key:'Handicap'},
   ...(isFourn?[
-    {key:'Mentor - Nom'},{key:'Mentor - Téléphone'},{key:'Mentor - CIP'},
+    {key:'Mentor - Nom'},{key:'Mentor - Téléphone'},{key:'Mentor - CIP'},{key:'Mentor - Âge'},
     {key:'Département'},{key:'Commune'},{key:'Arrondissement'},{key:'Village'},
     {key:'Bas-fonds'},{key:'Superficie (ha)'},
-    {key:'Total avance (FCFA)'},{key:'Prix/contrat (FCFA)'},{key:'Riz paddy équiv. (kg)'},{key:'Détail avances'},
+    {key:'Date de naissance'},{key:'Âge'},{key:'Tranche d\'âge'},
+    {key:'Nationalité'},{key:'Niveau d\'instruction'},
+    {key:'Réside localement'},{key:'Disponible formation'},
+    {key:'Accepte bonnes pratiques'},{key:'Accepte partenariat'},{key:'Membre coop. partenaire'},{key:'A déjà cultivé le riz'},
+    {key:'Nb. jeunes femmes'},{key:'Nb. jeunes hommes'},
+    {key:'Accès garanti terre'},{key:'Propriété terre'},{key:'Mode accès terre'},{key:'Décision'},
+    {key:'Total avance (FCFA)'},{key:'Prix/contrat (FCFA)'},{key:'Riz paddy équiv. (kg)'},
+    {key:'Labour - Qté'},{key:'Labour - Montant (FCFA)'},
+    {key:'Semences - Qté'},{key:'Semences - Montant (FCFA)'},
+    {key:'Engrais - Qté'},{key:'Engrais - Montant (FCFA)'},
+    {key:'Herbicide - Qté'},{key:'Herbicide - Montant (FCFA)'},
+    {key:'Crédits - Qté'},{key:'Crédits - Montant (FCFA)'},
+    {key:'Détail avances'},
   ]:[]),
 ]
 const consolTiersVal = (it,c) => ({
@@ -1643,15 +1659,43 @@ const consolTiersVal = (it,c) => ({
   'Mentor - Nom': it.mentor_nom||'',
   'Mentor - Téléphone': it.mentor_telephone||'',
   'Mentor - CIP': it.mentor_cip||'',
+  'Mentor - Âge': it.mentor_age||'',
   'Département': it.departement||'',
   'Commune': it.commune||'',
   'Arrondissement': it.arrondissement||'',
   'Village': it.village||'',
   'Bas-fonds': it.nom_bas_fonds||'',
   'Superficie (ha)': it.superficie_bas_fonds||'',
+  'Date de naissance': it.date_naissance ? new Date(it.date_naissance).toLocaleDateString('fr-FR') : '',
+  'Âge': it.age||'',
+  'Tranche d\'âge': it.tranche_age||'',
+  'Nationalité': it.nationalite||'',
+  'Niveau d\'instruction': it.niveau_instruction||'',
+  'Réside localement': it.reside_localite ? 'Oui' : 'Non',
+  'Disponible formation': it.disponible_formation ? 'Oui' : 'Non',
+  'Accepte bonnes pratiques': it.accepte_bonnes_pratiques ? 'Oui' : 'Non',
+  'Accepte partenariat': it.accepte_partenariat ? 'Oui' : 'Non',
+  'Membre coop. partenaire': it.cooperative_partenaire ? 'Oui' : 'Non',
+  'A déjà cultivé le riz': it.a_deja_cultive_riz ? 'Oui' : 'Non',
+  'Nb. jeunes femmes': it.nombre_jeunes_femmes||'',
+  'Nb. jeunes hommes': it.nombre_jeunes_hommes||'',
+  'Accès garanti terre': it.acces_garanti_terre||'',
+  'Propriété terre': it.propriete_terre ? 'Oui' : 'Non',
+  'Mode accès terre': it.mode_acces_terre||'',
+  'Décision': it.decision||'',
   'Total avance (FCFA)': (Array.isArray(it._avances)?it._avances:[]).reduce((sm,a)=>sm+(Number(a.valeur_remboursement)||0),0) || '',
   'Prix/contrat (FCFA)': it.prix_contrat||'',
   'Riz paddy équiv. (kg)': (()=>{ const tt=(Array.isArray(it._avances)?it._avances:[]).reduce((sm,a)=>sm+(Number(a.valeur_remboursement)||0),0); const pp=Number(it.prix_contrat)||0; return pp>0?(tt/pp).toFixed(2):'' })(),
+  'Labour - Qté': consolAvVal(it,'Labour','quantite_recue'),
+  'Labour - Montant (FCFA)': consolAvVal(it,'Labour','valeur_remboursement'),
+  'Semences - Qté': consolAvVal(it,'Semences','quantite_recue'),
+  'Semences - Montant (FCFA)': consolAvVal(it,'Semences','valeur_remboursement'),
+  'Engrais - Qté': consolAvVal(it,'Engrais','quantite_recue'),
+  'Engrais - Montant (FCFA)': consolAvVal(it,'Engrais','valeur_remboursement'),
+  'Herbicide - Qté': consolAvVal(it,'Herbicide','quantite_recue'),
+  'Herbicide - Montant (FCFA)': consolAvVal(it,'Herbicide','valeur_remboursement'),
+  'Crédits - Qté': consolAvVal(it,'Crédits','quantite_recue'),
+  'Crédits - Montant (FCFA)': consolAvVal(it,'Crédits','valeur_remboursement'),
   'Détail avances': (Array.isArray(it._avances)?it._avances:[]).map(a=>`${a.type_avance}: ${Number(a.quantite_recue)||0} = ${Number(a.valeur_remboursement)||0}`).join(' | '),
 }[c] ?? '')
 
