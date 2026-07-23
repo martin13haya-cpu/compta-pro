@@ -1750,10 +1750,21 @@ function ConsolidationPage({ toast }) {
 
   const cfg = CONSOL_TYPES[dataType]
   const allColumns = cfg.columns
-  const visibleColumns = allColumns.filter(c => selectedCols===null || selectedCols.includes(c.key))
+  // L'ordre d'export suit l'ordre de selectedCols, pas l'ordre fixe de allColumns —
+  // meme convention que TiersPage, pour permettre le reordonnancement via moveCol.
+  const visibleColumns = (selectedCols===null ? allColumns.map(c=>c.key) : selectedCols)
+    .map(key => allColumns.find(c=>c.key===key)).filter(Boolean)
   const toggleCol = key => setSelectedCols(prev => {
     const base = prev===null ? allColumns.map(c=>c.key) : prev
     return base.includes(key) ? base.filter(k=>k!==key) : [...base, key]
+  })
+  const moveCol = (key, direction) => setSelectedCols(prev => {
+    const base = prev===null ? allColumns.map(c=>c.key) : [...prev]
+    const idx = base.indexOf(key)
+    const newIdx = idx + direction
+    if (idx===-1 || newIdx<0 || newIdx>=base.length) return base
+    ;[base[idx], base[newIdx]] = [base[newIdx], base[idx]]
+    return base
   })
   const selectAllCols   = () => setSelectedCols(allColumns.map(c=>c.key))
   const deselectAllCols = () => setSelectedCols([])
@@ -1866,6 +1877,26 @@ function ConsolidationPage({ toast }) {
             <button onClick={deselectAllCols} style={{fontSize:12,color:'#64748b',background:'none',border:'none',cursor:'pointer',fontWeight:600}}>Tout décocher</button>
           </div>
         </div>
+
+        {visibleColumns.length>0 && (
+          <div style={{marginBottom:14}}>
+            <p style={{fontSize:12.5,fontWeight:600,color:'#475569',marginBottom:6}}>
+              Ordre des colonnes (export Excel)
+            </p>
+            <div style={{display:'flex',flexDirection:'column',gap:4,maxHeight:180,overflowY:'auto',border:'1px solid #e2e8f0',borderRadius:6,padding:6}}>
+              {visibleColumns.map((c,i)=>(
+                <div key={c.key} style={{display:'flex',alignItems:'center',gap:6,fontSize:12.5,color:'#334155'}}>
+                  <span style={{flex:1}}>{i+1}. {c.key}</span>
+                  <button type="button" disabled={i===0} onClick={()=>moveCol(c.key,-1)}
+                    style={{border:'1px solid #cbd5e1',borderRadius:4,background:'#fff',cursor:i===0?'default':'pointer',opacity:i===0?0.4:1,width:22,height:22}}>▲</button>
+                  <button type="button" disabled={i===visibleColumns.length-1} onClick={()=>moveCol(c.key,1)}
+                    style={{border:'1px solid #cbd5e1',borderRadius:4,background:'#fff',cursor:i===visibleColumns.length-1?'default':'pointer',opacity:i===visibleColumns.length-1?0.4:1,width:22,height:22}}>▼</button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(180px,1fr))',gap:8}}>
           {allColumns.map(c=>(
             <label key={c.key} style={{display:'flex',alignItems:'center',gap:8,fontSize:13,color:'#334155'}}>
