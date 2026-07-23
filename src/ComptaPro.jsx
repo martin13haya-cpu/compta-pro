@@ -1614,7 +1614,9 @@ function UsersManagementPage({ toast }) {
 // Colonnes des fiches Clients/Fournisseurs, identiques à celles de TiersPage
 // (dupliquées ici volontairement : cette page vit indépendamment de TiersPage).
 const CONSOL_TIERS_COLUMNS = (isFourn) => [
-  {key:'Type'},{key:'Nom'},{key:'Téléphone'},{key:'Provenance'},
+  {key:'Type'},{key:'Nom'},
+  ...(isFourn?[{key:'Prénom'}]:[]),
+  {key:'Téléphone'},{key:'Provenance'},
   ...(isFourn?[{key:'Coopérative'},{key:'N° Contrat'}]:[]),
   {key:'N° IFU'},{key:'N° CIP'},{key:'Email'},{key:'Adresse'},{key:'Genre'},{key:'Handicap'},
   ...(isFourn?[
@@ -1627,6 +1629,7 @@ const CONSOL_TIERS_COLUMNS = (isFourn) => [
 const consolTiersVal = (it,c) => ({
   'Type': it.type==='morale'?'Société':'Physique',
   'Nom': it.type==='morale' ? (it.nom_societe||'') : (it.nom||''),
+  'Prénom': it.prenom||'',
   'Téléphone': it.telephone||'',
   'Provenance': it.provenance||'',
   'Coopérative': it.cooperative_affiliee||'',
@@ -2760,7 +2763,8 @@ function printFicheTiers(it, kind='fournisseur') {
     <h3 style="margin:6px 0 6px;font-size:11pt;color:#075E54">${isFourn?'🚚':'👥'} Identité</h3>
     <table><tbody>${rows([
       ['Type de personne', isMorale ? 'Personne morale' : 'Personne physique'],
-      [isMorale ? 'Raison sociale' : 'Nom et prénom(s)', nomAffiche],
+      [isMorale ? 'Raison sociale' : (isFourn ? 'Nom' : 'Nom et prénom(s)'), nomAffiche],
+      ...(isFourn && !isMorale ? [['Prénom(s)', it.prenom]] : []),
       ...(isMorale ? [['Représentant', it.nom]] : []),
       ['Téléphone', it.telephone],
       ['Email', it.email],
@@ -3198,7 +3202,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
       'reside_localite','disponible_formation','accepte_bonnes_pratiques','accepte_partenariat','a_deja_cultive_riz','cooperative_partenaire',
       'nombre_jeunes_femmes','nombre_jeunes_hommes','acces_garanti_terre','propriete_terre','mode_acces_terre','decision',
     ] : []
-    const fields = ['company_id','nom','telephone','provenance','cip','ifu','email','adresse','genre','handicap', ...mentorFields, ...locFields, ...fournExtra, ...jeuneFields, ...(extraFields?.names||[])]
+    const fields = ['company_id','nom','prenom','telephone','provenance','cip','ifu','email','adresse','genre','handicap', ...mentorFields, ...locFields, ...fournExtra, ...jeuneFields, ...(extraFields?.names||[])]
     const pay = {}; fields.forEach(k=>{ if(form[k]!==undefined) pay[k]=form[k] })
     // Normaliser les champs numériques (accepter les décimales avec virgule : 0,5)
     ;['superficie_bas_fonds','prix_contrat','mentor_age','age','nombre_jeunes_femmes','nombre_jeunes_hommes'].forEach(k=>{
@@ -3346,9 +3350,9 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
   const canImport = table==='compta_fournisseurs' || table==='compta_clients'
 
   const downloadTemplate = () => {
-    const headers = ['type','nom','nom_societe','telephone','provenance','cooperative_affiliee','numero_contrat','cip','ifu','email','adresse','genre','handicap','mentor_nom','mentor_telephone','mentor_cip','mentor_age','departement','commune','arrondissement','village','nom_bas_fonds','superficie_bas_fonds','date_naissance','age','tranche_age','nationalite','niveau_instruction','reside_localite','disponible_formation','accepte_bonnes_pratiques','accepte_partenariat','a_deja_cultive_riz','nombre_jeunes_femmes','nombre_jeunes_hommes','acces_garanti_terre','propriete_terre','mode_acces_terre','decision','prix_contrat','labour_qte','labour_montant','semences_qte','semences_montant','engrais_qte','engrais_montant','herbicide_qte','herbicide_montant','credits_qte','credits_montant']
-    const ex1 = ['physique','HAYA Martin','','22997000000','Tanguiéta','Coop PINGOU','CTR-2026-001','','3202012190967','martin@exemple.com','BP 707','Homme','Non','KOUDORO Jean','22995000000','CIP9988','45','Atacora','Tanguiéta','Cotiakou','Pingou','Bas-fonds Pingou','2.5','2002-05-14','24','18-25','Béninoise','Secondaire','Oui','Oui','Oui','Oui','Non','1','2','3-5 ans','Non','Héritage familial','Accepté','150000','2.5','50000','10','30000','','','1.5','15000','','']
-    const ex2 = ['morale','','SARL EXEMPLE','22996000000','Natitingou','','','','3201998877665','contact@exemple.com','Cotonou','','','','','','','','','','','','','','','','','','','','','','','','','','','','','','','','','','','','','','','']
+    const headers = ['type','nom','prenom','nom_societe','telephone','provenance','cooperative_affiliee','numero_contrat','cip','ifu','email','adresse','genre','handicap','mentor_nom','mentor_telephone','mentor_cip','mentor_age','departement','commune','arrondissement','village','nom_bas_fonds','superficie_bas_fonds','date_naissance','age','tranche_age','nationalite','niveau_instruction','reside_localite','disponible_formation','accepte_bonnes_pratiques','accepte_partenariat','a_deja_cultive_riz','nombre_jeunes_femmes','nombre_jeunes_hommes','acces_garanti_terre','propriete_terre','mode_acces_terre','decision','prix_contrat','labour_qte','labour_montant','semences_qte','semences_montant','engrais_qte','engrais_montant','herbicide_qte','herbicide_montant','credits_qte','credits_montant']
+    const ex1 = ['physique','HAYA','Martin','','22997000000','Tanguiéta','Coop PINGOU','CTR-2026-001','','3202012190967','martin@exemple.com','BP 707','Homme','Non','KOUDORO Jean','22995000000','CIP9988','45','Atacora','Tanguiéta','Cotiakou','Pingou','Bas-fonds Pingou','2.5','2002-05-14','24','18-25','Béninoise','Secondaire','Oui','Oui','Oui','Oui','Non','1','2','3-5 ans','Non','Héritage familial','Accepté','150000','2.5','50000','10','30000','','','1.5','15000','','']
+    const ex2 = ['morale','','','SARL EXEMPLE','22996000000','Natitingou','','','','3201998877665','contact@exemple.com','Cotonou','','','','','','','','','','','','','','','','','','','','','','','','','','','','','','','','','','','','','','','']
     const csv = [headers.join(';'), ex1.join(';'), ex2.join(';')].join('\n')
     const blob = new Blob(['\ufeff'+csv], {type:'text/csv;charset=utf-8;'})
     const url = URL.createObjectURL(blob)
@@ -3371,6 +3375,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     .trim()
   const HEADER_ALIASES = {
     type: ['type'], nom: ['nom'],
+    prenom: ['prenom','prénom','prenom(s)','prénom(s)'],
     nom_societe: ['nom_societe','nom societe','raison sociale'],
     telephone: ['telephone','tel'], provenance: ['provenance'],
     cooperative_affiliee: ['cooperative_affiliee','cooperative','cooperative affiliee'],
@@ -3461,6 +3466,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
           company_id: cid, user_id: uid,
           type: t==='morale'?'morale':'physique',
           nom: obj.nom||null,
+          prenom: obj.prenom||null,
           nom_societe: obj.nom_societe||null,
           telephone: obj.telephone||null, provenance: obj.provenance||null,
           cip: obj.cip||null, ifu: obj.ifu||null,
@@ -3961,6 +3967,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
   const tiersVal = (it,c) => ({
     'Type': it.type==='morale'?'Société':'Physique',
     'Nom': displayName(it),
+    'Prénom': it.prenom||'',
     'Téléphone': it.telephone||'',
     'Provenance': it.provenance||'',
     'Coopérative': it.cooperative_affiliee||'',
@@ -4016,7 +4023,9 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
 
   // ── Colonnes disponibles pour les exports PDF & Excel (filtrables) ────────
   const allColumns = [
-    {key:'Type', w:6},{key:'Nom', w:16},{key:'Téléphone', w:9},{key:'Provenance', w:9},
+    {key:'Type', w:6},{key:'Nom', w:16},
+    ...(isFourn?[{key:'Prénom', w:12}]:[]),
+    {key:'Téléphone', w:9},{key:'Provenance', w:9},
     ...(isFourn?[{key:'Coopérative', w:8},{key:'N° Contrat', w:7}]:[]),
     {key:'N° IFU', w:8},{key:'N° CIP', w:7},{key:'Email', w:10},{key:'Adresse', w:10},
     {key:'Genre', w:7},{key:'Handicap', w:6},
@@ -4264,7 +4273,10 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
             {(table==='compta_clients'||table==='compta_fournisseurs') && (form.type||'physique')==='morale' ? (
               <Span2><Input label="Raison sociale *" name="nom_societe" value={form.nom_societe||''} onChange={set} required /></Span2>
             ) : (
-              <Span2><Input label="Nom et Prénom(s) *" name="nom" value={form.nom||''} onChange={set} required /></Span2>
+              <Span2><Input label={table==='compta_fournisseurs' ? 'Nom *' : 'Nom et Prénom(s) *'} name="nom" value={form.nom||''} onChange={set} required /></Span2>
+            )}
+            {table==='compta_fournisseurs' && (form.type||'physique')!=='morale' && (
+              <Input label="Prénom(s)" name="prenom" value={form.prenom||''} onChange={set} />
             )}
             {(table==='compta_fournisseurs') && (form.type||'physique')==='morale' && (
               <Span2><Input label="Nom et Prénom(s) du représentant" name="nom" value={form.nom||''} onChange={set} /></Span2>
