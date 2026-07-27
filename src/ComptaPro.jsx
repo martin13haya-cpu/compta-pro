@@ -1345,6 +1345,44 @@ function UsersManagementPage({ toast }) {
 
   useEffect(()=>{ load() },[load])
 
+  // ── RESTRICTION DES SOCIÉTÉS VISIBLES PAR UN SUPER ADMIN SECONDAIRE ──
+  // Seul martin13haya@gmail.com (le maître) voit ce contrôle : il définit,
+  // pour chaque AUTRE compte super_admin, la liste des sociétés que ce
+  // compte a le droit de voir/gérer. Tant qu'aucune société n'est cochée
+  // pour un compte donné, ce compte reste illimité (comportement inchangé) —
+  // dès qu'une première société est cochée, il devient restreint à la liste.
+  const [currentEmail, setCurrentEmail] = useState(null)
+  useEffect(()=>{
+    supabase.auth.getUser().then(({ data })=>setCurrentEmail(data?.user?.email||null))
+  },[])
+  const isMaster = currentEmail === SUPER_ADMIN_EMAIL
+
+  const [societesModalUser, setSocietesModalUser] = useState(null)
+  const [assignedIds,       setAssignedIds]       = useState([])
+  const [assignLoading,     setAssignLoading]     = useState(false)
+
+  const openSocietesModal = async (u) => {
+    setSocietesModalUser(u); setAssignLoading(true)
+    const { data } = await supabase.from('compta_super_admin_societes').select('company_id').eq('super_admin_id', u.id)
+    setAssignedIds((data||[]).map(r=>r.company_id)); setAssignLoading(false)
+  }
+
+  const toggleSociete = async (companyId) => {
+    const deja = assignedIds.includes(companyId)
+    if (deja) {
+      const { error } = await supabase.from('compta_super_admin_societes')
+        .delete().eq('super_admin_id', societesModalUser.id).eq('company_id', companyId)
+      if (error) { toast.error(error.message); return }
+      setAssignedIds(ids=>ids.filter(id=>id!==companyId))
+    } else {
+      const { data:authData } = await supabase.auth.getUser()
+      const { error } = await supabase.from('compta_super_admin_societes')
+        .insert({ super_admin_id: societesModalUser.id, company_id: companyId, created_by: authData?.user?.id })
+      if (error) { toast.error(error.message); return }
+      setAssignedIds(ids=>[...ids, companyId])
+    }
+  }
+
   const updateStatut = async (id, statut) => {
     const { error } = await supabase.from('compta_profiles').update({ statut }).eq('id', id)
     if (error) { toast.error(error.message); return }
@@ -1557,6 +1595,10 @@ function UsersManagementPage({ toast }) {
                           </button>
                           {/* Diagnostic données égarées */}
                           <Btn sm variant="secondary" onClick={()=>runDiagnostic(u)}>🔍 Diagnostiquer</Btn>
+                          {/* Sociétés visibles — réservé au maître, uniquement pour les autres super admin */}
+                          {isMaster && u.role==='super_admin' && (
+                            <Btn sm variant="secondary" onClick={()=>openSocietesModal(u)}>🏢 Sociétés visibles</Btn>
+                          )}
                           {/* Suppression */}
                           <Btn sm variant="danger" onClick={()=>deleteUser(u)}>🗑️ Supprimer</Btn>
                         </div>
@@ -1604,6 +1646,29 @@ function UsersManagementPage({ toast }) {
               </div>
             )}
           </>
+        )}
+      </Modal>
+
+      <Modal open={!!societesModalUser} onClose={()=>setSocietesModalUser(null)} title={`Sociétés visibles — ${societesModalUser?.email||''}`} size="md">
+        <p style={{fontSize:13,color:'#64748b',marginBottom:16}}>
+          {assignedIds.length===0
+            ? "Aucune société cochée : ce compte reste illimité et voit toutes les sociétés, comme avant."
+            : `Ce compte est restreint aux ${assignedIds.length} société(s) cochée(s) ci-dessous — il ne verra plus les autres.`}
+          {' '}Décochez toutes les cases pour lui redonner un accès illimité.
+        </p>
+        {assignLoading ? <div style={{padding:16}}>Chargement…</div> : (
+          companies.length===0 ? (
+            <div style={{textAlign:'center',padding:24,color:'#94a3b8'}}>Aucune société enregistrée.</div>
+          ) : (
+            <div style={{display:'flex',flexDirection:'column',gap:6,maxHeight:360,overflowY:'auto'}}>
+              {companies.map(c=>(
+                <label key={c.id} style={{display:'flex',alignItems:'center',gap:10,padding:'8px 12px',borderRadius:8,border:'1px solid #e2e8f0',cursor:'pointer',fontSize:13}}>
+                  <input type="checkbox" checked={assignedIds.includes(c.id)} onChange={()=>toggleSociete(c.id)} />
+                  🏢 {c.raison_sociale||'(sans nom)'}
+                </label>
+              ))}
+            </div>
+          )
         )}
       </Modal>
     </div>
@@ -18340,16 +18405,18 @@ export default function ComptaPro() {
     return ()=>subscription.unsubscribe()
   },[])
 
-  // Load companies — super admin voit toutes, admin_societe voit la sienne, utilisateur_simple via son profil
+  // Load companies — le maître (SUPER_ADMIN_EMAIL) et tout super_admin
+  // voient ce que la RLS autorise (tout si non restreint, sinon uniquement
+  // les sociétés assignées par le maître via compta_super_admin_societes) ;
+  // admin_societe voit la sienne, utilisateur_simple via son profil.
   const loadCompanies = useCallback(async()=>{
     const { data:authData } = await supabase.auth.getUser()
     const uid = authData?.user?.id
     if (!uid) return
-    const isAdmin = authData?.user?.email === SUPER_ADMIN_EMAIL
+    const isMaster = authData?.user?.email === SUPER_ADMIN_EMAIL
+    const { data:prof } = await supabase.from('compta_profiles').select('role,company_id').eq('id',uid).maybeSingle()
     let q = supabase.from('compta_companies').select('*').order('raison_sociale')
-    if (!isAdmin) {
-      // Récupérer le profil pour savoir si utilisateur_simple
-      const { data:prof } = await supabase.from('compta_profiles').select('role,company_id').eq('id',uid).maybeSingle()
+    if (!isMaster && prof?.role !== 'super_admin') {
       if (prof?.role === 'utilisateur_simple' && prof?.company_id) {
         // Charger uniquement la société rattachée au profil
         q = q.eq('id', prof.company_id)
