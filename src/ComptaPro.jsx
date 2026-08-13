@@ -6220,7 +6220,7 @@ function buildPrestationHtml(row, companyName) {
       <tbody>
         <tr>
           <td>${row.description||'—'}</td>
-          <td class="r">${(+(row.quantite)||0).toFixed(2)}</td>
+          <td class="r">${Math.round(+(row.quantite)||0).toLocaleString('fr-FR')}</td>
           <td class="r">${Math.round(+(row.prix)||0).toLocaleString('fr-FR')}</td>
           <td class="r"><strong>${Math.round(+(row.montant)||0).toLocaleString('fr-FR')}</strong></td>
         </tr>
@@ -6324,9 +6324,44 @@ function PrestationPage({ companies, companyId, toast, readOnly=false, setPage }
     const { company_id,numero_facture,date_prestation,client_id,nom_client,description,quantite,prix } = form
     const montant = Math.round((parseFloat(quantite)||0)*(parseFloat(prix)||0))
     const pay = { company_id,numero_facture,date_prestation,client_id,nom_client,description,quantite:+quantite,prix:+prix,montant }
+
+    // Si on modifie une prestation existante, on retire d'abord son ancienne
+    // ecriture liee (regroupee par piece_id = numero_facture) pour ne pas
+    // laisser un doublon ou un montant perime dans le journal des ventes,
+    // avant de la recreer ci-dessous avec les valeurs a jour.
+    if (editItem) {
+      await supabase.from('compta_ecritures').delete().eq('piece_id', numero_facture).eq('company_id', company_id)
+    }
+
     const { error } = editItem
       ? await supabase.from('compta_prestations').update(pay).eq('id', editItem.id)
       : await supabase.from('compta_prestations').insert({...pay,user_id:uid})
+
+    // Generation automatique de l'ecriture comptable correspondante :
+    // debit du compte client (411xx du client selectionne) / credit 706
+    // "Services vendus" (meme compte deja utilise pour classer ce type de
+    // revenu dans les etats financiers, voir note 21 "Travaux, services
+    // vendus"). Sans cette ecriture, la prestation n'apparaissait jamais
+    // dans le Grand Livre / la Balance / les etats financiers, alors
+    // qu'elle etait bien enregistree dans compta_prestations -- c'est le
+    // bug corrige ici.
+    if (!error && montant > 0) {
+      const piece_id = numero_facture
+      const libelle = `Prestation ${description||''} — ${nom_client||''}`.trim()
+      const rows = [
+        { company_id, user_id:uid, piece_id, journal:'JV', date_ecriture:date_prestation,
+          numero_piece:numero_facture, numero_facture, reference:'',
+          libelle, numero_compte:String(form.numero_compte||''), compte_libelle:nom_client||'',
+          debit:montant, credit:0 },
+        { company_id, user_id:uid, piece_id, journal:'JV', date_ecriture:date_prestation,
+          numero_piece:numero_facture, numero_facture, reference:'',
+          libelle, numero_compte:'706', compte_libelle:'Services vendus',
+          debit:0, credit:montant },
+      ]
+      const { error: errEcr } = await supabase.from('compta_ecritures').insert(rows)
+      if (errEcr) toast.error(`Prestation enregistrée mais écriture comptable en échec : ${errEcr.message}`)
+    }
+
     setSaving(false)
     if (error) { toast.error(error.message); return }
     toast.success(editItem ? 'Prestation modifiée !' : 'Prestation enregistrée !'); close(); load()
@@ -6334,7 +6369,13 @@ function PrestationPage({ companies, companyId, toast, readOnly=false, setPage }
 
   const del = async id=>{
     if (!confirm('Supprimer cette prestation ?')) return
+    const item = items.find(r=>r.id===id)
     await supabase.from('compta_prestations').delete().eq('id',id)
+    // Supprime aussi l'ecriture comptable liee (meme piece_id = numero_facture),
+    // pour ne pas laisser une ecriture fantome dans le Grand Livre / la Balance.
+    if (item?.numero_facture) {
+      await supabase.from('compta_ecritures').delete().eq('piece_id', item.numero_facture).eq('company_id', item.company_id)
+    }
     toast.success('Supprimée.'); load()
   }
 
@@ -6343,7 +6384,7 @@ function PrestationPage({ companies, companyId, toast, readOnly=false, setPage }
 
   const printFilteredP = () => {
     const headers = [{label:'N° Facture'},{label:'Date'},{label:'Client'},{label:'Description'},{label:'Qté',r:true},{label:'Prix U.',r:true},{label:'Montant',r:true}]
-    const rows = items.map(r=>[r.numero_facture||'—',r.date_prestation,r.nom_client||'—',r.description||'—',(r.quantite||0).toFixed(2),Math.round(r.prix||0).toLocaleString('fr-FR')+' FCFA',Math.round(r.montant||0).toLocaleString('fr-FR')+' FCFA'])
+    const rows = items.map(r=>[r.numero_facture||'—',r.date_prestation,r.nom_client||'—',r.description||'—',Math.round(r.quantite||0).toLocaleString('fr-FR'),Math.round(r.prix||0).toLocaleString('fr-FR')+' FCFA',Math.round(r.montant||0).toLocaleString('fr-FR')+' FCFA'])
     printFilteredList({ title:'Prestations', companyName, headers, rows, dateFrom, dateTo,
       totals:[{label:'Total', value:Math.round(total).toLocaleString('fr-FR')+' FCFA'}]})
   }
@@ -6353,7 +6394,7 @@ function PrestationPage({ companies, companyId, toast, readOnly=false, setPage }
     const thead = cols.map(c=>`<th style="background:#eceff3;color:#1a1a1a;padding:6px 10px;white-space:nowrap">${c}</th>`).join('')
     const tbody = items.map((r,i)=>`<tr style="background:${i%2===0?'#f8fafc':'white'}">
       <td>${r.numero_facture||'—'}</td><td>${r.date_prestation||'—'}</td><td>${r.nom_client||'—'}</td>
-      <td>${r.description||'—'}</td><td>${(r.quantite||0).toFixed(2)}</td>
+      <td>${r.description||'—'}</td><td>${Math.round(r.quantite||0).toLocaleString('fr-FR')}</td>
       <td>${Math.round(r.prix||0).toLocaleString('fr-FR')}</td><td>${Math.round(r.montant||0).toLocaleString('fr-FR')}</td>
     </tr>`).join('')
     const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
@@ -6405,7 +6446,7 @@ function PrestationPage({ companies, companyId, toast, readOnly=false, setPage }
                   <TD sm>{r.date_prestation}</TD>
                   <TD bold>{r.nom_client||'—'}</TD>
                   <TD sm>{r.description||'—'}</TD>
-                  <TD right>{(r.quantite||0).toFixed(2)}</TD>
+                  <TD right>{Math.round(r.quantite||0).toLocaleString('fr-FR')}</TD>
                   <TD right sm>{fcfa(r.prix)}</TD>
                   <TD right bold color={ACCENT}>{fcfa(r.montant)}</TD>
                   <TD>
