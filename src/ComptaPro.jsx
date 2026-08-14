@@ -6389,6 +6389,53 @@ function PrestationPage({ companies, companyId, toast, readOnly=false, setPage }
       totals:[{label:'Total', value:Math.round(total).toLocaleString('fr-FR')+' FCFA'}]})
   }
 
+  // Rattrapage ponctuel : genere les ecritures manquantes pour les
+  // prestations creees AVANT le correctif (celles qui n'avaient encore
+  // jamais d'ecriture liee -- voir save() ci-dessus pour la logique normale,
+  // desormais appliquee automatiquement a chaque nouvelle prestation).
+  // A executer une seule fois ; les prestations deja regularisees ne sont
+  // jamais retraitees (detection par piece_id = numero_facture deja present
+  // dans compta_ecritures, journal 'JV').
+  const [reconciling, setReconciling] = useState(false)
+  const reconcilierEcritures = async () => {
+    if (!confirm("Générer les écritures comptables manquantes pour les prestations déjà enregistrées avant la mise à jour ? Cette action est sans risque : les prestations déjà régularisées sont ignorées automatiquement.")) return
+    setReconciling(true)
+    try {
+      const uid = (await supabase.auth.getUser()).data?.user?.id
+      const { data: existantes } = await supabase.from('compta_ecritures')
+        .select('piece_id').eq('company_id', companyId).eq('journal', 'JV')
+      const dejaTraitees = new Set((existantes||[]).map(e=>e.piece_id))
+      const { data: clientsData } = await supabase.from('compta_clients')
+        .select('id,numero_compte').eq('company_id', companyId)
+      const compteParClient = Object.fromEntries((clientsData||[]).map(c=>[c.id,c.numero_compte]))
+
+      let creees = 0, ignoreesSansCompte = 0
+      for (const r of items) {
+        if (!r.numero_facture || dejaTraitees.has(r.numero_facture)) continue
+        const montant = Math.round(r.montant||0)
+        const numeroCompte = compteParClient[r.client_id]
+        if (montant<=0 || !numeroCompte) { ignoreesSansCompte++; continue }
+        const piece_id = r.numero_facture
+        const libelle = `Prestation ${r.description||''} — ${r.nom_client||''}`.trim()
+        const rows = [
+          { company_id:companyId, user_id:uid, piece_id, journal:'JV', date_ecriture:r.date_prestation,
+            numero_piece:r.numero_facture, numero_facture:r.numero_facture, reference:'',
+            libelle, numero_compte:String(numeroCompte), compte_libelle:r.nom_client||'',
+            debit:montant, credit:0 },
+          { company_id:companyId, user_id:uid, piece_id, journal:'JV', date_ecriture:r.date_prestation,
+            numero_piece:r.numero_facture, numero_facture:r.numero_facture, reference:'',
+            libelle, numero_compte:'706', compte_libelle:'Services vendus',
+            debit:0, credit:montant },
+        ]
+        const { error } = await supabase.from('compta_ecritures').insert(rows)
+        if (!error) creees++
+      }
+      toast.success(`${creees} prestation(s) régularisée(s).${ignoreesSansCompte?` ${ignoreesSansCompte} ignorée(s) (compte client introuvable).`:''}`)
+    } finally {
+      setReconciling(false)
+    }
+  }
+
   const exportExcelPrestations = () => {
     const cols = ['N° Facture','Date','Client','Description','Quantité','Prix unitaire (FCFA)','Montant (FCFA)']
     const thead = cols.map(c=>`<th style="background:#eceff3;color:#1a1a1a;padding:6px 10px;white-space:nowrap">${c}</th>`).join('')
@@ -6420,6 +6467,7 @@ function PrestationPage({ companies, companyId, toast, readOnly=false, setPage }
         actions={<>
           <Btn sm variant="danger" onClick={printFilteredP}>🖨️ PDF liste</Btn>
           {items.length>0 && <Btn sm variant="success" onClick={exportExcelPrestations}>📊 Excel</Btn>}
+          {!readOnly && <Btn sm variant="secondary" onClick={reconcilierEcritures} disabled={reconciling}>{reconciling?'Régularisation...':'🔧 Régulariser écritures manquantes'}</Btn>}
           {!readOnly && <Btn onClick={openAdd}>+ Nouvelle Prestation</Btn>}
         </>}
       />
