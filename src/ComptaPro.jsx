@@ -6405,15 +6405,17 @@ function PrestationPage({ companies, companyId, toast, readOnly=false, setPage }
       const { data: existantes } = await supabase.from('compta_ecritures')
         .select('piece_id').eq('company_id', companyId).eq('journal', 'JV')
       const dejaTraitees = new Set((existantes||[]).map(e=>e.piece_id))
-      const { data: clientsData } = await supabase.from('compta_clients')
-        .select('id,numero_compte').eq('company_id', companyId)
-      const compteParClient = Object.fromEntries((clientsData||[]).map(c=>[c.id,c.numero_compte]))
-
+      // On reutilise directement la jointure compta_clients(numero_compte)
+      // deja chargee dans `items` par load() (celle qui alimente aussi le
+      // formulaire d'edition) plutot qu'une recherche separee par client_id
+      // -- cette derniere renvoyait systematiquement "compte introuvable",
+      // probablement a cause d'un decalage de type entre l'id du client
+      // stocke sur la prestation et celui renvoye par la requete separee.
       let creees = 0, ignoreesSansCompte = 0
       for (const r of items) {
         if (!r.numero_facture || dejaTraitees.has(r.numero_facture)) continue
         const montant = Math.round(r.montant||0)
-        const numeroCompte = compteParClient[r.client_id]
+        const numeroCompte = r.compta_clients?.numero_compte
         if (montant<=0 || !numeroCompte) { ignoreesSansCompte++; continue }
         const piece_id = r.numero_facture
         const libelle = `Prestation ${r.description||''} — ${r.nom_client||''}`.trim()
