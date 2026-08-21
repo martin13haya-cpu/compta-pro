@@ -6339,12 +6339,8 @@ function PrestationPage({ companies, companyId, toast, readOnly=false, setPage }
 
     // Generation automatique de l'ecriture comptable correspondante :
     // debit du compte client (411xx du client selectionne) / credit 706
-    // "Services vendus" (meme compte deja utilise pour classer ce type de
-    // revenu dans les etats financiers, voir note 21 "Travaux, services
-    // vendus"). Sans cette ecriture, la prestation n'apparaissait jamais
-    // dans le Grand Livre / la Balance / les etats financiers, alors
-    // qu'elle etait bien enregistree dans compta_prestations -- c'est le
-    // bug corrige ici.
+    // "Services vendus". Sans cette ecriture, la prestation n'apparaissait
+    // jamais dans le Grand Livre / la Balance / les etats financiers.
     if (!error && montant > 0) {
       const piece_id = numero_facture
       const libelle = `Prestation ${description||''} — ${nom_client||''}`.trim()
@@ -6390,33 +6386,88 @@ function PrestationPage({ companies, companyId, toast, readOnly=false, setPage }
   }
 
   // Rattrapage ponctuel : genere les ecritures manquantes pour les
-  // prestations creees AVANT le correctif (celles qui n'avaient encore
-  // jamais d'ecriture liee -- voir save() ci-dessus pour la logique normale,
-  // desormais appliquee automatiquement a chaque nouvelle prestation).
-  // A executer une seule fois ; les prestations deja regularisees ne sont
-  // jamais retraitees (detection par piece_id = numero_facture deja present
-  // dans compta_ecritures, journal 'JV').
+  // prestations creees AVANT le correctif. Deux cas geres :
+  //  - client_id deja renseigne (prestations recentes) -> jointure directe
+  //    compta_clients(numero_compte) deja chargee dans `items`.
+  //  - client_id NULL (prestations tres anciennes, cas d'IMOROU FOULERA
+  //    notamment) -> correspondance par nom_client contre compta_clients,
+  //    avec le CIP/IFU comme garde-fou d'unicite : si plusieurs clients
+  //    partagent exactement le meme nom, on ne devine jamais lequel choisir,
+  //    on signale le cas pour resolution manuelle plutot que de risquer un
+  //    mauvais rattachement comptable. Quand un match unique est trouve, le
+  //    client_id de la prestation est aussi corrige a la source (backfill),
+  //    pas seulement l'ecriture.
+  // Anti-doublon : verifie l'absence d'ecriture existante portant le meme
+  // numero_facture dans N'IMPORTE QUEL journal (pas seulement JV) -- au cas
+  // ou un comptable ait deja saisi l'ecriture manuellement via Saisie
+  // Comptable en attendant que ce correctif soit en place.
   const [reconciling, setReconciling] = useState(false)
+  const [reconcileReport, setReconcileReport] = useState(null)
+  const normaliserNom = s => (s||'').trim().toUpperCase().replace(/\s+/g,' ')
+
   const reconcilierEcritures = async () => {
-    if (!confirm("Générer les écritures comptables manquantes pour les prestations déjà enregistrées avant la mise à jour ? Cette action est sans risque : les prestations déjà régularisées sont ignorées automatiquement.")) return
+    if (!confirm("Générer les écritures comptables manquantes pour les prestations déjà enregistrées avant la mise à jour ? Cette action est sans risque : les prestations déjà régularisées (y compris saisies manuellement) sont ignorées automatiquement.")) return
     setReconciling(true)
+    setReconcileReport(null)
     try {
       const uid = (await supabase.auth.getUser()).data?.user?.id
+
+      // Anti-doublon elargi : tout numero_facture deja present dans
+      // compta_ecritures, quel que soit le journal, est considere traite.
       const { data: existantes } = await supabase.from('compta_ecritures')
-        .select('piece_id').eq('company_id', companyId).eq('journal', 'JV')
-      const dejaTraitees = new Set((existantes||[]).map(e=>e.piece_id))
-      // On reutilise directement la jointure compta_clients(numero_compte)
-      // deja chargee dans `items` par load() (celle qui alimente aussi le
-      // formulaire d'edition) plutot qu'une recherche separee par client_id
-      // -- cette derniere renvoyait systematiquement "compte introuvable",
-      // probablement a cause d'un decalage de type entre l'id du client
-      // stocke sur la prestation et celui renvoye par la requete separee.
-      let creees = 0, ignoreesSansCompte = 0
+        .select('numero_facture').eq('company_id', companyId).not('numero_facture','is',null)
+      const dejaTraitees = new Set((existantes||[]).map(e=>e.numero_facture))
+
+      // Index des clients par nom normalise, pour le rattrapage des
+      // prestations sans client_id. On garde la liste complete des
+      // correspondances par nom pour detecter les cas ambigus (CIP
+      // different mais nom identique).
+      const { data: clientsData } = await supabase.from('compta_clients')
+        .select('id,nom,nom_societe,cip,ifu,numero_compte').eq('company_id', companyId)
+      const indexParNom = {}
+      for (const c of (clientsData||[])) {
+        for (const nomBrut of [c.nom, c.nom_societe]) {
+          if (!nomBrut) continue
+          const cle = normaliserNom(nomBrut)
+          if (!indexParNom[cle]) indexParNom[cle] = []
+          if (!indexParNom[cle].some(x=>x.id===c.id)) indexParNom[cle].push(c)
+        }
+      }
+
+      let creees = 0, ambigues = [], introuvables = [], backfillClientId = 0
+
       for (const r of items) {
         if (!r.numero_facture || dejaTraitees.has(r.numero_facture)) continue
         const montant = Math.round(r.montant||0)
-        const numeroCompte = r.compta_clients?.numero_compte
-        if (montant<=0 || !numeroCompte) { ignoreesSansCompte++; continue }
+        if (montant <= 0) continue
+
+        let numeroCompte = r.compta_clients?.numero_compte
+        let clientIdTrouve = r.client_id
+
+        if (!numeroCompte) {
+          const candidats = indexParNom[normaliserNom(r.nom_client)] || []
+          if (candidats.length === 1) {
+            numeroCompte = candidats[0].numero_compte
+            clientIdTrouve = candidats[0].id
+          } else if (candidats.length > 1) {
+            ambigues.push(`${r.numero_facture} (${r.nom_client}) — ${candidats.length} clients portent ce nom, CIP différents : résolution manuelle requise`)
+            continue
+          } else {
+            introuvables.push(`${r.numero_facture} (${r.nom_client})`)
+            continue
+          }
+        }
+        if (!numeroCompte) { introuvables.push(`${r.numero_facture} (${r.nom_client})`); continue }
+
+        // Corrige la donnee a la source si le client_id manquait sur cette
+        // prestation, pour que les futures editions/jointures fonctionnent
+        // directement sans repasser par ce rattrapage.
+        if (!r.client_id && clientIdTrouve) {
+          const { error: errMaj } = await supabase.from('compta_prestations')
+            .update({ client_id: clientIdTrouve }).eq('id', r.id)
+          if (!errMaj) backfillClientId++
+        }
+
         const piece_id = r.numero_facture
         const libelle = `Prestation ${r.description||''} — ${r.nom_client||''}`.trim()
         const rows = [
@@ -6432,7 +6483,9 @@ function PrestationPage({ companies, companyId, toast, readOnly=false, setPage }
         const { error } = await supabase.from('compta_ecritures').insert(rows)
         if (!error) creees++
       }
-      toast.success(`${creees} prestation(s) régularisée(s).${ignoreesSansCompte?` ${ignoreesSansCompte} ignorée(s) (compte client introuvable).`:''}`)
+
+      setReconcileReport({ creees, backfillClientId, ambigues, introuvables })
+      toast.success(`${creees} prestation(s) régularisée(s).${ambigues.length?` ${ambigues.length} ambiguë(s).`:''}${introuvables.length?` ${introuvables.length} client(s) introuvable(s).`:''}`)
     } finally {
       setReconciling(false)
     }
@@ -6473,6 +6526,27 @@ function PrestationPage({ companies, companyId, toast, readOnly=false, setPage }
           {!readOnly && <Btn onClick={openAdd}>+ Nouvelle Prestation</Btn>}
         </>}
       />
+      {reconcileReport && (
+        <div style={{background:'#f8fafc',border:'1px solid #e2e8f0',borderRadius:12,padding:16,margin:'0 0 16px'}}>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+            <strong>Rapport de régularisation</strong>
+            <Btn sm variant="secondary" onClick={()=>setReconcileReport(null)}>Fermer</Btn>
+          </div>
+          <p>✅ {reconcileReport.creees} écriture(s) créée(s) — {reconcileReport.backfillClientId} prestation(s) recorrélée(s) à leur client.</p>
+          {reconcileReport.ambigues.length>0 && (
+            <div style={{marginTop:8}}>
+              <p style={{color:'#b45309',fontWeight:600}}>⚠️ Ambiguës (plusieurs clients au même nom — à corriger via CIP) :</p>
+              <ul style={{marginLeft:20}}>{reconcileReport.ambigues.map((a,i)=><li key={i}>{a}</li>)}</ul>
+            </div>
+          )}
+          {reconcileReport.introuvables.length>0 && (
+            <div style={{marginTop:8}}>
+              <p style={{color:'#dc2626',fontWeight:600}}>❌ Client introuvable (à rattacher via "Modifier") :</p>
+              <ul style={{marginLeft:20}}>{reconcileReport.introuvables.map((a,i)=><li key={i}>{a}</li>)}</ul>
+            </div>
+          )}
+        </div>
+      )}
       <PeriodFilter dateFrom={dateFrom} dateTo={dateTo} onFrom={setDateFrom} onTo={setDateTo} onReset={()=>{setDateFrom('');setDateTo('')}} />
       <div style={{background:'white',borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
         {items.length===0 ? (
