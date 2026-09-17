@@ -908,6 +908,20 @@ function TiersAccountField({ type='client', companyId, numeroCompte, onMatch, on
 
   const matched = typed ? rows.find(r => norm(r.numero_compte) === norm(typed)) : null
 
+  // Solde du tiers reconnu (dette fournisseur / créance client) — affiché des
+  // qu'un compte est selectionne ou saisi et reconnu, debounce pour ne pas
+  // interroger a chaque frappe.
+  const [soldeInfo, setSoldeInfo] = useState(null)
+  const [soldeLoading, setSoldeLoading] = useState(false)
+  useEffect(() => {
+    if (!matched || !companyId) { setSoldeInfo(null); return }
+    setSoldeLoading(true)
+    const t = setTimeout(() => {
+      getSoldeTiers(matched.numero_compte, companyId).then(r => { setSoldeInfo(r); setSoldeLoading(false) })
+    }, 350)
+    return () => clearTimeout(t)
+  }, [matched?.id, matched?.numero_compte, companyId])
+
   const handleChange = e => {
     const v = toUpperNoAccent(e.target.value)
     setTyped(v)
@@ -941,6 +955,15 @@ function TiersAccountField({ type='client', companyId, numeroCompte, onMatch, on
           : typed
             ? <span style={{ color:'#dc2626', fontWeight:600 }}>⚠️ Compte introuvable</span>
             : <span style={{ color:'#94a3b8' }}>—</span>}
+        {matched && (
+          soldeLoading
+            ? <span style={{ color:'#94a3b8', fontSize:12, whiteSpace:'nowrap' }}>Solde...</span>
+            : soldeInfo && soldeInfo.solde > 0
+              ? <span style={{ fontWeight:700, fontSize:12.5, whiteSpace:'nowrap', color: soldeInfo.type==='fournisseur' ? '#dc2626' : '#16a34a' }}>
+                  {soldeInfo.type==='fournisseur' ? 'Dû au fournisseur : ' : 'Solde client : '}{fcfa(soldeInfo.solde)}
+                </span>
+              : <span style={{ color:'#16a34a', fontSize:12, fontWeight:600, whiteSpace:'nowrap' }}>✓ Solde à 0</span>
+        )}
         {onCreateNew && !matched && (
           <button type="button" onClick={onCreateNew}
             style={{ background:'none', border:'none', color:ACCENT, fontWeight:600, fontSize:12,
@@ -3208,6 +3231,8 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
   const [filterCommune, setFilterCommune]= useState('')   // commune (fournisseurs)
   const [filterGenre, setFilterGenre] = useState('') // Homme|Femme
   const [filterHandicap, setFilterHandicap] = useState('') // oui|non
+  const [filterCol, setFilterCol] = useState('') // filtre generique par colonne (entete de la liste)
+  const [filterColValue, setFilterColValue] = useState('')
   const [sortBy, setSortBy] = useState('') // ''=plus récents | 'alpha' | 'contrat'
   const [avances, setAvances] = useState([])
   const [colModalOpen, setColModalOpen] = useState(false)
@@ -3293,6 +3318,76 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
   const provenances = [...new Set(items.map(i=>i.provenance).filter(Boolean))]
   const communes = [...new Set(items.map(i=>i.commune).filter(Boolean))].sort()
 
+  // displayName/avVal/tiersVal sont utilisees ci-dessous par le filtre generique par colonne
+  // (filterCol/filterColValue) -- deplacees plus haut dans le composant (elles vivaient plus
+  // bas, pres des exports PDF/Excel) pour rester disponibles au moment ou `filtered` se calcule.
+  const displayName = it => (table==='compta_clients' || table==='compta_fournisseurs')
+    ? (it.type==='morale' ? it.nom_societe : (it.nom||''))
+    : (it.nom||'')
+
+  // Lit un type d'avance precis dans it._avances (ex: Labour, Semences...)
+  const avVal = (it, type, field) => {
+    const a = (Array.isArray(it._avances)?it._avances:[]).find(x=>x.type_avance===type)
+    return a ? (Number(a[field])||'') : ''
+  }
+
+  const tiersVal = (it,c) => ({
+    'Type': it.type==='morale'?'Société':'Physique',
+    'Nom': displayName(it),
+    'Prénom': it.prenom||'',
+    'Téléphone': it.telephone||'',
+    'Provenance': it.provenance||'',
+    'Coopérative': it.cooperative_affiliee||'',
+    'N° Contrat': it.numero_contrat||'',
+    'N° IFU': it.ifu||'',
+    'N° CIP': it.cip||'',
+    'Email': it.email||'',
+    'Adresse': it.adresse||'',
+    'Genre': it.genre||'',
+    'Handicap': it.handicap ? 'Oui' : 'Non',
+    'Mentor - Nom': it.mentor_nom||'',
+    'Mentor - Téléphone': it.mentor_telephone||'',
+    'Mentor - CIP': it.mentor_cip||'',
+    'Mentor - Âge': it.mentor_age||'',
+    'Département': it.departement||'',
+    'Commune': it.commune||'',
+    'Arrondissement': it.arrondissement||'',
+    'Village': it.village||'',
+    'Bas-fonds': it.nom_bas_fonds||'',
+    'Superficie (ha)': it.superficie_bas_fonds||'',
+    'Date de naissance': it.date_naissance ? new Date(it.date_naissance).toLocaleDateString('fr-FR') : '',
+    'Âge': it.age||'',
+    'Tranche d\'âge': it.tranche_age||'',
+    'Nationalité': it.nationalite||'',
+    'Niveau d\'instruction': it.niveau_instruction||'',
+    'Réside localement': it.reside_localite ? 'Oui' : 'Non',
+    'Disponible formation': it.disponible_formation ? 'Oui' : 'Non',
+    'Accepte bonnes pratiques': it.accepte_bonnes_pratiques ? 'Oui' : 'Non',
+    'Accepte partenariat': it.accepte_partenariat ? 'Oui' : 'Non',
+    'Membre coop. partenaire': it.cooperative_partenaire ? 'Oui' : 'Non',
+    'A déjà cultivé le riz': it.a_deja_cultive_riz ? 'Oui' : 'Non',
+    'Nb. jeunes femmes': it.nombre_jeunes_femmes||'',
+    'Nb. jeunes hommes': it.nombre_jeunes_hommes||'',
+    'Accès garanti terre': it.acces_garanti_terre||'',
+    'Propriété terre': it.propriete_terre ? 'Oui' : 'Non',
+    'Mode accès terre': it.mode_acces_terre||'',
+    'Décision': it.decision||'',
+    'Total avance (FCFA)': (Array.isArray(it._avances)?it._avances:[]).reduce((sm,a)=>sm+(Number(a.valeur_remboursement)||0),0) || '',
+    'Prix/contrat (FCFA)': it.prix_contrat||'',
+    'Riz paddy équiv. (kg)': (()=>{ const tt=(Array.isArray(it._avances)?it._avances:[]).reduce((sm,a)=>sm+(Number(a.valeur_remboursement)||0),0); const pp=Number(it.prix_contrat)||0; return pp>0?(tt/pp).toFixed(2):'' })(),
+    'Labour - Qté': avVal(it,'Labour','quantite_recue'),
+    'Labour - Montant (FCFA)': avVal(it,'Labour','valeur_remboursement'),
+    'Semences - Qté': avVal(it,'Semences','quantite_recue'),
+    'Semences - Montant (FCFA)': avVal(it,'Semences','valeur_remboursement'),
+    'Engrais - Qté': avVal(it,'Engrais','quantite_recue'),
+    'Engrais - Montant (FCFA)': avVal(it,'Engrais','valeur_remboursement'),
+    'Herbicide - Qté': avVal(it,'Herbicide','quantite_recue'),
+    'Herbicide - Montant (FCFA)': avVal(it,'Herbicide','valeur_remboursement'),
+    'Crédits - Qté': avVal(it,'Crédits','quantite_recue'),
+    'Crédits - Montant (FCFA)': avVal(it,'Crédits','valeur_remboursement'),
+    'Détail avances': (Array.isArray(it._avances)?it._avances:[]).map(a=>`${a.type_avance}: ${Number(a.quantite_recue)||0} = ${Number(a.valeur_remboursement)||0}`).join(' | '),
+  }[c] ?? '')
+
   const filtered = items.filter(it => {
     if (search) {
       const s = (it.nom||'')+' '+(it.prenom||'')+' '+(it.nom_societe||'')
@@ -3304,6 +3399,13 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     } else if (filterProv && it.provenance !== filterProv) return false
     if (filterGenre && it.genre !== filterGenre) return false
     if (filterHandicap && (filterHandicap==='oui') !== !!it.handicap) return false
+    // Filtre generique par colonne : reutilise tiersVal (meme mapping entete -> valeur
+    // que les exports PDF/Excel) pour que "filtrer par colonne" corresponde exactement
+    // a ce que l'utilisateur voit/exporte, quelle que soit la colonne choisie.
+    if (filterCol && filterColValue.trim()) {
+      const v = String(tiersVal(it, filterCol) ?? '')
+      if (!v.toLowerCase().includes(filterColValue.trim().toLowerCase())) return false
+    }
     return true
   })
 
@@ -3454,10 +3556,6 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     }
     toast.success('Archivé.'); load()
   }
-
-  const displayName = it => (table==='compta_clients' || table==='compta_fournisseurs')
-    ? (it.type==='morale' ? it.nom_societe : (it.nom||''))
-    : (it.nom||'')
 
   // Le n° de contrat peut être un simple entier ("157") ou, pour les contrats générés
   // automatiquement, un format "007 / 2026 / CEPEA KOUANDE" — on trie sur le premier
@@ -3990,12 +4088,6 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     load()
   }
 
-  // Lit un type d'avance precis dans it._avances (ex: Labour, Semences...)
-  const avVal = (it, type, field) => {
-    const a = (Array.isArray(it._avances)?it._avances:[]).find(x=>x.type_avance===type)
-    return a ? (Number(a[field])||'') : ''
-  }
-
   // Réf. de contrat séquentielle et stable par fournisseur, format "007/2026/CEPEA KOUANDE".
   // Si le fournisseur a déjà un numero_contrat renseigné (saisi à la main ou par import CSV),
   // on le réutilise tel quel. Sinon on parcourt TOUS les fournisseurs de la société (pas
@@ -4150,63 +4242,6 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     setContratModalOpen(false)
     load()
   }
-
-  const tiersVal = (it,c) => ({
-    'Type': it.type==='morale'?'Société':'Physique',
-    'Nom': displayName(it),
-    'Prénom': it.prenom||'',
-    'Téléphone': it.telephone||'',
-    'Provenance': it.provenance||'',
-    'Coopérative': it.cooperative_affiliee||'',
-    'N° Contrat': it.numero_contrat||'',
-    'N° IFU': it.ifu||'',
-    'N° CIP': it.cip||'',
-    'Email': it.email||'',
-    'Adresse': it.adresse||'',
-    'Genre': it.genre||'',
-    'Handicap': it.handicap ? 'Oui' : 'Non',
-    'Mentor - Nom': it.mentor_nom||'',
-    'Mentor - Téléphone': it.mentor_telephone||'',
-    'Mentor - CIP': it.mentor_cip||'',
-    'Mentor - Âge': it.mentor_age||'',
-    'Département': it.departement||'',
-    'Commune': it.commune||'',
-    'Arrondissement': it.arrondissement||'',
-    'Village': it.village||'',
-    'Bas-fonds': it.nom_bas_fonds||'',
-    'Superficie (ha)': it.superficie_bas_fonds||'',
-    'Date de naissance': it.date_naissance ? new Date(it.date_naissance).toLocaleDateString('fr-FR') : '',
-    'Âge': it.age||'',
-    'Tranche d\'âge': it.tranche_age||'',
-    'Nationalité': it.nationalite||'',
-    'Niveau d\'instruction': it.niveau_instruction||'',
-    'Réside localement': it.reside_localite ? 'Oui' : 'Non',
-    'Disponible formation': it.disponible_formation ? 'Oui' : 'Non',
-    'Accepte bonnes pratiques': it.accepte_bonnes_pratiques ? 'Oui' : 'Non',
-    'Accepte partenariat': it.accepte_partenariat ? 'Oui' : 'Non',
-    'Membre coop. partenaire': it.cooperative_partenaire ? 'Oui' : 'Non',
-    'A déjà cultivé le riz': it.a_deja_cultive_riz ? 'Oui' : 'Non',
-    'Nb. jeunes femmes': it.nombre_jeunes_femmes||'',
-    'Nb. jeunes hommes': it.nombre_jeunes_hommes||'',
-    'Accès garanti terre': it.acces_garanti_terre||'',
-    'Propriété terre': it.propriete_terre ? 'Oui' : 'Non',
-    'Mode accès terre': it.mode_acces_terre||'',
-    'Décision': it.decision||'',
-    'Total avance (FCFA)': (Array.isArray(it._avances)?it._avances:[]).reduce((sm,a)=>sm+(Number(a.valeur_remboursement)||0),0) || '',
-    'Prix/contrat (FCFA)': it.prix_contrat||'',
-    'Riz paddy équiv. (kg)': (()=>{ const tt=(Array.isArray(it._avances)?it._avances:[]).reduce((sm,a)=>sm+(Number(a.valeur_remboursement)||0),0); const pp=Number(it.prix_contrat)||0; return pp>0?(tt/pp).toFixed(2):'' })(),
-    'Labour - Qté': avVal(it,'Labour','quantite_recue'),
-    'Labour - Montant (FCFA)': avVal(it,'Labour','valeur_remboursement'),
-    'Semences - Qté': avVal(it,'Semences','quantite_recue'),
-    'Semences - Montant (FCFA)': avVal(it,'Semences','valeur_remboursement'),
-    'Engrais - Qté': avVal(it,'Engrais','quantite_recue'),
-    'Engrais - Montant (FCFA)': avVal(it,'Engrais','valeur_remboursement'),
-    'Herbicide - Qté': avVal(it,'Herbicide','quantite_recue'),
-    'Herbicide - Montant (FCFA)': avVal(it,'Herbicide','valeur_remboursement'),
-    'Crédits - Qté': avVal(it,'Crédits','quantite_recue'),
-    'Crédits - Montant (FCFA)': avVal(it,'Crédits','valeur_remboursement'),
-    'Détail avances': (Array.isArray(it._avances)?it._avances:[]).map(a=>`${a.type_avance}: ${Number(a.quantite_recue)||0} = ${Number(a.valeur_remboursement)||0}`).join(' | '),
-  }[c] ?? '')
 
   // ── Colonnes disponibles pour les exports PDF & Excel (filtrables) ────────
   const allColumns = [
@@ -4389,8 +4424,23 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
               <option value='non'>Handicap : Non</option>
             </select>
           )}
-          {(search||filterType||filterProv||filterCommune||filterGenre||filterHandicap) && (
-            <button onClick={()=>{setSearch('');setFilterType('');setFilterProv('');setFilterCommune('');setFilterGenre('');setFilterHandicap('')}}
+          {(table==='compta_clients'||table==='compta_fournisseurs') && allColumns.length>0 && (
+            <>
+              <select value={filterCol} onChange={e=>{ setFilterCol(e.target.value); if(!e.target.value) setFilterColValue('') }}
+                title="Filtrer par n'importe quelle colonne de la liste"
+                style={{padding:'8px 12px',borderRadius:8,border:'1px solid #d1d5db',fontSize:13,background:'white'}}>
+                <option value=''>Filtrer par colonne...</option>
+                {allColumns.map(c=><option key={c.key} value={c.key}>{c.key}</option>)}
+              </select>
+              {filterCol && (
+                <input value={filterColValue} onChange={e=>setFilterColValue(e.target.value)}
+                  placeholder={`Valeur pour « ${filterCol} »...`} autoFocus
+                  style={{padding:'8px 14px',borderRadius:8,border:'1px solid #d1d5db',fontSize:13,minWidth:160}} />
+              )}
+            </>
+          )}
+          {(search||filterType||filterProv||filterCommune||filterGenre||filterHandicap||filterCol) && (
+            <button onClick={()=>{setSearch('');setFilterType('');setFilterProv('');setFilterCommune('');setFilterGenre('');setFilterHandicap('');setFilterCol('');setFilterColValue('')}}
               style={{padding:'8px 12px',borderRadius:8,border:'1px solid #e2e8f0',fontSize:12,cursor:'pointer',background:'#f8fafc',color:'#64748b'}}>
               ✕ Réinitialiser
             </button>
@@ -13382,6 +13432,50 @@ async function getSoldeCompte(compte, cid) {
   return (data||[]).reduce((s,r)=> s + (r.type_operation==='entree' ? (r.montant||0) : -(r.montant||0)), 0)
 }
 
+// Solde d'un tiers (fournisseur/client) identifie par son numero de compte —
+// meme logique que lignesPourCompte() du Grand-Livre (achats/factures/prestations
+// + mouvements des 3 journaux + ecritures), mais limitee a CE tiers seul (requetes
+// filtrees par son id/numero_compte) plutot que de charger tout le grand-livre
+// juste pour afficher un solde dans le formulaire de saisie d'un journal.
+// Retourne { type:'fournisseur'|'client', solde } (solde toujours >= 0), ou null
+// si le compte ne correspond a aucun tiers connu (compte de tresorerie, etc.).
+async function getSoldeTiers(numeroCompte, cid) {
+  if (!numeroCompte || !cid) return null
+  const { data:ad } = await supabase.auth.getUser()
+  const uid = ad?.user?.id; const isAdmin = ad?.user?.email===SUPER_ADMIN_EMAIL
+  const scope = q => isAdmin ? q.eq('company_id', cid) : q.eq('user_id', uid).eq('company_id', cid)
+
+  const [foR, clR] = await Promise.all([
+    scope(supabase.from('compta_fournisseurs').select('id').eq('numero_compte', numeroCompte)).maybeSingle(),
+    scope(supabase.from('compta_clients').select('id').eq('numero_compte', numeroCompte)).maybeSingle(),
+  ])
+  const fournId = foR.data?.id, clientId = clR.data?.id
+  if (!fournId && !clientId) return null
+
+  const [jc, jb, jm, ec] = await Promise.all([
+    scope(supabase.from('compta_journal_caisse').select('type_operation,montant').eq('numero_compte', numeroCompte)),
+    scope(supabase.from('compta_journal_banque').select('type_operation,montant').eq('numero_compte', numeroCompte)),
+    scope(supabase.from('compta_journal_mobile').select('type_operation,montant').eq('numero_compte', numeroCompte)),
+    scope(supabase.from('compta_ecritures').select('debit,credit').eq('numero_compte', numeroCompte)),
+  ])
+  let debit = 0, credit = 0
+  ;[jc, jb, jm].forEach(r => (r.data||[]).forEach(m => { if (m.type_operation==='sortie') debit += m.montant||0; else credit += m.montant||0 }))
+  ;(ec.data||[]).forEach(x => { debit += x.debit||0; credit += x.credit||0 })
+
+  if (fournId) {
+    const { data:ac } = await scope(supabase.from('compta_achats_semi_finis').select('montant').eq('fournisseur_id', fournId))
+    ;(ac||[]).forEach(a => credit += a.montant||0)
+    return { type:'fournisseur', solde: Math.max(0, credit - debit) }
+  }
+  const [{ data:fa }, { data:ps }] = await Promise.all([
+    scope(supabase.from('compta_documents').select('montant_ttc').eq('client_id', clientId).eq('type_doc','facture')),
+    scope(supabase.from('compta_prestations').select('montant').eq('client_id', clientId)),
+  ])
+  ;(fa||[]).forEach(f => debit += f.montant_ttc||0)
+  ;(ps||[]).forEach(p => debit += p.montant||0)
+  return { type:'client', solde: Math.max(0, debit - credit) }
+}
+
 // Crée une écriture "sortie" dans le journal du compte, liée à sa source
 async function creerSortieJournal({ compte, cid, uid, date, montant, libelle, tiers, reference, sourceType, sourceId, numeroCompte }) {
   const table = JOURNAL_TABLE[compte]; if (!table) return { error:{ message:'Compte invalide' } }
@@ -13830,6 +13924,8 @@ function JournalPage({ table, title, icon, journalType='caisse', companies, comp
   const [addTiersModal, setAddTiersModal] = useState(false)
   const [addTiersForm, setAddTiersForm]   = useState({})
   const [addTiersSaving, setAddTiersSaving] = useState(false)
+  const [soldeTiers, setSoldeTiers] = useState(null) // { type, solde } | null
+  const [soldeTiersLoading, setSoldeTiersLoading] = useState(false)
 
   const loadComptesTiers = useCallback(async()=>{
     const { data:ad }=await supabase.auth.getUser()
@@ -13854,6 +13950,20 @@ function JournalPage({ table, title, icon, journalType='caisse', companies, comp
                : null
     setForm(f=>({...f, numero_compte:v, ...(m?{tiers:m.nom}:{}), ...(auto?{type_operation:auto}:{})}))
   }
+
+  // Solde du tiers affiché des qu'un compte reconnu est selectionne ou saisi
+  // (debounce pour ne pas interroger a chaque frappe).
+  useEffect(() => {
+    const v = form.numero_compte
+    const cid = form.company_id || companyId || companies[0]?.id
+    const reconnu = v && comptesTiers.some(c=>c.numero===v)
+    if (!reconnu || !cid) { setSoldeTiers(null); return }
+    setSoldeTiersLoading(true)
+    const t = setTimeout(() => {
+      getSoldeTiers(v, cid).then(r => { setSoldeTiers(r); setSoldeTiersLoading(false) })
+    }, 350)
+    return () => clearTimeout(t)
+  }, [form.numero_compte, form.company_id, companyId, comptesTiers])
   const openAddTiers = ()=>{ setAddTiersForm({ categorie:'fournisseur', type:'physique', nom:'' }); setAddTiersModal(true) }
   const setAddT = e => setAddTiersForm(f=>({...f,[e.target.name]:e.target.value}))
   const saveAddTiers = async e => {
@@ -14148,6 +14258,18 @@ function JournalPage({ table, title, icon, journalType='caisse', companies, comp
                   style={{marginTop:6,padding:'6px 10px',background:'#ecfdf5',border:'1px solid #86efac',borderRadius:8,cursor:'pointer',fontSize:12.5,fontWeight:600,color:'#16a34a'}}>
                   ➕ Ce compte n'existe pas — ajouter un tiers
                 </button>
+              )}
+              {comptesTiers.some(c=>c.numero===form.numero_compte) && (
+                <div style={{marginTop:6,padding:'6px 10px',borderRadius:8,fontSize:12.5,
+                  background:'#f8fafc',border:'1px solid #e2e8f0'}}>
+                  {soldeTiersLoading
+                    ? <span style={{color:'#94a3b8'}}>Solde...</span>
+                    : soldeTiers && soldeTiers.solde > 0
+                      ? <span style={{fontWeight:700,color:soldeTiers.type==='fournisseur'?'#dc2626':'#16a34a'}}>
+                          {soldeTiers.type==='fournisseur' ? 'Dû au fournisseur : ' : 'Solde client : '}{fcfa(soldeTiers.solde)}
+                        </span>
+                      : <span style={{color:'#16a34a',fontWeight:600}}>✓ Solde à 0</span>}
+                </div>
               )}
             </div>
             <Input label="Tiers" name="tiers" value={form.tiers||''} onChange={set} />
