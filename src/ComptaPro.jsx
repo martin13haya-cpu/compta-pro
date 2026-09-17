@@ -3570,6 +3570,17 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
   }
   if (sortBy==='alpha') filtered.sort((a,b)=>displayName(a).localeCompare(displayName(b),'fr',{sensitivity:'base'}))
   else if (sortBy==='contrat') filtered.sort(compareNumeroContrat)
+  else if (sortBy==='provenance') filtered.sort((a,b)=>{
+    // Groupe par provenance (ex. "DASSARI" ensemble), puis alphabetique des
+    // noms a l'interieur de chaque groupe — les provenances vides passent en
+    // dernier plutot que de se meler au premier groupe alphabetique.
+    const pa = (a.provenance||'').trim(), pb = (b.provenance||'').trim()
+    if (!pa && pb) return 1
+    if (pa && !pb) return -1
+    const cp = pa.localeCompare(pb,'fr',{sensitivity:'base'})
+    if (cp !== 0) return cp
+    return displayName(a).localeCompare(displayName(b),'fr',{sensitivity:'base'})
+  })
 
   // ── DÉTECTION & SUPPRESSION DES DOUBLONS (fournisseurs) ───────────────────
   // Deux fiches sont considérées comme doublons si elles partagent : le même
@@ -4380,6 +4391,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
               style={{padding:'8px 12px',borderRadius:8,border:'1px solid #d1d5db',fontSize:13,background:'white'}}>
               <option value=''>Tri : plus récents</option>
               <option value='alpha'>Tri : A → Z</option>
+              <option value='provenance'>Tri : Provenance, puis Nom</option>
               {table==='compta_fournisseurs' && <option value='contrat'>Tri : N° Contrat</option>}
             </select>
           )}
