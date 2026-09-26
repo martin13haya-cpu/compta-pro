@@ -828,6 +828,78 @@ function Btn({ onClick, variant='primary', sm, children, type='button', disabled
   )
 }
 
+// Menu déroulant « Actions » : regroupe les boutons secondaires d'une page
+// ou d'une ligne de tableau (même principe que dans Gestion Stock Pro).
+// items : [{ label, onClick, danger, disabled }] ; null insère un séparateur.
+// Le menu est en position fixe, calculée depuis le bouton : il passe
+// par-dessus le tableau au lieu d'être coupé par son bord, et s'ouvre vers
+// le haut quand la place manque en dessous.
+function ActionsMenu({ label='Actions', items, sm }) {
+  const [open, setOpen] = useState(false)
+  const [pos, setPos] = useState(null)
+  const ref = useRef(null)
+  // Les entrées conditionnelles valent false : on les retire, puis les
+  // séparateurs en tête, en fin ou en double.
+  const liste = items.filter(it => it || it === null)
+    .filter((it, i, t) => it !== null || (i > 0 && t[i-1] !== null && i < t.length - 1))
+  const LARGEUR = 250
+  const ouvrir = () => {
+    if (open) return setOpen(false)
+    const r = ref.current.getBoundingClientRect()
+    const hauteur = liste.filter(Boolean).length * 38 + 12
+    const dessous = window.innerHeight - r.bottom
+    const versHaut = dessous < hauteur + 8 && r.top > dessous
+    setPos({
+      left: Math.max(4, Math.min(r.right - LARGEUR, window.innerWidth - LARGEUR - 4)),
+      ...(versHaut ? { bottom: window.innerHeight - r.top + 4 } : { top: r.bottom + 4 }),
+      maxHeight: Math.max(140, (versHaut ? r.top : dessous) - 12),
+    })
+    setOpen(true)
+  }
+  useEffect(() => {
+    if (!open) return
+    const dehors = e => { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
+    const fermer = () => setOpen(false)
+    const defil = e => { if (ref.current && ref.current.contains(e.target)) return; setOpen(false) }
+    document.addEventListener('mousedown', dehors)
+    window.addEventListener('resize', fermer)
+    document.addEventListener('scroll', defil, true)
+    return () => {
+      document.removeEventListener('mousedown', dehors)
+      window.removeEventListener('resize', fermer)
+      document.removeEventListener('scroll', defil, true)
+    }
+  }, [open])
+  return (
+    <div ref={ref} style={{ position:'relative', display:'inline-block' }}>
+      <button type="button" onClick={ouvrir} style={{
+        background:'white', color:'#374151', border:'1px solid #d1d5db', padding:sm?'6px 12px':'9px 16px',
+        borderRadius:8, fontSize:sm?12:13, fontWeight:600, cursor:'pointer', display:'inline-flex', alignItems:'center', gap:6,
+      }}>
+        ⋯ {label} <span style={{ fontSize:10, color:'#64748b' }}>{open ? '▲' : '▼'}</span>
+      </button>
+      {open && pos && (
+        <div style={{ position:'fixed', zIndex:1000, width:LARGEUR, background:'white', border:'1px solid #e2e8f0',
+          borderRadius:10, boxShadow:'0 10px 25px rgba(15,23,42,.15)', padding:'4px 0', overflowY:'auto', ...pos }}>
+          {liste.map((it, i) => it === null ? (
+            <div key={`sep-${i}`} style={{ margin:'4px 0', borderTop:'1px solid #f1f5f9' }} />
+          ) : (
+            <button key={it.label} type="button" disabled={it.disabled}
+              onClick={() => { setOpen(false); it.onClick() }}
+              onMouseEnter={e => { e.currentTarget.style.background = it.danger ? '#fef2f2' : '#f8fafc' }}
+              onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
+              style={{ width:'100%', display:'flex', alignItems:'center', gap:8, textAlign:'left', padding:'9px 14px',
+                fontSize:13, fontWeight:500, border:'none', background:'transparent', cursor:it.disabled?'not-allowed':'pointer',
+                opacity:it.disabled?.5:1, color:it.danger ? '#dc2626' : '#334155' }}>
+              {it.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // Transforme un texte en MAJUSCULES sans accents
 function toUpperNoAccent(str) {
   return (str||'')
@@ -3719,6 +3791,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
   })
   const resolveHeaderKey = (h) => HEADER_LOOKUP[normalizeHeader(h)] || null
 
+  const importInputRef = useRef(null)
   const handleImport = async (e) => {
     const file = e.target.files[0]
     if(!file) return
@@ -4334,52 +4407,26 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     <div>
       <PageHeader title={title} subtitle={`${filtered.length} enregistrement(s)`}
         actions={(
-          <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
-            {items.length>0 && (
-              <>
-                <Btn sm variant="secondary" onClick={()=>setColModalOpen(true)}>🧮 Colonnes</Btn>
-                <Btn sm variant="info" onClick={printListeTiers}>🖨️ PDF liste</Btn>
-                <Btn sm variant="success" onClick={exportExcelTiers}>📊 Excel</Btn>
-              </>
-            )}
-            {isFourn && items.length>0 && (
-              <>
-                <Btn sm variant="secondary" onClick={openMentorModal}>🎓 Fiches Mentors</Btn>
-                <Btn sm variant="info" onClick={openMentorModalAll}>🖨️ Toutes les fiches Mentors</Btn>
-                <Btn sm variant="success" onClick={exportExcelMentors}>📊 Liste Mentors</Btn>
-                <Btn sm variant="info" onClick={printPvReceptionTout}>📄 Toutes les PV de réception ({filtered.filter(i=>i.type!=='morale').length})</Btn>
-              </>
-            )}
-            {!readOnly && (
-              <>
-            {canImport && (
-              <>
-                <button onClick={downloadTemplate} title="Télécharger le modèle CSV"
-                  style={{padding:'9px 14px',background:'#f1f5f9',border:'1px solid #cbd5e1',borderRadius:8,cursor:'pointer',fontSize:13,fontWeight:600,color:'#475569',display:'flex',alignItems:'center',gap:6}}>
-                  📥 Modèle
-                </button>
-                <label style={{padding:'9px 14px',background:'#dcfce7',border:'1px solid #86efac',borderRadius:8,cursor:importing?'wait':'pointer',fontSize:13,fontWeight:600,color:'#15803d',display:'flex',alignItems:'center',gap:6}}>
-                  {importing?'⏳ Import…':'📤 Importer CSV'}
-                  <input type="file" accept=".csv" onChange={handleImport} disabled={importing} style={{display:'none'}} />
-                </label>
-              </>
-            )}
-            {table==='compta_fournisseurs' && items.length>1 && (
-              <button onClick={removeDuplicates} title="Détecter et supprimer les doublons (même nom+téléphone, IFU ou CIP)"
-                style={{padding:'9px 14px',background:'#eff6ff',border:'1px solid #93c5fd',borderRadius:8,cursor:'pointer',fontSize:13,fontWeight:600,color:'#1d4ed8',display:'flex',alignItems:'center',gap:6}}>
-                🧹 Doublons
-              </button>
-            )}
-            {table==='compta_fournisseurs' && items.length>0 && (
-              <button onClick={deleteAll}
-                title={filtered.length!==items.length ? `Supprimer uniquement les ${filtered.length} fournisseur(s) correspondant au filtre actif` : 'Supprimer toute la liste'}
-                style={{padding:'9px 14px',background:'#fef2f2',border:'1px solid #fca5a5',borderRadius:8,cursor:'pointer',fontSize:13,fontWeight:600,color:'#dc2626',display:'flex',alignItems:'center',gap:6}}>
-                🗑️ {filtered.length!==items.length ? `Supprimer filtrés (${filtered.length})` : 'Vider la liste'}
-              </button>
-            )}
-            <Btn onClick={()=>open()}>+ Nouveau(elle)</Btn>
-              </>
-            )}
+          <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
+            {/* Entrée fichier hors du menu : elle survit à sa fermeture. */}
+            <input ref={importInputRef} type="file" accept=".csv" onChange={handleImport} disabled={importing} style={{display:'none'}} />
+            <ActionsMenu items={[
+              items.length>0 && { label:'🧮 Colonnes', onClick:()=>setColModalOpen(true) },
+              items.length>0 && { label:'🖨️ PDF liste', onClick:printListeTiers },
+              items.length>0 && { label:'📊 Excel', onClick:exportExcelTiers },
+              isFourn && items.length>0 && null,
+              isFourn && items.length>0 && { label:'🎓 Fiches Mentors', onClick:openMentorModal },
+              isFourn && items.length>0 && { label:'🖨️ Toutes les fiches Mentors', onClick:openMentorModalAll },
+              isFourn && items.length>0 && { label:'📊 Liste Mentors', onClick:exportExcelMentors },
+              isFourn && items.length>0 && { label:`📄 Toutes les PV de réception (${filtered.filter(i=>i.type!=='morale').length})`, onClick:printPvReceptionTout },
+              !readOnly && canImport && null,
+              !readOnly && canImport && { label:'📥 Modèle CSV', onClick:downloadTemplate },
+              !readOnly && canImport && { label:importing?'⏳ Import…':'📤 Importer CSV', disabled:importing, onClick:()=>importInputRef.current?.click() },
+              !readOnly && table==='compta_fournisseurs' && items.length>0 && null,
+              !readOnly && table==='compta_fournisseurs' && items.length>1 && { label:'🧹 Doublons', onClick:removeDuplicates },
+              !readOnly && table==='compta_fournisseurs' && items.length>0 && { label:`🗑️ ${filtered.length!==items.length ? `Supprimer filtrés (${filtered.length})` : 'Vider la liste'}`, danger:true, onClick:deleteAll },
+            ]} />
+            {!readOnly && <Btn onClick={()=>open()}>+ Nouveau(elle)</Btn>}
           </div>
         )} />
       <Card style={{marginBottom:16,padding:'12px 20px'}}>
@@ -4496,13 +4543,14 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
                   <TD sm>{it.ifu||'—'}</TD>
                   <TD sm>{it.cip||'—'}</TD>
                   <TD>
-                    <div style={{display:'flex',gap:6}}>
-                      <Btn sm variant="info" onClick={()=>printFicheTiers(it, isFourn?'fournisseur':'client')}>📥 PDF</Btn>
-                      {isFourn && it.type!=='morale' && <Btn sm variant="secondary" onClick={()=>printPvReception(it)}>📄 PV</Btn>}
-                      {isFourn && it.type!=='morale' && <Btn sm variant="success" onClick={()=>openContratModal(it)}>📝 Contrat</Btn>}
-                      {!readOnly && <Btn sm variant="secondary" onClick={()=>open(it)}>Edit</Btn>}
-                      {!readOnly && <Btn sm variant="danger" onClick={()=>archive(it.id)}>🗑️</Btn>}
-                    </div>
+                    <ActionsMenu sm items={[
+                      { label:'📥 Fiche PDF', onClick:()=>printFicheTiers(it, isFourn?'fournisseur':'client') },
+                      isFourn && it.type!=='morale' && { label:'📄 PV de réception', onClick:()=>printPvReception(it) },
+                      isFourn && it.type!=='morale' && { label:'📝 Contrat', onClick:()=>openContratModal(it) },
+                      !readOnly && null,
+                      !readOnly && { label:'✏️ Modifier', onClick:()=>open(it) },
+                      !readOnly && { label:'🗑️ Supprimer', danger:true, onClick:()=>archive(it.id) },
+                    ]} />
                   </TD>
                 </TR>
               ))}
