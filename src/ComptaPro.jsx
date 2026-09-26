@@ -4959,7 +4959,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
         </Row>
       </Modal>
 
-      <Modal open={!!ouvriersFourn} onClose={()=>setOuvriersFourn(null)} title={`Ouvriers engagés — ${ouvriersFourn?displayName(ouvriersFourn):''}`} size="lg">
+      <Modal open={!!ouvriersFourn} onClose={()=>setOuvriersFourn(null)} title={`Ouvriers engagés — ${ouvriersFourn?displayName(ouvriersFourn):''}`} size="xl">
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
           <span style={{fontSize:12.5,color:'#64748b'}}>
             {ouvriers.length} ouvrier(s) — {ouvriers.filter(o=>o.sexe==='Femme').length} femme(s), {ouvriers.filter(o=>o.sexe==='Homme').length} homme(s)
