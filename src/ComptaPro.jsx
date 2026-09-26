@@ -830,7 +830,8 @@ function Btn({ onClick, variant='primary', sm, children, type='button', disabled
 
 // Menu déroulant « Actions » : regroupe les boutons secondaires d'une page
 // ou d'une ligne de tableau (même principe que dans Gestion Stock Pro).
-// items : [{ label, onClick, danger, disabled }] ; null insère un séparateur.
+// items : [{ label, onClick, couleur, danger, disabled, confirmer }] ; null
+// insère un séparateur. `confirmer` : question posée avant d'agir.
 // Le menu est en position fixe, calculée depuis le bouton : il passe
 // par-dessus le tableau au lieu d'être coupé par son bord, et s'ouvre vers
 // le haut quand la place manque en dessous.
@@ -873,27 +874,30 @@ function ActionsMenu({ label='Actions', items, sm }) {
   return (
     <div ref={ref} style={{ position:'relative', display:'inline-block' }}>
       <button type="button" onClick={ouvrir} style={{
-        background:'white', color:'#374151', border:'1px solid #d1d5db', padding:sm?'6px 12px':'9px 16px',
+        background:open?'#3730a3':'#4f46e5', color:'white', border:'none', padding:sm?'6px 12px':'9px 16px',
+        boxShadow:'0 1px 2px rgba(15,23,42,.15)',
         borderRadius:8, fontSize:sm?12:13, fontWeight:600, cursor:'pointer', display:'inline-flex', alignItems:'center', gap:6,
       }}>
-        ⋯ {label} <span style={{ fontSize:10, color:'#64748b' }}>{open ? '▲' : '▼'}</span>
+        ⋯ {label} <span style={{ fontSize:10, opacity:.85 }}>{open ? '▲' : '▼'}</span>
       </button>
       {open && pos && (
         <div style={{ position:'fixed', zIndex:1000, width:LARGEUR, background:'white', border:'1px solid #e2e8f0',
           borderRadius:10, boxShadow:'0 10px 25px rgba(15,23,42,.15)', padding:'4px 0', overflowY:'auto', ...pos }}>
-          {liste.map((it, i) => it === null ? (
-            <div key={`sep-${i}`} style={{ margin:'4px 0', borderTop:'1px solid #f1f5f9' }} />
-          ) : (
-            <button key={it.label} type="button" disabled={it.disabled}
-              onClick={() => { setOpen(false); it.onClick() }}
-              onMouseEnter={e => { e.currentTarget.style.background = it.danger ? '#fef2f2' : '#f8fafc' }}
-              onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
-              style={{ width:'100%', display:'flex', alignItems:'center', gap:8, textAlign:'left', padding:'9px 14px',
-                fontSize:13, fontWeight:500, border:'none', background:'transparent', cursor:it.disabled?'not-allowed':'pointer',
-                opacity:it.disabled?.5:1, color:it.danger ? '#dc2626' : '#334155' }}>
-              {it.label}
-            </button>
-          ))}
+          {liste.map((it, i) => {
+            if (it === null) return <div key={`sep-${i}`} style={{ margin:'4px 0', borderTop:'1px solid #f1f5f9' }} />
+            const c = it.couleur || (it.danger ? '#dc2626' : '#334155')
+            return (
+              <button key={it.label} type="button" disabled={it.disabled}
+                onClick={() => { setOpen(false); if (it.confirmer && !window.confirm(it.confirmer)) return; it.onClick() }}
+                onMouseEnter={e => { e.currentTarget.style.background = c + '14' }}
+                onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
+                style={{ width:'100%', display:'flex', alignItems:'center', gap:8, textAlign:'left', padding:'8px 12px',
+                  fontSize:13, fontWeight:600, border:'none', borderLeft:`3px solid ${c}`, background:'transparent',
+                  cursor:it.disabled?'not-allowed':'pointer', opacity:it.disabled?.5:1, color:c }}>
+                {it.label}
+              </button>
+            )
+          })}
         </div>
       )}
     </div>
@@ -1791,7 +1795,6 @@ const CONSOL_TIERS_COLUMNS = (isFourn) => [
     {key:'Nationalité'},{key:'Niveau d\'instruction'},
     {key:'Réside localement'},{key:'Disponible formation'},
     {key:'Accepte bonnes pratiques'},{key:'Accepte partenariat'},{key:'Membre coop. partenaire'},{key:'A déjà cultivé le riz'},
-    {key:'Nb. jeunes femmes'},{key:'Nb. jeunes hommes'},
     {key:'Accès garanti terre'},{key:'Propriété terre'},{key:'Mode accès terre'},{key:'Décision'},
     {key:'Total avance (FCFA)'},{key:'Prix/contrat (FCFA)'},{key:'Riz paddy équiv. (kg)'},
     {key:'Labour - Qté'},{key:'Labour - Montant (FCFA)'},
@@ -1837,8 +1840,6 @@ const consolTiersVal = (it,c) => ({
   'Accepte partenariat': it.accepte_partenariat ? 'Oui' : 'Non',
   'Membre coop. partenaire': it.cooperative_partenaire ? 'Oui' : 'Non',
   'A déjà cultivé le riz': it.a_deja_cultive_riz ? 'Oui' : 'Non',
-  'Nb. jeunes femmes': it.nombre_jeunes_femmes||'',
-  'Nb. jeunes hommes': it.nombre_jeunes_hommes||'',
   'Accès garanti terre': it.acces_garanti_terre||'',
   'Propriété terre': it.propriete_terre ? 'Oui' : 'Non',
   'Mode accès terre': it.mode_acces_terre||'',
@@ -3307,6 +3308,11 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
   const [filterColValue, setFilterColValue] = useState('')
   const [sortBy, setSortBy] = useState('') // ''=plus récents | 'alpha' | 'contrat'
   const [avances, setAvances] = useState([])
+  // Ouvriers engagés par un producteur (table compta_ouvriers_fournisseur)
+  const [ouvriersFourn, setOuvriersFourn] = useState(null)   // fournisseur dont on saisit les ouvriers
+  const [ouvriers, setOuvriers] = useState([])
+  const [ouvriersSaving, setOuvriersSaving] = useState(false)
+  const [ouvriersCompte, setOuvriersCompte] = useState({})   // fournisseur_id -> nombre d'ouvriers
   const [colModalOpen, setColModalOpen] = useState(false)
   const [selectedCols, setSelectedCols] = useState(null) // null = toutes les colonnes
   const [loadError, setLoadError] = useState(false)
@@ -3438,8 +3444,6 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     'Accepte partenariat': it.accepte_partenariat ? 'Oui' : 'Non',
     'Membre coop. partenaire': it.cooperative_partenaire ? 'Oui' : 'Non',
     'A déjà cultivé le riz': it.a_deja_cultive_riz ? 'Oui' : 'Non',
-    'Nb. jeunes femmes': it.nombre_jeunes_femmes||'',
-    'Nb. jeunes hommes': it.nombre_jeunes_hommes||'',
     'Accès garanti terre': it.acces_garanti_terre||'',
     'Propriété terre': it.propriete_terre ? 'Oui' : 'Non',
     'Mode accès terre': it.mode_acces_terre||'',
@@ -3521,7 +3525,11 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     }
   }
   const addAvance = () => setAvances(a=>[...a,{ type_avance:'Labour', quantite_recue:'', montant:'' }])
-  const delAvance = (i) => setAvances(a=>a.filter((_,j)=>j!==i))
+  const delAvance = (i) => {
+    const a = avances[i]
+    if ((numFR(a.quantite_recue)||numFR(a.montant)) && !confirm(`Supprimer l'avance « ${a.type_avance} » ?`)) return
+    setAvances(l=>l.filter((_,j)=>j!==i))
+  }
   const setAvanceField = (i,field,val) => setAvances(a=>{ const n=[...a]; n[i]={...n[i],[field]:val}; return n })
   const persistAvances = async (fournId, cid, uidp) => {
     if (table!=='compta_fournisseurs' || !fournId) return
@@ -3616,8 +3624,8 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
   }
 
   const archive = async id => {
-    if (!confirm(`Archiver ce(tte) ${titleSingle} ?`)) return
     const it = items.find(x=>x.id===id)
+    if (!confirm(`🗑️ Supprimer ${titleSingle.toLowerCase()} « ${displayName(it)||'sans nom'} » ?\n\nLa fiche sera archivée et disparaîtra de la liste.`)) return
     await supabase.from(table).update({actif:false}).eq('id',id)
     // Le n° de compte attribué à ce tiers (sous-compte 4011xxx / 4111xxx) n'appartient
     // qu'à lui seul (attribuerCompteTiers en crée un nouveau à chaque fois) : on peut donc
@@ -3718,7 +3726,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
   const canImport = table==='compta_fournisseurs' || table==='compta_clients'
 
   const downloadTemplate = () => {
-    const headers = ['type','nom','prenom','nom_societe','telephone','provenance','cooperative_affiliee','numero_contrat','cip','ifu','email','adresse','genre','handicap','mentor_nom','mentor_telephone','mentor_cip','mentor_age','departement','commune','arrondissement','village','nom_bas_fonds','superficie_bas_fonds','date_naissance','age','tranche_age','nationalite','niveau_instruction','reside_localite','disponible_formation','accepte_bonnes_pratiques','accepte_partenariat','a_deja_cultive_riz','nombre_jeunes_femmes','nombre_jeunes_hommes','acces_garanti_terre','propriete_terre','mode_acces_terre','decision','prix_contrat','labour_qte','labour_montant','semences_qte','semences_montant','engrais_qte','engrais_montant','herbicide_qte','herbicide_montant','credits_qte','credits_montant']
+    const headers = ['type','nom','prenom','nom_societe','telephone','provenance','cooperative_affiliee','numero_contrat','cip','ifu','email','adresse','genre','handicap','mentor_nom','mentor_telephone','mentor_cip','mentor_age','departement','commune','arrondissement','village','nom_bas_fonds','superficie_bas_fonds','date_naissance','age','tranche_age','nationalite','niveau_instruction','reside_localite','disponible_formation','accepte_bonnes_pratiques','accepte_partenariat','a_deja_cultive_riz','acces_garanti_terre','propriete_terre','mode_acces_terre','decision','prix_contrat','labour_qte','labour_montant','semences_qte','semences_montant','engrais_qte','engrais_montant','herbicide_qte','herbicide_montant','credits_qte','credits_montant']
     const ex1 = ['physique','HAYA','Martin','','22997000000','Tanguiéta','Coop PINGOU','CTR-2026-001','','3202012190967','martin@exemple.com','BP 707','Homme','Non','KOUDORO Jean','22995000000','CIP9988','45','Atacora','Tanguiéta','Cotiakou','Pingou','Bas-fonds Pingou','2.5','2002-05-14','24','18-25','Béninoise','Secondaire','Oui','Oui','Oui','Oui','Non','1','2','3-5 ans','Non','Héritage familial','Accepté','150000','2.5','50000','10','30000','','','1.5','15000','','']
     const ex2 = ['morale','','','SARL EXEMPLE','22996000000','Natitingou','','','','3201998877665','contact@exemple.com','Cotonou','','','','','','','','','','','','','','','','','','','','','','','','','','','','','','','','','','','','','','','']
     const csv = [headers.join(';'), ex1.join(';'), ex2.join(';')].join('\n')
@@ -3942,11 +3950,126 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     setMentorModalOpen(true)
   }
 
-  const buildFicheMentorHTML = (mentorName, info) => {
+  // ── OUVRIERS ENGAGÉS PAR LES PRODUCTEURS ─────────────────────────────
+  const MSG_TABLE_OUVRIERS = "La table des ouvriers n'existe pas encore : exécutez le script supabase/migrations/20260926_ouvriers_fournisseur.sql dans Supabase (SQL Editor)."
+  const erreurOuvriers = (error) => toast.error(/compta_ouvriers_fournisseur|does not exist|schema cache/i.test(error?.message||'') ? MSG_TABLE_OUVRIERS : (error?.message||'Erreur'))
+  // Ouvriers de plusieurs fournisseurs, par lots (URL trop longue sinon).
+  const chargerOuvriers = async (ids) => {
+    const CHUNK = 150
+    let tous = []
+    for (let i=0; i<ids.length; i+=CHUNK) {
+      const { data, error } = await supabase.from('compta_ouvriers_fournisseur')
+        .select('fournisseur_id,nom_prenom,contact,sexe,handicap,age,village,ordre')
+        .in('fournisseur_id', ids.slice(i,i+CHUNK)).order('ordre')
+      if (error) { erreurOuvriers(error); return null }
+      tous = tous.concat(data||[])
+    }
+    const parF = {}
+    tous.forEach(o=>{ (parF[o.fournisseur_id]=parF[o.fournisseur_id]||[]).push(o) })
+    return parF
+  }
+  const ouvrirOuvriers = async (it) => {
+    setOuvriersFourn(it)
+    setOuvriers([])
+    const { data, error } = await supabase.from('compta_ouvriers_fournisseur')
+      .select('nom_prenom,contact,sexe,handicap,age,village,ordre').eq('fournisseur_id', it.id).order('ordre')
+    if (error) { erreurOuvriers(error); return }
+    setOuvriers((data||[]).map(o=>({ nom_prenom:o.nom_prenom||'', contact:o.contact||'', sexe:o.sexe||'', handicap:!!o.handicap, age:o.age??'', village:o.village||'' })))
+    setOuvriersCompte(c=>({ ...c, [it.id]:(data||[]).length }))
+  }
+  const ajouterOuvrier = () => setOuvriers(l=>[...l,{ nom_prenom:'', contact:'', sexe:'', handicap:false, age:'', village:ouvriersFourn?.village||'' }])
+  const majOuvrier = (i,champ,val) => setOuvriers(l=>{ const n=[...l]; n[i]={...n[i],[champ]:val}; return n })
+  const retirerOuvrier = (i) => {
+    const o = ouvriers[i]
+    if ((o.nom_prenom||o.contact||o.village||o.age) && !confirm(`Retirer l'ouvrier « ${o.nom_prenom||'sans nom'} » de la liste ?`)) return
+    setOuvriers(l=>l.filter((_,j)=>j!==i))
+  }
+  const enregistrerOuvriers = async () => {
+    const lignes = ouvriers.filter(o=>o.nom_prenom.trim())
+    if (lignes.length !== ouvriers.filter(o=>o.nom_prenom.trim()||o.contact||o.village||o.age).length) {
+      toast.error('Le nom et prénom est obligatoire sur chaque ligne remplie.'); return
+    }
+    setOuvriersSaving(true)
+    const uid = (await supabase.auth.getUser()).data?.user?.id
+    const f = ouvriersFourn
+    const { error:errDel } = await supabase.from('compta_ouvriers_fournisseur').delete().eq('fournisseur_id', f.id)
+    if (errDel) { setOuvriersSaving(false); erreurOuvriers(errDel); return }
+    if (lignes.length) {
+      const rows = lignes.map((o,i)=>({ fournisseur_id:f.id, company_id:f.company_id||companyId||null, user_id:uid, ordre:i,
+        nom_prenom:o.nom_prenom.trim(), contact:o.contact.trim()||null, sexe:o.sexe||null, handicap:!!o.handicap,
+        age:o.age==='' ? null : (parseInt(o.age,10)||null), village:o.village.trim()||null }))
+      const { error } = await supabase.from('compta_ouvriers_fournisseur').insert(rows)
+      if (error) { setOuvriersSaving(false); erreurOuvriers(error); return }
+    }
+    setOuvriersCompte(c=>({ ...c, [f.id]:lignes.length }))
+    setOuvriersSaving(false)
+    toast.success(`${lignes.length} ouvrier(s) enregistré(s) pour ${displayName(f)}.`)
+    setOuvriersFourn(null)
+  }
+  // Lignes de la liste des ouvriers : producteurs du filtre actif, dans
+  // l'ordre de la liste.
+  const lignesListeOuvriers = async () => {
+    const producteurs = filtered.filter(i=>i.type!=='morale')
+    const parF = await chargerOuvriers(producteurs.map(p=>p.id))
+    if (!parF) return null
+    const lignes = []
+    producteurs.forEach(p=>(parF[p.id]||[]).forEach(o=>lignes.push({ producteur:displayName(p)||'', mentor:p.mentor_nom||'', ...o })))
+    if (lignes.length===0) { toast.error('Aucun ouvrier enregistré pour les producteurs affichés.'); return null }
+    return lignes
+  }
+  const COLS_OUVRIERS = ['N°','Producteur','Nom et prénom','Contact','Sexe','Handicap','Âge','Village']
+  const celluleOuvrier = (o,i) => [i+1, o.producteur, o.nom_prenom, o.contact||'', o.sexe||'', o.handicap?'Oui':'Non', o.age??'', o.village||'']
+  const printListeOuvriers = async () => {
+    const lignes = await lignesListeOuvriers()
+    if (!lignes) return
+    const nbF = lignes.filter(o=>o.sexe==='Femme').length, nbH = lignes.filter(o=>o.sexe==='Homme').length
+    const html = `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><title>Liste des ouvriers — ${companyName}</title>
+      <style>
+        *{margin:0;padding:0;box-sizing:border-box}
+        body{font-family:Arial,sans-serif;font-size:10pt;color:#000;padding:10px}
+        h2{text-align:center;font-size:14pt;margin:4px 0}
+        p.sous{text-align:center;color:#444;margin-bottom:12px}
+        table{width:100%;border-collapse:collapse}
+        th,td{border:1px solid #000;padding:5px 7px;font-size:9.5pt}
+        th{background:#B4C6E7}
+        @media print { @page { size:A4 landscape; margin:10mm } }
+      </style></head><body>
+      <h2>LISTE DES OUVRIERS ENGAGÉS PAR LES PRODUCTEURS</h2>
+      <p class="sous">${companyName} — ${lignes.length} ouvrier(s) : ${nbF} femme(s), ${nbH} homme(s), ${lignes.filter(o=>o.handicap).length} en situation de handicap</p>
+      <table><thead><tr>${COLS_OUVRIERS.map(c=>`<th>${c}</th>`).join('')}</tr></thead>
+      <tbody>${lignes.map((o,i)=>`<tr>${celluleOuvrier(o,i).map((v,j)=>`<td${j===0||j>=4&&j<=6?' style="text-align:center"':''}>${v}</td>`).join('')}</tr>`).join('')}</tbody></table>
+      </body></html>`
+    openPrintWindow(html, `liste_ouvriers_${companyName.replace(/\s+/g,'_')}`)
+  }
+  const exportExcelOuvriers = async () => {
+    const lignes = await lignesListeOuvriers()
+    if (!lignes) return
+    const thead = COLS_OUVRIERS.map(c=>`<th style="background:#eceff3;color:#1a1a1a;padding:6px 10px;white-space:nowrap">${c}</th>`).join('')
+    const tbody = lignes.map((o,i)=>`<tr style="background:${i%2===0?'#f8fafc':'white'}">${celluleOuvrier(o,i).map(v=>`<td>${v}</td>`).join('')}</tr>`).join('')
+    const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+      <head><meta charset="UTF-8"><style>
+        table{border-collapse:collapse;width:100%}
+        th,td{border:1px solid #d1d5db;padding:5px 8px;font-size:10pt}
+        h2{font-family:Arial;color:#0f2044}p{font-family:Arial;font-size:9pt;color:#555}
+      </style></head><body>
+      <h2>Liste des ouvriers engagés par les producteurs</h2>
+      <p>${companyName} — ${lignes.length} ouvrier(s) — Exporté le ${new Date().toLocaleDateString('fr-FR')}</p>
+      <table><thead><tr>${thead}</tr></thead><tbody>${tbody}</tbody></table>
+      </body></html>`
+    const blob = new Blob(['\uFEFF'+html], {type:'application/vnd.ms-excel;charset=utf-8'})
+    const url  = URL.createObjectURL(blob)
+    const a    = document.createElement('a')
+    a.href=url; a.download=`liste_ouvriers_${companyName.replace(/\s+/g,'_')}.xls`; a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const buildFicheMentorHTML = (mentorName, info, ouvriersParF = {}) => {
     const producteurs = items.filter(i => i.mentor_nom === mentorName)
     if (producteurs.length===0) return null
     const premier = producteurs[0]
     const rows = producteurs.map((p,i)=>`<tr><td style="text-align:center">${i+1}</td><td>${displayName(p)||''}</td><td>${p.telephone||''}</td><td>${p.numero_contrat||''}</td></tr>`).join('')
+    const listeOuvriers = producteurs.flatMap(p=>(ouvriersParF[p.id]||[]).map(o=>({ producteur:displayName(p)||'', ...o })))
+    const lignesOuvriers = listeOuvriers.map((o,i)=>`<tr>${celluleOuvrier(o,i).map((v,j)=>`<td${j===0||j>=4&&j<=6?' style="text-align:center"':''}>${v}</td>`).join('')}</tr>`).join('')
     return `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><title>Fiche mentor ${mentorName}</title>
       <style>
         *{margin:0;padding:0;box-sizing:border-box}
@@ -3975,19 +4098,29 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
         <tr class="blue"><td style="width:8%">N°</td><td>Nom et Prénom</td><td>Contact</td><td>N° du Contrat</td></tr>
         ${rows}
       </table>
+      <div style="font-weight:bold;margin-bottom:8px">Liste des ouvriers engagés par les producteurs :</div>
+      <table>
+        <tr class="blue"><td style="width:6%">N°</td><td>Producteur</td><td>Nom et prénom de l'ouvrier</td><td>Contact</td><td>Sexe</td><td>Handicap</td><td>Âge</td><td>Village</td></tr>
+        ${lignesOuvriers || '<tr><td colspan="8" style="text-align:center;color:#555">Aucun ouvrier enregistré</td></tr>'}
+      </table>
       </body></html>`
   }
 
-  const printFicheMentor = () => {
-    const html = buildFicheMentorHTML(selectedMentor, mentorInfo)
+  const printFicheMentor = async () => {
+    const ids = items.filter(i=>i.mentor_nom===selectedMentor).map(i=>i.id)
+    const parF = await chargerOuvriers(ids)
+    if (!parF) return
+    const html = buildFicheMentorHTML(selectedMentor, mentorInfo, parF)
     if (!html) { toast.error('Aucun producteur pour ce mentor.'); return }
     openPrintWindow(html, `fiche_mentor_${selectedMentor.replace(/\s+/g,'_')}`)
     setMentorModalOpen(false)
   }
 
-  const printFichesMentorsTout = () => {
+  const printFichesMentorsTout = async () => {
     if (mentors.length===0) { toast.error('Aucun fournisseur n\'a de mentor renseigné.'); return }
-    const docs = mentors.map(m=>buildFicheMentorHTML(m, mentorInfo)).filter(Boolean)
+    const parF = await chargerOuvriers(items.filter(i=>i.mentor_nom).map(i=>i.id))
+    if (!parF) return
+    const docs = mentors.map(m=>buildFicheMentorHTML(m, mentorInfo, parF)).filter(Boolean)
     if (docs.length===0) { toast.error('Aucun producteur pour les mentors.'); return }
     const styleMatch = docs[0].match(/<style[^>]*>([\s\S]*?)<\/style>/i)
     const styles = styleMatch ? styleMatch[1] : ''
@@ -4343,7 +4476,6 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
       {key:'Nationalité', w:7},{key:'Niveau d\'instruction', w:8},
       {key:'Réside localement', w:6},{key:'Disponible formation', w:6},
       {key:'Accepte bonnes pratiques', w:6},{key:'Accepte partenariat', w:6},{key:'Membre coop. partenaire', w:6},{key:'A déjà cultivé le riz', w:6},
-      {key:'Nb. jeunes femmes', w:6},{key:'Nb. jeunes hommes', w:6},
       {key:'Accès garanti terre', w:8},{key:'Propriété terre', w:6},{key:'Mode accès terre', w:9},{key:'Décision', w:6},
       {key:'Total avance (FCFA)', w:8},{key:'Prix/contrat (FCFA)', w:8},{key:'Riz paddy équiv. (kg)', w:7},
       {key:'Labour - Qté', w:5},{key:'Labour - Montant (FCFA)', w:7},
@@ -4411,19 +4543,22 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
             {/* Entrée fichier hors du menu : elle survit à sa fermeture. */}
             <input ref={importInputRef} type="file" accept=".csv" onChange={handleImport} disabled={importing} style={{display:'none'}} />
             <ActionsMenu items={[
-              items.length>0 && { label:'🧮 Colonnes', onClick:()=>setColModalOpen(true) },
-              items.length>0 && { label:'🖨️ PDF liste', onClick:printListeTiers },
-              items.length>0 && { label:'📊 Excel', onClick:exportExcelTiers },
+              items.length>0 && { couleur:'#475569', label:'🧮 Colonnes', onClick:()=>setColModalOpen(true) },
+              items.length>0 && { couleur:'#0891b2', label:'🖨️ PDF liste', onClick:printListeTiers },
+              items.length>0 && { couleur:'#16a34a', label:'📊 Excel', onClick:exportExcelTiers },
               isFourn && items.length>0 && null,
-              isFourn && items.length>0 && { label:'🎓 Fiches Mentors', onClick:openMentorModal },
-              isFourn && items.length>0 && { label:'🖨️ Toutes les fiches Mentors', onClick:openMentorModalAll },
-              isFourn && items.length>0 && { label:'📊 Liste Mentors', onClick:exportExcelMentors },
-              isFourn && items.length>0 && { label:`📄 Toutes les PV de réception (${filtered.filter(i=>i.type!=='morale').length})`, onClick:printPvReceptionTout },
+              isFourn && items.length>0 && { couleur:'#7c3aed', label:'🎓 Fiches Mentors', onClick:openMentorModal },
+              isFourn && items.length>0 && { couleur:'#7c3aed', label:'🖨️ Toutes les fiches Mentors', onClick:openMentorModalAll },
+              isFourn && items.length>0 && { couleur:'#16a34a', label:'📊 Liste Mentors', onClick:exportExcelMentors },
+              isFourn && items.length>0 && { couleur:'#0369a1', label:`📄 Toutes les PV de réception (${filtered.filter(i=>i.type!=='morale').length})`, onClick:printPvReceptionTout },
+              isFourn && items.length>0 && null,
+              isFourn && items.length>0 && { couleur:'#ea580c', label:'👷 Liste des ouvriers (PDF)', onClick:printListeOuvriers },
+              isFourn && items.length>0 && { couleur:'#16a34a', label:'👷 Liste des ouvriers (Excel)', onClick:exportExcelOuvriers },
               !readOnly && canImport && null,
-              !readOnly && canImport && { label:'📥 Modèle CSV', onClick:downloadTemplate },
-              !readOnly && canImport && { label:importing?'⏳ Import…':'📤 Importer CSV', disabled:importing, onClick:()=>importInputRef.current?.click() },
+              !readOnly && canImport && { couleur:'#64748b', label:'📥 Modèle CSV', onClick:downloadTemplate },
+              !readOnly && canImport && { couleur:'#15803d', label:importing?'⏳ Import…':'📤 Importer CSV', disabled:importing, onClick:()=>importInputRef.current?.click() },
               !readOnly && table==='compta_fournisseurs' && items.length>0 && null,
-              !readOnly && table==='compta_fournisseurs' && items.length>1 && { label:'🧹 Doublons', onClick:removeDuplicates },
+              !readOnly && table==='compta_fournisseurs' && items.length>1 && { couleur:'#1d4ed8', label:'🧹 Doublons', onClick:removeDuplicates },
               !readOnly && table==='compta_fournisseurs' && items.length>0 && { label:`🗑️ ${filtered.length!==items.length ? `Supprimer filtrés (${filtered.length})` : 'Vider la liste'}`, danger:true, onClick:deleteAll },
             ]} />
             {!readOnly && <Btn onClick={()=>open()}>+ Nouveau(elle)</Btn>}
@@ -4544,11 +4679,12 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
                   <TD sm>{it.cip||'—'}</TD>
                   <TD>
                     <ActionsMenu sm items={[
-                      { label:'📥 Fiche PDF', onClick:()=>printFicheTiers(it, isFourn?'fournisseur':'client') },
-                      isFourn && it.type!=='morale' && { label:'📄 PV de réception', onClick:()=>printPvReception(it) },
-                      isFourn && it.type!=='morale' && { label:'📝 Contrat', onClick:()=>openContratModal(it) },
+                      { couleur:'#0891b2', label:'📥 Fiche PDF', onClick:()=>printFicheTiers(it, isFourn?'fournisseur':'client') },
+                      isFourn && it.type!=='morale' && { couleur:'#0369a1', label:'📄 PV de réception', onClick:()=>printPvReception(it) },
+                      isFourn && it.type!=='morale' && { couleur:'#16a34a', label:'📝 Contrat', onClick:()=>openContratModal(it) },
+                      isFourn && it.type!=='morale' && { couleur:'#ea580c', label:'👷 Ouvriers', onClick:()=>ouvrirOuvriers(it) },
                       !readOnly && null,
-                      !readOnly && { label:'✏️ Modifier', onClick:()=>open(it) },
+                      !readOnly && { couleur:'#b45309', label:'✏️ Modifier', onClick:()=>open(it) },
                       !readOnly && { label:'🗑️ Supprimer', danger:true, onClick:()=>archive(it.id) },
                     ]} />
                   </TD>
@@ -4647,8 +4783,12 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
                   options={[{value:'',label:'— Non renseigné —'},{value:'<35',label:'< 35 ans'},{value:'>35',label:'> 35 ans'}]} />
                 <Input label="Nationalité" name="nationalite" value={form.nationalite||''} onChange={set} />
                 <Input label="Niveau d'instruction" name="niveau_instruction" value={form.niveau_instruction||''} onChange={set} />
-                <Input label="Nombre de jeunes femmes ouvrières à engager" name="nombre_jeunes_femmes" type="text" inputMode="numeric" value={form.nombre_jeunes_femmes||''} onChange={set} />
-                <Input label="Nombre de jeunes hommes ouvriers à engager" name="nombre_jeunes_hommes" type="text" inputMode="numeric" value={form.nombre_jeunes_hommes||''} onChange={set} />
+                <div style={{display:'flex',flexDirection:'column',justifyContent:'flex-end'}}>
+                  <label style={{display:'block',fontSize:12.5,fontWeight:600,color:'#374151',marginBottom:5}}>Ouvriers engagés</label>
+                  <Btn type="button" variant="secondary" onClick={()=>form.id ? ouvrirOuvriers(form) : toast.error("Enregistrez d'abord le fournisseur, puis ajoutez ses ouvriers.")}>
+                    👷 Ouvrier{form.id && ouvriersCompte[form.id] ? ` (${ouvriersCompte[form.id]})` : ''}
+                  </Btn>
+                </div>
                 <Input label="Accès garanti à la terre (durée)" name="acces_garanti_terre" value={form.acces_garanti_terre||''} onChange={set} placeholder="ex : 3-5 ans" />
                 {!form.propriete_terre && (
                   <Input label="Si non propriétaire, mode d'accès" name="mode_acces_terre" value={form.mode_acces_terre||''} onChange={set} />
@@ -4816,6 +4956,56 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
         </Grid>
         <Row><Btn variant="secondary" onClick={()=>setMentorModalOpen(false)}>Annuler</Btn>
           <Btn onClick={mentorBatchMode ? printFichesMentorsTout : printFicheMentor}>📥 {mentorBatchMode?'Générer toutes les fiches':'Générer la fiche'}</Btn>
+        </Row>
+      </Modal>
+
+      <Modal open={!!ouvriersFourn} onClose={()=>setOuvriersFourn(null)} title={`Ouvriers engagés — ${ouvriersFourn?displayName(ouvriersFourn):''}`} size="lg">
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+          <span style={{fontSize:12.5,color:'#64748b'}}>
+            {ouvriers.length} ouvrier(s) — {ouvriers.filter(o=>o.sexe==='Femme').length} femme(s), {ouvriers.filter(o=>o.sexe==='Homme').length} homme(s)
+          </span>
+          <Btn sm type="button" variant="secondary" onClick={ajouterOuvrier}>+ Ajouter un ouvrier</Btn>
+        </div>
+        <div style={{border:'1px solid #e2e8f0',borderRadius:8,overflowX:'auto',marginBottom:16}}>
+          <table style={{width:'100%',minWidth:760,borderCollapse:'collapse',fontSize:13}}>
+            <thead><tr style={{background:'#f8fafc'}}>
+              {['Nom et prénom *','Contact','Sexe','Handicap','Âge','Village',''].map((h,i)=>(
+                <th key={i} style={{padding:'8px 8px',textAlign:'left',fontSize:12,color:'#475569',whiteSpace:'nowrap'}}>{h}</th>
+              ))}
+            </tr></thead>
+            <tbody>
+              {ouvriers.length===0 ? (
+                <tr><td colSpan={7} style={{padding:12,textAlign:'center',color:'#94a3b8'}}>Aucun ouvrier — cliquez sur « + Ajouter un ouvrier »</td></tr>
+              ) : ouvriers.map((o,i)=>{
+                const champ = {padding:'6px 8px',borderRadius:6,border:'1px solid #d1d5db',fontSize:13,width:'100%',background:'white'}
+                return (
+                  <tr key={i} style={{borderTop:'1px solid #f1f5f9'}}>
+                    <td style={{padding:'4px 6px',minWidth:190}}><input style={{...champ,background:'#fffbeb'}} value={o.nom_prenom} onChange={e=>majOuvrier(i,'nom_prenom',toUpperNoAccent(e.target.value))} /></td>
+                    <td style={{padding:'4px 6px',width:130}}><input style={champ} inputMode="tel" value={o.contact} onChange={e=>majOuvrier(i,'contact',e.target.value)} /></td>
+                    <td style={{padding:'4px 6px',width:105}}>
+                      <select style={champ} value={o.sexe} onChange={e=>majOuvrier(i,'sexe',e.target.value)}>
+                        <option value="">—</option><option value="Femme">Femme</option><option value="Homme">Homme</option>
+                      </select>
+                    </td>
+                    <td style={{padding:'4px 6px',width:90}}>
+                      <select style={champ} value={o.handicap?'oui':'non'} onChange={e=>majOuvrier(i,'handicap',e.target.value==='oui')}>
+                        <option value="non">Non</option><option value="oui">Oui</option>
+                      </select>
+                    </td>
+                    <td style={{padding:'4px 6px',width:70}}><input style={champ} inputMode="numeric" value={o.age} onChange={e=>majOuvrier(i,'age',e.target.value.replace(/\D/g,''))} /></td>
+                    <td style={{padding:'4px 6px',minWidth:130}}><input style={champ} value={o.village} onChange={e=>majOuvrier(i,'village',toUpperNoAccent(e.target.value))} /></td>
+                    <td style={{padding:'4px 6px',width:40,textAlign:'center'}}>
+                      <button type="button" title="Retirer" onClick={()=>retirerOuvrier(i)} style={{border:'none',background:'transparent',color:'#dc2626',cursor:'pointer',fontSize:15}}>✕</button>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+        <Row>
+          <Btn variant="secondary" onClick={()=>setOuvriersFourn(null)}>Annuler</Btn>
+          <Btn onClick={enregistrerOuvriers} disabled={ouvriersSaving}>{ouvriersSaving?'⏳ Enregistrement…':'💾 Enregistrer'}</Btn>
         </Row>
       </Modal>
 
