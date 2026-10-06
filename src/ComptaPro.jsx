@@ -2464,6 +2464,7 @@ const NAV = [
   { section:'Stock' },
   { id:'stock',              icon:'📦', label:'Articles & Stock' },
   { id:'mouvements',         icon:'↕️',  label:'Mouvements' },
+  { id:'bons_stock',         icon:'🧾', label:"Bons d'entrée / sortie" },
   { id:'inventaire',         icon:'📋', label:'Inventaire' },
   { section:'Commercial' },
   { id:'commercial',         icon:'📄', label:'Documents' },
@@ -5082,6 +5083,7 @@ function StockPage({ companies, companyId, setPage, toast, readOnly=false }) {
           <Btn sm variant="success" onClick={()=>setPage('stock-entree')}>↓ Entrée</Btn>
           <Btn sm variant="warning" onClick={()=>setPage('stock-sortie')}>↑ Sortie</Btn>
           <Btn sm variant="secondary" onClick={()=>setPage('mouvements')}>↕ Mouvements</Btn>
+          <Btn sm variant="secondary" onClick={()=>setPage('bons_stock')}>🧾 Bons d'entrée / sortie</Btn>
           <Btn sm variant="info" onClick={()=>setPage('inventaire')}>📋 Inventaire</Btn>
           {!readOnly && <Btn onClick={openAdd}>+ Nouvel Article</Btn>}
         </>}
@@ -5299,6 +5301,351 @@ function StockSortiePage({ companies, companyId, setPage, toast }) {
           </form>
         </Card>
       </div>
+    </div>
+  )
+}
+
+// ── BONS D'ENTRÉE / BONS DE SORTIE DE STOCK ──────────────────────────────────
+// Un bon regroupe plusieurs articles sous un numéro (BE-AAAAMMJJ-NNNN /
+// BS-AAAAMMJJ-NNNN). Chaque ligne passe un mouvement ordinaire dans
+// compta_mouvements_stock (référence = numéro du bon) et met le stock de
+// l'article à jour ; le bon (compta_bons_stock) garde l'en-tête et les lignes
+// pour la réimpression. La date d'entrée / de sortie est saisie ; la date
+// d'enregistrement (created_at) est posée par la base et ne se modifie pas.
+const MSG_TABLE_BONS = "La table des bons n'existe pas encore : exécutez le script supabase/migrations/20261006_bons_stock.sql dans Supabase (SQL Editor)."
+const MOTIFS_BON = {
+  entree: ['achat', 'production', 'retour', 'ajustement'],
+  sortie: ['vente', 'production', 'ajustement', 'perte'],
+}
+const ligneBonVide = () => ({ article_id:'', quantite:'', prix_unitaire:'', observation:'' })
+const numFrBon = v => parseFloat(String(v ?? '').replace(/\s/g, '').replace(',', '.')) || 0
+const dateFr = d => d ? String(d).slice(0, 10).split('-').reverse().join('/') : ''
+
+function BonsStockPage({ companies, companyId, toast, readOnly=false }) {
+  const [bons, setBons] = useState([])
+  const [articles, setArticles] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [erreurTable, setErreurTable] = useState(false)
+  const [filtreType, setFiltreType] = useState('')
+  const [recherche, setRecherche] = useState('')
+  const [form, setForm] = useState(null)   // null = liste ; sinon bon en cours de saisie
+  const [saving, setSaving] = useState(false)
+  const company = companies.find(c => c.id === companyId)
+
+  const charger = useCallback(async () => {
+    if (!companyId) { setBons([]); setArticles([]); setLoading(false); return }
+    setLoading(true)
+    const [{ data:b, error }, { data:a }] = await Promise.all([
+      supabase.from('compta_bons_stock').select('*').eq('company_id', companyId).order('date_bon', { ascending:false }).order('created_at', { ascending:false }).limit(500),
+      supabase.from('compta_articles').select('id,designation,unite,stock_actuel,prix_achat,prix_vente').eq('company_id', companyId).eq('actif', true).order('designation'),
+    ])
+    setErreurTable(!!error && /compta_bons_stock|does not exist|schema cache/i.test(error.message || ''))
+    if (error && !/compta_bons_stock|does not exist|schema cache/i.test(error.message || '')) toast.error(error.message)
+    setBons(b || [])
+    setArticles(a || [])
+    setLoading(false)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [companyId])
+
+  useEffect(() => { charger() }, [charger])
+
+  const nouveau = type => {
+    if (!companyId) { toast.error("Sélectionnez une société précise (en haut de l'écran) avant de créer un bon."); return }
+    if (erreurTable) { toast.error(MSG_TABLE_BONS); return }
+    setForm({ type, date_bon:today(), tiers:'', motif:MOTIFS_BON[type][0], observations:'', lignes:[ligneBonVide(), ligneBonVide(), ligneBonVide()] })
+  }
+  const setChamp = (k, v) => setForm(f => ({ ...f, [k]:v }))
+  const setLigne = (i, k, v) => setForm(f => {
+    const lignes = [...f.lignes]
+    lignes[i] = { ...lignes[i], [k]:v }
+    if (k === 'article_id') {
+      const a = articles.find(x => x.id === v)
+      lignes[i].prix_unitaire = a ? (a.prix_achat || 0) : ''
+    }
+    return { ...f, lignes }
+  })
+  const retirerLigne = i => setForm(f => {
+    const l = f.lignes[i]
+    if ((l.article_id || l.quantite) && !confirm('Retirer cette ligne du bon ?')) return f
+    return { ...f, lignes:f.lignes.filter((_, j) => j !== i) }
+  })
+
+  const prochainNumero = async (type, dateBon) => {
+    const prefixe = `${type === 'sortie' ? 'BS' : 'BE'}-${dateBon.replace(/-/g, '')}-`
+    const { data } = await supabase.from('compta_bons_stock').select('numero').eq('company_id', companyId).like('numero', `${prefixe}%`).order('numero', { ascending:false }).limit(1)
+    const dernier = data?.[0]?.numero ? parseInt(data[0].numero.slice(prefixe.length), 10) || 0 : 0
+    return `${prefixe}${String(dernier + 1).padStart(4, '0')}`
+  }
+
+  const enregistrer = async e => {
+    e.preventDefault()
+    const lignes = form.lignes.filter(l => l.article_id)
+    if (!lignes.length) { toast.error('Le bon doit contenir au moins un article.'); return }
+    if (lignes.some(l => !(numFrBon(l.quantite) > 0))) { toast.error('Chaque article doit avoir une quantité supérieure à zéro.'); return }
+    if (!form.date_bon || form.date_bon > today()) { toast.error("La date ne peut pas être postérieure à aujourd'hui."); return }
+    setSaving(true)
+    // Stock relu juste avant l'enregistrement, quantités cumulées par article.
+    const ids = [...new Set(lignes.map(l => l.article_id))]
+    const { data:frais } = await supabase.from('compta_articles').select('id,designation,unite,stock_actuel').in('id', ids)
+    const stock = Object.fromEntries((frais || []).map(a => [a.id, a]))
+    const cumul = {}
+    lignes.forEach(l => { cumul[l.article_id] = (cumul[l.article_id] || 0) + numFrBon(l.quantite) })
+    if (form.type === 'sortie') {
+      const manque = ids.find(id => cumul[id] > (stock[id]?.stock_actuel || 0))
+      if (manque) {
+        setSaving(false)
+        toast.error(`Stock insuffisant pour ${stock[manque]?.designation} : ${(stock[manque]?.stock_actuel || 0)} ${stock[manque]?.unite || ''} disponible(s).`)
+        return
+      }
+    }
+    const uid = (await supabase.auth.getUser()).data?.user?.id
+    const numero = await prochainNumero(form.type, form.date_bon)
+    const lignesBon = lignes.map(l => {
+      const a = stock[l.article_id] || articles.find(x => x.id === l.article_id) || {}
+      const q = numFrBon(l.quantite), pu = numFrBon(l.prix_unitaire)
+      return { article_id:l.article_id, designation:a.designation || '', unite:a.unite || '', quantite:q, prix_unitaire:pu, montant:Math.round(q * pu), observation:(l.observation || '').trim() }
+    })
+    const total = lignesBon.reduce((s, l) => s + l.montant, 0)
+    const { error } = await supabase.from('compta_bons_stock').insert({
+      company_id:companyId, user_id:uid, numero, type:form.type, date_bon:form.date_bon,
+      tiers:form.tiers.trim() || null, motif:form.motif, observations:form.observations.trim() || null, lignes:lignesBon, total,
+    })
+    if (error) { setSaving(false); toast.error(/compta_bons_stock|does not exist|schema cache/i.test(error.message) ? MSG_TABLE_BONS : error.message); return }
+    // Mouvements et stock, ligne par ligne.
+    const { error:errMvt } = await supabase.from('compta_mouvements_stock').insert(lignesBon.map(l => ({
+      article_id:l.article_id, company_id:companyId, user_id:uid, type:form.type, motif:form.motif,
+      quantite:l.quantite, prix_unitaire:l.prix_unitaire, montant:l.montant, reference:numero, date_mvt:form.date_bon,
+    })))
+    if (errMvt) toast.error(`Bon ${numero} créé mais mouvements non enregistrés : ${errMvt.message}`)
+    else {
+      for (const id of ids) {
+        const actuel = stock[id]?.stock_actuel || 0
+        await supabase.from('compta_articles').update({ stock_actuel:form.type === 'sortie' ? actuel - cumul[id] : actuel + cumul[id] }).eq('id', id)
+      }
+    }
+    setSaving(false)
+    toast.success(`${form.type === 'sortie' ? 'Bon de sortie' : "Bon d'entrée"} ${numero} enregistré.`)
+    const cree = { company_id:companyId, numero, type:form.type, date_bon:form.date_bon, tiers:form.tiers.trim(), motif:form.motif, observations:form.observations.trim(), lignes:lignesBon, total, created_at:new Date().toISOString() }
+    setForm(null)
+    charger()
+    imprimer(cree)
+  }
+
+  // Annulation : le stock est remis comme avant le bon, puis le bon et ses
+  // mouvements sont supprimés.
+  const annuler = async b => {
+    if (!confirm(`Annuler le ${b.type === 'sortie' ? 'bon de sortie' : "bon d'entrée"} ${b.numero} ?\n\nLe stock des ${(b.lignes || []).length} article(s) sera remis comme avant ce bon.`)) return
+    const ids = [...new Set((b.lignes || []).map(l => l.article_id))]
+    const { data:frais } = await supabase.from('compta_articles').select('id,designation,stock_actuel').in('id', ids)
+    const cumul = {}
+    ;(b.lignes || []).forEach(l => { cumul[l.article_id] = (cumul[l.article_id] || 0) + (Number(l.quantite) || 0) })
+    if (b.type === 'entree') {
+      const negatif = (frais || []).find(a => (a.stock_actuel || 0) - cumul[a.id] < 0)
+      if (negatif) { toast.error(`Impossible : le stock de ${negatif.designation} deviendrait négatif (une partie de cette entrée a déjà été consommée).`); return }
+    }
+    for (const a of frais || []) {
+      await supabase.from('compta_articles').update({ stock_actuel:b.type === 'entree' ? (a.stock_actuel || 0) - cumul[a.id] : (a.stock_actuel || 0) + cumul[a.id] }).eq('id', a.id)
+    }
+    await supabase.from('compta_mouvements_stock').delete().eq('company_id', b.company_id).eq('reference', b.numero)
+    const { error } = await supabase.from('compta_bons_stock').delete().eq('id', b.id)
+    if (error) { toast.error(error.message); return }
+    toast.success(`Bon ${b.numero} annulé, stock rétabli.`)
+    charger()
+  }
+
+  const imprimer = b => {
+    const sortie = b.type === 'sortie'
+    const lignes = b.lignes || []
+    const rows = lignes.map((l, i) => `<tr><td style="text-align:center">${i + 1}</td><td>${l.designation || ''}</td><td style="text-align:center">${l.unite || ''}</td><td style="text-align:right">${(Number(l.quantite) || 0).toLocaleString('fr-FR')}</td><td style="text-align:right">${Math.round(l.prix_unitaire || 0).toLocaleString('fr-FR')}</td><td style="text-align:right">${Math.round(l.montant || 0).toLocaleString('fr-FR')}</td><td>${l.observation || ''}</td></tr>`)
+    while (rows.length < 4) rows.push('<tr><td>&nbsp;</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>')
+    const enregistre = b.created_at ? new Date(b.created_at).toLocaleString('fr-FR', { dateStyle:'short', timeStyle:'short' }) : ''
+    const html = `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><title>${sortie ? 'Bon de sortie' : "Bon d'entrée"} ${b.numero}</title>
+      <style>
+        @page{size:A4;margin:8mm}
+        *{margin:0;padding:0;box-sizing:border-box}
+        html,body{width:190mm}
+        body{font-family:'Times New Roman',serif;font-size:11pt;color:#000;padding:6px 4px;margin:0 auto}
+        table{width:100%;border-collapse:collapse;margin-bottom:18px;page-break-inside:avoid}
+        td,th{border:1px solid #000;padding:7px 8px;font-size:10.5pt;vertical-align:top}
+        .header{display:grid;grid-template-columns:110px 1fr 110px;align-items:center;gap:14px;margin-bottom:10px}
+        .company-text{text-align:center}
+        .company-name{font-size:13pt;font-weight:bold}
+        .company-info{font-size:9pt}
+        .titre{text-align:center;font-weight:bold;font-size:14pt;margin:8px 0 14px}
+        .blue{background:#B4C6E7;font-weight:bold;text-align:center}
+        .lbl{font-weight:bold;white-space:nowrap}
+        .no-border td{border:none;padding:4px 8px}
+        .signatures td{height:80px}
+        .total td{font-weight:bold}
+      </style></head><body>
+      <div class="header">
+        <div></div>
+        <div class="company-text">
+          <div class="company-name">${company?.raison_sociale || ''}</div>
+          <div class="company-info">
+            ${company?.rccm ? `RCCM : ${company.rccm} &nbsp; ` : ''}${company?.ifu ? `IFU : ${company.ifu} &nbsp; ` : ''}${company?.tel ? `TEL : ${company.tel}` : ''}<br>
+            ${company?.adresse ? `${company.adresse}` : ''}${company?.email ? ` &nbsp; Email : ${company.email}` : ''}
+          </div>
+        </div>
+        <div style="text-align:right">${company?.logo_url ? `<img src="${company.logo_url}" style="max-height:60px;max-width:110px;object-fit:contain">` : ''}</div>
+      </div>
+      <div class="titre">${sortie ? 'BON DE SORTIE DE STOCK' : "BON D'ENTRÉE EN STOCK"} N° ${b.numero}</div>
+      <table class="no-border">
+        <tr><td class="lbl" width="22%">${sortie ? 'Destinataire :' : 'Provenance / fournisseur :'}</td><td width="34%">${b.tiers || ''}</td>
+            <td class="lbl" width="20%">${sortie ? 'Date de sortie :' : "Date d'entrée :"}</td><td>${dateFr(b.date_bon)}</td></tr>
+        <tr><td class="lbl">Motif :</td><td>${b.motif ? b.motif.charAt(0).toUpperCase() + b.motif.slice(1) : ''}</td>
+            <td class="lbl">Enregistré le :</td><td>${enregistre}</td></tr>
+        ${b.observations ? `<tr><td class="lbl">Observations :</td><td colspan="3">${b.observations}</td></tr>` : ''}
+      </table>
+      <table>
+        <tr class="blue"><td width="6%">N°</td><td>DÉSIGNATION</td><td width="9%">UNITÉ</td><td width="11%">QUANTITÉ</td><td width="13%">P.U. (FCFA)</td><td width="14%">MONTANT (FCFA)</td><td width="18%">OBSERVATION</td></tr>
+        ${rows.join('')}
+        <tr class="total"><td colspan="3">TOTAL — ${lignes.length} article(s)</td><td style="text-align:right">${lignes.reduce((s, l) => s + (Number(l.quantite) || 0), 0).toLocaleString('fr-FR')}</td><td></td><td style="text-align:right">${Math.round(b.total || 0).toLocaleString('fr-FR')}</td><td></td></tr>
+      </table>
+      <table class="signatures">
+        <tr class="blue"><td>${sortie ? 'LE MAGASINIER' : 'LE LIVREUR'}</td><td>${sortie ? 'LE RÉCEPTIONNAIRE' : 'LE MAGASINIER (bon pour réception)'}</td><td>LE CONTRÔLEUR</td></tr>
+        <tr><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr>
+      </table>
+      </body></html>`
+    openPrintWindow(html, `${sortie ? 'bon_sortie' : 'bon_entree'}_${b.numero}`)
+  }
+
+  // ── Formulaire de saisie ──
+  if (form) {
+    const sortie = form.type === 'sortie'
+    const total = form.lignes.reduce((s, l) => s + Math.round(numFrBon(l.quantite) * numFrBon(l.prix_unitaire)), 0)
+    const champ = { padding:'7px 9px', borderRadius:7, border:'1px solid #d1d5db', fontSize:13, width:'100%', background:'white', boxSizing:'border-box' }
+    return (
+      <div>
+        <PageHeader title={sortie ? 'Nouveau bon de sortie' : "Nouveau bon d'entrée"} subtitle={company?.raison_sociale || ''}
+          actions={<Btn variant="secondary" onClick={() => setForm(null)}>← Retour à la liste</Btn>} />
+        <form onSubmit={enregistrer}>
+          <Card style={{ marginBottom:16 }} accent={sortie ? '#f59e0b' : '#16a34a'}>
+            <Grid cols={2} gap={14}>
+              <Input label={sortie ? 'Destinataire (service, personne, client…)' : 'Provenance / fournisseur'} name="tiers" value={form.tiers} onChange={e => setChamp('tiers', e.target.value)} />
+              <Input label={sortie ? 'Date de sortie *' : "Date d'entrée *"} name="date_bon" type="date" value={form.date_bon} onChange={e => setChamp('date_bon', e.target.value)} required />
+              <Sel label="Motif" name="motif" value={form.motif} onChange={e => setChamp('motif', e.target.value)}
+                options={MOTIFS_BON[form.type].map(m => ({ value:m, label:m.charAt(0).toUpperCase() + m.slice(1) }))} />
+              <Input label="Observations" name="observations" value={form.observations} onChange={e => setChamp('observations', e.target.value)} />
+            </Grid>
+            <div style={{ fontSize:12, color:'#64748b', marginTop:8 }}>La date d'enregistrement est posée automatiquement et ne peut pas être modifiée.</div>
+          </Card>
+          <Card style={{ marginBottom:16 }}>
+            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:10 }}>
+              <SectionTitle color={sortie ? '#b45309' : '#15803d'}>Articles</SectionTitle>
+              <Btn sm type="button" variant="secondary" onClick={() => setForm(f => ({ ...f, lignes:[...f.lignes, ligneBonVide()] }))}>+ Ajouter une ligne</Btn>
+            </div>
+            <div style={{ overflowX:'auto' }}>
+              <table style={{ width:'100%', minWidth:760, borderCollapse:'collapse', fontSize:13 }}>
+                <thead><tr style={{ background:'#f8fafc' }}>
+                  {['Article', 'Quantité', 'P.U. (FCFA)', 'Montant', 'Observation', ''].map((h, i) => <th key={i} style={{ padding:'8px', textAlign:i >= 1 && i <= 3 ? 'right' : 'left', fontSize:12, color:'#475569' }}>{h}</th>)}
+                </tr></thead>
+                <tbody>
+                  {form.lignes.map((l, i) => {
+                    const a = articles.find(x => x.id === l.article_id)
+                    const depasse = sortie && a && numFrBon(l.quantite) > (a.stock_actuel || 0)
+                    return (
+                      <tr key={i} style={{ borderTop:'1px solid #f1f5f9' }}>
+                        <td style={{ padding:'4px 6px', minWidth:260 }}>
+                          <select style={champ} value={l.article_id} onChange={e => setLigne(i, 'article_id', e.target.value)}>
+                            <option value="">— Choisir un article —</option>
+                            {articles.map(x => <option key={x.id} value={x.id}>{x.designation} (stock : {(x.stock_actuel || 0).toLocaleString('fr-FR')} {x.unite || ''})</option>)}
+                          </select>
+                        </td>
+                        <td style={{ padding:'4px 6px', width:110 }}>
+                          <input style={{ ...champ, textAlign:'right', borderColor:depasse ? '#dc2626' : '#d1d5db' }} inputMode="decimal" value={l.quantite} onChange={e => setLigne(i, 'quantite', e.target.value)} title={depasse ? 'Stock insuffisant' : ''} />
+                        </td>
+                        <td style={{ padding:'4px 6px', width:120 }}><input style={{ ...champ, textAlign:'right' }} inputMode="decimal" value={l.prix_unitaire} onChange={e => setLigne(i, 'prix_unitaire', e.target.value)} /></td>
+                        <td style={{ padding:'4px 6px', width:120, textAlign:'right', fontWeight:600 }}>{Math.round(numFrBon(l.quantite) * numFrBon(l.prix_unitaire)).toLocaleString('fr-FR')}</td>
+                        <td style={{ padding:'4px 6px', minWidth:150 }}><input style={champ} value={l.observation} onChange={e => setLigne(i, 'observation', e.target.value)} /></td>
+                        <td style={{ padding:'4px 6px', width:36, textAlign:'center' }}>
+                          <button type="button" title="Retirer la ligne" onClick={() => retirerLigne(i)} style={{ border:'none', background:'transparent', color:'#dc2626', cursor:'pointer', fontSize:15 }}>✕</button>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                  <tr style={{ borderTop:'2px solid #cbd5e1', fontWeight:700 }}>
+                    <td style={{ padding:'8px' }}>Total</td>
+                    <td style={{ padding:'8px', textAlign:'right' }}>{form.lignes.reduce((s, l) => s + numFrBon(l.quantite), 0).toLocaleString('fr-FR')}</td>
+                    <td></td>
+                    <td style={{ padding:'8px', textAlign:'right' }}>{fcfa(total)}</td>
+                    <td colSpan={2}></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </Card>
+          <Row>
+            <Btn variant="secondary" onClick={() => setForm(null)}>Annuler</Btn>
+            <Btn type="submit" variant={sortie ? 'warning' : 'success'} disabled={saving}>{saving ? '⏳ Enregistrement…' : `💾 Enregistrer et imprimer le ${sortie ? 'bon de sortie' : "bon d'entrée"}`}</Btn>
+          </Row>
+        </form>
+      </div>
+    )
+  }
+
+  // ── Liste des bons ──
+  const t = recherche.trim().toLowerCase()
+  const visibles = bons.filter(b => (!filtreType || b.type === filtreType) &&
+    (!t || [b.numero, b.tiers, b.motif, ...(b.lignes || []).map(l => l.designation)].filter(Boolean).some(x => String(x).toLowerCase().includes(t))))
+  return (
+    <div>
+      <PageHeader title="Bons d'entrée et de sortie" subtitle={company?.raison_sociale ? `${company.raison_sociale} — ${bons.length} bon(s)` : "Sélectionnez une société en haut de l'écran"}
+        actions={!readOnly && (
+          <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+            <Btn variant="success" onClick={() => nouveau('entree')}>↓ Bon d'entrée</Btn>
+            <Btn variant="warning" onClick={() => nouveau('sortie')}>↑ Bon de sortie</Btn>
+          </div>
+        )} />
+      {erreurTable && (
+        <Card style={{ marginBottom:16, background:'#fffbeb', borderColor:'#fcd34d' }}>
+          <div style={{ fontSize:13, color:'#92400e' }}>⚠️ {MSG_TABLE_BONS}</div>
+        </Card>
+      )}
+      <Card style={{ marginBottom:16, padding:'12px 20px' }}>
+        <div style={{ display:'flex', gap:10, flexWrap:'wrap', alignItems:'center' }}>
+          <input value={recherche} onChange={e => setRecherche(e.target.value)} placeholder="🔍 N° de bon, destinataire, article…"
+            style={{ padding:'8px 14px', borderRadius:8, border:'1px solid #d1d5db', fontSize:13, flex:1, minWidth:200 }} />
+          <select value={filtreType} onChange={e => setFiltreType(e.target.value)} style={{ padding:'8px 12px', borderRadius:8, border:'1px solid #d1d5db', fontSize:13 }}>
+            <option value="">Entrées et sorties</option>
+            <option value="entree">Bons d'entrée</option>
+            <option value="sortie">Bons de sortie</option>
+          </select>
+        </div>
+      </Card>
+      {loading ? <Card><div style={{ color:'#94a3b8' }}>Chargement…</div></Card> : (
+        <TableWrap>
+          <div style={{ overflowX:'auto' }}>
+            <table style={{ width:'100%', borderCollapse:'collapse' }}>
+              <thead><tr><TH>N° bon</TH><TH>Type</TH><TH>Date</TH><TH>Destinataire / provenance</TH><TH>Motif</TH><TH right>Articles</TH><TH right>Montant</TH><TH>Enregistré le</TH><TH>Actions</TH></tr></thead>
+              <tbody>
+                {visibles.map(b => (
+                  <TR key={b.id}>
+                    <TD bold>{b.numero}</TD>
+                    <TD><Badge type={b.type === 'sortie' ? 'warning' : 'success'}>{b.type === 'sortie' ? 'Sortie' : 'Entrée'}</Badge></TD>
+                    <TD>{dateFr(b.date_bon)}</TD>
+                    <TD>{b.tiers || '—'}</TD>
+                    <TD>{b.motif || '—'}</TD>
+                    <TD right>{(b.lignes || []).length}</TD>
+                    <TD right>{fcfa(b.total)}</TD>
+                    <TD sm>{b.created_at ? new Date(b.created_at).toLocaleString('fr-FR', { dateStyle:'short', timeStyle:'short' }) : ''}</TD>
+                    <TD>
+                      <ActionsMenu sm items={[
+                        { couleur:'#0891b2', label:'🖨️ Imprimer le bon', onClick:() => imprimer(b) },
+                        !readOnly && null,
+                        !readOnly && { label:'🗑️ Annuler le bon', danger:true, onClick:() => annuler(b) },
+                      ]} />
+                    </TD>
+                  </TR>
+                ))}
+                {visibles.length === 0 && (
+                  <tr><td colSpan={9} style={{ padding:20, textAlign:'center', color:'#94a3b8' }}>{companyId ? 'Aucun bon.' : "Sélectionnez une société pour voir ses bons."}</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </TableWrap>
+      )}
     </div>
   )
 }
@@ -7389,7 +7736,7 @@ function LotsSemiFinisPage({ companies, companyId, toast, readOnly=false }) {
 // ── CONSTANTES SECTIONS ───────────────────────────────────────────────────────
 const ALL_SECTIONS = [
   ['dashboard','Tableau de bord'],['companies','Sociétés'],['clients','Clients'],
-  ['fournisseurs','Fournisseurs'],['stock','Articles & Stock'],['mouvements','Mouvements'],
+  ['fournisseurs','Fournisseurs'],['stock','Articles & Stock'],['mouvements','Mouvements'],['bons_stock',"Bons d'entrée / sortie"],
   ['inventaire','Inventaire'],['commercial','Documents commerciaux'],['reglements_clients','Règlements Clients'],['reglements_fourn','Règlements Fournisseurs'],
   ['prestations','Prestations'],['suivi_lot','Suivi de lot'],['lots','Lots Production'],
   ['etuvage','Étuvage'],['decorticage','Décorticage'],['calibrage','Calibrage'],
@@ -7408,7 +7755,7 @@ const ALL_SECTIONS = [
 
 const SECTION_GROUPS = [
   {group:'Référentiel', ids:['companies','clients','fournisseurs']},
-  {group:'Stock', ids:['stock','mouvements','inventaire']},
+  {group:'Stock', ids:['stock','mouvements','bons_stock','inventaire']},
   {group:'Commercial', ids:['commercial','reglements_clients','reglements_fourn','prestations']},
   {group:'Production', ids:['suivi_lot','lots','etuvage','decorticage','calibrage','tri_optique','conditionnement']},
   {group:'Étuveuses', ids:['etv_repertoire','etv_avances','etv_bc','etv_br','etv_entrees','etv_sorties','etv_inventaire','etv_tresorerie']},
@@ -19110,7 +19457,7 @@ export default function ComptaPro() {
     controle_budget:'Contrôle Budgétaire',
     users:'Gestion des utilisateurs',
     fournisseurs:'Fournisseurs', stock:'Articles & Stock', 'stock-entree':'Entrée de stock',
-    'stock-sortie':'Sortie de stock', mouvements:'Mouvements de stock', inventaire:'Inventaire',
+    'stock-sortie':'Sortie de stock', mouvements:'Mouvements de stock', bons_stock:"Bons d'entrée / sortie", inventaire:'Inventaire',
     commercial:'Documents commerciaux', 'commercial-view':'Détail document', lots:'Lots Production',
     etuvage:'Étuvage', decorticage:'Décorticage', calibrage:'Calibrage',
     tri_optique:'Tri Optique', conditionnement:'Conditionnement',
@@ -19157,6 +19504,7 @@ export default function ComptaPro() {
       case 'stock-entree':  return <StockEntreePage {...sp} setPage={setPage} />
       case 'stock-sortie':  return <StockSortiePage {...sp} setPage={setPage} />
       case 'mouvements':    return <MouvementsPage {...sp} setPage={setPage} />
+      case 'bons_stock':    return <BonsStockPage {...sp} readOnly={getReadOnly('bons_stock')} />
       case 'inventaire':    return <InventairePage companies={companies} companyId={effectiveCompanyId} setCompanyId={setCompanyId} />
       case 'commercial':    return <CommercialPage {...sp} setPage={setPage} setDocId={setDocId} />
       case 'commercial-view': return <CommercialViewPage docId={docId} setPage={setPage} toast={toast} />
