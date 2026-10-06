@@ -2528,6 +2528,102 @@ const NAV_ADMIN_SOCIETE = [
   { id:'parametres',         icon:'⚙️', label:'Paramètres' },
 ]
 
+// Entrées de navigation autorisées pour l'utilisateur : tout pour un super
+// admin ou un admin société (avec leur rubrique Administration), seulement
+// les pages permises pour un utilisateur simple.
+function entreesNavigation(user, profile) {
+  const isSuperAdmin = profile?.role === 'super_admin' || user?.email === SUPER_ADMIN_EMAIL
+  const isUtilisateurSimple = profile?.role === 'utilisateur_simple'
+  const isAdminSociete = !isSuperAdmin && !isUtilisateurSimple
+  const permissions = profile?.permissions || {}
+  const filteredNAV = isUtilisateurSimple
+    ? NAV.filter(item => !item.id || item.id==='chat' || item.id==='dashboard' || (permissions[item.id] === 'read' || permissions[item.id] === 'write'))
+    : NAV
+  return isSuperAdmin
+    ? [...NAV, ...NAV_ADMIN]
+    : isAdminSociete
+    ? [...NAV, ...NAV_ADMIN_SOCIETE]
+    : filteredNAV
+}
+
+// Rubriques de la barre de menus : chaque « section » de NAV devient un menu
+// déroulant contenant ses pages (les rubriques vidées par les droits
+// disparaissent). « Principal » s'appelle « Accueil ».
+function rubriquesNavigation(user, profile) {
+  const rubriques = []
+  for (const item of entreesNavigation(user, profile)) {
+    if (item.section) rubriques.push({ label: item.section === 'Principal' ? 'Accueil' : item.section, items: [] })
+    else if (rubriques.length) rubriques[rubriques.length - 1].items.push(item)
+  }
+  return rubriques.filter(r => r.items.length)
+}
+
+// Barre de menus horizontale (ordinateur), comme dans Gestion Stock Pro : un
+// clic ouvre la rubrique ; tant qu'un menu est ouvert, survoler une autre
+// rubrique l'ouvre à sa place ; clic à l'extérieur ou Échap pour fermer.
+function BarreMenus({ page, setPage, user, profile }) {
+  const [ouvert, setOuvert] = useState(null)
+  const [ancre, setAncre] = useState(null)
+  const ref = useRef(null)
+  const rubriques = rubriquesNavigation(user, profile)
+  useEffect(() => {
+    if (ouvert === null) return
+    const dehors = e => { if (ref.current && !ref.current.contains(e.target)) setOuvert(null) }
+    const echap = e => { if (e.key === 'Escape') setOuvert(null) }
+    const fermer = () => setOuvert(null)
+    document.addEventListener('mousedown', dehors)
+    document.addEventListener('keydown', echap)
+    window.addEventListener('resize', fermer)
+    return () => {
+      document.removeEventListener('mousedown', dehors)
+      document.removeEventListener('keydown', echap)
+      window.removeEventListener('resize', fermer)
+    }
+  }, [ouvert])
+  const ouvrir = (i, el) => {
+    const r = el.getBoundingClientRect()
+    setAncre({ left: Math.min(r.left, window.innerWidth - 270), top: r.bottom + 2, maxHeight: window.innerHeight - r.bottom - 12 })
+    setOuvert(i)
+  }
+  return (
+    <div ref={ref} data-barre="menus" style={{ background:SIDEBAR, display:'flex', alignItems:'stretch', gap:2, padding:'0 12px', overflowX:'auto', position:'sticky', top:60, zIndex:99 }}>
+      {rubriques.map((r, i) => {
+        const actif = r.items.some(it => it.id === page)
+        const estOuvert = ouvert === i
+        return (
+          <button key={r.label} type="button"
+            onClick={e => estOuvert ? setOuvert(null) : ouvrir(i, e.currentTarget)}
+            onMouseEnter={e => { if (ouvert !== null && !estOuvert) ouvrir(i, e.currentTarget) }}
+            style={{
+              background: estOuvert ? 'rgba(255,255,255,.18)' : 'transparent', border:'none', cursor:'pointer',
+              color: actif || estOuvert ? 'white' : 'rgba(255,255,255,.78)', fontWeight: actif ? 700 : 500, fontSize:13.5,
+              padding:'10px 14px', whiteSpace:'nowrap', borderBottom: actif ? '3px solid #60a5fa' : '3px solid transparent',
+            }}>
+            {r.label} <span style={{ fontSize:9, opacity:.7 }}>▼</span>
+          </button>
+        )
+      })}
+      {ouvert !== null && ancre && rubriques[ouvert] && (
+        <div style={{ position:'fixed', left:ancre.left, top:ancre.top, maxHeight:ancre.maxHeight, overflowY:'auto', zIndex:1000,
+          minWidth:250, background:'white', borderRadius:10, border:'1px solid #e2e8f0', boxShadow:'0 12px 28px rgba(15,23,42,.18)', padding:'6px 0' }}>
+          {rubriques[ouvert].items.map(it => {
+            const actif = page === it.id
+            return (
+              <button key={it.id} type="button" onClick={() => { setPage(it.id); setOuvert(null) }}
+                onMouseEnter={e => { if (!actif) e.currentTarget.style.background = '#f1f5f9' }}
+                onMouseLeave={e => { if (!actif) e.currentTarget.style.background = 'transparent' }}
+                style={{ width:'100%', display:'flex', alignItems:'center', gap:10, textAlign:'left', border:'none', cursor:'pointer',
+                  padding:'9px 16px', fontSize:13.5, background: actif ? '#eef2ff' : 'transparent', color: actif ? '#3730a3' : '#334155', fontWeight: actif ? 700 : 500 }}>
+                <span style={{ width:20, textAlign:'center' }}>{it.icon}</span>{it.label}
+              </button>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function Sidebar({ page, setPage, user, profile, onLogout, open, onClose }) {
   const { isMobile, isTablet, isLandscape, isMobileLandscape } = useResponsive()
   // En paysage sur mobile : sidebar visible en mode compact
@@ -2535,18 +2631,7 @@ function Sidebar({ page, setPage, user, profile, onLogout, open, onClose }) {
   const isSuperAdmin = profile?.role === 'super_admin' || user?.email === SUPER_ADMIN_EMAIL
   const isUtilisateurSimple = profile?.role === 'utilisateur_simple'
   const isAdminSociete = !isSuperAdmin && !isUtilisateurSimple
-  const permissions = profile?.permissions || {}
-
-  // Filter NAV based on permissions for utilisateur_simple
-  const filteredNAV = isUtilisateurSimple
-    ? NAV.filter(item => !item.id || item.id==='chat' || item.id==='dashboard' || (permissions[item.id] === 'read' || permissions[item.id] === 'write'))
-    : NAV
-
-  const navItems = isSuperAdmin
-    ? [...NAV, ...NAV_ADMIN]
-    : isAdminSociete
-    ? [...NAV, ...NAV_ADMIN_SOCIETE]
-    : filteredNAV
+  const navItems = entreesNavigation(user, profile)
 
   const handleNav = (id) => { setPage(id); if (onClose) onClose() }
 
@@ -19564,12 +19649,20 @@ export default function ComptaPro() {
   return (
     <div style={{ fontFamily:"'Segoe UI',system-ui,sans-serif", background:'#f1f5f9', color:'#1e293b', minHeight:'100vh' }}>
       <Toasts toasts={toast.toasts} />
-      <Sidebar page={page} setPage={setPage} user={user} profile={profile} onLogout={logout}
-        open={sidebarOpen} onClose={()=>setSidebarOpen(false)} />
-      <div style={{ marginLeft:sidebarCollapsed ? 0 : 260, minHeight:'100vh', display:'flex', flexDirection:'column', transition:'margin-left 0.2s ease' }}>
+      {sidebarCollapsed && (
+        <Sidebar page={page} setPage={setPage} user={user} profile={profile} onLogout={logout}
+          open={sidebarOpen} onClose={()=>setSidebarOpen(false)} />
+      )}
+      <div style={{ marginLeft:0, minHeight:'100vh', display:'flex', flexDirection:'column' }}>
         {/* Topbar */}
         <div style={{ height:60, background:'white', borderBottom:'1px solid #e2e8f0', display:'flex', alignItems:'center', justifyContent:'space-between', padding:'0 16px', position:'sticky', top:0, zIndex:100 }}>
           <div style={{ display:'flex', alignItems:'center', gap:12 }}>
+            {!sidebarCollapsed && (
+              <div onClick={()=>setPage('dashboard')} title="Tableau de bord" style={{ display:'flex', alignItems:'center', gap:8, cursor:'pointer', paddingRight:12, borderRight:'1px solid #e2e8f0' }}>
+                <div style={{ width:32, height:32, background:SIDEBAR, borderRadius:9, display:'flex', alignItems:'center', justifyContent:'center', fontSize:16 }}>📊</div>
+                <div style={{ fontWeight:800, fontSize:14, color:'#0f172a', whiteSpace:'nowrap' }}>Compta Pro</div>
+              </div>
+            )}
             {sidebarCollapsed && (
               <button onClick={()=>setSidebarOpen(true)} style={{ background:'none', border:'none', cursor:'pointer', fontSize:22, padding:'4px 6px', color:'#374151', display:'flex', alignItems:'center' }}>
                 ☰
@@ -19594,8 +19687,17 @@ export default function ComptaPro() {
               style={{ background:theme==='dark'?'#2a3942':'#f0f2f5', border:'none', borderRadius:20, cursor:'pointer', fontSize:18, padding:'6px 12px', display:'flex', alignItems:'center' }}>
               {theme==='dark'?'☀️':'🌙'}
             </button>
+            {!sidebarCollapsed && (
+              <div style={{ display:'flex', alignItems:'center', gap:8, paddingLeft:10, borderLeft:'1px solid #e2e8f0' }} title={`${user?.email || ''} — ${APP_VERSION}`}>
+                <div style={{ width:30, height:30, background:isSuperAdmin?'#f59e0b':SIDEBAR, borderRadius:'50%', display:'flex', alignItems:'center', justifyContent:'center', color:'white', fontWeight:700, fontSize:13 }}>
+                  {(user?.email||'U')[0].toUpperCase()}
+                </div>
+                <button onClick={logout} title="Déconnexion" style={{ background:'none', border:'none', cursor:'pointer', fontSize:16 }}>🚪</button>
+              </div>
+            )}
           </div>
         </div>
+        {!sidebarCollapsed && <BarreMenus page={page} setPage={setPage} user={user} profile={profile} />}
         {/* Bandeau super admin — société consultée */}
         {isSuperAdmin && adminViewCompany && (
           <div style={{background: isOwnCompany?'#dcfce7':'#fef3c7', borderBottom:`2px solid ${isOwnCompany?'#16a34a':'#f59e0b'}`, padding:'8px 16px',display:'flex',alignItems:'center',gap:12,flexWrap:'wrap'}}>
