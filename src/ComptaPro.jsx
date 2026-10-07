@@ -2636,6 +2636,8 @@ const NAV = [
   { id:'rh_historique',      icon:'📜', label:'Historique Paie' },
   { id:'rh_declarations',    icon:'📋', label:'Déclarations CNSS/ITS' },
   { id:'rh_rapport',         icon:'📊', label:'Rapport Cabinet' },
+  { id:'rh_dossiers',        icon:'🗂️', label:'Dossier du personnel' },
+  { id:'rh_carriere',        icon:'🎖️', label:'Carrière' },
   { id:'rh_conges',          icon:'🏖️', label:'Congés' },
   { id:'rh_absences',        icon:'🕒', label:'Permissions & absences' },
   { id:'rh_prets',           icon:'🤝', label:'Prêts & avances' },
@@ -7942,7 +7944,7 @@ const ALL_SECTIONS = [
   ['epierrage','Épierrage'],['etuvage_paiements','Paiements étuvage'],
   ['docs_admin','Documents administratifs'],
   ['rh_employes','Employés'],['rh_fiches_paie','Fiches de Paie'],['rh_historique','Historique Paie'],
-  ['rh_declarations','Déclarations CNSS/ITS'],['rh_rapport','Rapport Cabinet'],['rh_conges','Congés'],['rh_absences','Permissions & absences'],['rh_prets','Prêts & avances'],['rh_missions','Missions'],['rh_tableau_bord','Tableau de bord RH'],['rh_simulateur','Simulateur Brut ↔ Net'],
+  ['rh_declarations','Déclarations CNSS/ITS'],['rh_rapport','Rapport Cabinet'],['rh_dossiers','Dossier du personnel'],['rh_carriere','Carrière'],['rh_conges','Congés'],['rh_absences','Permissions & absences'],['rh_prets','Prêts & avances'],['rh_missions','Missions'],['rh_tableau_bord','Tableau de bord RH'],['rh_simulateur','Simulateur Brut ↔ Net'],
   ['journal_caisse','Journal Caisse'],['journal_banque','Journal Banque'],
   ['journal_mobile','Journal Mobile Money'],['plan_comptable','Plan Comptable'],['grand_livre','Grand-Livre'],['ecritures','Saisie Comptable'],['balance','Balance'],['etats_financiers','États Financiers'],
 ]
@@ -7955,7 +7957,7 @@ const SECTION_GROUPS = [
   {group:'Étuveuses', ids:['etv_repertoire','etv_avances','etv_bc','etv_br','etv_entrees','etv_sorties','etv_inventaire','etv_tresorerie']},
   {group:'Achats', ids:['achats','lots_semi_finis','epierrage','etuvage_paiements']},
   {group:'Documents', ids:['docs_admin']},
-  {group:'RH & Paie', ids:['rh_employes','rh_fiches_paie','rh_historique','rh_declarations','rh_rapport','rh_conges','rh_absences','rh_prets','rh_missions','rh_tableau_bord','rh_simulateur']},
+  {group:'RH & Paie', ids:['rh_employes','rh_fiches_paie','rh_historique','rh_declarations','rh_rapport','rh_dossiers','rh_carriere','rh_conges','rh_absences','rh_prets','rh_missions','rh_tableau_bord','rh_simulateur']},
   {group:'Comptabilité', ids:['journal_caisse','journal_banque','journal_mobile','plan_comptable','grand_livre','ecritures','balance','etats_financiers']},
 ]
 
@@ -20230,6 +20232,276 @@ const RH_RappelPretsMissions = ({employeeId, mois, annee, avances, onAppliquer})
   );
 };
 
+// ─── RH LOT 4 : CARRIÈRE ET DOSSIER DU PERSONNEL ────────────────────────────
+// Repris de Gestion Stock Pro : chaque événement garde la situation avant /
+// après ; appliqué, il met à jour la fiche de l'employé (emploi, catégorie,
+// salaire de base ; un départ le passe en inactif). Les pièces du dossier
+// sont dans un espace de stockage privé, ouvertes par lien temporaire.
+const MSG_TABLES_RH_LOT4 = "Les tables de la carrière et du dossier du personnel n'existent pas encore : exécutez le script supabase/migrations/rh/20261007_rh_carriere_dossiers.sql dans le projet Supabase RH (SQL Editor)."
+const estErreurTableLot4 = e => /rh_carriere|rh_documents|does not exist|schema cache|bucket/i.test(e?.message || "")
+const BUCKET_DOSSIERS = "dossiers-personnel"
+// [libellé, modifie la situation, départ de l'entreprise]
+const TYPES_CARRIERE = {
+  embauche:["Embauche",true,false], fin_essai:["Fin de période d'essai (confirmation)",false,false], titularisation:["Titularisation",true,false],
+  promotion:["Promotion",true,false], avancement:["Avancement (échelon, catégorie)",true,false], augmentation:["Augmentation de salaire",true,false],
+  changement_poste:["Changement de poste",true,false], mutation:["Mutation / affectation",true,false], recompense:["Récompense / félicitations",false,false],
+  avertissement:["Avertissement",false,false], blame:["Blâme",false,false], mise_a_pied:["Mise à pied",false,false], suspension:["Suspension",false,false],
+  fin_contrat:["Fin de contrat",false,true], demission:["Démission",false,true], retraite:["Départ à la retraite",false,true],
+  licenciement:["Licenciement",false,true], deces:["Décès",false,true], autre:["Autre",false,false],
+}
+const CATEGORIES_DOCUMENT = {
+  contrat:"Contrat de travail", avenant:"Avenant", piece_identite:"Pièce d'identité", diplome:"Diplôme / attestation de formation",
+  cv:"CV", attestation:"Attestation / certificat de travail", certificat_medical:"Certificat médical", decision:"Décision / note de service",
+  acte_civil:"Acte d'état civil (naissance, mariage…)", rib:"Relevé d'identité bancaire", autre:"Autre",
+}
+const PIECES_ESSENTIELLES = ["contrat","piece_identite"]
+const tailleLisible = o => !o ? "" : o<1024 ? `${o} o` : o<1048576 ? `${Math.round(o/1024)} Ko` : `${(o/1048576).toFixed(1)} Mo`
+const joursAvant = d => d ? Math.ceil((new Date(d) - new Date(new Date().toLocaleDateString("sv-SE"))) / 86400000) : null
+
+// ── CARRIÈRE ────────────────────────────────────────────────────────────────
+const RH_Carriere = ({companies}) => {
+  const [compId,setCompId]=useState(companies[0]?.id||"");
+  useEffect(()=>{ if(!compId&&companies.length) setCompId(companies[0].id); },[companies,compId]);
+  const [d,setD]=useState({emps:[],evts:[],loading:true,erreur:false});
+  const [empFiltre,setEmpFiltre]=useState("");
+  const [form,setForm]=useState(null);
+  const comp=companies.find(c=>c.id===compId);
+  const charger=useCallback(async()=>{
+    if(!compId) return;
+    const [{data:e},{data:v,error}]=await Promise.all([
+      supabaseRH.from("employees").select("*").eq("company_id",compId).order("nom"),
+      supabaseRH.from("rh_carriere").select("*").eq("company_id",compId).order("date_effet",{ascending:false}),
+    ]);
+    setD({emps:e||[],evts:v||[],loading:false,erreur:estErreurTableLot4(error)});
+  },[compId]);
+  useEffect(()=>{ charger(); },[charger]);
+  const empDe=id=>d.emps.find(e=>e.id===id)||{};
+
+  const nouveau=(employee_id=empFiltre)=>{ if(d.erreur) return rhToast.error(MSG_TABLES_RH_LOT4);
+    const e=empDe(employee_id);
+    setForm({employee_id,type:"promotion",date_effet:new Date().toLocaleDateString("sv-SE"),reference_decision:"",motif:"",
+      emploi_apres:e.emploi||"",categorie_apres:e.categorie||"",salaire_apres:String(e.salaire_base||""),appliquer:true}); };
+  const setF=(k,v)=>setForm(f=>{ const n={...f,[k]:v};
+    if(k==="employee_id"){ const e=empDe(v); n.emploi_apres=e.emploi||""; n.categorie_apres=e.categorie||""; n.salaire_apres=String(e.salaire_base||""); }
+    return n; });
+  const enregistrer=async()=>{
+    if(!form.employee_id) return rhToast.error("Choisissez l'employé.");
+    const e=empDe(form.employee_id); const [,modifie,depart]=TYPES_CARRIERE[form.type];
+    const salaireApres=parseFloat(form.salaire_apres);
+    const payload={company_id:compId,employee_id:form.employee_id,type:form.type,date_effet:form.date_effet,reference_decision:form.reference_decision||null,motif:form.motif||null,
+      emploi_avant:e.emploi||null,categorie_avant:e.categorie||null,salaire_avant:e.salaire_base??null,
+      emploi_apres:modifie?(form.emploi_apres||null):null,categorie_apres:modifie?(form.categorie_apres||null):null,salaire_apres:modifie&&!isNaN(salaireApres)?salaireApres:null,
+      applique:!!form.appliquer&&(modifie||depart)};
+    const {error}=await supabaseRH.from("rh_carriere").insert(payload);
+    if(error) return rhToast.error(estErreurTableLot4(error)?MSG_TABLES_RH_LOT4:error.message);
+    if(payload.applique){
+      const maj=depart?{actif:false}:{emploi:payload.emploi_apres??e.emploi,categorie:payload.categorie_apres??e.categorie,salaire_base:payload.salaire_apres??e.salaire_base};
+      const {error:eu}=await supabaseRH.from("employees").update(maj).eq("id",e.id);
+      if(eu) rhToast.error("Événement enregistré, mais la fiche de l'employé n'a pas pu être mise à jour : "+eu.message);
+    }
+    rhToast.success(payload.applique?(depart?"Événement enregistré — employé passé en inactif":"Événement enregistré — fiche de l'employé mise à jour"):"Événement enregistré");
+    setForm(null); charger();
+  };
+  const supprimer=async v=>{ if(!confirm("Supprimer cet événement ? La fiche de l'employé n'est pas modifiée.")) return; await supabaseRH.from("rh_carriere").delete().eq("id",v.id); charger(); };
+  const situation=(emploi,cat,sal)=>[emploi,cat&&`cat. ${cat}`,sal!=null&&sal!==""&&fmt(sal)].filter(Boolean).join(" — ")||"—";
+  const imprimerDecision=v=>{ const emp=empDe(v.employee_id); const [lib,modifie]=TYPES_CARRIERE[v.type];
+    openPrintWindow(gabaritDocumentHtml({ comp, titre:"DÉCISION", numero:v.reference_decision||"", date:dateDoc(v.date_effet),
+      infos:[["Objet",lib],["Prise d'effet",dateDoc(v.date_effet)]],
+      tiersLabel:"Salarié concerné", tiers:{nom:`${emp.nom||""} ${emp.prenoms||""}`, adresse:[emp.matricule&&`Matricule ${emp.matricule}`].filter(Boolean).join("")},
+      avantTableau:`<div class="bloc" style="font-size:10.5pt;line-height:1.7">La Direction de <strong>${echapHtml(comp?.raison_sociale||"")}</strong> décide, à compter du <strong>${dateDoc(v.date_effet)}</strong>, de la mesure suivante concernant <strong>${echapHtml(emp.nom)} ${echapHtml(emp.prenoms)}</strong> : <strong>${echapHtml(lib.toLowerCase())}</strong>.${v.motif?`<br>Motif : ${echapHtml(v.motif)}`:""}</div>`,
+      colonnes:modifie?[{label:""},{label:"Avant"},{label:"Après"}]:[{label:"Situation de l'intéressé"},{label:""}],
+      lignes:modifie?[["Emploi",echapHtml(v.emploi_avant||"—"),`<strong>${echapHtml(v.emploi_apres||v.emploi_avant||"—")}</strong>`],["Catégorie",echapHtml(v.categorie_avant||"—"),`<strong>${echapHtml(v.categorie_apres||v.categorie_avant||"—")}</strong>`],["Salaire de base",v.salaire_avant!=null?fmtN(v.salaire_avant):"—",`<strong>${v.salaire_apres!=null?fmtN(v.salaire_apres):"—"}</strong>`]]
+                     :[["Emploi",echapHtml(v.emploi_avant||"—")],["Catégorie",echapHtml(v.categorie_avant||"—")]],
+      totaux:[], signatures:["Le salarié (pour notification)","La Direction"] }), `decision_${emp.matricule||emp.nom||""}`); };
+  const imprimerReleve=empId=>{ const emp=empDe(empId); const evts=d.evts.filter(v=>v.employee_id===empId).sort((a,b)=>String(a.date_effet).localeCompare(String(b.date_effet)));
+    openPrintWindow(gabaritDocumentHtml({ comp, titre:"RELEVÉ DE CARRIÈRE", numero:emp.matricule||"", date:new Date().toLocaleDateString("fr-FR"),
+      infos:[["Embauche",dateDoc(emp.date_embauche)],["Ancienneté",libelleAnciennete(ancienneteMois(emp.date_embauche))],["Statut",emp.actif===false?"Inactif":"Actif"]],
+      tiersLabel:"Salarié", tiers:{nom:`${emp.nom||""} ${emp.prenoms||""}`, adresse:situation(emp.emploi,emp.categorie,emp.salaire_base)},
+      colonnes:[{label:"Date",largeur:"13%"},{label:"Événement",largeur:"24%"},{label:"Situation après"},{label:"Décision / motif",largeur:"26%"}],
+      lignes:evts.map(v=>[dateDoc(v.date_effet),TYPES_CARRIERE[v.type][0],echapHtml(TYPES_CARRIERE[v.type][1]?situation(v.emploi_apres,v.categorie_apres,v.salaire_apres):"—"),echapHtml([v.reference_decision,v.motif].filter(Boolean).join(" — "))]),
+      totaux:[], signatures:["Le salarié","Le responsable RH"] }), `releve_carriere_${emp.matricule||emp.nom||""}`); };
+
+  const visibles=d.evts.filter(v=>!empFiltre||v.employee_id===empFiltre);
+  const f=form; const [,modifie,depart]=f?TYPES_CARRIERE[f.type]:[];
+  return (
+    <div>
+      <div className="rh-page-header">
+        <h2 style={{fontSize:"22px",fontWeight:700,color:"#1a3a6b"}}>Carrière</h2>
+        <div className="rh-inline-actions"><RH_SelectSociete companies={companies} compId={compId} setCompId={setCompId}/><RH_Btn onClick={()=>nouveau()}>+ Nouvel événement</RH_Btn></div>
+      </div>
+      {d.erreur && <RH_Card style={{background:"#fffbeb",border:"1px solid #fcd34d"}}><div style={{fontSize:13,color:"#92400e"}}>⚠️ {MSG_TABLES_RH_LOT4}</div></RH_Card>}
+      <RH_Card>
+        <div style={{display:"flex",gap:12,alignItems:"flex-end",flexWrap:"wrap",marginBottom:10}}>
+          <Select label="Employé" value={empFiltre} onChange={setEmpFiltre} options={[{value:"",label:"Tous les employés"},...d.emps.map(e=>({value:e.id,label:`${e.nom} ${e.prenoms}`}))]}/>
+          {empFiltre && <div style={{paddingBottom:12}}><RH_Btn variant="secondary" onClick={()=>imprimerReleve(empFiltre)}>🖨️ Relevé de carrière</RH_Btn></div>}
+        </div>
+        {d.loading ? "Chargement…" : <>
+          <Table cols={[
+            {label:"Date",render:r=>dateDoc(r.date_effet)},
+            {label:"Employé",render:r=>{ const e=empDe(r.employee_id); return `${e.nom||""} ${e.prenoms||""}`; }},
+            {label:"Événement",render:r=>TYPES_CARRIERE[r.type]?.[0]},
+            {label:"Avant → après",render:r=>TYPES_CARRIERE[r.type]?.[1] ? `${situation(r.emploi_avant,r.categorie_avant,r.salaire_avant)} → ${situation(r.emploi_apres,r.categorie_apres,r.salaire_apres)}` : (r.motif||"—")},
+            {label:"Fiche",render:r=>r.applique?<RH_Badge label="Appliqué" color="#16a34a"/>:"—"},
+            {label:"Actions",render:r=>(
+              <div className="rh-btn-group">
+                <RH_Btn small variant="secondary" onClick={e=>{e.stopPropagation();imprimerDecision(r)}}>🖨️ Décision</RH_Btn>
+                <RH_Btn small variant="danger" onClick={e=>{e.stopPropagation();supprimer(r)}}>Suppr.</RH_Btn>
+              </div>
+            )},
+          ]} rows={visibles}/>
+          {!visibles.length && <div style={{fontSize:13,color:G.textDim,padding:8}}>Aucun événement de carrière.</div>}
+        </>}
+      </RH_Card>
+      {f && (
+        <RH_Modal title="Nouvel événement de carrière" onClose={()=>setForm(null)} width="620px">
+          <div className="rh-form-grid-2">
+            <Select label="Employé *" value={f.employee_id} onChange={v=>setF("employee_id",v)} options={[{value:"",label:"-- Choisir --"},...d.emps.map(e=>({value:e.id,label:`${e.nom} ${e.prenoms}${e.actif===false?" (inactif)":""}`}))]}/>
+            <Select label="Événement" value={f.type} onChange={v=>setF("type",v)} options={Object.entries(TYPES_CARRIERE).map(([value,[label]])=>({value,label}))}/>
+            <RH_Input label="Date d'effet" value={f.date_effet} onChange={v=>setF("date_effet",v)} type="date"/>
+            <RH_Input label="Référence de la décision" value={f.reference_decision} onChange={v=>setF("reference_decision",v)}/>
+          </div>
+          <RH_Input label="Motif / observations" value={f.motif} onChange={v=>setF("motif",v)}/>
+          {f.employee_id && modifie && (()=>{ const e=empDe(f.employee_id); return (
+            <div style={{background:G.bg,borderRadius:8,padding:"10px 12px",margin:"6px 0"}}>
+              <div style={{fontSize:12,fontWeight:700,color:G.accent,marginBottom:6}}>Nouvelle situation (actuelle : {situation(e.emploi,e.categorie,e.salaire_base)})</div>
+              <div className="rh-form-grid-2">
+                <RH_Input label="Emploi" value={f.emploi_apres} onChange={v=>setF("emploi_apres",v)}/>
+                <RH_Input label="Catégorie" value={f.categorie_apres} onChange={v=>setF("categorie_apres",v)}/>
+                <RH_Input label="Salaire de base (FCFA)" value={f.salaire_apres} onChange={v=>setF("salaire_apres",v)} type="number"/>
+              </div>
+            </div>); })()}
+          {(modifie||depart) && <label style={{display:"flex",gap:8,alignItems:"center",fontSize:13,color:G.text,margin:"6px 0 10px",cursor:"pointer"}}>
+            <input type="checkbox" checked={f.appliquer} onChange={e=>setF("appliquer",e.target.checked)}/>
+            {depart?"Passer l'employé en inactif (il n'apparaîtra plus dans les fiches de paie)":"Mettre à jour la fiche de l'employé (emploi, catégorie, salaire de base)"}
+          </label>}
+          <div className="rh-actions-row"><RH_Btn onClick={enregistrer}>Enregistrer</RH_Btn><RH_Btn variant="ghost" onClick={()=>setForm(null)}>Annuler</RH_Btn></div>
+        </RH_Modal>
+      )}
+    </div>
+  );
+};
+
+// ── DOSSIER DU PERSONNEL ────────────────────────────────────────────────────
+const RH_Dossiers = ({companies}) => {
+  const [compId,setCompId]=useState(companies[0]?.id||"");
+  useEffect(()=>{ if(!compId&&companies.length) setCompId(companies[0].id); },[companies,compId]);
+  const [d,setD]=useState({emps:[],docs:[],loading:true,erreur:false});
+  const [empId,setEmpId]=useState("");
+  const [ajout,setAjout]=useState(null);
+  const [envoi,setEnvoi]=useState(false);
+  const comp=companies.find(c=>c.id===compId);
+  const { isMobile }=useResponsive();
+  const charger=useCallback(async()=>{
+    if(!compId) return;
+    const [{data:e},{data:docs,error}]=await Promise.all([
+      supabaseRH.from("employees").select("*").eq("company_id",compId).order("nom"),
+      supabaseRH.from("rh_documents").select("*").eq("company_id",compId).order("created_at",{ascending:false}),
+    ]);
+    setD({emps:e||[],docs:docs||[],loading:false,erreur:estErreurTableLot4(error)});
+  },[compId]);
+  useEffect(()=>{ charger(); },[charger]);
+  const emp=d.emps.find(e=>e.id===empId);
+  const docsEmp=d.docs.filter(x=>x.employee_id===empId);
+  const manquantes=e=>PIECES_ESSENTIELLES.filter(c=>!d.docs.some(x=>x.employee_id===e.id&&x.categorie===c));
+  const alertes=d.docs.filter(x=>{ const j=joursAvant(x.date_expiration); return j!=null&&j<=30; });
+
+  const ouvrir=async doc=>{
+    const {data,error}=await supabaseRH.storage.from(BUCKET_DOSSIERS).createSignedUrl(doc.chemin,300);
+    if(error) return rhToast.error("Impossible d'ouvrir le fichier : "+error.message);
+    window.open(data.signedUrl,"_blank","noopener");
+  };
+  const supprimer=async doc=>{
+    if(!confirm(`Supprimer « ${doc.libelle} » du dossier ? Le fichier sera effacé.`)) return;
+    await supabaseRH.storage.from(BUCKET_DOSSIERS).remove([doc.chemin]);
+    const {error}=await supabaseRH.from("rh_documents").delete().eq("id",doc.id);
+    if(error) return rhToast.error(error.message); rhToast.success("Pièce supprimée"); charger();
+  };
+  const envoyer=async()=>{
+    const fichier=ajout.fichier;
+    if(!fichier) return rhToast.error("Choisissez un fichier.");
+    if(fichier.size>10485760) return rhToast.error("Fichier trop volumineux (10 Mo maximum).");
+    setEnvoi(true);
+    const nomPropre=fichier.name.normalize("NFD").replace(/[̀-ͯ]/g,"").replace(/[^A-Za-z0-9._-]+/g,"_");
+    const chemin=`${compId}/${empId}/${Date.now()}_${nomPropre}`;
+    const {error:eu}=await supabaseRH.storage.from(BUCKET_DOSSIERS).upload(chemin,fichier,{contentType:fichier.type||undefined,upsert:false});
+    if(eu){ setEnvoi(false); return rhToast.error(estErreurTableLot4(eu)?MSG_TABLES_RH_LOT4:"Envoi impossible : "+eu.message); }
+    const {error}=await supabaseRH.from("rh_documents").insert({company_id:compId,employee_id:empId,categorie:ajout.categorie,
+      libelle:ajout.libelle.trim()||CATEGORIES_DOCUMENT[ajout.categorie],chemin,nom_fichier:fichier.name,type_mime:fichier.type||null,taille:fichier.size,date_expiration:ajout.date_expiration||null});
+    setEnvoi(false);
+    if(error){ await supabaseRH.storage.from(BUCKET_DOSSIERS).remove([chemin]); return rhToast.error(error.message); }
+    rhToast.success("Pièce ajoutée au dossier"); setAjout(null); charger();
+  };
+
+  return (
+    <div>
+      <div className="rh-page-header">
+        <h2 style={{fontSize:"22px",fontWeight:700,color:"#1a3a6b"}}>Dossier du personnel</h2>
+        <div className="rh-inline-actions"><RH_SelectSociete companies={companies} compId={compId} setCompId={c=>{setCompId(c);setEmpId("");}}/></div>
+      </div>
+      {d.erreur && <RH_Card style={{background:"#fffbeb",border:"1px solid #fcd34d"}}><div style={{fontSize:13,color:"#92400e"}}>⚠️ {MSG_TABLES_RH_LOT4}</div></RH_Card>}
+      {alertes.length>0 && <RH_Card style={{background:"#fef2f2",border:"1px solid #fca5a5"}}>
+        <div style={{fontWeight:700,color:G.red,marginBottom:4,fontSize:13}}>Pièces expirées ou expirant sous 30 jours</div>
+        {alertes.map(x=>{ const e=d.emps.find(y=>y.id===x.employee_id)||{}; const j=joursAvant(x.date_expiration);
+          return <div key={x.id} style={{fontSize:12.5}}>• {e.nom} {e.prenoms} — {x.libelle} : {j<0?`expirée depuis ${-j} jour(s)`:j===0?"expire aujourd'hui":`expire dans ${j} jour(s)`} ({dateDoc(x.date_expiration)})</div>; })}
+      </RH_Card>}
+      <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"minmax(240px,320px) 1fr",gap:12,alignItems:"start"}}>
+        <RH_Card style={{maxHeight:"70vh",overflowY:"auto"}}>
+          <div style={{fontWeight:700,color:G.text,marginBottom:8,fontSize:13}}>Employés</div>
+          {d.emps.map(e=>{ const m=manquantes(e); const nb=d.docs.filter(x=>x.employee_id===e.id).length;
+            return (
+              <div key={e.id} onClick={()=>setEmpId(e.id)} style={{padding:"8px 10px",borderRadius:8,cursor:"pointer",marginBottom:3,
+                background:empId===e.id?G.input:"transparent",border:`1px solid ${empId===e.id?G.accent:"transparent"}`}}>
+                <div style={{fontSize:13,fontWeight:600,color:e.actif===false?G.textDim:G.text}}>{e.nom} {e.prenoms}{e.actif===false?" (inactif)":""}</div>
+                <div style={{fontSize:11.5,color:m.length?G.red:G.textDim}}>{nb} pièce(s){m.length?` — manque : ${m.map(c=>CATEGORIES_DOCUMENT[c].toLowerCase()).join(", ")}`:""}</div>
+              </div>); })}
+          {!d.emps.length && !d.loading && <div style={{fontSize:13,color:G.textDim}}>Aucun employé.</div>}
+        </RH_Card>
+        <RH_Card>
+          {!emp ? <div style={{color:G.textDim,fontSize:13}}>Choisissez un employé dans la liste pour voir et compléter son dossier.</div> : <>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12,flexWrap:"wrap",marginBottom:12}}>
+              <div>
+                <div style={{fontSize:17,fontWeight:800,color:G.text}}>{emp.nom} {emp.prenoms}</div>
+                <div style={{fontSize:12.5,color:G.textDim}}>{[emp.matricule&&`Matricule ${emp.matricule}`,emp.emploi,emp.categorie&&`cat. ${emp.categorie}`].filter(Boolean).join(" — ")}</div>
+                <div style={{fontSize:12.5,color:G.textDim}}>Embauché le {dateDoc(emp.date_embauche)||"—"} — ancienneté {libelleAnciennete(ancienneteMois(emp.date_embauche))} — {fmt(emp.salaire_base)}</div>
+              </div>
+              <div className="rh-btn-group">
+                <RH_Btn variant="secondary" onClick={()=>imprimerFicheEmploye(emp,comp)}>🖨️ Fiche du salarié</RH_Btn>
+                <RH_Btn onClick={()=>{ if(d.erreur) return rhToast.error(MSG_TABLES_RH_LOT4); setAjout({categorie:manquantes(emp)[0]||"contrat",libelle:"",date_expiration:"",fichier:null}); }}>+ Ajouter une pièce</RH_Btn>
+              </div>
+            </div>
+            <Table cols={[
+              {label:"Catégorie",render:r=>CATEGORIES_DOCUMENT[r.categorie]},
+              {label:"Libellé",render:r=>r.libelle},
+              {label:"Fichier",render:r=>`${r.nom_fichier||""} ${tailleLisible(r.taille)}`},
+              {label:"Expiration",render:r=>{ const j=joursAvant(r.date_expiration); return r.date_expiration?<span style={{color:j<0?G.red:j<=30?G.yellow:G.text,fontWeight:j<=30?700:400}}>{dateDoc(r.date_expiration)}</span>:"—"; }},
+              {label:"Ajoutée le",render:r=>dateDoc(r.created_at)},
+              {label:"Actions",render:r=>(
+                <div className="rh-btn-group">
+                  <RH_Btn small variant="secondary" onClick={e=>{e.stopPropagation();ouvrir(r)}}>Ouvrir</RH_Btn>
+                  <RH_Btn small variant="danger" onClick={e=>{e.stopPropagation();supprimer(r)}}>Suppr.</RH_Btn>
+                </div>
+              )},
+            ]} rows={docsEmp}/>
+            {!docsEmp.length && <div style={{fontSize:13,color:G.textDim,padding:8}}>Aucune pièce dans ce dossier.</div>}
+          </>}
+        </RH_Card>
+      </div>
+      {ajout && (
+        <RH_Modal title={`Ajouter une pièce — ${emp?.nom||""} ${emp?.prenoms||""}`} onClose={()=>!envoi&&setAjout(null)} width="520px">
+          <Select label="Catégorie" value={ajout.categorie} onChange={v=>setAjout(a=>({...a,categorie:v}))} options={Object.entries(CATEGORIES_DOCUMENT).map(([value,label])=>({value,label}))}/>
+          <RH_Input label="Libellé (facultatif)" value={ajout.libelle} onChange={v=>setAjout(a=>({...a,libelle:v}))} placeholder={CATEGORIES_DOCUMENT[ajout.categorie]}/>
+          <RH_Input label="Date d'expiration (CNI, contrat à durée déterminée, certificat…)" value={ajout.date_expiration} onChange={v=>setAjout(a=>({...a,date_expiration:v}))} type="date"/>
+          <div style={{margin:"8px 0 14px"}}>
+            <label style={{display:"block",fontSize:12.5,fontWeight:600,color:G.textDim,marginBottom:5}}>Fichier (PDF, image… 10 Mo maximum)</label>
+            <input type="file" accept=".pdf,.jpg,.jpeg,.png,.webp,.doc,.docx" onChange={e=>setAjout(a=>({...a,fichier:e.target.files?.[0]||null}))}/>
+          </div>
+          <div className="rh-actions-row"><RH_Btn onClick={envoyer} disabled={envoi}>{envoi?"Envoi…":"Ajouter au dossier"}</RH_Btn><RH_Btn variant="ghost" onClick={()=>setAjout(null)}>Annuler</RH_Btn></div>
+        </RH_Modal>
+      )}
+    </div>
+  );
+};
+
 function RH_EmployeesWrapper({ companies }) {
   return <><RH_ToastContainer /><Employees companies={companies} /></>
 }
@@ -20264,6 +20536,14 @@ function RH_PretsWrapper({ companies }) {
 
 function RH_MissionsWrapper({ companies }) {
   return <><RH_ToastContainer /><RH_Missions companies={companies} /></>
+}
+
+function RH_CarriereWrapper({ companies }) {
+  return <><RH_ToastContainer /><RH_Carriere companies={companies} /></>
+}
+
+function RH_DossiersWrapper({ companies }) {
+  return <><RH_ToastContainer /><RH_Dossiers companies={companies} /></>
 }
 
 function RH_SimulateurWrapper() {
@@ -20633,7 +20913,7 @@ export default function ComptaPro() {
     prestations:'Prestations', journal_caisse:'Journal Caisse', journal_banque:'Journal Banque',
     suivi_lot:'Suivi de Lot', journal_mobile:'Journal Mobile Money', plan_comptable:'Plan Comptable', grand_livre:'Grand-Livre', ecritures:'Saisie Comptable', balance:'Balance', etats_financiers:'États Financiers',
     rh_employes:'RH — Employés', rh_fiches_paie:'RH — Fiches de Paie', rh_historique:'RH — Historique Paie',
-    rh_declarations:'RH — Déclarations CNSS/ITS', rh_rapport:'RH — Rapport Cabinet', rh_conges:'RH — Congés', rh_absences:'RH — Permissions & absences', rh_prets:'RH — Prêts & avances', rh_missions:'RH — Missions', rh_tableau_bord:'RH — Tableau de bord', rh_simulateur:'RH — Simulateur Brut ↔ Net',
+    rh_declarations:'RH — Déclarations CNSS/ITS', rh_rapport:'RH — Rapport Cabinet', rh_dossiers:'RH — Dossier du personnel', rh_carriere:'RH — Carrière', rh_conges:'RH — Congés', rh_absences:'RH — Permissions & absences', rh_prets:'RH — Prêts & avances', rh_missions:'RH — Missions', rh_tableau_bord:'RH — Tableau de bord', rh_simulateur:'RH — Simulateur Brut ↔ Net',
   }
 
   const renderPage = () => {
@@ -20711,6 +20991,8 @@ export default function ComptaPro() {
       case 'rh_historique':   return <RH_HistoriqueWrapper user={user} companies={companies} />
       case 'rh_declarations': return <RH_DeclarationsWrapper user={user} companies={companies} />
       case 'rh_rapport':      return <RH_RapportWrapper user={user} companies={companies} />
+      case 'rh_dossiers':     return <RH_DossiersWrapper companies={companies} />
+      case 'rh_carriere':     return <RH_CarriereWrapper companies={companies} />
       case 'rh_conges':       return <RH_CongesWrapper companies={companies} />
       case 'rh_absences':     return <RH_AbsencesWrapper companies={companies} />
       case 'rh_prets':        return <RH_PretsWrapper companies={companies} />
