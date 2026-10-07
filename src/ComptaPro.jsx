@@ -2636,6 +2636,8 @@ const NAV = [
   { id:'rh_historique',      icon:'📜', label:'Historique Paie' },
   { id:'rh_declarations',    icon:'📋', label:'Déclarations CNSS/ITS' },
   { id:'rh_rapport',         icon:'📊', label:'Rapport Cabinet' },
+  { id:'rh_conges',          icon:'🏖️', label:'Congés' },
+  { id:'rh_absences',        icon:'🕒', label:'Permissions & absences' },
   { id:'rh_tableau_bord',    icon:'📈', label:'Tableau de bord RH' },
   { id:'rh_simulateur',      icon:'🧮', label:'Simulateur Brut ↔ Net' },
   { section:'Comptabilité' },
@@ -7938,7 +7940,7 @@ const ALL_SECTIONS = [
   ['epierrage','Épierrage'],['etuvage_paiements','Paiements étuvage'],
   ['docs_admin','Documents administratifs'],
   ['rh_employes','Employés'],['rh_fiches_paie','Fiches de Paie'],['rh_historique','Historique Paie'],
-  ['rh_declarations','Déclarations CNSS/ITS'],['rh_rapport','Rapport Cabinet'],['rh_tableau_bord','Tableau de bord RH'],['rh_simulateur','Simulateur Brut ↔ Net'],
+  ['rh_declarations','Déclarations CNSS/ITS'],['rh_rapport','Rapport Cabinet'],['rh_conges','Congés'],['rh_absences','Permissions & absences'],['rh_tableau_bord','Tableau de bord RH'],['rh_simulateur','Simulateur Brut ↔ Net'],
   ['journal_caisse','Journal Caisse'],['journal_banque','Journal Banque'],
   ['journal_mobile','Journal Mobile Money'],['plan_comptable','Plan Comptable'],['grand_livre','Grand-Livre'],['ecritures','Saisie Comptable'],['balance','Balance'],['etats_financiers','États Financiers'],
 ]
@@ -7951,7 +7953,7 @@ const SECTION_GROUPS = [
   {group:'Étuveuses', ids:['etv_repertoire','etv_avances','etv_bc','etv_br','etv_entrees','etv_sorties','etv_inventaire','etv_tresorerie']},
   {group:'Achats', ids:['achats','lots_semi_finis','epierrage','etuvage_paiements']},
   {group:'Documents', ids:['docs_admin']},
-  {group:'RH & Paie', ids:['rh_employes','rh_fiches_paie','rh_historique','rh_declarations','rh_rapport','rh_tableau_bord','rh_simulateur']},
+  {group:'RH & Paie', ids:['rh_employes','rh_fiches_paie','rh_historique','rh_declarations','rh_rapport','rh_conges','rh_absences','rh_tableau_bord','rh_simulateur']},
   {group:'Comptabilité', ids:['journal_caisse','journal_banque','journal_mobile','plan_comptable','grand_livre','ecritures','balance','etats_financiers']},
 ]
 
@@ -17293,6 +17295,8 @@ ${lienCasse}
             <Select label="Année" value={form.annee} onChange={v=>f("annee",v)}
               options={years.map(y=>({value:y,label:y}))}/>
             <RH_Input label="Salaire base (FCFA)" value={form.salaire_base} onChange={v=>f("salaire_base",v)} type="number"/>
+            <RH_RappelAbsencesMois employeeId={form.employee_id} mois={parseInt(form.mois)} annee={parseInt(form.annee)}
+              salaireBase={form.salaire_base} onDeduire={v=>f("salaire_base",String(v))}/>
             <div style={{gridColumn:"1/-1",background:G.bg,borderRadius:"8px",padding:"12px",marginBottom:"4px"}}>
               <div style={{fontSize:"12px",fontWeight:600,color:G.accent,marginBottom:"10px"}}>
                 Heures supplémentaires (taux horaire = salaire base ÷ 173,33)
@@ -19534,6 +19538,363 @@ async function imprimerFicheEmploye(emp, comp) {
   openPrintWindow(html, `fiche_salarie_${emp.matricule||emp.nom||"employe"}`);
 }
 
+// ─── RH LOT 2 : CONGÉS, PERMISSIONS ET ABSENCES ─────────────────────────────
+// Règles reprises de Gestion Stock Pro (Code du travail béninois) :
+//  • droits : 2 jours ouvrables par mois de service effectif (24 j/an),
+//    portés à 26, 28 puis 30 j/an après 20, 25 et 30 ans d'ancienneté
+//    (art. 158 al. 3, paliers non cumulatifs, plafond 30 j) ;
+//  • jours ouvrables : tous les jours sauf le dimanche ;
+//  • solde = acquis − congés annuels pris − permissions déductibles du congé
+//    (− ajustements : congés pris avant la mise en service du logiciel).
+// Le solde n'est jamais stocké : il est recalculé à chaque affichage.
+const MSG_TABLES_RH_LOT2 = "Les tables des congés et absences n'existent pas encore : exécutez le script supabase/migrations/rh/20261007_rh_conges_absences.sql dans le projet Supabase RH (SQL Editor)."
+const estErreurTableRH = e => /rh_conges|rh_absences|does not exist|schema cache/i.test(e?.message || "")
+
+const TYPES_CONGE = {
+  annuel:"Congé annuel (payé)", maladie:"Congé de maladie", maternite:"Congé de maternité", paternite:"Congé de paternité",
+  exceptionnel:"Congé exceptionnel (événement familial)", sans_solde:"Congé sans solde", ajustement:"Ajustement du solde (congés déjà pris)",
+}
+const CATEGORIES_ABSENCE = {
+  permission_deductible:{ label:"Permission déductible du congé", impactConge:true, impactPaie:false },
+  permission_non_deductible:{ label:"Permission non déductible", impactConge:false, impactPaie:false },
+  absence_justifiee:{ label:"Absence justifiée", impactConge:false, impactPaie:false },
+  absence_non_justifiee:{ label:"Absence non justifiée", impactConge:false, impactPaie:true },
+  absence_sans_solde:{ label:"Absence sans solde", impactConge:false, impactPaie:true },
+  autorisation_speciale:{ label:"Autorisation spéciale", impactConge:false, impactPaie:false },
+}
+const STATUTS_RH = { en_attente:["En attente",G.yellow], approuve:["Approuvé","#16a34a"], rejete:["Rejeté",G.red], annule:["Annulé","#64748b"] }
+
+function moisServiceEffectif(dateEmbauche, dateReference) {
+  if(!dateEmbauche) return 0;
+  const e=new Date(dateEmbauche), r=new Date(dateReference);
+  if(isNaN(e)||isNaN(r)||r<e) return 0;
+  let m=(r.getFullYear()-e.getFullYear())*12+(r.getMonth()-e.getMonth());
+  if(r.getDate()<e.getDate()) m-=1;
+  return Math.max(0,m);
+}
+function joursOuvrablesEntre(debut, fin) {
+  const d=new Date(debut), f=new Date(fin);
+  if(isNaN(d)||isNaN(f)||f<d) return 0;
+  let n=0; const c=new Date(d);
+  while(c<=f){ if(c.getDay()!==0) n++; c.setDate(c.getDate()+1); }
+  return n;
+}
+function joursCongeAcquis(moisService) {
+  if(moisService<=0) return 0;
+  const paliers=[{seuil:0,an:24},{seuil:240,an:26},{seuil:300,an:28},{seuil:360,an:30}];
+  let j=0;
+  for(let i=0;i<paliers.length;i++){
+    const deb=paliers[i].seuil, fin=paliers[i+1]?.seuil ?? Infinity;
+    if(moisService<=deb) break;
+    j+=(Math.min(moisService,fin)-deb)*paliers[i].an/12;
+  }
+  return Math.round(j*100)/100;
+}
+function soldeCongeEmploye(emp, conges, absences, dateRef=new Date()) {
+  const acquis=joursCongeAcquis(moisServiceEffectif(emp.date_embauche, dateRef));
+  const ok=x=>x.employee_id===emp.id&&x.statut==="approuve";
+  const pris=conges.filter(c=>ok(c)&&(c.type==="annuel"||c.type==="ajustement")).reduce((t,c)=>t+(+c.nb_jours||0),0);
+  const permissions=absences.filter(a=>ok(a)&&a.impact_conge).reduce((t,a)=>t+(a.unite==="heures"?(+a.duree||0)/8:(+a.duree||0)),0);
+  return { acquis, pris, permissions, solde:Math.round((acquis-pris-permissions)*100)/100 };
+}
+// Retenue proposée : salaire de base ÷ 26 jours ouvrables par jour, ou
+// ÷ 173,33 heures par heure (même taux horaire que les heures sup).
+const retenueProposee = (salaireBase, unite, duree) => Math.round((+salaireBase||0) * (+duree||0) / (unite==="heures" ? 173.33 : 26));
+
+const BadgeStatut = ({statut}) => { const [l,c]=STATUTS_RH[statut]||[statut,G.textDim]; return <RH_Badge label={l} color={c}/>; };
+
+// Chargement commun : employés, congés et absences d'une société.
+function useDonneesConges(compId) {
+  const [d,setD]=useState({emps:[],conges:[],absences:[],loading:true,erreurTable:false});
+  const charger=useCallback(async()=>{
+    if(!compId) return;
+    const [{data:e},{data:c,error:ec},{data:a,error:ea}]=await Promise.all([
+      supabaseRH.from("employees").select("*").eq("company_id",compId).order("nom"),
+      supabaseRH.from("rh_conges").select("*").eq("company_id",compId).order("date_debut",{ascending:false}),
+      supabaseRH.from("rh_absences").select("*").eq("company_id",compId).order("date_debut",{ascending:false}),
+    ]);
+    setD({emps:e||[],conges:c||[],absences:a||[],loading:false,erreurTable:estErreurTableRH(ec)||estErreurTableRH(ea)});
+  },[compId]);
+  useEffect(()=>{ charger(); },[charger]);
+  return [d,charger];
+}
+
+function imprimerDocRH({comp, emp, titre, infos, lignes, colonnes, totaux, texte, signatures}) {
+  const html=gabaritDocumentHtml({
+    comp, titre, numero:emp.matricule||"", date:new Date().toLocaleDateString("fr-FR"),
+    tiersLabel:"Salarié", tiers:{nom:`${emp.nom||""} ${emp.prenoms||""}`, adresse:[emp.emploi,emp.categorie].filter(Boolean).join(" — ")},
+    infos, colonnes, lignes, totaux,
+    avantTableau: texte ? `<div class="bloc" style="font-size:10.5pt;line-height:1.6">${texte}</div>` : "",
+    signatures,
+  });
+  openPrintWindow(html, `${titre.toLowerCase().replace(/[^a-z0-9]+/g,"_")}_${emp.matricule||emp.nom||""}`);
+}
+
+// ── CONGÉS ──────────────────────────────────────────────────────────────────
+const RH_Conges = ({companies}) => {
+  const [compId,setCompId]=useState(companies[0]?.id||"");
+  useEffect(()=>{ if(!compId&&companies.length) setCompId(companies[0].id); },[companies,compId]);
+  const [{emps,conges,absences,loading,erreurTable},charger]=useDonneesConges(compId);
+  const [onglet,setOnglet]=useState("soldes");
+  const [form,setForm]=useState(null);
+  const [filtreAnnee,setFiltreAnnee]=useState(String(CURRENT_YEAR));
+  const comp=companies.find(c=>c.id===compId);
+  const actifs=emps.filter(e=>e.actif!==false);
+  const empDe=id=>emps.find(e=>e.id===id)||{};
+
+  const nouveau=(employee_id="")=>{ if(erreurTable) return rhToast.error(MSG_TABLES_RH_LOT2);
+    const j=new Date().toLocaleDateString("sv-SE");
+    setForm({employee_id,type:"annuel",date_debut:j,date_fin:j,nb_jours:"1",motif:"",statut:"approuve"}); };
+  const setF=(k,v)=>setForm(f=>{ const n={...f,[k]:v};
+    if((k==="date_debut"||k==="date_fin")&&n.type!=="ajustement") n.nb_jours=String(joursOuvrablesEntre(n.date_debut,n.date_fin));
+    return n; });
+  const enregistrer=async()=>{
+    if(!form.employee_id) return rhToast.error("Choisissez l'employé.");
+    if(form.date_fin<form.date_debut) return rhToast.error("La date de fin doit suivre la date de début.");
+    const payload={company_id:compId,employee_id:form.employee_id,type:form.type,date_debut:form.date_debut,date_fin:form.date_fin,
+      nb_jours:parseFloat(form.nb_jours)||0,motif:form.motif||null,statut:form.statut};
+    const {error}=form.id ? await supabaseRH.from("rh_conges").update(payload).eq("id",form.id) : await supabaseRH.from("rh_conges").insert(payload);
+    if(error) return rhToast.error(estErreurTableRH(error)?MSG_TABLES_RH_LOT2:error.message);
+    rhToast.success(form.id?"Congé mis à jour":"Congé enregistré"); setForm(null); charger();
+  };
+  const changerStatut=async(c,statut)=>{ const {error}=await supabaseRH.from("rh_conges").update({statut}).eq("id",c.id); if(error) return rhToast.error(error.message); charger(); };
+  const supprimer=async c=>{ if(!confirm("Supprimer ce congé ?")) return; await supabaseRH.from("rh_conges").delete().eq("id",c.id); charger(); };
+  const imprimerTitre=c=>{ const emp=empDe(c.employee_id), s=soldeCongeEmploye(emp,conges,absences);
+    imprimerDocRH({comp,emp,titre:c.type==="annuel"?"TITRE DE CONGÉ":"AUTORISATION DE CONGÉ",
+      infos:[["Type",TYPES_CONGE[c.type]],["Statut",STATUTS_RH[c.statut]?.[0]]],
+      texte:`Il est accordé à <strong>${echapHtml(emp.nom)} ${echapHtml(emp.prenoms)}</strong>${emp.emploi?`, ${echapHtml(emp.emploi)}`:""}, un <strong>${echapHtml(TYPES_CONGE[c.type].toLowerCase())}</strong> de <strong>${nbFr(c.nb_jours)} jour(s) ouvrable(s)</strong>, du <strong>${dateDoc(c.date_debut)}</strong> au <strong>${dateDoc(c.date_fin)}</strong> inclus.${c.motif?`<br>Motif : ${echapHtml(c.motif)}`:""}<br>Reprise du service le premier jour ouvrable suivant le ${dateDoc(c.date_fin)}.`,
+      colonnes:[{label:"Situation des droits à congé"},{label:"Jours",align:"d",largeur:"20%"}],
+      lignes:[["Jours acquis depuis l'embauche",nbFr(s.acquis)],["Congés annuels déjà pris (et ajustements)",nbFr(s.pris)],["Permissions déductibles",nbFr(s.permissions)]],
+      totaux:[["Solde après ce congé",`${nbFr(s.solde)} j`,true]],
+      signatures:["Le salarié","Le responsable","La direction"]}); };
+
+  const annees=[...new Set([String(CURRENT_YEAR),...conges.map(c=>String(c.date_debut).slice(0,4))])].sort().reverse();
+  const visibles=conges.filter(c=>String(c.date_debut).slice(0,4)===filtreAnnee);
+  return (
+    <div>
+      <div className="rh-page-header">
+        <h2 style={{fontSize:"22px",fontWeight:700,color:"#1a3a6b"}}>Congés</h2>
+        <div className="rh-inline-actions">
+          <RH_SelectSociete companies={companies} compId={compId} setCompId={setCompId}/>
+          <RH_Btn onClick={()=>nouveau()}>+ Nouveau congé</RH_Btn>
+        </div>
+      </div>
+      {erreurTable && <RH_Card style={{background:"#fffbeb",border:"1px solid #fcd34d"}}><div style={{fontSize:13,color:"#92400e"}}>⚠️ {MSG_TABLES_RH_LOT2}</div></RH_Card>}
+      <div style={{display:"flex",gap:6,marginBottom:12}}>
+        {[["soldes","Soldes de congé"],["demandes","Congés enregistrés"]].map(([k,l])=>(
+          <button key={k} type="button" onClick={()=>setOnglet(k)} style={{padding:"8px 16px",borderRadius:8,cursor:"pointer",fontWeight:600,fontSize:13,
+            border:`1px solid ${onglet===k?G.accent:G.border}`,background:onglet===k?G.accent:"#fff",color:onglet===k?"#fff":G.text}}>{l}</button>
+        ))}
+      </div>
+      {loading ? <RH_Card>Chargement…</RH_Card> : onglet==="soldes" ? (
+        <RH_Card>
+          <Table cols={[
+            {label:"Employé",render:r=>`${r.nom} ${r.prenoms}`},
+            {label:"Embauche",render:r=>r.date_embauche?dateDoc(r.date_embauche):"—"},
+            {label:"Ancienneté",render:r=>libelleAnciennete(ancienneteMois(r.date_embauche))},
+            {label:"Acquis",render:r=>nbFr(soldeCongeEmploye(r,conges,absences).acquis)},
+            {label:"Pris",render:r=>nbFr(soldeCongeEmploye(r,conges,absences).pris)},
+            {label:"Permissions déd.",render:r=>nbFr(soldeCongeEmploye(r,conges,absences).permissions)},
+            {label:"Solde (jours)",render:r=>{ const s=soldeCongeEmploye(r,conges,absences).solde; return <strong style={{color:s<0?G.red:"#16a34a"}}>{nbFr(s)}</strong>; }},
+            {label:"",render:r=><RH_Btn small variant="secondary" onClick={e=>{e.stopPropagation();nouveau(r.id)}}>+ Congé</RH_Btn>},
+          ]} rows={actifs}/>
+          {!actifs.some(e=>e.date_embauche) && actifs.length>0 && <div style={{fontSize:12,color:G.textDim,marginTop:8}}>Renseignez la date d'embauche des employés pour calculer leurs droits.</div>}
+          <div style={{fontSize:12,color:G.textDim,marginTop:8}}>
+            Pour un employé embauché avant l'utilisation du logiciel, enregistrez un « Ajustement du solde » égal aux jours de congé déjà pris.
+          </div>
+        </RH_Card>
+      ) : (
+        <RH_Card>
+          <div style={{marginBottom:10}}>
+            <Select label="Année" value={filtreAnnee} onChange={setFiltreAnnee} options={annees.map(a=>({value:a,label:a}))}/>
+          </div>
+          <Table cols={[
+            {label:"Employé",render:r=>{ const e=empDe(r.employee_id); return `${e.nom||""} ${e.prenoms||""}`; }},
+            {label:"Type",render:r=>TYPES_CONGE[r.type]},
+            {label:"Période",render:r=>`${dateDoc(r.date_debut)} → ${dateDoc(r.date_fin)}`},
+            {label:"Jours",render:r=>nbFr(r.nb_jours)},
+            {label:"Statut",render:r=><BadgeStatut statut={r.statut}/>},
+            {label:"Actions",render:r=>(
+              <div className="rh-btn-group">
+                {r.statut==="en_attente" && <RH_Btn small onClick={e=>{e.stopPropagation();changerStatut(r,"approuve")}}>Approuver</RH_Btn>}
+                {r.statut==="en_attente" && <RH_Btn small variant="danger" onClick={e=>{e.stopPropagation();changerStatut(r,"rejete")}}>Rejeter</RH_Btn>}
+                {r.type!=="ajustement" && <RH_Btn small variant="secondary" onClick={e=>{e.stopPropagation();imprimerTitre(r)}}>🖨️</RH_Btn>}
+                <RH_Btn small variant="secondary" onClick={e=>{e.stopPropagation();setForm({...r,nb_jours:String(r.nb_jours)})}}>Modifier</RH_Btn>
+                <RH_Btn small variant="danger" onClick={e=>{e.stopPropagation();supprimer(r)}}>Suppr.</RH_Btn>
+              </div>
+            )},
+          ]} rows={visibles}/>
+          {!visibles.length && <div style={{fontSize:13,color:G.textDim,padding:8}}>Aucun congé en {filtreAnnee}.</div>}
+        </RH_Card>
+      )}
+      {form && (
+        <RH_Modal title={form.id?"Modifier le congé":"Nouveau congé"} onClose={()=>setForm(null)} width="560px">
+          <div className="rh-form-grid-2">
+            <Select label="Employé *" value={form.employee_id} onChange={v=>setF("employee_id",v)}
+              options={[{value:"",label:"-- Choisir --"},...actifs.map(e=>({value:e.id,label:`${e.nom} ${e.prenoms}`}))]}/>
+            <Select label="Type de congé" value={form.type} onChange={v=>setF("type",v)} options={Object.entries(TYPES_CONGE).map(([value,label])=>({value,label}))}/>
+            <RH_Input label="Du" value={form.date_debut} onChange={v=>setF("date_debut",v)} type="date"/>
+            <RH_Input label="Au (inclus)" value={form.date_fin} onChange={v=>setF("date_fin",v)} type="date"/>
+            <RH_Input label="Jours ouvrables (hors dimanches)" value={form.nb_jours} onChange={v=>setF("nb_jours",v)} type="number"/>
+            <Select label="Statut" value={form.statut} onChange={v=>setF("statut",v)} options={Object.entries(STATUTS_RH).map(([value,[label]])=>({value,label}))}/>
+          </div>
+          <RH_Input label="Motif / observations" value={form.motif||""} onChange={v=>setF("motif",v)}/>
+          {form.employee_id && (()=>{ const s=soldeCongeEmploye(empDe(form.employee_id),conges.filter(c=>c.id!==form.id),absences);
+            const apres=form.type==="annuel"||form.type==="ajustement" ? s.solde-(parseFloat(form.nb_jours)||0) : s.solde;
+            return <div style={{fontSize:13,background:G.input,borderRadius:8,padding:"8px 12px",margin:"6px 0 10px",color:apres<0?G.red:G.text}}>
+              Solde actuel : <strong>{nbFr(s.solde)} j</strong> — après ce congé : <strong>{nbFr(apres)} j</strong>{apres<0?" (dépassement du solde)":""}
+            </div>; })()}
+          <div className="rh-actions-row"><RH_Btn onClick={enregistrer}>Enregistrer</RH_Btn><RH_Btn variant="ghost" onClick={()=>setForm(null)}>Annuler</RH_Btn></div>
+        </RH_Modal>
+      )}
+    </div>
+  );
+};
+
+// ── PERMISSIONS ET ABSENCES ─────────────────────────────────────────────────
+const RH_Absences = ({companies}) => {
+  const [compId,setCompId]=useState(companies[0]?.id||"");
+  useEffect(()=>{ if(!compId&&companies.length) setCompId(companies[0].id); },[companies,compId]);
+  const [{emps,absences,loading,erreurTable},charger]=useDonneesConges(compId);
+  const [form,setForm]=useState(null);
+  const [filtreMois,setFiltreMois]=useState(`${CURRENT_YEAR}-${String(new Date().getMonth()+1).padStart(2,"0")}`);
+  const comp=companies.find(c=>c.id===compId);
+  const actifs=emps.filter(e=>e.actif!==false);
+  const empDe=id=>emps.find(e=>e.id===id)||{};
+  const recalcule=n=>{ const def=CATEGORIES_ABSENCE[n.categorie]; const emp=empDe(n.employee_id);
+    return {...n,montant_retenue:n.impact_paie?String(retenueProposee(emp.salaire_base,n.unite,n.duree)):"0",def}; };
+  const nouveau=()=>{ if(erreurTable) return rhToast.error(MSG_TABLES_RH_LOT2);
+    const j=new Date().toLocaleDateString("sv-SE");
+    setForm({employee_id:"",categorie:"absence_justifiee",date_debut:j,date_fin:j,unite:"jours",duree:"1",motif:"",impact_paie:false,montant_retenue:"0",impact_conge:false,statut:"approuve"}); };
+  const setF=(k,v)=>setForm(f=>{ let n={...f,[k]:v};
+    if(k==="categorie"){ n.impact_paie=CATEGORIES_ABSENCE[v].impactPaie; n.impact_conge=CATEGORIES_ABSENCE[v].impactConge; }
+    if((k==="date_debut"||k==="date_fin")&&n.unite==="jours") n.duree=String(joursOuvrablesEntre(n.date_debut,n.date_fin));
+    if(["categorie","employee_id","date_debut","date_fin","unite","duree","impact_paie"].includes(k)) n=recalcule(n);
+    return n; });
+  const enregistrer=async()=>{
+    if(!form.employee_id) return rhToast.error("Choisissez l'employé.");
+    if(form.date_fin<form.date_debut) return rhToast.error("La date de fin doit suivre la date de début.");
+    const payload={company_id:compId,employee_id:form.employee_id,categorie:form.categorie,date_debut:form.date_debut,date_fin:form.date_fin,
+      unite:form.unite,duree:parseFloat(form.duree)||0,motif:form.motif||null,impact_paie:!!form.impact_paie,
+      montant_retenue:form.impact_paie?(parseFloat(form.montant_retenue)||0):0,impact_conge:!!form.impact_conge,statut:form.statut};
+    const {error}=form.id ? await supabaseRH.from("rh_absences").update(payload).eq("id",form.id) : await supabaseRH.from("rh_absences").insert(payload);
+    if(error) return rhToast.error(estErreurTableRH(error)?MSG_TABLES_RH_LOT2:error.message);
+    rhToast.success("Enregistré"); setForm(null); charger();
+  };
+  const supprimer=async a=>{ if(!confirm("Supprimer cet enregistrement ?")) return; await supabaseRH.from("rh_absences").delete().eq("id",a.id); charger(); };
+  const imprimer=a=>{ const emp=empDe(a.employee_id);
+    imprimerDocRH({comp,emp,titre:a.categorie.startsWith("permission")||a.categorie==="autorisation_speciale"?"AUTORISATION D'ABSENCE":"FICHE D'ABSENCE",
+      infos:[["Catégorie",CATEGORIES_ABSENCE[a.categorie].label],["Statut",STATUTS_RH[a.statut]?.[0]]],
+      texte:`<strong>${echapHtml(emp.nom)} ${echapHtml(emp.prenoms)}</strong> — ${echapHtml(CATEGORIES_ABSENCE[a.categorie].label.toLowerCase())} du <strong>${dateDoc(a.date_debut)}</strong> au <strong>${dateDoc(a.date_fin)}</strong>, soit <strong>${nbFr(a.duree)} ${a.unite}</strong>.${a.motif?`<br>Motif : ${echapHtml(a.motif)}`:""}`,
+      colonnes:[{label:"Effet"},{label:"Valeur",align:"d",largeur:"30%"}],
+      lignes:[["Déduit du solde de congé",a.impact_conge?"Oui":"Non"],["Retenue sur salaire",a.impact_paie?fcfaDoc(a.montant_retenue):"Non"]],
+      totaux:[],
+      signatures:["Le salarié","Le responsable"]}); };
+
+  const [an,mo]=filtreMois.split("-").map(Number);
+  const visibles=absences.filter(a=>{ const d=new Date(a.date_debut), f=new Date(a.date_fin); const deb=new Date(an,mo-1,1), fin=new Date(an,mo,0); return d<=fin&&f>=deb; });
+  const totalRetenues=visibles.filter(a=>a.statut==="approuve"&&a.impact_paie).reduce((t,a)=>t+(+a.montant_retenue||0),0);
+  return (
+    <div>
+      <div className="rh-page-header">
+        <h2 style={{fontSize:"22px",fontWeight:700,color:"#1a3a6b"}}>Permissions & absences</h2>
+        <div className="rh-inline-actions">
+          <RH_SelectSociete companies={companies} compId={compId} setCompId={setCompId}/>
+          <RH_Btn onClick={nouveau}>+ Nouvelle permission / absence</RH_Btn>
+        </div>
+      </div>
+      {erreurTable && <RH_Card style={{background:"#fffbeb",border:"1px solid #fcd34d"}}><div style={{fontSize:13,color:"#92400e"}}>⚠️ {MSG_TABLES_RH_LOT2}</div></RH_Card>}
+      <RH_Card>
+        <div style={{display:"flex",gap:12,alignItems:"flex-end",flexWrap:"wrap",marginBottom:10}}>
+          <RH_Input label="Mois" value={filtreMois} onChange={setFiltreMois} type="month"/>
+          <div style={{fontSize:13,color:G.text,paddingBottom:12}}>Retenues sur salaire du mois : <strong style={{color:G.red}}>{fmt(totalRetenues)}</strong></div>
+        </div>
+        {loading ? "Chargement…" : <>
+          <Table cols={[
+            {label:"Employé",render:r=>{ const e=empDe(r.employee_id); return `${e.nom||""} ${e.prenoms||""}`; }},
+            {label:"Catégorie",render:r=>CATEGORIES_ABSENCE[r.categorie]?.label},
+            {label:"Période",render:r=>`${dateDoc(r.date_debut)} → ${dateDoc(r.date_fin)}`},
+            {label:"Durée",render:r=>`${nbFr(r.duree)} ${r.unite}`},
+            {label:"Effets",render:r=>[r.impact_conge&&"− congé",r.impact_paie&&`− ${fmtN(r.montant_retenue)} F`].filter(Boolean).join(" · ")||"—"},
+            {label:"Statut",render:r=><BadgeStatut statut={r.statut}/>},
+            {label:"Actions",render:r=>(
+              <div className="rh-btn-group">
+                <RH_Btn small variant="secondary" onClick={e=>{e.stopPropagation();imprimer(r)}}>🖨️</RH_Btn>
+                <RH_Btn small variant="secondary" onClick={e=>{e.stopPropagation();setForm({...r,duree:String(r.duree),montant_retenue:String(r.montant_retenue)})}}>Modifier</RH_Btn>
+                <RH_Btn small variant="danger" onClick={e=>{e.stopPropagation();supprimer(r)}}>Suppr.</RH_Btn>
+              </div>
+            )},
+          ]} rows={visibles}/>
+          {!visibles.length && <div style={{fontSize:13,color:G.textDim,padding:8}}>Aucune permission ni absence ce mois-ci.</div>}
+        </>}
+      </RH_Card>
+      {form && (
+        <RH_Modal title={form.id?"Modifier":"Nouvelle permission / absence"} onClose={()=>setForm(null)} width="600px">
+          <div className="rh-form-grid-2">
+            <Select label="Employé *" value={form.employee_id} onChange={v=>setF("employee_id",v)}
+              options={[{value:"",label:"-- Choisir --"},...actifs.map(e=>({value:e.id,label:`${e.nom} ${e.prenoms}`}))]}/>
+            <Select label="Catégorie" value={form.categorie} onChange={v=>setF("categorie",v)} options={Object.entries(CATEGORIES_ABSENCE).map(([value,c])=>({value,label:c.label}))}/>
+            <RH_Input label="Du" value={form.date_debut} onChange={v=>setF("date_debut",v)} type="date"/>
+            <RH_Input label="Au (inclus)" value={form.date_fin} onChange={v=>setF("date_fin",v)} type="date"/>
+            <Select label="Unité" value={form.unite} onChange={v=>setF("unite",v)} options={[{value:"jours",label:"Jours ouvrables"},{value:"heures",label:"Heures"}]}/>
+            <RH_Input label="Durée" value={form.duree} onChange={v=>setF("duree",v)} type="number"/>
+            <Select label="Statut" value={form.statut} onChange={v=>setF("statut",v)} options={Object.entries(STATUTS_RH).map(([value,[label]])=>({value,label}))}/>
+            <RH_Input label="Motif" value={form.motif||""} onChange={v=>setF("motif",v)}/>
+          </div>
+          <div style={{background:G.bg,borderRadius:8,padding:"10px 12px",margin:"6px 0 12px",fontSize:13}}>
+            <label style={{display:"flex",gap:8,alignItems:"center",marginBottom:6,cursor:"pointer"}}>
+              <input type="checkbox" checked={!!form.impact_conge} onChange={e=>setF("impact_conge",e.target.checked)}/> Déduire du solde de congé
+            </label>
+            <label style={{display:"flex",gap:8,alignItems:"center",cursor:"pointer"}}>
+              <input type="checkbox" checked={!!form.impact_paie} onChange={e=>setF("impact_paie",e.target.checked)}/> Retenue sur salaire
+            </label>
+            {form.impact_paie && <div style={{marginTop:8}}>
+              <RH_Input label="Montant de la retenue (FCFA) — proposé : base ÷ 26 par jour, ÷ 173,33 par heure" value={form.montant_retenue} onChange={v=>setF("montant_retenue",v)} type="number"/>
+            </div>}
+            <div style={{fontSize:11.5,color:G.textDim,marginTop:4}}>Les cases sont pré-cochées selon la catégorie ; vous pouvez les modifier.</div>
+          </div>
+          <div className="rh-actions-row"><RH_Btn onClick={enregistrer}>Enregistrer</RH_Btn><RH_Btn variant="ghost" onClick={()=>setForm(null)}>Annuler</RH_Btn></div>
+        </RH_Modal>
+      )}
+    </div>
+  );
+};
+
+// ── RAPPEL DANS LA FICHE DE PAIE ────────────────────────────────────────────
+// Congés et absences approuvés du mois de la fiche ; les retenues peuvent
+// être déduites du salaire de base de la fiche d'un clic (une seule fois).
+const RH_RappelAbsencesMois = ({employeeId, mois, annee, salaireBase, onDeduire}) => {
+  const [donnees,setDonnees]=useState(null);
+  const [applique,setApplique]=useState(false);
+  useEffect(()=>{
+    setApplique(false);
+    if(!employeeId||!mois||!annee){ setDonnees(null); return; }
+    const mm=String(mois).padStart(2,"0"), deb=`${annee}-${mm}-01`, fin=`${annee}-${mm}-${String(new Date(annee,mois,0).getDate()).padStart(2,"0")}`;
+    (async()=>{
+      const [{data:c,error},{data:a}]=await Promise.all([
+        supabaseRH.from("rh_conges").select("*").eq("employee_id",employeeId).eq("statut","approuve").lte("date_debut",fin).gte("date_fin",deb),
+        supabaseRH.from("rh_absences").select("*").eq("employee_id",employeeId).eq("statut","approuve").lte("date_debut",fin).gte("date_fin",deb),
+      ]);
+      setDonnees(error?null:{conges:c||[],absences:a||[]});
+    })();
+  },[employeeId,mois,annee]);
+  if(!donnees||(!donnees.conges.length&&!donnees.absences.length)) return null;
+  const retenue=donnees.absences.filter(a=>a.impact_paie).reduce((t,a)=>t+(+a.montant_retenue||0),0);
+  return (
+    <div style={{gridColumn:"1/-1",background:"#fffbeb",border:"1px solid #fcd34d",borderRadius:8,padding:"10px 12px",marginBottom:4,fontSize:12.5}}>
+      <div style={{fontWeight:700,color:"#92400e",marginBottom:4}}>Congés et absences de {MOIS[parseInt(mois)]} {annee}</div>
+      {donnees.conges.map(c=><div key={c.id}>• {TYPES_CONGE[c.type]} : {dateDoc(c.date_debut)} → {dateDoc(c.date_fin)} ({nbFr(c.nb_jours)} j)</div>)}
+      {donnees.absences.map(a=><div key={a.id}>• {CATEGORIES_ABSENCE[a.categorie]?.label} : {dateDoc(a.date_debut)} → {dateDoc(a.date_fin)} ({nbFr(a.duree)} {a.unite}){a.impact_paie?` — retenue ${fmt(a.montant_retenue)}`:""}</div>)}
+      {retenue>0 && <div style={{marginTop:6,display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+        <strong>Total des retenues : {fmt(retenue)}</strong>
+        <RH_Btn small disabled={applique} onClick={()=>{ onDeduire(Math.max(0,(parseFloat(salaireBase)||0)-retenue)); setApplique(true); rhToast.info("Retenue déduite du salaire de base de la fiche"); }}>
+          {applique?"✔ Déduite du salaire de base":"Déduire du salaire de base"}
+        </RH_Btn>
+      </div>}
+    </div>
+  );
+};
+
 function RH_EmployeesWrapper({ companies }) {
   return <><RH_ToastContainer /><Employees companies={companies} /></>
 }
@@ -19552,6 +19913,14 @@ function RH_DeclarationsWrapper({ user, companies }) {
 
 function RH_TableauDeBordWrapper({ companies }) {
   return <><RH_ToastContainer /><RH_TableauDeBord companies={companies} /></>
+}
+
+function RH_CongesWrapper({ companies }) {
+  return <><RH_ToastContainer /><RH_Conges companies={companies} /></>
+}
+
+function RH_AbsencesWrapper({ companies }) {
+  return <><RH_ToastContainer /><RH_Absences companies={companies} /></>
 }
 
 function RH_SimulateurWrapper() {
@@ -19921,7 +20290,7 @@ export default function ComptaPro() {
     prestations:'Prestations', journal_caisse:'Journal Caisse', journal_banque:'Journal Banque',
     suivi_lot:'Suivi de Lot', journal_mobile:'Journal Mobile Money', plan_comptable:'Plan Comptable', grand_livre:'Grand-Livre', ecritures:'Saisie Comptable', balance:'Balance', etats_financiers:'États Financiers',
     rh_employes:'RH — Employés', rh_fiches_paie:'RH — Fiches de Paie', rh_historique:'RH — Historique Paie',
-    rh_declarations:'RH — Déclarations CNSS/ITS', rh_rapport:'RH — Rapport Cabinet', rh_tableau_bord:'RH — Tableau de bord', rh_simulateur:'RH — Simulateur Brut ↔ Net',
+    rh_declarations:'RH — Déclarations CNSS/ITS', rh_rapport:'RH — Rapport Cabinet', rh_conges:'RH — Congés', rh_absences:'RH — Permissions & absences', rh_tableau_bord:'RH — Tableau de bord', rh_simulateur:'RH — Simulateur Brut ↔ Net',
   }
 
   const renderPage = () => {
@@ -19999,6 +20368,8 @@ export default function ComptaPro() {
       case 'rh_historique':   return <RH_HistoriqueWrapper user={user} companies={companies} />
       case 'rh_declarations': return <RH_DeclarationsWrapper user={user} companies={companies} />
       case 'rh_rapport':      return <RH_RapportWrapper user={user} companies={companies} />
+      case 'rh_conges':       return <RH_CongesWrapper companies={companies} />
+      case 'rh_absences':     return <RH_AbsencesWrapper companies={companies} />
       case 'rh_tableau_bord': return <RH_TableauDeBordWrapper companies={companies} />
       case 'rh_simulateur':   return <RH_SimulateurWrapper />
     }
