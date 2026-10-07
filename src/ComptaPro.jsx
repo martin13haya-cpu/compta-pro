@@ -321,68 +321,234 @@ const CSS_PRINT = `
 
 const CSS_PRINT_LANDSCAPE = CSS_PRINT.replace('@page { size: A4;', '@page { size: A4 landscape;')
 
-function buildCommercialDocHtml(doc, lignes) {
-  const estBC = doc.type_doc==='bon_commande'
-  const cli  = estBC ? doc.compta_fournisseurs : doc.compta_clients
-  const comp = doc.compta_companies
-  const partLabel = estBC ? 'Fournisseur' : 'Client'
-  const cliNom = cli ? (cli.type==='morale' ? cli.nom_societe : (cli.nom||'').trim()) : null
+// ── GABARIT COMMUN DES DOCUMENTS IMPRIMÉS ───────────────────────────────────
+// Même identité visuelle que les documents de Gestion Stock Pro (HyperCiel100) :
+// logo et raison sociale en tête, coordonnées à droite sous un filet bleu ;
+// grand titre sur un bandeau dégradé ; destinataire et cadre des références ;
+// tableau à en-tête foncé ; totaux avec le montant principal en valeur ;
+// « Arrêtée la présente … à la somme de … » ; remerciement et signature.
+// Utilisé par les proformas, factures, bons de livraison et de commande,
+// bordereaux de livraison et bons d'entrée / de sortie de stock.
 
-  const estBL = doc.type_doc==='bon_livraison'
-  const nbCols = estBL ? 4 : 6
-  const lignesHtml = (lignes||[]).length > 0
-    ? (lignes||[]).map((l,i) => `
-    <tr>
-      <td>${i+1}</td>
-      <td>${l.designation||''}</td>
-      <td class="r">${l.unite||''}</td>
-      <td class="r">${((+(l.quantite)||0) % 1 === 0 ? (+(l.quantite)||0).toLocaleString('fr-FR') : parseFloat((+(l.quantite)||0).toFixed(3)).toLocaleString('fr-FR'))}</td>
-      ${estBL ? '' : `<td class="r">${Math.round(+(l.prix_unitaire)||0).toLocaleString('fr-FR')}</td><td class="r"><strong>${Math.round(+(l.montant_ligne)||0).toLocaleString('fr-FR')}</strong></td>`}
-    </tr>`).join('')
-    : `<tr><td colspan="${nbCols}" style="text-align:center;color:#888;padding:16px">Aucune ligne enregistrée</td></tr>`
+// Montant en toutes lettres (orthographe traditionnelle des documents
+// commerciaux : « quatre-vingts », « deux cents », « mille » invariable).
+const LETTRES_UNITES = ['zéro','un','deux','trois','quatre','cinq','six','sept','huit','neuf','dix','onze','douze','treize','quatorze','quinze','seize','dix-sept','dix-huit','dix-neuf']
+const LETTRES_DIZAINES = ['','','vingt','trente','quarante','cinquante','soixante']
+function lettresMoinsDeCent(n, final) {
+  if (n < 20) return LETTRES_UNITES[n]
+  if (n < 70) {
+    const d = Math.floor(n / 10), u = n % 10
+    if (u === 0) return LETTRES_DIZAINES[d]
+    if (u === 1) return `${LETTRES_DIZAINES[d]} et un`
+    return `${LETTRES_DIZAINES[d]}-${LETTRES_UNITES[u]}`
+  }
+  if (n < 80) return n === 71 ? 'soixante et onze' : `soixante-${LETTRES_UNITES[n - 60]}`
+  const r = n - 80
+  if (r === 0) return final ? 'quatre-vingts' : 'quatre-vingt'
+  return `quatre-vingt-${LETTRES_UNITES[r]}`
+}
+function lettresMoinsDeMille(n, final) {
+  const c = Math.floor(n / 100), r = n % 100
+  let t = ''
+  if (c === 1) t = 'cent'
+  else if (c > 1) t = r === 0 && final ? `${LETTRES_UNITES[c]} cents` : `${LETTRES_UNITES[c]} cent`
+  if (r > 0) t = t ? `${t} ${lettresMoinsDeCent(r, final)}` : lettresMoinsDeCent(r, final)
+  return t
+}
+function nombreEnLettres(valeur) {
+  let n = Math.round(Math.abs(Number(valeur) || 0))
+  if (n === 0) return 'zéro'
+  const mds = Math.floor(n / 1e9); n %= 1e9
+  const mns = Math.floor(n / 1e6); n %= 1e6
+  const mil = Math.floor(n / 1000), u = n % 1000
+  const m = []
+  if (mds) m.push(`${lettresMoinsDeMille(mds, true)} milliard${mds > 1 ? 's' : ''}`)
+  if (mns) m.push(`${lettresMoinsDeMille(mns, true)} million${mns > 1 ? 's' : ''}`)
+  if (mil) m.push(mil === 1 ? 'mille' : `${lettresMoinsDeMille(mil, false)} mille`)
+  if (u) m.push(lettresMoinsDeMille(u, true))
+  return m.join(' ')
+}
+function montantEnLettres(valeur) {
+  const n = Math.round(Math.abs(Number(valeur) || 0))
+  return `${nombreEnLettres(n)} (${n.toLocaleString('fr-FR')}) francs CFA`
+}
 
-  return `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">
-    <title>${doc.numero}</title>
-    <style>${CSS_PRINT}</style></head><body>
+const echapHtml = v => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+const nbFr = v => {
+  const n = +v || 0
+  return n % 1 === 0 ? n.toLocaleString('fr-FR') : parseFloat(n.toFixed(3)).toLocaleString('fr-FR')
+}
+const fcfaDoc = v => `${Math.round(+v || 0).toLocaleString('fr-FR')} FCFA`
+const dateDoc = d => {
+  if (!d) return ''
+  const s = String(d)
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s.slice(0, 10)) && s.length <= 10) return s.split('-').reverse().join('/')
+  const dt = new Date(s)
+  return isNaN(dt) ? s : dt.toLocaleDateString('fr-FR')
+}
+
+const CSS_GABARIT = `
+  @page { size: A4; margin: 12mm 12mm 14mm; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', Tahoma, Arial, sans-serif; font-size: 10.5pt; color: #1e293b; background: #fff; }
+  .page { max-width: 186mm; margin: 0 auto; padding: 4mm 2mm; }
+  .entete { display: flex; justify-content: space-between; align-items: flex-start; gap: 18px; }
+  .societe { display: flex; align-items: center; gap: 12px; min-width: 0; }
+  .societe img { height: 62px; max-width: 135px; object-fit: contain; }
+  .societe .nom { font-size: 16pt; font-weight: 800; text-transform: uppercase; letter-spacing: .5px; color: #1d4ed8; line-height: 1.15; }
+  .societe .sigle { font-size: 8.5pt; color: #64748b; }
+  .coord { border-left: 2px solid #2563eb; padding-left: 10px; font-size: 8.5pt; line-height: 1.45; color: #475569; max-width: 62mm; }
+  .titre { margin-top: 22px; }
+  .titre h1 { font-size: 27pt; font-weight: 800; letter-spacing: 2px; color: #0ea5e9; line-height: 1.1; }
+  .titre .bandeau { margin-top: 6px; height: 10px; background: linear-gradient(90deg, #2563eb, #0ea5e9, #7dd3fc); }
+  .parties { margin-top: 18px; display: grid; grid-template-columns: 3fr 2fr; gap: 20px; }
+  .lib { font-size: 8.5pt; font-weight: 700; text-transform: uppercase; letter-spacing: .6px; color: #64748b; margin-bottom: 3px; }
+  .tiers .nom { font-weight: 700; color: #0f172a; font-size: 11pt; }
+  .tiers p { color: #475569; }
+  .refs { border-left: 2px solid #2563eb; padding-left: 10px; }
+  .refs .r { display: flex; justify-content: space-between; gap: 10px; padding: 1px 0; }
+  .refs .r span:first-child { font-size: 8.5pt; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: #64748b; }
+  .refs .r span:last-child { font-weight: 600; color: #0f172a; text-align: right; }
+  table.lignes { width: 100%; border-collapse: collapse; margin-top: 18px; }
+  table.lignes th { background: #475569; color: #fff; padding: 7px 8px; font-size: 8.5pt; font-weight: 600; text-transform: uppercase; letter-spacing: .5px; text-align: left; }
+  table.lignes td { padding: 6px 8px; border-bottom: 1px solid #e2e8f0; vertical-align: top; }
+  table.lignes tr:nth-child(even) td { background: #f8fafc; }
+  table.lignes .d { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  table.lignes .c { text-align: center; }
+  .bas { margin-top: 16px; display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; }
+  .mentions { flex: 1; font-size: 8.5pt; color: #475569; line-height: 1.5; white-space: pre-line; }
+  .totaux { width: 76mm; }
+  .totaux .t { display: flex; justify-content: space-between; background: #f1f5f9; padding: 4px 10px; margin-bottom: 3px; }
+  .totaux .t span:first-child { font-size: 8.5pt; font-weight: 600; text-transform: uppercase; letter-spacing: .5px; color: #475569; }
+  .totaux .t span:last-child { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .totaux .p { background: #2563eb; color: #fff; padding: 7px 10px; margin-top: 4px; }
+  .totaux .p .l { font-size: 8.5pt; font-weight: 600; text-transform: uppercase; letter-spacing: .5px; opacity: .9; }
+  .totaux .p .v { font-size: 17pt; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1.2; }
+  .arrete { margin-top: 14px; border-top: 1px solid #cbd5e1; border-bottom: 1px solid #cbd5e1; padding: 6px 0; font-size: 10pt; color: #1e293b; }
+  .notes { margin-top: 12px; border-left: 3px solid #94a3b8; padding: 5px 10px; font-size: 9pt; color: #334155; }
+  .bloc { margin-top: 14px; }
+  table.grille { width: 100%; border-collapse: collapse; font-size: 9.5pt; }
+  table.grille th { background: #e2e8f0; color: #334155; font-size: 8pt; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; padding: 5px 8px; text-align: left; border: 1px solid #cbd5e1; }
+  table.grille td { padding: 6px 8px; border: 1px solid #cbd5e1; vertical-align: top; }
+  .signatures { margin-top: 26px; display: flex; justify-content: space-between; gap: 18px; }
+  .signatures div { flex: 1; text-align: center; font-size: 8.5pt; color: #64748b; padding-top: 42px; position: relative; }
+  .signatures div::before { content: ''; position: absolute; top: 34px; left: 10%; right: 10%; border-top: 1px solid #94a3b8; }
+  .merci { margin-top: 26px; display: flex; justify-content: space-between; align-items: flex-end; gap: 24px; }
+  .merci p { font-size: 13pt; font-weight: 700; font-style: italic; color: #0284c7; }
+  .merci .sig { text-align: center; font-size: 8.5pt; color: #64748b; }
+  .merci .sig::before { content: ''; display: block; width: 48mm; border-top: 1px solid #94a3b8; margin-bottom: 4px; }
+  .pied { margin-top: 22px; text-align: center; font-size: 7.5pt; color: #94a3b8; }
+  .print-btn { position: fixed; top: 12px; right: 12px; background: #2563eb; color: white; border: none; padding: 10px 20px; border-radius: 6px; font-size: 13px; cursor: pointer; z-index: 999; }
+  @media print { .print-btn { display: none; } }
+`
+
+// doc : { comp, titre, numero, date, infos:[[lib, val]], tiersLabel,
+//   tiers:{ nom, adresse, telephone, ifu, livraison }, colonnes:[{ label, align:'d'|'c', largeur }],
+//   lignes:[[cellule…]] (HTML déjà échappé), lignesMin, totaux:[[lib, val, principal]],
+//   mentions, arrete, notes, avantTableau, apresTotaux, signatures:[lib…] | null (= « Merci… » + cachet) }
+function gabaritDocumentHtml(d) {
+  const c = d.comp || {}
+  const coord = [
+    c.adresse, c.tel && `Tél : ${c.tel}`, c.email, c.ifu && `IFU : ${c.ifu}`, c.rccm && `RCCM : ${c.rccm}`,
+  ].filter(Boolean)
+  const refs = [['N°', d.numero], ['Date', d.date], ...(d.infos || [])].filter(([, v]) => v)
+  const t = d.tiers || {}
+  const cols = d.colonnes || []
+  const lignes = [...(d.lignes || [])]
+  while (lignes.length < (d.lignesMin || 0)) lignes.push(cols.map(() => '&nbsp;'))
+  const corps = lignes.length
+    ? lignes.map(l => `<tr>${l.map((v, i) => `<td class="${cols[i]?.align || ''}">${v}</td>`).join('')}</tr>`).join('')
+    : `<tr><td colspan="${cols.length}" style="text-align:center;color:#94a3b8;padding:14px">Aucune ligne</td></tr>`
+  const totaux = (d.totaux || []).map(([l, v, p]) => p
+    ? `<div class="p"><div class="l">${l}</div><div class="v">${v}</div></div>`
+    : `<div class="t"><span>${l}</span><span>${v}</span></div>`).join('')
+  return `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><title>${echapHtml(d.titre)} ${echapHtml(d.numero)}</title>
+    <style>${CSS_GABARIT}</style></head><body>
     <button class="print-btn" onclick="window.print()">🖨️ Imprimer / PDF</button>
-    <div class="header">
-      <div>
-        ${comp?.logo_url?`<img src="${comp.logo_url}" class="company-logo" alt="logo" />`:''}
-        <div class="company-name">${comp?.raison_sociale||''}</div>
-        <div class="company-info">
-          ${comp?.rccm ? `RCCM : ${comp.rccm}<br>` : ''}
-          ${comp?.adresse||''} ${comp?.tel ? `&mdash; T&eacute;l : ${comp.tel}` : ''}
+    <div class="page">
+      <div class="entete">
+        <div class="societe">
+          ${c.logo_url ? `<img src="${c.logo_url}" alt="logo">` : ''}
+          <div><div class="nom">${echapHtml(c.raison_sociale || 'Ma Société')}</div>${c.sigle ? `<div class="sigle">${echapHtml(c.sigle)}</div>` : ''}</div>
         </div>
+        ${coord.length ? `<div class="coord">${coord.map(x => `<div>${echapHtml(x)}</div>`).join('')}</div>` : ''}
       </div>
-      <div class="doc-title">
-        <h1>${TYPE_DOC_LABELS[doc.type_doc]||doc.type_doc}</h1>
-        <div class="doc-numero">N&deg; ${doc.numero}</div>
-        <div class="doc-date">Date : ${doc.date_doc}${doc.date_echeance?` &mdash; &Eacute;ch&eacute;ance : ${doc.date_echeance}`:''}</div>
+      <div class="titre"><h1>${echapHtml(d.titre)}</h1><div class="bandeau"></div></div>
+      <div class="parties">
+        <div class="tiers">
+          <div class="lib">${echapHtml(d.tiersLabel || 'Client')}</div>
+          <div class="nom">${echapHtml(t.nom || '—')}</div>
+          ${t.adresse ? `<p>${echapHtml(t.adresse)}</p>` : ''}
+          ${t.telephone ? `<p>Tél : ${echapHtml(t.telephone)}</p>` : ''}
+          ${t.ifu ? `<p>IFU : ${echapHtml(t.ifu)}</p>` : ''}
+          ${t.livraison ? `<div style="margin-top:6px"><div class="lib">Adresse de livraison</div><p style="color:#1e293b;white-space:pre-line">${echapHtml(t.livraison)}</p></div>` : ''}
+        </div>
+        <div class="refs">${refs.map(([l, v]) => `<div class="r"><span>${echapHtml(l)}</span><span>${echapHtml(v)}</span></div>`).join('')}</div>
       </div>
-    </div>
-    ${cliNom ? `<div class="client-box"><strong>${partLabel} :</strong> ${cliNom}${cli?.telephone?` &mdash; T&eacute;l : ${cli.telephone}`:''}${cli?.ifu?` &mdash; IFU : ${cli.ifu}`:''}</div>` : ''}
-    <table>
-      <thead><tr>
-        <th style="width:30px">#</th>
-        <th>D&eacute;signation</th>
-        <th class="r" style="width:55px">Unit&eacute;</th>
-        <th class="r" style="width:80px">Quantit&eacute;</th>
-        ${estBL ? '' : `<th class="r" style="width:110px">Prix U. (FCFA)</th><th class="r" style="width:120px">Montant (FCFA)</th>`}
-      </tr></thead>
-      <tbody>${lignesHtml}</tbody>
-    </table>
-    ${estBL ? '' : `<div class="totals">
-      <div class="row"><span>Montant HT</span><span>${Math.round(doc.montant_ht||0).toLocaleString('fr-FR')} FCFA</span></div>
-      ${(doc.tva_pct||0)>0 ? `<div class="row"><span>TVA (${doc.tva_pct}%)</span><span>${Math.round(doc.montant_tva||0).toLocaleString('fr-FR')} FCFA</span></div>` : ''}
-      <div class="ttc"><span>TOTAL TTC</span><span>${Math.round(doc.montant_ttc||0).toLocaleString('fr-FR')} FCFA</span></div>
-      ${(doc.montant_paye||0)>0 ? `<div class="row" style="margin-top:4px"><span>Pay&eacute;</span><span style="color:#16a34a">${Math.round(doc.montant_paye||0).toLocaleString('fr-FR')} FCFA</span></div>` : ''}
-    </div>`}
-    ${doc.notes ? `<div class="notes"><strong>Notes :</strong> ${doc.notes}</div>` : ''}
-    <div class="signatures">
-      <div class="sig-box">Signature de l'acheteur${comp?.raison_sociale?`<br><small>${comp.raison_sociale}</small>`:''}</div>
-      <div class="sig-box">Signature du ${partLabel.toLowerCase()}${cliNom?`<br><small>${cliNom}</small>`:''}</div>
+      ${d.avantTableau || ''}
+      <table class="lignes">
+        <thead><tr>${cols.map(col => `<th class="${col.align || ''}"${col.largeur ? ` style="width:${col.largeur}"` : ''}>${col.label}</th>`).join('')}</tr></thead>
+        <tbody>${corps}</tbody>
+      </table>
+      ${(totaux || d.mentions) ? `<div class="bas"><div class="mentions">${d.mentions ? `<div class="lib">Conditions</div>${echapHtml(d.mentions)}` : ''}</div>${totaux ? `<div class="totaux">${totaux}</div>` : ''}</div>` : ''}
+      ${d.arrete ? `<div class="arrete">${d.arrete}</div>` : ''}
+      ${d.notes ? `<div class="notes"><strong>Notes :</strong> ${echapHtml(d.notes)}</div>` : ''}
+      ${d.apresTotaux || ''}
+      ${d.signatures
+        ? `<div class="signatures">${d.signatures.map(s => `<div>${s}</div>`).join('')}</div>`
+        : `<div class="merci"><p>Merci pour votre confiance.</p><div class="sig">Signature et cachet</div></div>`}
+      <div class="pied">${echapHtml(c.raison_sociale || 'Compta Pro')} — document établi avec Compta Pro</div>
     </div>
   </body></html>`
+}
+
+// Titres et phrase d'arrêté par type de document commercial.
+const TITRES_DOC_IMPRIME = { proforma:'FACTURE PROFORMA', bon_commande:'BON DE COMMANDE', bon_livraison:'BON DE LIVRAISON', facture:'FACTURE' }
+const ARRETE_DOC = {
+  proforma:'Arrêtée la présente facture proforma à la somme de',
+  facture:'Arrêtée la présente facture à la somme de',
+  bon_commande:'Arrêté le présent bon de commande à la somme de',
+}
+
+function buildCommercialDocHtml(doc, lignes) {
+  const estBC = doc.type_doc === 'bon_commande'
+  const estBL = doc.type_doc === 'bon_livraison'
+  const cli = estBC ? doc.compta_fournisseurs : doc.compta_clients
+  const cliNom = cli ? (cli.type === 'morale' ? cli.nom_societe : [cli.nom, cli.prenom].filter(Boolean).join(' ').trim()) : ''
+  const colonnes = estBL
+    ? [{ label:'N°', align:'c', largeur:'8%' }, { label:'Désignation' }, { label:'Unité', align:'c', largeur:'12%' }, { label:'Quantité', align:'d', largeur:'16%' }]
+    : [{ label:'N°', align:'c', largeur:'6%' }, { label:'Désignation' }, { label:'Unité', align:'c', largeur:'9%' }, { label:'Qté', align:'d', largeur:'10%' }, { label:'P.U. (FCFA)', align:'d', largeur:'15%' }, { label:'Montant (FCFA)', align:'d', largeur:'17%' }]
+  const lignesDoc = (lignes || []).map((l, i) => estBL
+    ? [i + 1, echapHtml(l.designation), echapHtml(l.unite), nbFr(l.quantite)]
+    : [i + 1, echapHtml(l.designation), echapHtml(l.unite), nbFr(l.quantite), Math.round(+l.prix_unitaire || 0).toLocaleString('fr-FR'), `<strong>${Math.round(+l.montant_ligne || 0).toLocaleString('fr-FR')}</strong>`])
+  const totaux = estBL ? [] : [
+    ['Montant HT', fcfaDoc(doc.montant_ht)],
+    ...((doc.tva_pct || 0) > 0 ? [[`TVA (${doc.tva_pct} %)`, fcfaDoc(doc.montant_tva)]] : []),
+    // Facture avec acompte : le total TTC, le déjà payé, et le reste à payer
+    // mis en valeur ; sinon le total TTC.
+    ...((doc.montant_paye || 0) > 0
+      ? [['Total TTC', fcfaDoc(doc.montant_ttc)], ['Déjà payé', fcfaDoc(doc.montant_paye)], ['Reste à payer', fcfaDoc((doc.montant_ttc || 0) - (doc.montant_paye || 0)), true]]
+      : [['Total TTC', fcfaDoc(doc.montant_ttc), true]]),
+  ]
+  const quantiteTotale = (lignes || []).reduce((s, l) => s + (+l.quantite || 0), 0)
+  return gabaritDocumentHtml({
+    comp: doc.compta_companies,
+    titre: TITRES_DOC_IMPRIME[doc.type_doc] || TYPE_DOC_LABELS[doc.type_doc] || doc.type_doc,
+    numero: doc.numero,
+    date: dateDoc(doc.date_doc),
+    infos: [
+      ...(doc.date_echeance ? [['Échéance', dateDoc(doc.date_echeance)]] : []),
+      ...(doc.reference ? [['Référence', doc.reference]] : []),
+    ],
+    tiersLabel: estBC ? 'Fournisseur' : estBL ? 'Livré à' : 'Facturé à',
+    tiers: { nom: cliNom, adresse: cli?.adresse, telephone: cli?.telephone, ifu: cli?.ifu },
+    colonnes,
+    lignes: lignesDoc,
+    totaux: estBL ? [['Articles', String((lignes || []).length)], ['Quantité totale', nbFr(quantiteTotale), true]] : totaux,
+    arrete: !estBL && ARRETE_DOC[doc.type_doc] ? `${ARRETE_DOC[doc.type_doc]} <strong>${montantEnLettres(doc.montant_ttc)}</strong>.` : null,
+    notes: doc.notes,
+    signatures: estBL ? ['Le livreur', 'Le réceptionnaire (bon pour réception)'] : estBC ? ["Signature de l'acheteur", 'Signature du fournisseur'] : null,
+  })
 }
 
 function printCommercialDoc(doc, lignes) {
@@ -2215,72 +2381,41 @@ function BordereauxLivraisonPage({ companies, companyId, toast }) {
 
   const printBordereau = async (b) => {
     const { data:lignesData } = await supabase.from('compta_bordereau_lignes').select('*').eq('bordereau_id', b.id).order('ordre')
-    const realRows = (lignesData||[]).map(l=>`<tr><td>${l.reference||''}</td><td><div class="desc-clamp">${l.description||''}</div></td><td style="text-align:right">${l.unite??''}</td><td style="text-align:right">${l.quantite??''}</td><td style="text-align:right">${l.tonnage??''}</td></tr>`)
-    // Au moins 4 lignes (même vides), sans dépasser ce qui est nécessaire, pour que le tableau
-    // des articles reste compact et que le bordereau tienne sur une seule page.
-    const blankRow = '<tr><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr>'
-    while (realRows.length < 4) realRows.push(blankRow)
-    const rows = realRows.join('')
-    const html = `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><title>Bordereau ${b.numero}</title>
-      <style>
-        @page{size:A4;margin:8mm}
-        *{margin:0;padding:0;box-sizing:border-box}
-        html,body{width:190mm}
-        body{font-family:'Times New Roman',serif;font-size:11pt;color:#000;padding:6px 4px;margin:0 auto}
-        table{width:100%;border-collapse:collapse;margin-bottom:22px;page-break-inside:avoid}
-        td,th{border:1px solid #000;padding:10px 10px;font-size:10.5pt;vertical-align:top;height:30px}
-        tr{height:40px}
-        .header{display:grid;grid-template-columns:110px 1fr 110px;align-items:center;gap:14px;margin-bottom:10px}
-        .company-text{text-align:center}
-        .company-name{font-size:13pt;font-weight:bold}
-        .company-info{font-size:9pt}
-        .titre{text-align:center;font-weight:bold;font-size:14pt;margin:8px 0 14px}
-        .blue{background:#B4C6E7;font-weight:bold;text-align:center}
-        .lbl{font-weight:bold;white-space:nowrap}
-        .no-border td{border:none;padding:5px 10px}
-        .signatures td{height:80px}
-        .desc-clamp{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:4;overflow:hidden}
-      </style></head><body>
-      <div class="header">
-        <div></div>
-        <div class="company-text">
-          <div class="company-name">${company?.raison_sociale||''}</div>
-          <div class="company-info">
-            ${company?.rccm?`RCCM : ${company.rccm} &nbsp; `:''}${company?.ifu?`IFU : ${company.ifu} &nbsp; `:''}${company?.tel?`TEL : ${company.tel}`:''}<br>
-            ${company?.email?`Email : ${company.email}`:''}
-          </div>
-        </div>
-        <div style="text-align:right">${company?.logo_url?`<img src="${company.logo_url}" style="max-height:60px;max-width:110px;object-fit:contain">`:''}</div>
-      </div>
-      <div class="titre">BORDEREAU DE LIVRAISON N° ${b.numero}</div>
-      <table class="no-border">
-        <tr><td class="lbl" width="15%">NOM :</td><td width="35%">${b.client_nom||''}</td>
-            <td class="lbl" width="15%">Adresse livraison 1 :</td><td width="35%">${b.adresse_livraison_1||''}</td></tr>
-        <tr><td class="lbl">ADRESSE :</td><td>${b.client_adresse||''}</td>
-            <td class="lbl">Termes de livraison :</td><td>${b.termes_livraison||''}</td></tr>
-        <tr><td class="lbl">CONTACT :</td><td>${b.client_contact||''}</td>
-            <td class="lbl">Adresse livraison 2 :</td><td>${b.adresse_livraison_2||''}</td></tr>
-        <tr><td class="lbl">Email :</td><td>${b.client_email||''}</td>
-            <td class="lbl">Contact livraison :</td><td>${b.contact_livraison||''}</td></tr>
-        <tr><td class="lbl">N° IFU :</td><td colspan="3">${b.client_ifu||''}</td></tr>
-      </table>
-      <table>
-        <tr class="blue"><td>Numéro du chauffeur</td><td>Date de livraison</td><td>N° de commande</td><td>Commentaire</td></tr>
-        <tr><td>${b.numero_chauffeur||''}</td><td>${b.date_livraison||''}</td><td>${b.numero_commande||''}</td><td>${b.commentaire||''}</td></tr>
-        <tr><td width="16%">N° Véhicule : ${b.numero_vehicule||''}</td><td width="16%">Remorque : ${b.remorque||''}</td><td width="24%">Nom chauffeur : ${b.nom_chauffeur||''}</td><td width="44%">Signature : ${b.signature_chauffeur||'&nbsp;'}</td></tr>
-      </table>
-      <table>
-        <tr class="blue"><td>RÉFÉRENCE</td><td>DESCRIPTION</td><td>UNITÉ</td><td>QUANTITÉ</td><td>TONNAGE</td></tr>
-        ${rows}
-      </table>
-      <table>
-        <tr><td>DATE : ${b.date_chargement||''}</td><td>DÉBUT DE CHARGEMENT : ${b.debut_chargement||''}</td><td>HEURE D'ARRIVÉE : ${b.heure_arrivee||''}</td></tr>
-      </table>
-      <table class="signatures">
-        <tr class="blue"><td>NOM DU RÉCEPTIONNAIRE</td><td>CONTRÔLEUR</td><td>LIVREUR</td><td>SIGNATURE</td></tr>
-        <tr><td>${b.nom_receptionnaire||''}</td><td>${b.controleur||''}</td><td>${b.livreur||''}</td><td>&nbsp;</td></tr>
-      </table>
-      </body></html>`
+    const lignes = (lignesData || []).map(l => [echapHtml(l.reference), echapHtml(l.description), echapHtml(l.unite ?? ''), nbFr(l.quantite), l.tonnage != null && l.tonnage !== '' ? nbFr(l.tonnage) : ''])
+    const v = x => echapHtml(x || '') || '&nbsp;'
+    const livraison = [b.adresse_livraison_1, b.adresse_livraison_2].filter(Boolean).join('\n')
+    const transport = `<div class="bloc"><div class="lib">Transport</div>
+      <table class="grille">
+        <tr><th>Chauffeur</th><th>N° chauffeur</th><th>N° véhicule</th><th>Remorque</th><th>Termes de livraison</th></tr>
+        <tr><td>${v(b.nom_chauffeur)}</td><td>${v(b.numero_chauffeur)}</td><td>${v(b.numero_vehicule)}</td><td>${v(b.remorque)}</td><td>${v(b.termes_livraison)}</td></tr>
+      </table></div>`
+    const chargement = `<div class="bloc"><table class="grille">
+        <tr><th>Date de chargement</th><th>Début de chargement</th><th>Heure d'arrivée</th><th>Commentaire</th></tr>
+        <tr><td>${v(dateDoc(b.date_chargement))}</td><td>${v(b.debut_chargement)}</td><td>${v(b.heure_arrivee)}</td><td>${v(b.commentaire)}</td></tr>
+      </table></div>`
+    const totalQte = (lignesData || []).reduce((s2, l) => s2 + (+l.quantite || 0), 0)
+    const totalTonnage = (lignesData || []).reduce((s2, l) => s2 + (+l.tonnage || 0), 0)
+    const html = gabaritDocumentHtml({
+      comp: company,
+      titre: 'BORDEREAU DE LIVRAISON',
+      numero: b.numero,
+      date: dateDoc(b.date_livraison),
+      infos: [['N° commande', b.numero_commande], ['Contact livraison', b.contact_livraison]],
+      tiersLabel: 'Livré à',
+      tiers: { nom: b.client_nom, adresse: b.client_adresse, telephone: b.client_contact, ifu: b.client_ifu, livraison },
+      avantTableau: transport,
+      colonnes: [{ label:'Référence', largeur:'14%' }, { label:'Description' }, { label:'Unité', align:'c', largeur:'10%' }, { label:'Quantité', align:'d', largeur:'13%' }, { label:'Tonnage', align:'d', largeur:'13%' }],
+      lignes,
+      lignesMin: 4,
+      totaux: [['Quantité totale', nbFr(totalQte)], ...(totalTonnage ? [['Tonnage total', nbFr(totalTonnage), true]] : [])],
+      apresTotaux: chargement,
+      signatures: [
+        `Le réceptionnaire${b.nom_receptionnaire ? `<br><strong>${echapHtml(b.nom_receptionnaire)}</strong>` : ''}`,
+        `Le contrôleur${b.controleur ? `<br><strong>${echapHtml(b.controleur)}</strong>` : ''}`,
+        `Le livreur${b.livreur ? `<br><strong>${echapHtml(b.livreur)}</strong>` : ''}`,
+        `Le chauffeur${b.nom_chauffeur ? `<br><strong>${echapHtml(b.nom_chauffeur)}</strong>` : ''}`,
+      ],
+    })
     openPrintWindow(html, `bordereau_${b.numero}`)
   }
 
@@ -5541,57 +5676,25 @@ function BonsStockPage({ companies, companyId, toast, readOnly=false }) {
   const imprimer = b => {
     const sortie = b.type === 'sortie'
     const lignes = b.lignes || []
-    const rows = lignes.map((l, i) => `<tr><td style="text-align:center">${i + 1}</td><td>${l.designation || ''}</td><td style="text-align:center">${l.unite || ''}</td><td style="text-align:right">${(Number(l.quantite) || 0).toLocaleString('fr-FR')}</td><td style="text-align:right">${Math.round(l.prix_unitaire || 0).toLocaleString('fr-FR')}</td><td style="text-align:right">${Math.round(l.montant || 0).toLocaleString('fr-FR')}</td><td>${l.observation || ''}</td></tr>`)
-    while (rows.length < 4) rows.push('<tr><td>&nbsp;</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>')
     const enregistre = b.created_at ? new Date(b.created_at).toLocaleString('fr-FR', { dateStyle:'short', timeStyle:'short' }) : ''
-    const html = `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><title>${sortie ? 'Bon de sortie' : "Bon d'entrée"} ${b.numero}</title>
-      <style>
-        @page{size:A4;margin:8mm}
-        *{margin:0;padding:0;box-sizing:border-box}
-        html,body{width:190mm}
-        body{font-family:'Times New Roman',serif;font-size:11pt;color:#000;padding:6px 4px;margin:0 auto}
-        table{width:100%;border-collapse:collapse;margin-bottom:18px;page-break-inside:avoid}
-        td,th{border:1px solid #000;padding:7px 8px;font-size:10.5pt;vertical-align:top}
-        .header{display:grid;grid-template-columns:110px 1fr 110px;align-items:center;gap:14px;margin-bottom:10px}
-        .company-text{text-align:center}
-        .company-name{font-size:13pt;font-weight:bold}
-        .company-info{font-size:9pt}
-        .titre{text-align:center;font-weight:bold;font-size:14pt;margin:8px 0 14px}
-        .blue{background:#B4C6E7;font-weight:bold;text-align:center}
-        .lbl{font-weight:bold;white-space:nowrap}
-        .no-border td{border:none;padding:4px 8px}
-        .signatures td{height:80px}
-        .total td{font-weight:bold}
-      </style></head><body>
-      <div class="header">
-        <div></div>
-        <div class="company-text">
-          <div class="company-name">${company?.raison_sociale || ''}</div>
-          <div class="company-info">
-            ${company?.rccm ? `RCCM : ${company.rccm} &nbsp; ` : ''}${company?.ifu ? `IFU : ${company.ifu} &nbsp; ` : ''}${company?.tel ? `TEL : ${company.tel}` : ''}<br>
-            ${company?.adresse ? `${company.adresse}` : ''}${company?.email ? ` &nbsp; Email : ${company.email}` : ''}
-          </div>
-        </div>
-        <div style="text-align:right">${company?.logo_url ? `<img src="${company.logo_url}" style="max-height:60px;max-width:110px;object-fit:contain">` : ''}</div>
-      </div>
-      <div class="titre">${sortie ? 'BON DE SORTIE DE STOCK' : "BON D'ENTRÉE EN STOCK"} N° ${b.numero}</div>
-      <table class="no-border">
-        <tr><td class="lbl" width="22%">${sortie ? 'Destinataire :' : 'Provenance / fournisseur :'}</td><td width="34%">${b.tiers || ''}</td>
-            <td class="lbl" width="20%">${sortie ? 'Date de sortie :' : "Date d'entrée :"}</td><td>${dateFr(b.date_bon)}</td></tr>
-        <tr><td class="lbl">Motif :</td><td>${b.motif ? b.motif.charAt(0).toUpperCase() + b.motif.slice(1) : ''}</td>
-            <td class="lbl">Enregistré le :</td><td>${enregistre}</td></tr>
-        ${b.observations ? `<tr><td class="lbl">Observations :</td><td colspan="3">${b.observations}</td></tr>` : ''}
-      </table>
-      <table>
-        <tr class="blue"><td width="6%">N°</td><td>DÉSIGNATION</td><td width="9%">UNITÉ</td><td width="11%">QUANTITÉ</td><td width="13%">P.U. (FCFA)</td><td width="14%">MONTANT (FCFA)</td><td width="18%">OBSERVATION</td></tr>
-        ${rows.join('')}
-        <tr class="total"><td colspan="3">TOTAL — ${lignes.length} article(s)</td><td style="text-align:right">${lignes.reduce((s, l) => s + (Number(l.quantite) || 0), 0).toLocaleString('fr-FR')}</td><td></td><td style="text-align:right">${Math.round(b.total || 0).toLocaleString('fr-FR')}</td><td></td></tr>
-      </table>
-      <table class="signatures">
-        <tr class="blue"><td>${sortie ? 'LE MAGASINIER' : 'LE LIVREUR'}</td><td>${sortie ? 'LE RÉCEPTIONNAIRE' : 'LE MAGASINIER (bon pour réception)'}</td><td>LE CONTRÔLEUR</td></tr>
-        <tr><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr>
-      </table>
-      </body></html>`
+    const html = gabaritDocumentHtml({
+      comp: company,
+      titre: sortie ? 'BON DE SORTIE' : "BON D'ENTRÉE EN MAGASIN",
+      numero: b.numero,
+      date: '', // la date du bon est la date d'entrée / de sortie ci-dessous
+      infos: [
+        [sortie ? 'Date de sortie' : "Date d'entrée", dateDoc(b.date_bon)],
+        ['Enregistré le', enregistre],
+        ['Motif', b.motif ? b.motif.charAt(0).toUpperCase() + b.motif.slice(1) : ''],
+      ],
+      tiersLabel: sortie ? 'Destinataire' : 'Provenance / fournisseur',
+      tiers: { nom: b.tiers },
+      colonnes: [{ label:'N°', align:'c', largeur:'6%' }, { label:'Désignation' }, { label:'Unité', align:'c', largeur:'9%' }, { label:'Quantité', align:'d', largeur:'11%' }, { label:'P.U. (FCFA)', align:'d', largeur:'13%' }, { label:'Montant (FCFA)', align:'d', largeur:'15%' }, { label:'Observation', largeur:'18%' }],
+      lignes: lignes.map((l, i) => [i + 1, echapHtml(l.designation), echapHtml(l.unite), nbFr(l.quantite), Math.round(l.prix_unitaire || 0).toLocaleString('fr-FR'), Math.round(l.montant || 0).toLocaleString('fr-FR'), echapHtml(l.observation)]),
+      totaux: [['Articles', String(lignes.length)], ['Quantité totale', nbFr(lignes.reduce((s2, l) => s2 + (Number(l.quantite) || 0), 0))], ['Valeur', fcfaDoc(b.total), true]],
+      notes: b.observations,
+      signatures: sortie ? ['Le magasinier', 'Le réceptionnaire (bon pour réception)', 'Le contrôleur'] : ['Le livreur', 'Le magasinier (bon pour réception)', 'Le contrôleur'],
+    })
     openPrintWindow(html, `${sortie ? 'bon_sortie' : 'bon_entree'}_${b.numero}`)
   }
 
@@ -6037,12 +6140,12 @@ function CommercialPage({ companies, companyId, setPage, setDocId, toast, readOn
                       <div style={{display:'flex',gap:6}}>
                         <Btn sm variant="secondary" onClick={()=>{ setDocId(d.id); setPage('commercial-view') }}>Voir</Btn>
                         <Btn sm variant="info" onClick={async()=>{
-                          const r1=await supabase.from('compta_documents').select('*,compta_clients(*),compta_companies(*)').eq('id',d.id).single()
+                          const r1=await supabase.from('compta_documents').select('*,compta_clients(*),compta_fournisseurs(*),compta_companies(*)').eq('id',d.id).single()
                           const r2=await supabase.from('compta_lignes_document').select('*').eq('document_id',d.id)
                           if(r1.data) setPreview({doc:r1.data,lignes:r2.data||[]})
                         }}>👁️</Btn>
                         <Btn sm variant="danger" onClick={async()=>{
-                          const r1=await supabase.from('compta_documents').select('*,compta_clients(*),compta_companies(*)').eq('id',d.id).single()
+                          const r1=await supabase.from('compta_documents').select('*,compta_clients(*),compta_fournisseurs(*),compta_companies(*)').eq('id',d.id).single()
                           const r2=await supabase.from('compta_lignes_document').select('*').eq('document_id',d.id)
                           if(r1.data) printCommercialDoc(r1.data,r2.data||[])
                         }}>PDF</Btn>
