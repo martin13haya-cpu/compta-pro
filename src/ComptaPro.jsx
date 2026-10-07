@@ -6760,6 +6760,28 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
   const [dateTo,     setDateTo]   = useState('')
   const [rowPreview, setRowPreview] = useState(null)
   const [localLots,  setLocalLots]  = useState([])  // lots chargés selon companyId effectif
+  // Traçabilité (lot 1, repris de CePEA-PSARIZ) : étuveuses du répertoire,
+  // seuils d'alerte d'écart par étape et par société.
+  const etape = tableName.replace('compta_','')
+  const estEtuvage = tableName === 'compta_etuvage'
+  const [etuveuses, setEtuveuses] = useState([])
+  const [seuils, setSeuils] = useState(SEUILS_PRODUCTION_DEFAUT)
+  const [seuilsModal, setSeuilsModal] = useState(null)
+  useEffect(()=>{
+    (async()=>{
+      const cid = companyId || companies[0]?.id
+      if (!cid) return
+      const { data:sp, error:es } = await supabase.from('compta_seuils_production').select('*').eq('company_id', cid).maybeSingle()
+      setSeuils(es || !sp ? SEUILS_PRODUCTION_DEFAUT : { ...SEUILS_PRODUCTION_DEFAUT, ...sp })
+      if (estEtuvage) {
+        let q = supabase.from('compta_etuveuses').select('id,nom_etuveuse,code_etuveuse,zone,company_id').order('nom_etuveuse')
+        if (companyId) q = q.eq('company_id', companyId)
+        const { data } = await q; setEtuveuses(data||[])
+      }
+    })()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[companyId, estEtuvage])
+  const seuilEtape = Number(seuils[`${etape}_pct`] ?? 5)
 
   // Chargement local des lots — synchronisé avec le companyId reçu (evite le décalage effectiveCompanyId)
   useEffect(()=>{
@@ -6767,7 +6789,7 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
       const { data:ad } = await supabase.auth.getUser()
       const uid=ad?.user?.id; if (!uid) return
       const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
-      let q = supabase.from('compta_lots_production').select('id,numero_lot,statut').order('created_at',{ascending:false})
+      let q = supabase.from('compta_lots_production').select('id,numero_lot,statut,qte_paddy_entree').order('created_at',{ascending:false})
       if (isAdmin && companyId) q=q.eq('company_id',companyId)
       else if (companyId) q=q.eq('user_id',uid).eq('company_id',companyId)
       else q=q.eq('user_id',uid)
@@ -6814,8 +6836,12 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
     if (tableName === 'compta_etuvage') {
       const paddy = parseFloat(form.paddy_envoye_kg)    || 0
       const recu  = parseFloat(form.riz_etuve_recu_kg)  || 0
+      const dechets = parseFloat(form.dechets_kg) || 0
       if (fname === 'ecart_kg')       return Math.round((paddy - recu) * 1000) / 1000
       if (fname === 'taux_rendement') return paddy > 0 ? Math.round((recu / paddy * 100) * 100) / 100 : 0
+      // Perte que les déchets n'expliquent pas, en % du paddy envoyé
+      // (même règle que CePEA-PSARIZ) : c'est elle qui déclenche l'alerte.
+      if (fname === 'ecart_pct')      return paddy > 0 ? Math.round(((paddy - recu - dechets) / paddy * 100) * 100) / 100 : 0
     }
 
     // Décorticage
@@ -6848,6 +6874,10 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
 
   const set = e => {
     const { name, value } = e.target
+    if (name === 'etuveuse_id') {
+      const et = etuveuses.find(x => String(x.id) === String(value))
+      setForm(f=>({...f, etuveuse_id:value, etuveuse_cooperative: et ? et.nom_etuveuse : ''})); return
+    }
     // Auto-remplir numero_lot quand un lot est sélectionné
     if (name === 'lot_id' && value) {
       const lot = localLots.find(l => l.id === value)
@@ -6861,6 +6891,13 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
     if (!cid) { toast.error('Veuillez sélectionner une société.'); return }
     const df = { company_id:cid, lot_id:'', date_etape:today() }
     fields.forEach(f => { df[f.name] = '' })
+    if (estEtuvage) {
+      // Lot étuvé produit : ETUV-AAAA-NNN, suite des numéros de l'année.
+      const an = new Date().getFullYear()
+      const nums = items.map(i => String(i.lot_sortant||'').match(new RegExp(`^ETUV-${an}-(\\d+)$`))).filter(Boolean).map(m => parseInt(m[1],10))
+      df.lot_sortant = `ETUV-${an}-${String((nums.length ? Math.max(...nums) : 0) + 1).padStart(3,'0')}`
+      df.etuveuse_id = ''
+    }
     setEditItem(null); setForm(df); setModal(true)
   }
   const openEdit = it => {
@@ -6883,11 +6920,19 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
         pay[f.name] = f.type==='number' ? (parseFloat(form[f.name])||0) : (form[f.name]||'')
       }
     })
+    if (estEtuvage) {
+      const reste = resteLot(form.lot_id)
+      if (reste != null && (parseFloat(form.paddy_envoye_kg)||0) > reste + 0.001
+          && !confirm(`Le paddy envoyé (${fmtKg(form.paddy_envoye_kg)}) dépasse ce qui reste à étuver sur ce lot (${fmtKg(reste)}). Enregistrer quand même ?`)) { setSaving(false); return }
+      pay.etuveuse_id = form.etuveuse_id || null
+      pay.seuil_alerte_pct = seuilEtape
+      pay.alerte = Math.abs(pay.ecart_pct||0) > seuilEtape
+    }
     const { error } = editItem
       ? await supabase.from(tableName).update(pay).eq('id', editItem.id)
       : await supabase.from(tableName).insert({...pay, user_id:uid})
     setSaving(false)
-    if (error) { toast.error(error.message); return }
+    if (error) { toast.error(estEtuvage && /etuveuse_id|lot_sortant|dechets_kg|humidite_sortie|ecart_pct|seuil_alerte_pct|alerte|cuve|schema cache/i.test(error.message) ? MSG_SCRIPT_ETUVAGE : error.message); return }
     toast.success(editItem ? 'Modification enregistrée !' : 'Enregistrement réussi !'); close(); load()
   }
 
@@ -6935,6 +6980,24 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
   }
 
   const summaryFields = fields.filter(f=>f.summary).slice(0,4)
+  // Paddy du lot de production pas encore envoyé à l'étuvage.
+  function resteLot(lotId) {
+    const lot = localLots.find(l => l.id === lotId)
+    if (!lot || !(+lot.qte_paddy_entree > 0)) return null
+    const deja = items.filter(i => i.lot_id === lotId && (!editItem || i.id !== editItem.id)).reduce((t,i)=>t+(+i.paddy_envoye_kg||0),0)
+    return Math.round((+lot.qte_paddy_entree - deja) * 1000) / 1000
+  }
+  const ecartPctLigne = it => ecartPctProduction(tableName, it)
+  const nbAlertes = items.filter(it => { const p = ecartPctLigne(it); return p != null && Math.abs(p) > seuilEtape }).length
+  const enregistrerSeuils = async () => {
+    const cid = companyId || companies[0]?.id
+    const uid = (await supabase.auth.getUser()).data?.user?.id
+    const pay = { company_id:cid, user_id:uid, updated_at:new Date().toISOString() }
+    Object.keys(SEUILS_PRODUCTION_DEFAUT).forEach(k => { pay[k] = parseFloat(String(seuilsModal[k]).replace(',','.')) || 0 })
+    const { error } = await supabase.from('compta_seuils_production').upsert(pay, { onConflict:'company_id' })
+    if (error) { toast.error(/compta_seuils_production|schema cache|does not exist/i.test(error.message) ? MSG_SCRIPT_ETUVAGE : error.message); return }
+    setSeuils({ ...SEUILS_PRODUCTION_DEFAUT, ...pay }); setSeuilsModal(null); toast.success("Seuils d'alerte enregistrés.")
+  }
   const companyName = companies.find(c=>c.id===companyId)?.raison_sociale||''
 
   const printFiltered = () => {
@@ -6958,10 +7021,16 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
         actions={<>
           <Btn sm variant="success" onClick={exportExcel}>📊 Excel</Btn>
           <Btn sm variant="danger" onClick={printFiltered}>🖨️ PDF</Btn>
+          {!readOnly && <Btn sm variant="secondary" onClick={()=>setSeuilsModal({...seuils})}>⚙️ Seuils d'alerte</Btn>}
           {!readOnly && <Btn onClick={openAdd}>+ Nouveau</Btn>}
         </>}
       />
       <PeriodFilter dateFrom={dateFrom} dateTo={dateTo} onFrom={setDateFrom} onTo={setDateTo} onReset={()=>{setDateFrom('');setDateTo('')}} />
+      {nbAlertes > 0 && (
+        <div style={{background:'#fef2f2',border:'1px solid #fca5a5',borderRadius:10,padding:'10px 14px',marginBottom:12,fontSize:13,color:'#b91c1c'}}>
+          ⚠️ {nbAlertes} opération(s) avec un écart supérieur au seuil de {seuilEtape} % sur la période affichée.
+        </div>
+      )}
       <div style={{background:'white',borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
         {items.length===0 ? (
           <div style={{textAlign:'center',padding:'48px 24px',color:'#64748b'}}>{title} — Aucun enregistrement</div>
@@ -6970,7 +7039,9 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
             <table style={{width:'100%',borderCollapse:'collapse',minWidth:600}}>
             <thead><tr>
               <TH>Date</TH><TH>N° Lot</TH>
+              {estEtuvage && <TH>Lot produit</TH>}
               {summaryFields.map(f=><TH key={f.name} right={f.type==='number'}>{f.label}</TH>)}
+              <TH right>Écart %</TH>
               <TH>Responsable</TH><TH>Action</TH>
             </tr></thead>
             <tbody>
@@ -6978,11 +7049,15 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
                 <TR key={it.id}>
                   <TD sm>{it.date_etape||it.date_reception}</TD>
                   <TD>{it.compta_lots_production?.numero_lot||it.numero_lot||'—'}</TD>
+                  {estEtuvage && <TD sm>{it.lot_sortant||'—'}</TD>}
                   {summaryFields.map(f=>(
                     <TD key={f.name} right={f.type==='number'}>
                       {f.type==='number'?(+(it[f.name]||0)).toFixed(f.dec||2)+(f.unit?` ${f.unit}`:''):(it[f.name]||'—')}
                     </TD>
                   ))}
+                  <TD right>{(()=>{ const p = ecartPctLigne(it); if (p == null) return '—'
+                    const alerte = Math.abs(p) > seuilEtape
+                    return <span title={alerte?`Au-delà du seuil de ${seuilEtape} %`:''} style={{fontWeight:alerte?800:500,color:alerte?'#dc2626':'#334155'}}>{alerte?'⚠️ ':''}{p.toFixed(2)} %</span> })()}</TD>
                   <TD sm>{it.responsable_section||'—'}</TD>
                   <TD>
                     <div style={{display:'flex',gap:4}}>
@@ -7023,7 +7098,17 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
             <Sel label="Lot de production" name="lot_id" value={form.lot_id||''} onChange={set}
               options={[{value:'',label:localLots.length===0?'— Aucun lot disponible —':'— Choisir un lot —'},...localLots.map(l=>({value:l.id,label:`${l.numero_lot}${l.statut?' ('+l.statut+')':''}`}))]} />
             <Input label="Date" name="date_etape" type="date" value={form.date_etape||''} onChange={set} />
-            {fields.filter(f => !f.calc).map(f=> f.type==='select'
+            {estEtuvage && form.lot_id && resteLot(form.lot_id) != null && (()=>{ const reste = resteLot(form.lot_id); const envoye = parseFloat(form.paddy_envoye_kg)||0
+              return <Span2><div style={{fontSize:12.5,padding:'8px 12px',borderRadius:8,background:envoye>reste+0.001?'#fef2f2':'#f0f9ff',color:envoye>reste+0.001?'#b91c1c':'#0c4a6e'}}>
+                Paddy du lot : <strong>{fmtKg(localLots.find(l=>l.id===form.lot_id)?.qte_paddy_entree)}</strong> — reste à envoyer à l'étuvage : <strong>{fmtKg(reste)}</strong>
+                {envoye>reste+0.001 && ' — le paddy envoyé dépasse ce reste'}</div></Span2> })()}
+            {fields.filter(f => !f.calc).map(f=> f.type==='etuveuse'
+              ? <div key={f.name}>
+                  <Sel label={`${f.label} (répertoire)`} name="etuveuse_id" value={form.etuveuse_id||''} onChange={set}
+                    options={[{value:'',label:etuveuses.length?'— Choisir une étuveuse —':'— Aucune étuveuse au répertoire —'},...etuveuses.map(x=>({value:x.id,label:`${x.code_etuveuse?x.code_etuveuse+' — ':''}${x.nom_etuveuse}${x.zone?' ('+x.zone+')':''}`}))]} />
+                  {!form.etuveuse_id && form.etuveuse_cooperative && <div style={{fontSize:11.5,color:'#b45309',marginTop:-8,marginBottom:8}}>Saisie libre actuelle : « {form.etuveuse_cooperative} » — choisissez l'étuveuse dans le répertoire pour la tracer.</div>}
+                </div>
+              : f.type==='select'
               ? <Sel key={f.name} label={f.label} name={f.name} value={form[f.name]||''} onChange={set} options={f.options||[]} />
               : <Input key={f.name} label={f.label} name={f.name} type={f.type||'text'} value={form[f.name]??''} onChange={set} min={f.type==='number'?'0':undefined} step={f.type==='number'?'0.001':undefined} placeholder={f.placeholder} />
             )}
@@ -7032,8 +7117,36 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
         </form>
       </Modal>
       <ProductionRowPreviewModal open={!!rowPreview} onClose={()=>setRowPreview(null)} it={rowPreview} title={title} fields={fields} companyName={companyName} />
+      <Modal open={!!seuilsModal} onClose={()=>setSeuilsModal(null)} title="Seuils d'alerte d'écart par étape" size="sm">
+        {seuilsModal && <>
+          <div style={{fontSize:12.5,color:'#64748b',marginBottom:12}}>Au-delà de ces pourcentages, l'écart d'une opération est signalé en rouge (même principe que CePEA-PSARIZ).</div>
+          <Grid cols={2} gap={12} style={{marginBottom:16}}>
+            {[['etuvage_pct','Étuvage (perte non justifiée)'],['decorticage_pct','Décorticage'],['calibrage_pct','Calibrage'],['tri_optique_pct','Tri optique'],['conditionnement_pct','Conditionnement']].map(([k,l])=>(
+              <Input key={k} label={`${l} (%)`} name={k} type="number" step="0.1" min="0" value={seuilsModal[k]} onChange={e=>setSeuilsModal(x=>({...x,[k]:e.target.value}))} />
+            ))}
+          </Grid>
+          <Row><Btn variant="secondary" onClick={()=>setSeuilsModal(null)}>Annuler</Btn><Btn onClick={enregistrerSeuils}>Enregistrer</Btn></Row>
+        </>}
+      </Modal>
     </div>
   )
+}
+
+// Seuils d'alerte d'écart par défaut (repris de CePEA-PSARIZ) et écart en %
+// de chaque étape, rapporté à la quantité entrée dans l'étape.
+const SEUILS_PRODUCTION_DEFAUT = { etuvage_pct:5, decorticage_pct:5, calibrage_pct:5, tri_optique_pct:5, conditionnement_pct:0.5 }
+const MSG_SCRIPT_ETUVAGE = "Exécutez d'abord le script supabase/migrations/20261008_etuvage_tracabilite.sql dans Supabase (projet ComptaPro, SQL Editor)."
+const fmtKg = v => `${(+v||0).toLocaleString('fr-FR', { maximumFractionDigits:3 })} kg`
+function ecartPctProduction(tableName, it) {
+  const pct = (ecart, base) => (+base > 0 ? Math.round((+ecart||0) / +base * 10000) / 100 : null)
+  switch (tableName) {
+    case 'compta_etuvage': return it.ecart_pct != null ? +it.ecart_pct : pct((+it.paddy_envoye_kg||0) - (+it.riz_etuve_recu_kg||0) - (+it.dechets_kg||0), it.paddy_envoye_kg)
+    case 'compta_decorticage':
+    case 'compta_calibrage':
+    case 'compta_tri_optique': return pct(it.ecart, it.poids_avant)
+    case 'compta_conditionnement': return pct(it.ecart, it.poids_recu)
+    default: return null
+  }
 }
 
 // ── PRESTATIONS ──────────────────────────────────────────────────────────────
@@ -21014,11 +21127,16 @@ export default function ComptaPro() {
   const STAGES = {
     etuvage: { title:'Étuvage', accent:'#ea580c', fields:[
       {name:'numero_lot',    label:'N° Lot (libre)'},
-      {name:'etuveuse_cooperative', label:'Étuveuse / Coopérative', summary:true},
+      {name:'lot_sortant',   label:'Lot étuvé produit', placeholder:'ETUV-AAAA-NNN'},
+      {name:'etuveuse_cooperative', label:'Étuveuse', type:'etuveuse', summary:true},
+      {name:'cuve',             label:'Cuve / site'},
       {name:'paddy_envoye_kg',  label:'Paddy envoyé (kg)',   type:'number', summary:true, unit:'kg'},
       {name:'riz_etuve_recu_kg',label:'Riz étuvé reçu (kg)', type:'number', summary:true, unit:'kg'},
+      {name:'dechets_kg',       label:'Déchets (kg)',         type:'number', unit:'kg'},
+      {name:'humidite_sortie',  label:'Humidité de sortie (%)', type:'number', dec:1},
       {name:'ecart_kg',         label:'Écart (kg)',           type:'number', unit:'kg', calc:true},
       {name:'taux_rendement',   label:'Rendement (%)',        type:'number', summary:true, dec:1, calc:true},
+      {name:'ecart_pct',        label:'Perte non justifiée (%)', type:'number', dec:2, calc:true},
       {name:'controle_qualite', label:'Contrôle qualité', type:'select', options:[{value:'conforme',label:'Conforme'},{value:'non_conforme',label:'Non conforme'},{value:'a_verifier',label:'À vérifier'}]},
       {name:'observations',     label:'Observations'},
       {name:'responsable_section',label:'Responsable'},
