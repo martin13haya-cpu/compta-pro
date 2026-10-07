@@ -2636,6 +2636,8 @@ const NAV = [
   { id:'rh_historique',      icon:'📜', label:'Historique Paie' },
   { id:'rh_declarations',    icon:'📋', label:'Déclarations CNSS/ITS' },
   { id:'rh_rapport',         icon:'📊', label:'Rapport Cabinet' },
+  { id:'rh_tableau_bord',    icon:'📈', label:'Tableau de bord RH' },
+  { id:'rh_simulateur',      icon:'🧮', label:'Simulateur Brut ↔ Net' },
   { section:'Comptabilité' },
   { id:'journal_caisse',     icon:'🏦', label:'Journal Caisse' },
   { id:'journal_banque',     icon:'🏛️',  label:'Journal Banque' },
@@ -7936,7 +7938,7 @@ const ALL_SECTIONS = [
   ['epierrage','Épierrage'],['etuvage_paiements','Paiements étuvage'],
   ['docs_admin','Documents administratifs'],
   ['rh_employes','Employés'],['rh_fiches_paie','Fiches de Paie'],['rh_historique','Historique Paie'],
-  ['rh_declarations','Déclarations CNSS/ITS'],['rh_rapport','Rapport Cabinet'],
+  ['rh_declarations','Déclarations CNSS/ITS'],['rh_rapport','Rapport Cabinet'],['rh_tableau_bord','Tableau de bord RH'],['rh_simulateur','Simulateur Brut ↔ Net'],
   ['journal_caisse','Journal Caisse'],['journal_banque','Journal Banque'],
   ['journal_mobile','Journal Mobile Money'],['plan_comptable','Plan Comptable'],['grand_livre','Grand-Livre'],['ecritures','Saisie Comptable'],['balance','Balance'],['etats_financiers','États Financiers'],
 ]
@@ -7949,7 +7951,7 @@ const SECTION_GROUPS = [
   {group:'Étuveuses', ids:['etv_repertoire','etv_avances','etv_bc','etv_br','etv_entrees','etv_sorties','etv_inventaire','etv_tresorerie']},
   {group:'Achats', ids:['achats','lots_semi_finis','epierrage','etuvage_paiements']},
   {group:'Documents', ids:['docs_admin']},
-  {group:'RH & Paie', ids:['rh_employes','rh_fiches_paie','rh_historique','rh_declarations','rh_rapport']},
+  {group:'RH & Paie', ids:['rh_employes','rh_fiches_paie','rh_historique','rh_declarations','rh_rapport','rh_tableau_bord','rh_simulateur']},
   {group:'Comptabilité', ids:['journal_caisse','journal_banque','journal_mobile','plan_comptable','grand_livre','ecritures','balance','etats_financiers']},
 ]
 
@@ -16884,6 +16886,7 @@ const Employees = ({companies}) => {
           {label:"Statut",render:r=><RH_Badge label={r.actif?"Actif":"Inactif"} color={r.actif?G.accent:G.red}/>},
           {label:"Actions",render:r=>(
             <div className="rh-btn-group">
+              <RH_Btn small onClick={e=>{e.stopPropagation();imprimerFicheEmploye(r, companies.find(c=>c.id===compId))}} variant="secondary">🖨️ Fiche</RH_Btn>
               <RH_Btn small onClick={e=>{e.stopPropagation();open(r)}} variant="secondary">Modifier</RH_Btn>
               <RH_Btn small onClick={e=>{e.stopPropagation();del(r.id)}} variant="danger">Suppr.</RH_Btn>
             </div>
@@ -19278,6 +19281,259 @@ function RH_ChatPage({ user }) {
 // Les pages RH réutilisent désormais les sociétés de Compta Pro (compta_companies)
 // au lieu de la table "companies" séparée de l'ancienne appli RH-Paie Pro autonome,
 // afin que les paramètres CNSS/VPS/ITS saisis dans "Sociétés" soient bien pris en compte.
+// ─── RH LOT 1 : TABLEAU DE BORD RH, SIMULATEUR BRUT ↔ NET, FICHE EMPLOYÉ ───
+// Repris de Gestion Stock Pro (HyperCiel100). Les calculs utilisent
+// calculatePayroll(), celui des fiches de paie : le simulateur et le
+// tableau de bord donnent donc exactement les montants des bulletins.
+
+const RH_SelectSociete = ({companies, compId, setCompId}) => (
+  <select className="rh-control" value={compId} onChange={e=>setCompId(e.target.value)}
+    style={{background:"#fff",border:`1px solid ${G.border}`,borderRadius:"8px",padding:"8px 12px",color:G.text,fontSize:"13px",fontFamily:"inherit"}}>
+    {companies.map(c=><option key={c.id} value={c.id}>{c.raison_sociale}</option>)}
+  </select>
+);
+
+const ancienneteMois = (dateEmbauche, ref=new Date()) => {
+  if(!dateEmbauche) return null;
+  const d=new Date(dateEmbauche); if(isNaN(d)) return null;
+  return Math.max(0,(ref.getFullYear()-d.getFullYear())*12+(ref.getMonth()-d.getMonth()));
+};
+const libelleAnciennete = m => m==null ? "—" : m<12 ? `${m} mois` : `${Math.floor(m/12)} an${Math.floor(m/12)>1?"s":""}${m%12?` ${m%12} mois`:""}`;
+
+// ── TABLEAU DE BORD RH ──────────────────────────────────────────────────────
+const RH_TableauDeBord = ({companies}) => {
+  const [compId,setCompId]=useState(companies[0]?.id||"");
+  const [emps,setEmps]=useState([]);
+  const [fiches,setFiches]=useState([]);
+  const [loading,setLoading]=useState(true);
+  useEffect(()=>{ if(!compId&&companies.length) setCompId(companies[0].id); },[companies,compId]);
+  useEffect(()=>{
+    if(!compId){ setLoading(false); return; }
+    (async()=>{
+      setLoading(true);
+      const debut=new Date(); debut.setMonth(debut.getMonth()-11);
+      const [{data:e},{data:p}]=await Promise.all([
+        supabaseRH.from("employees").select("*").eq("company_id",compId),
+        supabaseRH.from("payrolls").select("employee_id,mois,annee,salaire_brut,salaire_net,remuneration_due,cnss_ouvriere,cnss_patronale,its,vps,taxe_radio")
+          .eq("company_id",compId).gte("annee",debut.getFullYear()),
+      ]);
+      setEmps(e||[]); setFiches(p||[]); setLoading(false);
+    })();
+  },[compId]);
+
+  // 12 derniers mois, du plus ancien au plus récent
+  const mois12=[]; { const d=new Date(); d.setDate(1); d.setMonth(d.getMonth()-11);
+    for(let i=0;i<12;i++){ mois12.push({mois:d.getMonth()+1,annee:d.getFullYear()}); d.setMonth(d.getMonth()+1); } }
+  const parMois=mois12.map(m=>{
+    const f=fiches.filter(x=>x.mois===m.mois&&x.annee===m.annee);
+    const s=k=>f.reduce((t,x)=>t+(parseFloat(x[k])||0),0);
+    const brut=s("salaire_brut"), patronal=s("cnss_patronale")+s("vps");
+    return {...m,nb:f.length,brut,patronal,cout:brut+patronal,net:s("remuneration_due"),cnss:s("cnss_ouvriere")+s("cnss_patronale"),its:s("its"),vps:s("vps")};
+  });
+  const dernier=[...parMois].reverse().find(m=>m.nb>0)||parMois[parMois.length-1];
+  const actifs=emps.filter(e=>e.actif!==false);
+  const anc=actifs.map(e=>ancienneteMois(e.date_embauche)).filter(x=>x!=null);
+  const ancMoy=anc.length?Math.round(anc.reduce((a,b)=>a+b,0)/anc.length):null;
+  const now=new Date();
+  const ficheCeMois=new Set(fiches.filter(x=>x.mois===now.getMonth()+1&&x.annee===now.getFullYear()).map(x=>x.employee_id));
+  const sansFiche=actifs.filter(e=>!ficheCeMois.has(e.id));
+  const anniversaires=actifs.filter(e=>{ if(!e.date_embauche) return false; const d=new Date(e.date_embauche);
+    return d.getMonth()===now.getMonth()&&d.getFullYear()<now.getFullYear(); });
+  const categories={}; actifs.forEach(e=>{ const c=e.categorie||"Non renseignée"; categories[c]=categories[c]||{nb:0,masse:0}; categories[c].nb++; categories[c].masse+=parseFloat(e.salaire_base)||0; });
+  const max=Math.max(1,...parMois.map(m=>m.cout));
+  const cartes=[
+    {label:"Effectif actif",value:actifs.length,sous:`${emps.length-actifs.length} inactif(s)`,color:G.accent},
+    {label:`Masse salariale brute — ${MOIS[dernier.mois]} ${dernier.annee}`,value:fmt(dernier.brut),sous:`${dernier.nb} fiche(s)`,color:"#6366f1"},
+    {label:"Charges patronales (CNSS + VPS)",value:fmt(dernier.patronal),sous:dernier.brut?`${(dernier.patronal/dernier.brut*100).toFixed(1)} % du brut`:"",color:G.yellow},
+    {label:"Coût total employeur",value:fmt(dernier.cout),sous:`Net versé : ${fmt(dernier.net)}`,color:"#db2777"},
+    {label:"Ancienneté moyenne",value:libelleAnciennete(ancMoy),sous:`Salaire de base moyen : ${fmt(actifs.length?actifs.reduce((t,e)=>t+(parseFloat(e.salaire_base)||0),0)/actifs.length:0)}`,color:"#0d9488"},
+  ];
+  return (
+    <div>
+      <div className="rh-page-header">
+        <h2 style={{fontSize:"22px",fontWeight:700,color:"#1a3a6b"}}>Tableau de bord RH</h2>
+        <div className="rh-inline-actions"><RH_SelectSociete companies={companies} compId={compId} setCompId={setCompId}/></div>
+      </div>
+      {loading ? <RH_Card>Chargement…</RH_Card> : <>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))",gap:12,marginBottom:16}}>
+          {cartes.map(c=>(
+            <RH_Card key={c.label} style={{marginBottom:0}}>
+              <div style={{fontSize:"11.5px",color:G.textDim,fontWeight:600}}>{c.label}</div>
+              <div style={{fontSize:"21px",fontWeight:800,color:c.color,margin:"6px 0 2px"}}>{c.value}</div>
+              <div style={{fontSize:"11.5px",color:G.textDim}}>{c.sous}</div>
+            </RH_Card>
+          ))}
+        </div>
+        <RH_Card>
+          <div style={{fontWeight:700,color:G.text,marginBottom:10}}>Coût employeur des 12 derniers mois</div>
+          <div style={{display:"flex",alignItems:"flex-end",gap:6,height:170,padding:"0 4px",borderBottom:`1px solid ${G.border}`}}>
+            {parMois.map(m=>(
+              <div key={`${m.annee}-${m.mois}`} title={`${MOIS[m.mois]} ${m.annee} — brut ${fmt(m.brut)}, charges ${fmt(m.patronal)}`}
+                style={{flex:1,display:"flex",flexDirection:"column",justifyContent:"flex-end",height:"100%"}}>
+                <div style={{height:`${m.patronal/max*100}%`,background:"#f59e0b",borderRadius:"3px 3px 0 0"}}/>
+                <div style={{height:`${m.brut/max*100}%`,background:G.accent}}/>
+              </div>
+            ))}
+          </div>
+          <div style={{display:"flex",gap:6,padding:"4px 4px 0"}}>
+            {parMois.map(m=><div key={`l${m.annee}-${m.mois}`} style={{flex:1,textAlign:"center",fontSize:"10.5px",color:G.textDim}}>{MOIS[m.mois].slice(0,3)}</div>)}
+          </div>
+          <div style={{display:"flex",gap:16,fontSize:"12px",color:G.textDim,marginTop:8}}>
+            <span><span style={{display:"inline-block",width:10,height:10,background:G.accent,marginRight:5}}/>Salaire brut</span>
+            <span><span style={{display:"inline-block",width:10,height:10,background:"#f59e0b",marginRight:5}}/>Charges patronales</span>
+          </div>
+          <div style={{overflowX:"auto",marginTop:12}}>
+            <table style={{width:"100%",borderCollapse:"collapse",fontSize:"12.5px"}}>
+              <thead><tr style={{background:G.input}}>
+                {["Mois","Fiches","Brut","CNSS (sal.+pat.)","ITS","VPS","Net versé","Coût employeur"].map((h,i)=><th key={h} style={{padding:"7px 8px",textAlign:i<1?"left":"right",color:G.text}}>{h}</th>)}
+              </tr></thead>
+              <tbody>{[...parMois].reverse().filter(m=>m.nb>0).map(m=>(
+                <tr key={`t${m.annee}-${m.mois}`} style={{borderTop:`1px solid ${G.border}`}}>
+                  <td style={{padding:"6px 8px"}}>{MOIS[m.mois]} {m.annee}</td>
+                  {[m.nb,fmtN(m.brut),fmtN(m.cnss),fmtN(m.its),fmtN(m.vps),fmtN(m.net),fmtN(m.cout)].map((v,i)=><td key={i} style={{padding:"6px 8px",textAlign:"right"}}>{v}</td>)}
+                </tr>
+              ))}</tbody>
+            </table>
+            {parMois.every(m=>!m.nb) && <div style={{color:G.textDim,fontSize:"13px",padding:10}}>Aucune fiche de paie sur les 12 derniers mois.</div>}
+          </div>
+        </RH_Card>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(300px,1fr))",gap:12}}>
+          <RH_Card>
+            <div style={{fontWeight:700,color:G.text,marginBottom:8}}>Répartition par catégorie</div>
+            {Object.entries(categories).sort((a,b)=>b[1].nb-a[1].nb).map(([c,v])=>(
+              <div key={c} style={{display:"flex",justifyContent:"space-between",fontSize:"13px",padding:"5px 0",borderBottom:`1px solid ${G.border}`}}>
+                <span>{c}</span><span style={{color:G.textDim}}>{v.nb} employé(s) — {fmt(v.masse)}</span>
+              </div>
+            ))}
+            {!actifs.length && <div style={{color:G.textDim,fontSize:"13px"}}>Aucun employé actif.</div>}
+          </RH_Card>
+          <RH_Card>
+            <div style={{fontWeight:700,color:G.text,marginBottom:8}}>À surveiller — {MOIS[now.getMonth()+1]} {now.getFullYear()}</div>
+            <div style={{fontSize:"13px",marginBottom:6,color:sansFiche.length?G.red:"#16a34a",fontWeight:600}}>
+              {sansFiche.length ? `${sansFiche.length} employé(s) actif(s) sans fiche de paie ce mois :` : "✔ Tous les employés actifs ont leur fiche du mois."}
+            </div>
+            {sansFiche.slice(0,8).map(e=><div key={e.id} style={{fontSize:"12.5px",color:G.textDim}}>• {e.nom} {e.prenoms}</div>)}
+            {sansFiche.length>8 && <div style={{fontSize:"12px",color:G.textDim}}>… et {sansFiche.length-8} autre(s)</div>}
+            {anniversaires.length>0 && <>
+              <div style={{fontSize:"13px",fontWeight:600,margin:"10px 0 4px",color:G.text}}>Anniversaires d'embauche ce mois :</div>
+              {anniversaires.map(e=><div key={e.id} style={{fontSize:"12.5px",color:G.textDim}}>• {e.nom} {e.prenoms} — {libelleAnciennete(ancienneteMois(e.date_embauche))}</div>)}
+            </>}
+          </RH_Card>
+        </div>
+      </>}
+    </div>
+  );
+};
+
+// ── SIMULATEUR BRUT ↔ NET ───────────────────────────────────────────────────
+// Brut → net : calcul direct. Net → brut : recherche du salaire de base qui
+// donne le net demandé (le calcul n'est pas inversible à la main, à cause
+// des tranches d'ITS arrondies au millier et de la taxe radio).
+const RH_SimulateurBrutNet = () => {
+  const [sens,setSens]=useState("net");
+  const [montant,setMontant]=useState("");
+  const [primes,setPrimes]=useState("");
+  const [mois,setMois]=useState(String(new Date().getMonth()+1));
+  const [taux,setTaux]=useState("0.194");
+  const [premierEmploi,setPremierEmploi]=useState(false);
+  const base={mois,annee:CURRENT_YEAR,primes:parseFloat(primes)||0,taux_cnss_patronale:parseFloat(taux),
+    premier_emploi:premierEmploi,date_embauche:premierEmploi?new Date().toISOString().slice(0,10):null};
+  const calc=b=>calculatePayroll({...base,salaire_base:b});
+  const cible=parseFloat(String(montant).replace(/\s/g,"").replace(",","."))||0;
+  let resultat=null;
+  if(cible>0){
+    if(sens==="brut") resultat=calc(Math.max(0,cible-(parseFloat(primes)||0)));
+    else {
+      let lo=0, hi=cible*3+200000;
+      for(let i=0;i<60;i++){ const mid=(lo+hi)/2; if(calc(mid).salaire_net<cible) lo=mid; else hi=mid; }
+      let b=Math.ceil(hi); while(b>0&&calc(b-1).salaire_net>=cible) b--;
+      resultat={...calc(b),salaire_base_trouve:b};
+    }
+  }
+  const lignes=resultat?[
+    ["Salaire de base",resultat.salaire_base_trouve ?? Math.max(0,cible-(parseFloat(primes)||0)),"#1a3a6b"],
+    ["Primes et indemnités",parseFloat(primes)||0],
+    ["Salaire brut",resultat.salaire_brut,G.accent,true],
+    ["CNSS salariale (3,6 %)",-resultat.cnss_ouvriere],
+    ["ITS",-resultat.its],
+    ["Taxe radio",-resultat.taxe_radio],
+    ["Salaire net",resultat.salaire_net,"#16a34a",true],
+    null,
+    [`CNSS patronale (${(parseFloat(taux)*100).toFixed(1)} %)`,resultat.cnss_patronale],
+    [`VPS (4 %)${resultat.vps_exonere?" — exonéré":""}`,resultat.vps],
+    ["Coût total employeur",resultat.salaire_brut+resultat.cnss_patronale+resultat.vps,"#db2777",true],
+  ]:[];
+  return (
+    <div>
+      <div className="rh-page-header"><h2 style={{fontSize:"22px",fontWeight:700,color:"#1a3a6b"}}>Simulateur Brut ↔ Net</h2></div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(320px,1fr))",gap:16,alignItems:"start"}}>
+        <RH_Card>
+          <div style={{display:"flex",gap:6,marginBottom:14}}>
+            {[["net","Je connais le net → brut"],["brut","Je connais le brut → net"]].map(([v,l])=>(
+              <button key={v} type="button" onClick={()=>setSens(v)} style={{flex:1,padding:"9px",borderRadius:8,cursor:"pointer",fontSize:"13px",fontWeight:600,
+                border:`1px solid ${sens===v?G.accent:G.border}`,background:sens===v?G.accent:"#fff",color:sens===v?"#fff":G.text}}>{l}</button>
+            ))}
+          </div>
+          <RH_Input label={sens==="net"?"Salaire net souhaité (FCFA)":"Salaire brut (FCFA)"} value={montant} onChange={setMontant} type="number"/>
+          <RH_Input label="Primes et indemnités imposables (FCFA)" value={primes} onChange={setPrimes} type="number"/>
+          <Select label="Mois de paie (taxe radio en mars et juin)" value={mois} onChange={setMois}
+            options={MOIS.slice(1).map((m,i)=>({value:String(i+1),label:m}))}/>
+          <Select label="Taux CNSS patronale (risque professionnel)" value={taux} onChange={setTaux}
+            options={[["0.164","Catégorie 1 — 16,4 %"],["0.174","Catégorie 2 — 17,4 %"],["0.184","Catégorie 3 — 18,4 %"],["0.194","Catégorie 4 — 19,4 %"]].map(([value,label])=>({value,label}))}/>
+          <label style={{display:"flex",alignItems:"center",gap:8,fontSize:"13px",color:G.textDim,cursor:"pointer",marginTop:6}}>
+            <input type="checkbox" checked={premierEmploi} onChange={e=>setPremierEmploi(e.target.checked)}/> Premier emploi (VPS exonéré pendant 24 mois)
+          </label>
+        </RH_Card>
+        <RH_Card>
+          {!resultat ? <div style={{color:G.textDim,fontSize:"13px"}}>Saisissez un montant pour voir le détail.</div> : (
+            <div>
+              {sens==="net" && <div style={{background:G.input,borderRadius:8,padding:"10px 12px",marginBottom:12,fontSize:"13px"}}>
+                Pour un net de <strong>{fmt(cible)}</strong>, le salaire de base à porter sur la fiche est <strong style={{color:G.accent,fontSize:"15px"}}>{fmt(resultat.salaire_base_trouve)}</strong>.
+              </div>}
+              {lignes.map((l,i)=> l===null ? <div key={i} style={{height:10}}/> : (
+                <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"6px 2px",borderBottom:`1px solid ${G.border}`,
+                  fontWeight:l[3]?800:500,color:l[2]||G.text,fontSize:l[3]?"14.5px":"13px"}}>
+                  <span>{l[0]}</span><span>{l[1]<0?`− ${fmt(-l[1])}`:fmt(l[1])}</span>
+                </div>
+              ))}
+              <div style={{fontSize:"11.5px",color:G.textDim,marginTop:10}}>Même calcul que les fiches de paie : CNSS 3,6 %, ITS par tranches (base arrondie au millier), taxe radio, VPS 4 %.</div>
+            </div>
+          )}
+        </RH_Card>
+      </div>
+    </div>
+  );
+};
+
+// ── FICHE EMPLOYÉ IMPRIMABLE ────────────────────────────────────────────────
+// Identification, situation et les 12 dernières fiches de paie, au gabarit
+// commun des documents (même design que Gestion Stock Pro).
+async function imprimerFicheEmploye(emp, comp) {
+  const {data:p}=await supabaseRH.from("payrolls").select("mois,annee,salaire_brut,cnss_ouvriere,its,salaire_net,remuneration_due")
+    .eq("employee_id",emp.id).order("annee",{ascending:false}).order("mois",{ascending:false}).limit(12);
+  const fiches=p||[];
+  const cell=(l,v)=>`<tr><th style="width:38%">${l}</th><td>${echapHtml(v||"—")}</td></tr>`;
+  const ident=`<div class="bloc"><table class="grille">
+    ${cell("Matricule",emp.matricule)}${cell("Nom et prénoms",`${emp.nom||""} ${emp.prenoms||""}`)}
+    ${cell("Emploi",emp.emploi)}${cell("Catégorie",emp.categorie)}
+    ${cell("Date d'embauche",dateDoc(emp.date_embauche))}${cell("Ancienneté",libelleAnciennete(ancienneteMois(emp.date_embauche)))}
+    ${cell("Salaire de base",fcfaDoc(emp.salaire_base))}${cell("Situation matrimoniale",`${emp.situation_matrimoniale||""} — ${emp.nb_enfants||0} enfant(s)`)}
+    ${cell("Nationalité",emp.nationalite)}${cell("N° CNSS",emp.cnss)}${cell("N° IFU",emp.ifu)}
+    ${cell("Contacts",[emp.whatsApp,emp.email].filter(Boolean).join(" — "))}
+    ${cell("Statut",`${emp.actif===false?"Inactif":"Actif"}${emp.premier_emploi?" — premier emploi":""}`)}
+  </table></div><div class="lib" style="margin-top:14px">Dernières fiches de paie</div>`;
+  const html=gabaritDocumentHtml({
+    comp, titre:"FICHE DU SALARIÉ", numero:emp.matricule||"", date:new Date().toLocaleDateString("fr-FR"),
+    tiersLabel:"Salarié", tiers:{nom:`${emp.nom||""} ${emp.prenoms||""}`, adresse:emp.emploi, telephone:emp.whatsApp},
+    avantTableau:ident,
+    colonnes:[{label:"Période"},{label:"Brut",align:"d"},{label:"CNSS",align:"d"},{label:"ITS",align:"d"},{label:"Net",align:"d"},{label:"Net à payer",align:"d"}],
+    lignes:fiches.map(f=>[`${MOIS[f.mois]} ${f.annee}`,fmtN(f.salaire_brut),fmtN(f.cnss_ouvriere),fmtN(f.its),fmtN(f.salaire_net),`<strong>${fmtN(f.remuneration_due)}</strong>`]),
+    totaux: fiches.length ? [["Fiches",String(fiches.length)],["Brut cumulé",fcfaDoc(fiches.reduce((t,f)=>t+(+f.salaire_brut||0),0))],["Net versé cumulé",fcfaDoc(fiches.reduce((t,f)=>t+(+f.remuneration_due||0),0)),true]] : [],
+    signatures:["Le salarié","L'employeur"],
+  });
+  openPrintWindow(html, `fiche_salarie_${emp.matricule||emp.nom||"employe"}`);
+}
+
 function RH_EmployeesWrapper({ companies }) {
   return <><RH_ToastContainer /><Employees companies={companies} /></>
 }
@@ -19292,6 +19548,14 @@ function RH_HistoriqueWrapper({ companies }) {
 
 function RH_DeclarationsWrapper({ user, companies }) {
   return <><RH_ToastContainer /><Declarations companies={companies} user={user} /></>
+}
+
+function RH_TableauDeBordWrapper({ companies }) {
+  return <><RH_ToastContainer /><RH_TableauDeBord companies={companies} /></>
+}
+
+function RH_SimulateurWrapper() {
+  return <><RH_ToastContainer /><RH_SimulateurBrutNet /></>
 }
 
 function RH_RapportWrapper({ companies }) {
@@ -19657,7 +19921,7 @@ export default function ComptaPro() {
     prestations:'Prestations', journal_caisse:'Journal Caisse', journal_banque:'Journal Banque',
     suivi_lot:'Suivi de Lot', journal_mobile:'Journal Mobile Money', plan_comptable:'Plan Comptable', grand_livre:'Grand-Livre', ecritures:'Saisie Comptable', balance:'Balance', etats_financiers:'États Financiers',
     rh_employes:'RH — Employés', rh_fiches_paie:'RH — Fiches de Paie', rh_historique:'RH — Historique Paie',
-    rh_declarations:'RH — Déclarations CNSS/ITS', rh_rapport:'RH — Rapport Cabinet',
+    rh_declarations:'RH — Déclarations CNSS/ITS', rh_rapport:'RH — Rapport Cabinet', rh_tableau_bord:'RH — Tableau de bord', rh_simulateur:'RH — Simulateur Brut ↔ Net',
   }
 
   const renderPage = () => {
@@ -19735,6 +19999,8 @@ export default function ComptaPro() {
       case 'rh_historique':   return <RH_HistoriqueWrapper user={user} companies={companies} />
       case 'rh_declarations': return <RH_DeclarationsWrapper user={user} companies={companies} />
       case 'rh_rapport':      return <RH_RapportWrapper user={user} companies={companies} />
+      case 'rh_tableau_bord': return <RH_TableauDeBordWrapper companies={companies} />
+      case 'rh_simulateur':   return <RH_SimulateurWrapper />
     }
   }
 
