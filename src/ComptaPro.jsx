@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js'
 import { useState, useEffect, useCallback, useRef, Fragment, useMemo } from 'react'
+import QRCode from 'qrcode'
 
 // ── CONFIG ─────────────────────────────────────────────────────────────────
 const SUPABASE_URL       ='https://proehigsikgqdrxjltmq.supabase.co'
@@ -2608,6 +2609,7 @@ const NAV = [
   { id:'prestations',        icon:'🛠️',  label:'Prestations' },
   { section:'Production' },
   { id:'suivi_lot',          icon:'🔎', label:'Suivi de lot' },
+  { id:'tracabilite',        icon:'🔗', label:'Traçabilité (QR)' },
   { id:'lots',               icon:'🏭', label:'Lots Production' },
   { id:'etuvage',            icon:'🔥', label:'Étuvage' },
   { id:'decorticage',        icon:'⚙️',  label:'Décorticage' },
@@ -8050,7 +8052,7 @@ const ALL_SECTIONS = [
   ['dashboard','Tableau de bord'],['companies','Sociétés'],['clients','Clients'],
   ['fournisseurs','Fournisseurs'],['stock','Articles & Stock'],['mouvements','Mouvements'],['bons_stock',"Bons d'entrée / sortie"],
   ['inventaire','Inventaire'],['commercial','Documents commerciaux'],['reglements_clients','Règlements Clients'],['reglements_fourn','Règlements Fournisseurs'],
-  ['prestations','Prestations'],['suivi_lot','Suivi de lot'],['lots','Lots Production'],
+  ['prestations','Prestations'],['suivi_lot','Suivi de lot'],['tracabilite','Traçabilité (QR)'],['lots','Lots Production'],
   ['etuvage','Étuvage'],['decorticage','Décorticage'],['calibrage','Calibrage'],
   ['tri_optique','Tri optique'],['conditionnement','Conditionnement'],
   ['etv_repertoire','Répertoire Étuveuses'],['etv_envois','Envois aux étuveuses'],['etv_performance','Performance des étuveuses'],['etv_avances','Avances'],
@@ -8069,7 +8071,7 @@ const SECTION_GROUPS = [
   {group:'Référentiel', ids:['companies','clients','fournisseurs']},
   {group:'Stock', ids:['stock','mouvements','bons_stock','inventaire']},
   {group:'Commercial', ids:['commercial','reglements_clients','reglements_fourn','prestations']},
-  {group:'Production', ids:['suivi_lot','lots','etuvage','decorticage','calibrage','tri_optique','conditionnement']},
+  {group:'Production', ids:['suivi_lot','tracabilite','lots','etuvage','decorticage','calibrage','tri_optique','conditionnement']},
   {group:'Étuveuses', ids:['etv_repertoire','etv_envois','etv_performance','etv_avances','etv_bc','etv_br','etv_entrees','etv_sorties','etv_inventaire','etv_tresorerie']},
   {group:'Achats', ids:['achats','lots_semi_finis','epierrage','etuvage_paiements']},
   {group:'Documents', ids:['docs_admin']},
@@ -15954,6 +15956,237 @@ const SUIVI_STAGES = [
     kpis:[ {f:'poids_recu',l:'Poids reçu',u:'kg'}, {f:'nb_sac_25kg',l:'Sacs 25 kg',u:''}, {f:'nb_sac_50kg',l:'Sacs 50 kg',u:''}, {f:'poids_total_conditionne',l:'Total conditionné',u:'kg'} ] },
 ]
 
+// ── TRAÇABILITÉ COMPLÈTE DES LOTS (lot 4) ───────────────────────────────────
+// Repris et étendu de CePEA-PSARIZ : pour un lot de production, la chaîne
+// producteurs → envois aux étuveuses → cycles d'étuvage → décorticage →
+// calibrage → tri optique → conditionnement → clients. Recherche dans les
+// deux sens (depuis un producteur ou depuis un client). La fiche et les
+// étiquettes portent un code QR qui contient le résumé de traçabilité en
+// clair : il se lit avec n'importe quel téléphone, sans internet.
+const MSG_SCRIPT_TRACA = "Exécutez d'abord le script supabase/migrations/20261008_tracabilite_lots.sql dans Supabase (projet ComptaPro, SQL Editor)."
+const estErreurTraca = e => /compta_lot_origines|compta_lot_destinations|schema cache|does not exist/i.test(e?.message||'')
+const nomTiersTraca = t => !t ? '' : t.type === 'morale' ? (t.nom_societe||'') : [t.nom, t.prenom].filter(Boolean).join(' ')
+const ETAPES_TRACA = [
+  ['compta_decorticage','⚙️','Décorticage','poids_avant','poids_apres'],
+  ['compta_calibrage','📐','Calibrage','poids_avant','poids_long_grain'],
+  ['compta_tri_optique','🔍','Tri optique','poids_avant','poids_apres_tri'],
+  ['compta_conditionnement','🎁','Conditionnement','poids_recu','poids_total_conditionne'],
+]
+const codeTraca = lot => `TRC-${String(lot?.numero_lot||lot?.id||'').replace(/\s+/g,'')}`
+
+function TracabilitePage({ companies, companyId, toast, readOnly=false }) {
+  const [d, setD] = useState(null)
+  const [recherche, setRecherche] = useState('')
+  const [lotId, setLotId] = useState('')
+  const [origine, setOrigine] = useState(null)
+  const [destination, setDestination] = useState(null)
+  const company = companies.find(c => c.id === companyId)
+
+  const charger = useCallback(async () => {
+    if (!companyId) { setD({ vide:true }); return }
+    const q = t => supabase.from(t).select('*').eq('company_id', companyId)
+    const tables = ['compta_lots_production','compta_lot_origines','compta_lot_destinations','compta_fournisseurs','compta_clients','compta_envois_etuveuses','compta_retours_etuveuses','compta_etuveuses','compta_etuvage', ...ETAPES_TRACA.map(e=>e[0])]
+    const res = await Promise.all(tables.map(t => q(t)))
+    const o = {}; tables.forEach((t,i) => { o[t] = res[i].data || [] })
+    o.erreur = estErreurTraca(res[1].error) || estErreurTraca(res[2].error)
+    setD(o)
+  }, [companyId])
+  useEffect(() => { charger() }, [charger])
+
+  if (!d) return <Card>Chargement…</Card>
+  if (d.vide) return <Card>Sélectionnez une société en haut de l'écran.</Card>
+  const lots = d.compta_lots_production
+  const lot = lots.find(l => String(l.id) === String(lotId))
+  const deLot = (t) => d[t].filter(x => String(x.lot_id) === String(lotId))
+  const frsDe = id => d.compta_fournisseurs.find(x => String(x.id) === String(id))
+  const cliDe = id => d.compta_clients.find(x => String(x.id) === String(id))
+  const etvDe = id => d.compta_etuveuses.find(x => String(x.id) === String(id)) || {}
+
+  // Recherche : n° de lot, lot ETUV, n° d'envoi, producteur, client.
+  const t = recherche.trim().toLowerCase()
+  const correspond = l => {
+    if (!t) return true
+    const lid = String(l.id)
+    const textes = [l.numero_lot,
+      ...d.compta_etuvage.filter(x=>String(x.lot_id)===lid).map(x=>x.lot_sortant),
+      ...d.compta_envois_etuveuses.filter(x=>String(x.lot_id)===lid).map(x=>x.numero),
+      ...d.compta_lot_origines.filter(x=>String(x.lot_id)===lid).flatMap(x=>[x.producteur_nom, nomTiersTraca(frsDe(x.fournisseur_id)), x.reference]),
+      ...d.compta_lot_destinations.filter(x=>String(x.lot_id)===lid).flatMap(x=>[x.client_nom, nomTiersTraca(cliDe(x.client_id)), x.document])]
+    return textes.filter(Boolean).some(x => String(x).toLowerCase().includes(t))
+  }
+  const resultats = lots.filter(correspond)
+
+  // ── Chaîne du lot sélectionné ──
+  const origines = lot ? deLot('compta_lot_origines') : []
+  const envois = lot ? deLot('compta_envois_etuveuses').filter(e=>!e.annule) : []
+  const cycles = lot ? deLot('compta_etuvage') : []
+  const etapes = lot ? ETAPES_TRACA.map(([table, icone, titre, avant, apres]) => ({ table, icone, titre, avant, apres, lignes:deLot(table) })) : []
+  const destinations = lot ? deLot('compta_lot_destinations') : []
+  const somme = (arr, k) => arr.reduce((s,x)=>s+(+x[k]||0),0)
+  const paddyOrigine = somme(origines,'quantite_kg')
+  const etuveRecu = somme(cycles,'riz_etuve_recu_kg')
+  const conditionne = somme(etapes[3]?.lignes||[],'poids_total_conditionne')
+  const livre = somme(destinations,'quantite_kg')
+  const etuveusesLot = [...new Set([...envois.map(e=>etvDe(e.etuveuse_id).nom_etuveuse), ...cycles.map(c=>etvDe(c.etuveuse_id).nom_etuveuse||c.etuveuse_cooperative)].filter(Boolean))]
+  const producteursLot = [...new Set(origines.map(o => nomTiersTraca(frsDe(o.fournisseur_id)) || o.producteur_nom).filter(Boolean))]
+
+  const texteQR = () => {
+    const villages = [...new Set(origines.map(o => frsDe(o.fournisseur_id)?.village).filter(Boolean))]
+    const dates = c => c.map(x=>x.date_etape).filter(Boolean).sort()
+    const dc = dates(etapes[3]?.lignes||[])
+    return [`${company?.raison_sociale||''} — TRAÇABILITÉ`, `Lot ${lot.numero_lot} (${codeTraca(lot)})`,
+      `Paddy : ${fmtKg(paddyOrigine || lot.qte_paddy_entree)}, ${producteursLot.length} producteur(s)${villages.length?` — ${villages.slice(0,4).join(', ')}`:''}`,
+      etuveusesLot.length ? `Étuvage : ${etuveusesLot.slice(0,4).join(', ')}${cycles.length?` — ${cycles.map(c=>c.lot_sortant).filter(Boolean).slice(0,3).join(', ')}`:''}` : '',
+      dc.length ? `Conditionné le ${dateDoc(dc[dc.length-1])} — ${fmtKg(conditionne)}` : '',
+      `Contrôle : ${cycles.some(c=>c.controle_qualite==='non_conforme')?'non-conformité signalée':'aucune non-conformité'}`].filter(Boolean).join('\n')
+  }
+
+  const enregistrerOrigine = async e => {
+    e.preventDefault()
+    const q = parseFloat(String(origine.quantite_kg).replace(',','.'))||0
+    if (!origine.fournisseur_id && !origine.producteur_nom.trim()) return toast.error('Choisissez le producteur.')
+    if (!(q>0)) return toast.error('Saisissez la quantité de paddy.')
+    const uid = (await supabase.auth.getUser()).data?.user?.id
+    const f = frsDe(origine.fournisseur_id)
+    const { error } = await supabase.from('compta_lot_origines').insert({ company_id:companyId, user_id:uid, lot_id:lotId, fournisseur_id:origine.fournisseur_id||null,
+      producteur_nom:f?nomTiersTraca(f):origine.producteur_nom.trim(), quantite_kg:q, date_reception:origine.date_reception, reference:origine.reference||null, variete:origine.variete||null, observations:origine.observations||null })
+    if (error) return toast.error(estErreurTraca(error)?MSG_SCRIPT_TRACA:error.message)
+    toast.success('Origine enregistrée.'); setOrigine(null); charger()
+  }
+  const enregistrerDestination = async e => {
+    e.preventDefault()
+    const q = parseFloat(String(destination.quantite_kg).replace(',','.'))||0
+    if (!destination.client_id && !destination.client_nom.trim()) return toast.error('Choisissez le client.')
+    if (!(q>0)) return toast.error('Saisissez la quantité livrée.')
+    const uid = (await supabase.auth.getUser()).data?.user?.id
+    const c = cliDe(destination.client_id)
+    const { error } = await supabase.from('compta_lot_destinations').insert({ company_id:companyId, user_id:uid, lot_id:lotId, client_id:destination.client_id||null,
+      client_nom:c?nomTiersTraca(c):destination.client_nom.trim(), document:destination.document||null, date_livraison:destination.date_livraison, quantite_kg:q,
+      nb_sacs:parseInt(destination.nb_sacs)||null, produit:destination.produit||null, observations:destination.observations||null })
+    if (error) return toast.error(estErreurTraca(error)?MSG_SCRIPT_TRACA:error.message)
+    toast.success('Livraison enregistrée.'); setDestination(null); charger()
+  }
+  const supprimerLien = async (table, x) => { if (!confirm('Supprimer cette ligne de traçabilité ?')) return; await supabase.from(table).delete().eq('id', x.id); charger() }
+
+  const imprimerFiche = async () => {
+    const qr = await QRCode.toDataURL(texteQR(), { width:220, margin:1, errorCorrectionLevel:'M' })
+    const grille = (titres, lignes) => `<table class="grille"><tr>${titres.map(h=>`<th>${h}</th>`).join('')}</tr>${lignes.length?lignes.map(l=>`<tr>${l.map(v=>`<td>${v}</td>`).join('')}</tr>`).join(''):`<tr><td colspan="${titres.length}" style="color:#94a3b8">—</td></tr>`}</table>`
+    const bloc = (titre, contenu) => `<div class="bloc"><div class="lib">${titre}</div>${contenu}</div>`
+    const html = gabaritDocumentHtml({ comp:company, titre:'FICHE DE TRAÇABILITÉ', numero:codeTraca(lot), date:new Date().toLocaleDateString('fr-FR'),
+      infos:[['Lot', lot.numero_lot], ['Début', dateDoc(lot.date_debut)], ['Statut', lot.statut||'']],
+      tiersLabel:'Lot de production', tiers:{ nom:lot.numero_lot, adresse:`Paddy entré : ${fmtKg(lot.qte_paddy_entree)}` },
+      avantTableau:`<div class="bloc" style="display:flex;gap:16px;align-items:center"><img src="${qr}" style="width:120px;height:120px"><div style="font-size:9pt;color:#475569;white-space:pre-line">${echapHtml(texteQR())}</div></div>`
+        + bloc('1. Origine du paddy — producteurs', grille(['Producteur','Village / coopérative','Quantité','Reçu le','Référence','Variété'], origines.map(o=>{ const f=frsDe(o.fournisseur_id); return [echapHtml(nomTiersTraca(f)||o.producteur_nom||''), echapHtml([f?.village,f?.cooperative_affiliee].filter(Boolean).join(' — ')), fmtKg(o.quantite_kg), dateDoc(o.date_reception), echapHtml(o.reference||''), echapHtml(o.variete||'')] })))
+        + bloc('2. Envois aux étuveuses', grille(['Envoi','Étuveuse','Date','Envoyé','Soldé','Riz reçu','Statut'], envois.map(e=>{ const s=situationEnvoi(e, d.compta_retours_etuveuses); return [e.numero, echapHtml(etvDe(e.etuveuse_id).nom_etuveuse||''), dateDoc(e.date_envoi), fmtKg(e.quantite_envoyee_kg), fmtKg(s.traite), fmtKg(s.recu), STATUTS_ENVOI[s.statut][0]] })))
+        + bloc('3. Étuvage', grille(['Lot produit','Étuveuse','Date','Paddy','Riz reçu','Rendement','Perte','Qualité'], cycles.map(c=>[echapHtml(c.lot_sortant||''), echapHtml(etvDe(c.etuveuse_id).nom_etuveuse||c.etuveuse_cooperative||''), dateDoc(c.date_etape), fmtKg(c.paddy_envoye_kg), fmtKg(c.riz_etuve_recu_kg), `${(+c.taux_rendement||0).toFixed(1)} %`, `${c.alerte?'⚠ ':''}${(ecartPctProduction('compta_etuvage',c)??0).toFixed(2)} %`, ({conforme:'Conforme',non_conforme:'Non conforme',a_verifier:'À vérifier'})[c.controle_qualite]||''])))
+        + etapes.map((e,i)=>bloc(`${4+i}. ${e.titre}`, grille(['Date','Entrée','Sortie','Écart %','Responsable'], e.lignes.map(x=>[dateDoc(x.date_etape), fmtKg(x[e.avant]), fmtKg(x[e.apres]), `${(ecartPctProduction(e.table,x)??0).toFixed(2)} %`, echapHtml(x.responsable_section||'')])))).join('')
+        + bloc('8. Destinations — clients', grille(['Client','Document','Date','Quantité','Sacs','Produit'], destinations.map(x=>[echapHtml(nomTiersTraca(cliDe(x.client_id))||x.client_nom||''), echapHtml(x.document||''), dateDoc(x.date_livraison), fmtKg(x.quantite_kg), x.nb_sacs||'', echapHtml(x.produit||'')]))),
+      colonnes:[{label:'Bilan matière'},{label:'Quantité',align:'d',largeur:'30%'}],
+      lignes:[['Paddy reçu des producteurs', fmtKg(paddyOrigine)], ['Riz étuvé reçu des étuveuses', fmtKg(etuveRecu)], ['Riz conditionné', fmtKg(conditionne)], ['Livré aux clients', fmtKg(livre)]],
+      totaux:[['Rendement global (conditionné / paddy)', paddyOrigine>0?`${(conditionne/paddyOrigine*100).toFixed(1)} %`:'—'], ['Reste à livrer', fmtKg(Math.max(0, conditionne-livre)), true]],
+      signatures:['Le responsable qualité','La direction'] })
+    openPrintWindow(html, `tracabilite_${lot.numero_lot}`)
+  }
+  const imprimerEtiquettes = async () => {
+    const n = parseInt(prompt('Nombre d\'étiquettes à imprimer (planche A4 de 21 étiquettes) :', '21'))
+    if (!(n > 0)) return
+    const qr = await QRCode.toDataURL(texteQR(), { width:200, margin:1, errorCorrectionLevel:'M' })
+    const dc = (etapes[3]?.lignes||[]).map(x=>x.date_etape).filter(Boolean).sort().pop()
+    const produit = (etapes[3]?.lignes||[]).map(x=>x.nom_produit).filter(Boolean)[0] || 'Riz étuvé'
+    const etiquette = `<div class="et"><img src="${qr}"><div><div class="s">${echapHtml(company?.raison_sociale||'')}</div><div class="p">${echapHtml(produit)}</div><div>Lot <b>${echapHtml(lot.numero_lot)}</b></div><div>${codeTraca(lot)}</div>${dc?`<div>Conditionné le ${dateDoc(dc)}</div>`:''}</div></div>`
+    openPrintWindow(`<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><title>Étiquettes ${lot.numero_lot}</title><style>
+      @page{size:A4;margin:8mm}*{box-sizing:border-box;margin:0;padding:0}body{font-family:Tahoma,Arial,sans-serif}
+      .planche{display:grid;grid-template-columns:repeat(3,1fr);gap:3mm}
+      .et{border:1px dashed #94a3b8;height:38mm;padding:2mm;display:flex;gap:2mm;align-items:center;font-size:7.5pt;color:#1e293b;page-break-inside:avoid}
+      .et img{width:30mm;height:30mm}.s{font-weight:700;color:#1d4ed8;font-size:8pt;text-transform:uppercase}.p{font-weight:700;font-size:8.5pt;margin:1mm 0}
+      .print-btn{position:fixed;top:12px;right:12px;background:#2563eb;color:#fff;border:none;padding:10px 20px;border-radius:6px;cursor:pointer}@media print{.print-btn{display:none}}
+    </style></head><body><button class="print-btn" onclick="window.print()">🖨️ Imprimer</button><div class="planche">${Array.from({length:n},()=>etiquette).join('')}</div></body></html>`, `etiquettes_${lot.numero_lot}`)
+  }
+
+  const tbl = (titres, lignes, vide) => (
+    <div style={{ overflowX:'auto' }}><table style={{ width:'100%', borderCollapse:'collapse', fontSize:12.5 }}>
+      <thead><tr style={{ background:'#f8fafc' }}>{titres.map(h=><th key={h} style={{ padding:'6px 8px', textAlign:'left', color:'#475569' }}>{h}</th>)}</tr></thead>
+      <tbody>{lignes.length ? lignes.map((l,i)=><tr key={i} style={{ borderTop:'1px solid #f1f5f9' }}>{l.map((v,j)=><td key={j} style={{ padding:'6px 8px' }}>{v}</td>)}</tr>) : <tr><td colSpan={titres.length} style={{ padding:'8px', color:'#94a3b8' }}>{vide}</td></tr>}</tbody>
+    </table></div>)
+  const section = (icone, titre, couleur, contenu, action) => (
+    <Card style={{ marginBottom:12, padding:16, borderLeft:`4px solid ${couleur}` }}>
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8 }}>
+        <div style={{ fontWeight:800, color:couleur, fontSize:14 }}>{icone} {titre}</div>{action}
+      </div>{contenu}
+    </Card>)
+  const supp = (table, x) => !readOnly && <button type="button" title="Supprimer" onClick={()=>supprimerLien(table, x)} style={{ border:'none', background:'transparent', color:'#dc2626', cursor:'pointer' }}>✕</button>
+
+  return (
+    <div>
+      <PageHeader title="Traçabilité des lots" subtitle={company?.raison_sociale||''}
+        actions={lot && <><Btn sm variant="secondary" onClick={imprimerEtiquettes}>🏷️ Étiquettes QR</Btn><Btn sm onClick={imprimerFiche}>🖨️ Fiche de traçabilité</Btn></>} />
+      {d.erreur && <Card style={{ marginBottom:16, background:'#fffbeb', borderColor:'#fcd34d' }}><div style={{ fontSize:13, color:'#92400e' }}>⚠️ {MSG_SCRIPT_TRACA}</div></Card>}
+      <Card style={{ marginBottom:16, padding:'12px 20px' }}>
+        <div style={{ display:'flex', gap:10, flexWrap:'wrap', alignItems:'center' }}>
+          <input value={recherche} onChange={e=>setRecherche(e.target.value)} placeholder="🔍 N° de lot, lot ETUV-…, n° d'envoi, producteur ou client…"
+            style={{ padding:'8px 14px', borderRadius:8, border:'1px solid #d1d5db', fontSize:13, flex:1, minWidth:240 }} />
+          <select value={lotId} onChange={e=>setLotId(e.target.value)} style={{ padding:'8px 12px', borderRadius:8, border:'1px solid #d1d5db', fontSize:13, minWidth:220 }}>
+            <option value="">— {resultats.length} lot(s) trouvé(s) —</option>
+            {resultats.map(l=><option key={l.id} value={l.id}>{l.numero_lot}{l.statut?` (${l.statut})`:''}</option>)}
+          </select>
+        </div>
+      </Card>
+      {!lot ? <Card><div style={{ color:'#64748b', fontSize:13 }}>Recherchez puis choisissez un lot pour afficher toute sa chaîne : producteurs → étuveuses → étapes de production → clients.</div></Card> : <>
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))', gap:10, marginBottom:12 }}>
+          {[['Code', codeTraca(lot)], ['Paddy des producteurs', fmtKg(paddyOrigine)], ['Riz étuvé reçu', fmtKg(etuveRecu)], ['Conditionné', fmtKg(conditionne)], ['Livré aux clients', fmtKg(livre)],
+            ['Rendement global', paddyOrigine>0?`${(conditionne/paddyOrigine*100).toFixed(1)} %`:'—']].map(([l,v])=>(
+            <div key={l} style={{ background:'white', border:'1px solid #e2e8f0', borderRadius:10, padding:'10px 12px' }}><div style={{ fontSize:11.5, color:'#64748b' }}>{l}</div><div style={{ fontSize:16, fontWeight:800 }}>{v}</div></div>))}
+        </div>
+        {+lot.qte_paddy_entree>0 && Math.abs(paddyOrigine - lot.qte_paddy_entree) > 0.5 && <div style={{ fontSize:12.5, color:'#b45309', marginBottom:10 }}>⚠️ Les origines enregistrées ({fmtKg(paddyOrigine)}) ne couvrent pas le paddy du lot ({fmtKg(lot.qte_paddy_entree)}).</div>}
+
+        {section('🌾','Origine du paddy — producteurs','#16a34a',
+          tbl(['Producteur','Village / coopérative','Quantité','Reçu le','Référence','Variété',''], origines.map(o=>{ const f=frsDe(o.fournisseur_id); return [nomTiersTraca(f)||o.producteur_nom, [f?.village,f?.cooperative_affiliee].filter(Boolean).join(' — '), fmtKg(o.quantite_kg), dateDoc(o.date_reception), o.reference||'', o.variete||'', supp('compta_lot_origines',o)] }), 'Aucun producteur relié à ce lot.'),
+          !readOnly && <Btn sm variant="secondary" onClick={()=>setOrigine({ fournisseur_id:'', producteur_nom:'', quantite_kg:'', date_reception:lot.date_debut||today(), reference:'', variete:'', observations:'' })}>+ Producteur</Btn>)}
+        {section('🚚','Envois aux étuveuses','#2563eb',
+          tbl(['Envoi','Étuveuse','Date','Envoyé','Soldé','Riz reçu','Statut'], envois.map(e=>{ const s=situationEnvoi(e, d.compta_retours_etuveuses); return [e.numero, etvDe(e.etuveuse_id).nom_etuveuse||'', dateDoc(e.date_envoi), fmtKg(e.quantite_envoyee_kg), fmtKg(s.traite), fmtKg(s.recu), STATUTS_ENVOI[s.statut][0]] }), 'Aucun envoi pour ce lot.'))}
+        {section('🔥','Étuvage','#ea580c',
+          tbl(['Lot produit','Étuveuse','Date','Paddy','Riz reçu','Rendement','Perte','Qualité'], cycles.map(c=>[c.lot_sortant||'—', etvDe(c.etuveuse_id).nom_etuveuse||c.etuveuse_cooperative||'', dateDoc(c.date_etape), fmtKg(c.paddy_envoye_kg), fmtKg(c.riz_etuve_recu_kg), `${(+c.taux_rendement||0).toFixed(1)} %`,
+            <span key="p" style={{ color:c.alerte?'#dc2626':'inherit', fontWeight:c.alerte?700:400 }}>{c.alerte?'⚠️ ':''}{(ecartPctProduction('compta_etuvage',c)??0).toFixed(2)} %</span>, ({conforme:'Conforme',non_conforme:'Non conforme',a_verifier:'À vérifier'})[c.controle_qualite]||'']), 'Aucun cycle d\'étuvage.'))}
+        {etapes.map(e => <Fragment key={e.table}>{section(e.icone, e.titre, '#7c3aed',
+          tbl(['Date','Entrée','Sortie','Écart %','Responsable'], e.lignes.map(x=>[dateDoc(x.date_etape), fmtKg(x[e.avant]), fmtKg(x[e.apres]), `${(ecartPctProduction(e.table,x)??0).toFixed(2)} %`, x.responsable_section||'']), 'Étape non traitée.'))}</Fragment>)}
+        {section('🛒','Destinations — clients','#ca8a04',
+          tbl(['Client','Document','Date','Quantité','Sacs','Produit',''], destinations.map(x=>[nomTiersTraca(cliDe(x.client_id))||x.client_nom, x.document||'', dateDoc(x.date_livraison), fmtKg(x.quantite_kg), x.nb_sacs||'', x.produit||'', supp('compta_lot_destinations',x)]), 'Aucune livraison enregistrée pour ce lot.'),
+          !readOnly && <Btn sm variant="secondary" onClick={()=>setDestination({ client_id:'', client_nom:'', document:'', date_livraison:today(), quantite_kg:'', nb_sacs:'', produit:'', observations:'' })}>+ Livraison</Btn>)}
+      </>}
+
+      <Modal open={!!origine} onClose={()=>setOrigine(null)} title={`Producteur d'origine — lot ${lot?.numero_lot||''}`} size="md">
+        {origine && <form onSubmit={enregistrerOrigine}>
+          <Grid cols={2} gap={14} style={{ marginBottom:14 }}>
+            <Sel label="Producteur (fournisseur)" name="fournisseur_id" value={origine.fournisseur_id} onChange={e=>setOrigine(o=>({...o, fournisseur_id:e.target.value}))}
+              options={[{value:'',label:'— Choisir —'}, ...d.compta_fournisseurs.filter(f=>f.actif!==false).map(f=>({value:f.id,label:`${nomTiersTraca(f)}${f.village?` — ${f.village}`:''}`}))]} />
+            {!origine.fournisseur_id && <Input label="ou nom du producteur" name="producteur_nom" value={origine.producteur_nom} onChange={e=>setOrigine(o=>({...o, producteur_nom:e.target.value}))} />}
+            <Input label="Paddy (kg) *" name="quantite_kg" type="number" step="0.001" min="0" value={origine.quantite_kg} onChange={e=>setOrigine(o=>({...o, quantite_kg:e.target.value}))} required />
+            <Input label="Reçu le" name="date_reception" type="date" value={origine.date_reception} onChange={e=>setOrigine(o=>({...o, date_reception:e.target.value}))} />
+            <Input label="N° PV / bon de réception" name="reference" value={origine.reference} onChange={e=>setOrigine(o=>({...o, reference:e.target.value}))} />
+            <Input label="Variété" name="variete" value={origine.variete} onChange={e=>setOrigine(o=>({...o, variete:e.target.value}))} />
+          </Grid>
+          <Row><Btn variant="secondary" onClick={()=>setOrigine(null)}>Annuler</Btn><Btn type="submit">Enregistrer</Btn></Row>
+        </form>}
+      </Modal>
+      <Modal open={!!destination} onClose={()=>setDestination(null)} title={`Livraison — lot ${lot?.numero_lot||''}`} size="md">
+        {destination && <form onSubmit={enregistrerDestination}>
+          <Grid cols={2} gap={14} style={{ marginBottom:14 }}>
+            <Sel label="Client" name="client_id" value={destination.client_id} onChange={e=>setDestination(x=>({...x, client_id:e.target.value}))}
+              options={[{value:'',label:'— Choisir —'}, ...d.compta_clients.filter(c=>c.actif!==false).map(c=>({value:c.id,label:nomTiersTraca(c)}))]} />
+            {!destination.client_id && <Input label="ou nom du client" name="client_nom" value={destination.client_nom} onChange={e=>setDestination(x=>({...x, client_nom:e.target.value}))} />}
+            <Input label="N° facture / bon de livraison" name="document" value={destination.document} onChange={e=>setDestination(x=>({...x, document:e.target.value}))} />
+            <Input label="Date de livraison" name="date_livraison" type="date" value={destination.date_livraison} onChange={e=>setDestination(x=>({...x, date_livraison:e.target.value}))} />
+            <Input label="Quantité (kg) *" name="quantite_kg" type="number" step="0.001" min="0" value={destination.quantite_kg} onChange={e=>setDestination(x=>({...x, quantite_kg:e.target.value}))} required />
+            <Input label="Nombre de sacs" name="nb_sacs" type="number" min="0" value={destination.nb_sacs} onChange={e=>setDestination(x=>({...x, nb_sacs:e.target.value}))} />
+            <Input label="Produit" name="produit" value={destination.produit} onChange={e=>setDestination(x=>({...x, produit:e.target.value}))} placeholder="ex. Riz étuvé long grain 25 kg" />
+          </Grid>
+          <Row><Btn variant="secondary" onClick={()=>setDestination(null)}>Annuler</Btn><Btn type="submit">Enregistrer</Btn></Row>
+        </form>}
+      </Modal>
+    </div>
+  )
+}
+
 function SuiviLotPage({ companies, companyId, toast }) {
   const [allLots,     setAllLots]    = useState([])
   const [selectedLot, setSelectedLot]= useState(null)
@@ -21662,7 +21895,7 @@ export default function ComptaPro() {
     achats:'Achats Semi-finis', lots_semi_finis:'Lots Semi-finis', epierrage:'Épierrage', reglements_clients:'Règlements Clients', reglements_fourn:'Règlements Fournisseurs', etuvage_paiements:'Paiements Étuvage',
     docs_admin:'Documents administratifs', parametres:'Paramètres',
     prestations:'Prestations', journal_caisse:'Journal Caisse', journal_banque:'Journal Banque',
-    suivi_lot:'Suivi de Lot', journal_mobile:'Journal Mobile Money', plan_comptable:'Plan Comptable', grand_livre:'Grand-Livre', ecritures:'Saisie Comptable', balance:'Balance', etats_financiers:'États Financiers',
+    suivi_lot:'Suivi de Lot', tracabilite:'Traçabilité des lots', journal_mobile:'Journal Mobile Money', plan_comptable:'Plan Comptable', grand_livre:'Grand-Livre', ecritures:'Saisie Comptable', balance:'Balance', etats_financiers:'États Financiers',
     rh_employes:'RH — Employés', rh_fiches_paie:'RH — Fiches de Paie', rh_historique:'RH — Historique Paie',
     rh_declarations:'RH — Déclarations CNSS/ITS', rh_rapport:'RH — Rapport Cabinet', rh_dossiers:'RH — Dossier du personnel', rh_carriere:'RH — Carrière', rh_conges:'RH — Congés', rh_absences:'RH — Permissions & absences', rh_prets:'RH — Prêts & avances', rh_missions:'RH — Missions', rh_centralisation:'RH — Centralisation comptable', rh_tableau_bord:'RH — Tableau de bord', rh_simulateur:'RH — Simulateur Brut ↔ Net',
   }
@@ -21705,6 +21938,7 @@ export default function ComptaPro() {
       case 'commercial-view': return <CommercialViewPage docId={docId} setPage={setPage} toast={toast} />
       case 'lots':          return <LotsProductionPage {...sp} />
       case 'suivi_lot':     return <SuiviLotPage {...sp} />
+      case 'tracabilite':   return <TracabilitePage {...sp} readOnly={getReadOnly('tracabilite')} />
       case 'etv_repertoire':  return <EtvRepertoirePage {...sp} readOnly={getReadOnly('etv_repertoire')} />
       case 'etv_envois':      return <EtvEnvoisPage {...sp} readOnly={getReadOnly('etv_envois')} />
       case 'etv_performance': return <EtvPerformancePage {...sp} />
