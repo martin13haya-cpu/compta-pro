@@ -390,7 +390,7 @@ const dateDoc = d => {
 const CSS_GABARIT = `
   @page { size: A4; margin: 12mm 12mm 14mm; }
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: 'Segoe UI', Tahoma, Arial, sans-serif; font-size: 10.5pt; color: #1e293b; background: #fff; }
+  body { font-family: Tahoma, 'Segoe UI', 'MS Sans Serif', Arial, sans-serif; font-size: 10.5pt; color: #1e293b; background: #fff; }
   .page { max-width: 186mm; margin: 0 auto; padding: 4mm 2mm; }
   .entete { display: flex; justify-content: space-between; align-items: flex-start; gap: 18px; }
   .societe { display: flex; align-items: center; gap: 12px; min-width: 0; }
@@ -2617,6 +2617,7 @@ const NAV = [
   { section:'Étuveuses' },
   { id:'etv_repertoire',  icon:'👩', label:'Répertoire' },
   { id:'etv_envois',      icon:'🚚', label:'Envois aux étuveuses' },
+  { id:'etv_performance', icon:'🏆', label:'Performance des étuveuses' },
   { id:'etv_avances',     icon:'💰', label:'Avances' },
   { id:'etv_bc',          icon:'📋', label:'Bons de Commande' },
   { id:'etv_br',          icon:'✅', label:'Bons de Réception' },
@@ -8052,7 +8053,7 @@ const ALL_SECTIONS = [
   ['prestations','Prestations'],['suivi_lot','Suivi de lot'],['lots','Lots Production'],
   ['etuvage','Étuvage'],['decorticage','Décorticage'],['calibrage','Calibrage'],
   ['tri_optique','Tri optique'],['conditionnement','Conditionnement'],
-  ['etv_repertoire','Répertoire Étuveuses'],['etv_envois','Envois aux étuveuses'],['etv_avances','Avances'],
+  ['etv_repertoire','Répertoire Étuveuses'],['etv_envois','Envois aux étuveuses'],['etv_performance','Performance des étuveuses'],['etv_avances','Avances'],
   ['etv_bc','Bons de Commande'],['etv_br','Bons de Réception'],
   ['etv_entrees','Entrées Magasin'],['etv_sorties','Sorties Magasin'],['etv_inventaire','Inventaire'],['etv_tresorerie','Trésorerie'],
   ['achats','Achats semi-finis'],['lots_semi_finis','Lots Semi-finis'],
@@ -8069,7 +8070,7 @@ const SECTION_GROUPS = [
   {group:'Stock', ids:['stock','mouvements','bons_stock','inventaire']},
   {group:'Commercial', ids:['commercial','reglements_clients','reglements_fourn','prestations']},
   {group:'Production', ids:['suivi_lot','lots','etuvage','decorticage','calibrage','tri_optique','conditionnement']},
-  {group:'Étuveuses', ids:['etv_repertoire','etv_envois','etv_avances','etv_bc','etv_br','etv_entrees','etv_sorties','etv_inventaire','etv_tresorerie']},
+  {group:'Étuveuses', ids:['etv_repertoire','etv_envois','etv_performance','etv_avances','etv_bc','etv_br','etv_entrees','etv_sorties','etv_inventaire','etv_tresorerie']},
   {group:'Achats', ids:['achats','lots_semi_finis','epierrage','etuvage_paiements']},
   {group:'Documents', ids:['docs_admin']},
   {group:'RH & Paie', ids:['rh_employes','rh_fiches_paie','rh_historique','rh_declarations','rh_rapport','rh_dossiers','rh_carriere','rh_conges','rh_absences','rh_prets','rh_missions','rh_centralisation','rh_tableau_bord','rh_simulateur']},
@@ -9969,6 +9970,150 @@ function EtvEnvoisPage({ companies, companyId, toast, readOnly=false }) {
             </table>}
           <div style={{ fontSize:12.5, marginTop:10 }}>Soldé {fmtKg(s.traite)} sur {fmtKg(detail.quantite_envoyee_kg)} — riz étuvé reçu {fmtKg(s.recu)}{s.rendement!=null?` (rendement ${s.rendement} %)`:''} — restant {fmtKg(s.restant)}</div>
         </> })()}
+      </Modal>
+    </div>
+  )
+}
+
+// ── PERFORMANCE DES ÉTUVEUSES (traçabilité, lot 3) ──────────────────────────
+// Sources, sans double compte :
+//  • cycles d'étuvage (compta_etuvage, saisis ou créés par un retour) :
+//    rendement, perte non justifiée, alertes, humidité, qualité ;
+//  • envois et retours : paddy confié, encore chez l'étuveuse, délais ;
+//  • avances : montant avancé, remboursé, solde dû.
+// Le classement se fait sur le rendement, puis sur la perte moyenne.
+function statsEtuveuse(etv, { cycles, envois, retours, avances }, periode) {
+  const dansPeriode = d => (!periode.du || d >= periode.du) && (!periode.au || d <= periode.au)
+  const cy = cycles.filter(c => String(c.etuveuse_id) === String(etv.id) && dansPeriode(String(c.date_etape||'')))
+  const paddy = cy.reduce((t,c)=>t+(+c.paddy_envoye_kg||0),0)
+  const recu = cy.reduce((t,c)=>t+(+c.riz_etuve_recu_kg||0),0)
+  const dech = cy.reduce((t,c)=>t+(+c.dechets_kg||0),0)
+  const hum = cy.filter(c => +c.humidite_sortie > 0)
+  const env = envois.filter(e => String(e.etuveuse_id) === String(etv.id) && !e.annule)
+  const envPeriode = env.filter(e => dansPeriode(String(e.date_envoi||'')))
+  const sits = env.map(e => ({ e, s:situationEnvoi(e, retours) }))
+  const ret = retours.filter(r => env.some(e => e.id === r.envoi_id))
+  const delais = ret.map(r => { const e = env.find(x => x.id === r.envoi_id); return Math.round((new Date(r.date_retour) - new Date(e.date_envoi)) / 86400000) }).filter(x => x >= 0)
+  const av = avances.filter(a => String(a.etuveuse_id) === String(etv.id))
+  const avance = av.reduce((t,a)=>t+(+a.montant||0),0), rembourse = av.reduce((t,a)=>t+(+a.montant_rembourse||0),0)
+  return {
+    etv, nbCycles:cy.length, paddy, recu, dechets:dech,
+    rendement: paddy > 0 ? Math.round(recu / paddy * 1000) / 10 : null,
+    perte: paddy > 0 ? Math.round((paddy - recu - dech) / paddy * 10000) / 100 : null,
+    alertes: cy.filter(c => c.alerte).length,
+    nonConformes: cy.filter(c => c.controle_qualite === 'non_conforme').length,
+    humidite: hum.length ? Math.round(hum.reduce((t,c)=>t+(+c.humidite_sortie),0) / hum.length * 10) / 10 : null,
+    nbEnvois: envPeriode.length, confie: envPeriode.reduce((t,e)=>t+(+e.quantite_envoyee_kg||0),0),
+    chezElle: sits.reduce((t,x)=>t+x.s.restant,0),
+    enRetard: sits.filter(x => x.s.statut !== 'termine' && x.s.jours > 15).length,
+    delaiMoyen: delais.length ? Math.round(delais.reduce((a,b)=>a+b,0) / delais.length) : null,
+    avance, rembourse, soldeAvances: avance - rembourse,
+    cycles: cy, envois: sits, avances: av,
+  }
+}
+
+function EtvPerformancePage({ companies, companyId }) {
+  const [d, setD] = useState({ etuveuses:[], cycles:[], envois:[], retours:[], avances:[], loading:true })
+  const an = new Date().getFullYear()
+  const [periode, setPeriode] = useState({ du:`${an}-01-01`, au:`${an}-12-31` })
+  const [tri, setTri] = useState('rendement')
+  const [fiche, setFiche] = useState(null)
+  const company = companies.find(c => c.id === companyId)
+  useEffect(() => {
+    if (!companyId) { setD(x=>({...x, loading:false})); return }
+    (async () => {
+      const q = t => supabase.from(t).select('*').eq('company_id', companyId)
+      const [{ data:et }, { data:cy }, { data:en }, { data:re }, { data:av }] = await Promise.all([
+        q('compta_etuveuses').order('nom_etuveuse'), q('compta_etuvage'), q('compta_envois_etuveuses'), q('compta_retours_etuveuses'), q('compta_avances_etuveuses'),
+      ])
+      setD({ etuveuses:et||[], cycles:cy||[], envois:en||[], retours:re||[], avances:av||[], loading:false })
+    })()
+  }, [companyId])
+
+  const stats = d.etuveuses.map(e => statsEtuveuse(e, d, periode))
+  const actives = stats.filter(s => s.nbCycles || s.nbEnvois || s.chezElle)
+  const cle = { rendement:s=>s.rendement ?? -1, perte:s=>-(s.perte ?? 999), paddy:s=>s.paddy, delai:s=>-(s.delaiMoyen ?? 999), avances:s=>s.soldeAvances }[tri]
+  const classes = [...stats].sort((a,b) => cle(b) - cle(a) || (a.perte ?? 999) - (b.perte ?? 999))
+  const rangs = new Map([...stats].filter(s=>s.rendement!=null).sort((a,b)=>b.rendement-a.rendement || (a.perte??999)-(b.perte??999)).map((s,i)=>[s.etv.id, i+1]))
+  const tot = actives.reduce((t,s)=>({ paddy:t.paddy+s.paddy, recu:t.recu+s.recu, chez:t.chez+s.chezElle, alertes:t.alertes+s.alertes, solde:t.solde+s.soldeAvances }), { paddy:0, recu:0, chez:0, alertes:0, solde:0 })
+  const medaille = r => r===1?'🥇':r===2?'🥈':r===3?'🥉':r?`${r}e`:'—'
+
+  const imprimerClassement = () => openPrintWindow(gabaritDocumentHtml({ comp:company, titre:'PERFORMANCE DES ÉTUVEUSES', numero:'', date:new Date().toLocaleDateString('fr-FR'),
+    infos:[['Période', `${dateDoc(periode.du)} au ${dateDoc(periode.au)}`], ['Étuveuses actives', String(actives.length)]],
+    tiersLabel:'Synthèse', tiers:{ nom:`Rendement global ${tot.paddy>0?(tot.recu/tot.paddy*100).toFixed(1)+' %':'—'}`, adresse:`Paddy étuvé ${fmtKg(tot.paddy)} — riz reçu ${fmtKg(tot.recu)}` },
+    colonnes:[{label:'Rang',align:'c',largeur:'6%'},{label:'Étuveuse'},{label:'Cycles',align:'d'},{label:'Paddy (kg)',align:'d'},{label:'Rendement',align:'d'},{label:'Perte',align:'d'},{label:'Alertes',align:'d'},{label:'Délai (j)',align:'d'},{label:'Chez elle (kg)',align:'d'},{label:'Avances dues',align:'d'}],
+    lignes:classes.filter(s=>actives.includes(s)).map(s=>[medaille(rangs.get(s.etv.id)), echapHtml(s.etv.nom_etuveuse), s.nbCycles, nbFr(s.paddy), s.rendement!=null?`${s.rendement} %`:'—', s.perte!=null?`${s.perte} %`:'—', s.alertes, s.delaiMoyen??'—', nbFr(s.chezElle), fcfaDoc(s.soldeAvances)]),
+    totaux:[['Paddy chez les étuveuses', fmtKg(tot.chez)], ['Cycles en alerte', String(tot.alertes)], ['Avances à recouvrer', fcfaDoc(tot.solde), true]],
+    signatures:['Le responsable étuvage','La direction'] }), 'performance_etuveuses')
+
+  const imprimerFiche = s => openPrintWindow(gabaritDocumentHtml({ comp:company, titre:'FICHE DE PERFORMANCE', numero:s.etv.code_etuveuse||'', date:new Date().toLocaleDateString('fr-FR'),
+    infos:[['Période', `${dateDoc(periode.du)} au ${dateDoc(periode.au)}`], ['Classement', rangs.get(s.etv.id)?`${rangs.get(s.etv.id)} / ${rangs.size}`:'—'], ['Capacité', +s.etv.capacite_kg>0?fmtKg(s.etv.capacite_kg):'—']],
+    tiersLabel:'Étuveuse', tiers:{ nom:s.etv.nom_etuveuse, adresse:[s.etv.zone, s.etv.ifu&&`IFU ${s.etv.ifu}`].filter(Boolean).join(' — ') },
+    avantTableau:`<div class="bloc"><table class="grille">
+      <tr><th>Paddy étuvé</th><th>Riz reçu</th><th>Rendement</th><th>Perte non justifiée</th><th>Alertes</th><th>Non conformes</th><th>Humidité moy.</th></tr>
+      <tr><td>${fmtKg(s.paddy)}</td><td>${fmtKg(s.recu)}</td><td><strong>${s.rendement!=null?s.rendement+' %':'—'}</strong></td><td>${s.perte!=null?s.perte+' %':'—'}</td><td>${s.alertes}</td><td>${s.nonConformes}</td><td>${s.humidite!=null?s.humidite+' %':'—'}</td></tr>
+      <tr><th>Envois (période)</th><th>Paddy confié</th><th>Encore chez elle</th><th>En retard (&gt;15 j)</th><th>Délai moyen</th><th>Avances</th><th>Solde dû</th></tr>
+      <tr><td>${s.nbEnvois}</td><td>${fmtKg(s.confie)}</td><td>${fmtKg(s.chezElle)}</td><td>${s.enRetard}</td><td>${s.delaiMoyen!=null?s.delaiMoyen+' j':'—'}</td><td>${fcfaDoc(s.avance)}</td><td><strong>${fcfaDoc(s.soldeAvances)}</strong></td></tr>
+    </table></div><div class="lib" style="margin-top:12px">Cycles d'étuvage de la période</div>`,
+    colonnes:[{label:'Date',largeur:'11%'},{label:'Lot produit'},{label:'Paddy',align:'d'},{label:'Riz reçu',align:'d'},{label:'Rendement',align:'d'},{label:'Perte',align:'d'},{label:'Qualité'}],
+    lignes:s.cycles.sort((a,b)=>String(a.date_etape).localeCompare(String(b.date_etape))).map(c=>[dateDoc(c.date_etape), echapHtml(c.lot_sortant||c.numero_lot||''), nbFr(c.paddy_envoye_kg), nbFr(c.riz_etuve_recu_kg), `${(+c.taux_rendement||0).toFixed(1)} %`, `${c.alerte?'⚠ ':''}${ecartPctProduction('compta_etuvage', c)?.toFixed(2) ?? '—'} %`, ({conforme:'Conforme',non_conforme:'Non conforme',a_verifier:'À vérifier'})[c.controle_qualite]||'']),
+    totaux:[], signatures:["L'étuveuse",'Le responsable étuvage'] }), `performance_${s.etv.code_etuveuse||s.etv.nom_etuveuse}`)
+
+  const th = (k, l) => <TH right><span onClick={()=>setTri(k)} style={{ cursor:'pointer', textDecoration:tri===k?'underline':'none' }}>{l}{tri===k?' ▾':''}</span></TH>
+  return (
+    <div>
+      <PageHeader title="Performance des étuveuses" subtitle={company ? company.raison_sociale : "Sélectionnez une société en haut de l'écran"}
+        actions={<Btn sm variant="secondary" onClick={imprimerClassement} disabled={!actives.length}>🖨️ Classement</Btn>} />
+      <Card style={{ marginBottom:16, padding:'12px 20px' }}>
+        <div style={{ display:'flex', gap:12, flexWrap:'wrap', alignItems:'center', fontSize:13 }}>
+          <label>Du <input type="date" value={periode.du} onChange={e=>setPeriode(p=>({...p, du:e.target.value}))} style={{ padding:'6px 10px', borderRadius:8, border:'1px solid #d1d5db' }} /></label>
+          <label>au <input type="date" value={periode.au} onChange={e=>setPeriode(p=>({...p, au:e.target.value}))} style={{ padding:'6px 10px', borderRadius:8, border:'1px solid #d1d5db' }} /></label>
+          <span style={{ color:'#64748b' }}>Rendement global : <strong>{tot.paddy>0?`${(tot.recu/tot.paddy*100).toFixed(1)} %`:'—'}</strong> — paddy chez les étuveuses : <strong>{fmtKg(tot.chez)}</strong> — cycles en alerte : <strong style={{ color:tot.alertes?'#dc2626':'inherit' }}>{tot.alertes}</strong> — avances à recouvrer : <strong>{fcfa(tot.solde)}</strong></span>
+        </div>
+      </Card>
+      {d.loading ? <Card>Chargement…</Card> : (
+        <TableWrap><div style={{ overflowX:'auto' }}>
+          <table style={{ width:'100%', borderCollapse:'collapse' }}>
+            <thead><tr><TH>Rang</TH><TH>Étuveuse</TH>{th('paddy','Paddy étuvé')}{th('rendement','Rendement')}{th('perte','Perte non just.')}<TH right>Alertes</TH>{th('delai','Délai moyen')}<TH right>Chez elle</TH>{th('avances','Avances dues')}<TH></TH></tr></thead>
+            <tbody>
+              {classes.map(s => (
+                <TR key={s.etv.id}>
+                  <TD>{medaille(rangs.get(s.etv.id))}</TD>
+                  <TD bold>{s.etv.nom_etuveuse}<div style={{ fontSize:11, color:'#94a3b8', fontWeight:400 }}>{[s.etv.code_etuveuse, s.etv.zone].filter(Boolean).join(' — ')}</div></TD>
+                  <TD right>{s.paddy ? fmtKg(s.paddy) : '—'}<div style={{ fontSize:11, color:'#94a3b8' }}>{s.nbCycles} cycle(s)</div></TD>
+                  <TD right><strong style={{ color:s.rendement==null?'#94a3b8':s.rendement>=95?'#16a34a':s.rendement>=90?'#b45309':'#dc2626' }}>{s.rendement!=null?`${s.rendement} %`:'—'}</strong></TD>
+                  <TD right>{s.perte!=null?`${s.perte} %`:'—'}</TD>
+                  <TD right><span style={{ color:s.alertes?'#dc2626':'inherit', fontWeight:s.alertes?700:400 }}>{s.alertes}</span>{s.nonConformes?<div style={{ fontSize:11, color:'#dc2626' }}>{s.nonConformes} non conf.</div>:null}</TD>
+                  <TD right>{s.delaiMoyen!=null?`${s.delaiMoyen} j`:'—'}{s.enRetard?<div style={{ fontSize:11, color:'#dc2626' }}>⚠️ {s.enRetard} en retard</div>:null}</TD>
+                  <TD right>{s.chezElle ? fmtKg(s.chezElle) : '—'}</TD>
+                  <TD right>{s.soldeAvances ? fcfa(s.soldeAvances) : '—'}</TD>
+                  <TD><Btn sm variant="secondary" onClick={()=>setFiche(s)}>Fiche</Btn></TD>
+                </TR>))}
+              {!classes.length && <tr><td colSpan={10} style={{ padding:20, textAlign:'center', color:'#94a3b8' }}>{companyId ? 'Aucune étuveuse au répertoire.' : 'Sélectionnez une société.'}</td></tr>}
+            </tbody>
+          </table>
+        </div></TableWrap>
+      )}
+      <div style={{ fontSize:12, color:'#64748b', marginTop:8 }}>Rendement et perte : cycles d'étuvage de la période reliés à l'étuveuse (choisie dans le répertoire). Les cycles anciens saisis en texte libre ne sont pas comptés : reliez-les à leur étuveuse depuis Production › Étuvage.</div>
+
+      <Modal open={!!fiche} onClose={()=>setFiche(null)} title={fiche ? `Performance — ${fiche.etv.nom_etuveuse}` : ''} size="lg">
+        {fiche && <>
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))', gap:10, marginBottom:14 }}>
+            {[['Classement', rangs.get(fiche.etv.id)?`${medaille(rangs.get(fiche.etv.id))} sur ${rangs.size}`:'—'], ['Rendement', fiche.rendement!=null?`${fiche.rendement} %`:'—'], ['Perte non justifiée', fiche.perte!=null?`${fiche.perte} %`:'—'],
+              ['Cycles / alertes', `${fiche.nbCycles} / ${fiche.alertes}`], ['Délai moyen de retour', fiche.delaiMoyen!=null?`${fiche.delaiMoyen} j`:'—'], ['Encore chez elle', fmtKg(fiche.chezElle)],
+              ['Humidité moyenne', fiche.humidite!=null?`${fiche.humidite} %`:'—'], ['Avances dues', fcfa(fiche.soldeAvances)]].map(([l,v])=>(
+              <div key={l} style={{ background:'#f8fafc', borderRadius:10, padding:'10px 12px' }}><div style={{ fontSize:11.5, color:'#64748b' }}>{l}</div><div style={{ fontSize:17, fontWeight:800, color:'#0f172a' }}>{v}</div></div>))}
+          </div>
+          <div style={{ fontWeight:700, fontSize:13, margin:'6px 0' }}>Envois en cours</div>
+          {fiche.envois.filter(x=>x.s.statut==='envoye'||x.s.statut==='partiel').map(x=>(
+            <div key={x.e.id} style={{ fontSize:12.5, padding:'3px 0' }}>• {x.e.numero} du {dateDoc(x.e.date_envoi)} — restant {fmtKg(x.s.restant)} ({x.s.jours} j){x.s.jours>15?' ⚠️':''}</div>))}
+          {!fiche.envois.some(x=>x.s.statut==='envoye'||x.s.statut==='partiel') && <div style={{ fontSize:12.5, color:'#94a3b8' }}>Aucun envoi en cours.</div>}
+          <div style={{ fontWeight:700, fontSize:13, margin:'12px 0 6px' }}>Derniers cycles d'étuvage</div>
+          {[...fiche.cycles].sort((a,b)=>String(b.date_etape).localeCompare(String(a.date_etape))).slice(0,8).map(c=>(
+            <div key={c.id} style={{ fontSize:12.5, padding:'3px 0', color:c.alerte?'#b91c1c':'inherit' }}>• {dateDoc(c.date_etape)} — {c.lot_sortant||c.numero_lot||''} : {fmtKg(c.paddy_envoye_kg)} → {fmtKg(c.riz_etuve_recu_kg)} ({(+c.taux_rendement||0).toFixed(1)} %){c.alerte?' ⚠️':''}</div>))}
+          {!fiche.cycles.length && <div style={{ fontSize:12.5, color:'#94a3b8' }}>Aucun cycle sur la période.</div>}
+          <Row style={{ marginTop:14 }}><Btn variant="secondary" onClick={()=>setFiche(null)}>Fermer</Btn><Btn onClick={()=>imprimerFiche(fiche)}>🖨️ Imprimer la fiche</Btn></Row>
+        </>}
       </Modal>
     </div>
   )
@@ -16835,7 +16980,7 @@ const RH_LoginPage = ({onLogin}) => {
     minHeight:"100vh",
     background:"linear-gradient(135deg,#0f2d6b 0%,#1a4fa8 55%,#2d6fd4 100%)",
     display:"flex",alignItems:"center",justifyContent:"center",
-    fontFamily:"system-ui,sans-serif",padding:"20px",position:"relative",overflow:"hidden"
+    fontFamily:"Tahoma,'Segoe UI',Arial,sans-serif",padding:"20px",position:"relative",overflow:"hidden"
   };
   const cardStyle={
     background:"#ffffff",borderRadius:"20px",padding:"2.5rem 2.5rem 2rem",
@@ -17064,7 +17209,7 @@ const ResetPasswordPage = ({onDone}) => {
 
   return (
     <div style={{minHeight:"100vh",background:"linear-gradient(135deg,#1a3a6b 0%,#1a6dd6 50%,#63a8f0 100%)",
-                 display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"system-ui,sans-serif"}}>
+                 display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"Tahoma,'Segoe UI',Arial,sans-serif"}}>
       <div style={{width:"100%",maxWidth:"380px",padding:"20px"}}>
         <div style={{textAlign:"center",marginBottom:"32px"}}>
           <div style={{fontSize:"32px",fontWeight:900,color:"#fff",letterSpacing:"-1px"}}>RH-Paie Pro</div>
@@ -21511,7 +21656,7 @@ export default function ComptaPro() {
     commercial:'Documents commerciaux', 'commercial-view':'Détail document', lots:'Lots Production',
     etuvage:'Étuvage', decorticage:'Décorticage', calibrage:'Calibrage',
     tri_optique:'Tri Optique', conditionnement:'Conditionnement',
-    etv_repertoire:'Répertoire Étuveuses', etv_envois:'Envois aux étuveuses', etv_avances:'Avances sur Commande',
+    etv_repertoire:'Répertoire Étuveuses', etv_envois:'Envois aux étuveuses', etv_performance:'Performance des étuveuses', etv_avances:'Avances sur Commande',
     etv_bc:'Bons de Commande', etv_br:'Bons de Réception',
     etv_entrees:'Entrées Magasin', etv_sorties:'Sorties Magasin', etv_inventaire:'Inventaire Étuveuses', etv_tresorerie:'Trésorerie Étuveuses',
     achats:'Achats Semi-finis', lots_semi_finis:'Lots Semi-finis', epierrage:'Épierrage', reglements_clients:'Règlements Clients', reglements_fourn:'Règlements Fournisseurs', etuvage_paiements:'Paiements Étuvage',
@@ -21562,6 +21707,7 @@ export default function ComptaPro() {
       case 'suivi_lot':     return <SuiviLotPage {...sp} />
       case 'etv_repertoire':  return <EtvRepertoirePage {...sp} readOnly={getReadOnly('etv_repertoire')} />
       case 'etv_envois':      return <EtvEnvoisPage {...sp} readOnly={getReadOnly('etv_envois')} />
+      case 'etv_performance': return <EtvPerformancePage {...sp} />
       case 'etv_avances':     return <EtvAvancesPage {...sp} readOnly={getReadOnly('etv_avances')} />
       case 'etv_bc':          return <EtvBCPage {...sp} readOnly={getReadOnly('etv_bc')} />
       case 'etv_br':          return <EtvBRPage {...sp} readOnly={getReadOnly('etv_br')} />
@@ -21622,7 +21768,7 @@ export default function ComptaPro() {
   const sidebarCollapsed = isMobile || isMobileLandscape
 
   return (
-    <div style={{ fontFamily:"'Segoe UI',system-ui,sans-serif", background:'#f1f5f9', color:'#1e293b', minHeight:'100vh' }}>
+    <div style={{ fontFamily:"Tahoma,'Segoe UI','MS Sans Serif',Arial,sans-serif", background:'#f1f5f9', color:'#1e293b', minHeight:'100vh' }}>
       <Toasts toasts={toast.toasts} />
       {sidebarCollapsed && (
         <Sidebar page={page} setPage={setPage} user={user} profile={profile} onLogout={logout}
