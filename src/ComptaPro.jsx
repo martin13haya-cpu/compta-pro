@@ -2638,6 +2638,8 @@ const NAV = [
   { id:'rh_rapport',         icon:'📊', label:'Rapport Cabinet' },
   { id:'rh_conges',          icon:'🏖️', label:'Congés' },
   { id:'rh_absences',        icon:'🕒', label:'Permissions & absences' },
+  { id:'rh_prets',           icon:'🤝', label:'Prêts & avances' },
+  { id:'rh_missions',        icon:'🧳', label:'Missions' },
   { id:'rh_tableau_bord',    icon:'📈', label:'Tableau de bord RH' },
   { id:'rh_simulateur',      icon:'🧮', label:'Simulateur Brut ↔ Net' },
   { section:'Comptabilité' },
@@ -7940,7 +7942,7 @@ const ALL_SECTIONS = [
   ['epierrage','Épierrage'],['etuvage_paiements','Paiements étuvage'],
   ['docs_admin','Documents administratifs'],
   ['rh_employes','Employés'],['rh_fiches_paie','Fiches de Paie'],['rh_historique','Historique Paie'],
-  ['rh_declarations','Déclarations CNSS/ITS'],['rh_rapport','Rapport Cabinet'],['rh_conges','Congés'],['rh_absences','Permissions & absences'],['rh_tableau_bord','Tableau de bord RH'],['rh_simulateur','Simulateur Brut ↔ Net'],
+  ['rh_declarations','Déclarations CNSS/ITS'],['rh_rapport','Rapport Cabinet'],['rh_conges','Congés'],['rh_absences','Permissions & absences'],['rh_prets','Prêts & avances'],['rh_missions','Missions'],['rh_tableau_bord','Tableau de bord RH'],['rh_simulateur','Simulateur Brut ↔ Net'],
   ['journal_caisse','Journal Caisse'],['journal_banque','Journal Banque'],
   ['journal_mobile','Journal Mobile Money'],['plan_comptable','Plan Comptable'],['grand_livre','Grand-Livre'],['ecritures','Saisie Comptable'],['balance','Balance'],['etats_financiers','États Financiers'],
 ]
@@ -7953,7 +7955,7 @@ const SECTION_GROUPS = [
   {group:'Étuveuses', ids:['etv_repertoire','etv_avances','etv_bc','etv_br','etv_entrees','etv_sorties','etv_inventaire','etv_tresorerie']},
   {group:'Achats', ids:['achats','lots_semi_finis','epierrage','etuvage_paiements']},
   {group:'Documents', ids:['docs_admin']},
-  {group:'RH & Paie', ids:['rh_employes','rh_fiches_paie','rh_historique','rh_declarations','rh_rapport','rh_conges','rh_absences','rh_tableau_bord','rh_simulateur']},
+  {group:'RH & Paie', ids:['rh_employes','rh_fiches_paie','rh_historique','rh_declarations','rh_rapport','rh_conges','rh_absences','rh_prets','rh_missions','rh_tableau_bord','rh_simulateur']},
   {group:'Comptabilité', ids:['journal_caisse','journal_banque','journal_mobile','plan_comptable','grand_livre','ecritures','balance','etats_financiers']},
 ]
 
@@ -16953,6 +16955,9 @@ const Payroll = ({companies}) => {
     primes:"0",indemnites:"0",avances:"0",saisie_arret:"0",assurance_sante:"0",notes:""};
   const [form,setForm]=useState(initForm);
   const [calc,setCalc]=useState(null);
+  // Mensualités de prêt ajoutées aux avances de la fiche en cours : elles
+  // deviennent des remboursements quand la fiche est enregistrée.
+  const [pretsAppliques,setPretsAppliques]=useState(null);
 
   const loadEmployees = useCallback(async()=>{
     if(!compId) return;
@@ -17005,7 +17010,17 @@ const Payroll = ({companies}) => {
     const {error}=await supabaseRH.from("payrolls").upsert(payload,{onConflict:"employee_id,mois,annee"});
     setLoading(false);
     if(error){ setMsg(error.message); rhToast.error("Erreur : "+error.message); }
-    else{ setModal(null); rhToast.success("✅ Fiche de paie enregistrée avec succès !"); load(); }
+    else{
+      if(pretsAppliques?.length){
+        for(const x of pretsAppliques){
+          await supabaseRH.from("rh_pret_remboursements").delete().eq("pret_id",x.pret_id).eq("source","paie").eq("mois",parseInt(form.mois)).eq("annee",parseInt(form.annee));
+          const {error:er}=await supabaseRH.from("rh_pret_remboursements").insert({pret_id:x.pret_id,company_id:compId,employee_id:form.employee_id,source:"paie",mois:parseInt(form.mois),annee:parseInt(form.annee),montant:x.montant});
+          if(er) rhToast.error("Remboursement de prêt non enregistré : "+er.message);
+        }
+        setPretsAppliques(null);
+      }
+      setModal(null); rhToast.success("✅ Fiche de paie enregistrée avec succès !"); load();
+    }
   };
 
   const genererTout=async()=>{
@@ -17297,6 +17312,8 @@ ${lienCasse}
             <RH_Input label="Salaire base (FCFA)" value={form.salaire_base} onChange={v=>f("salaire_base",v)} type="number"/>
             <RH_RappelAbsencesMois employeeId={form.employee_id} mois={parseInt(form.mois)} annee={parseInt(form.annee)}
               salaireBase={form.salaire_base} onDeduire={v=>f("salaire_base",String(v))}/>
+            <RH_RappelPretsMissions employeeId={form.employee_id} mois={parseInt(form.mois)} annee={parseInt(form.annee)}
+              avances={form.avances} onAppliquer={(liste,av)=>{ setPretsAppliques(liste); if(liste) f("avances",String(av)); }}/>
             <div style={{gridColumn:"1/-1",background:G.bg,borderRadius:"8px",padding:"12px",marginBottom:"4px"}}>
               <div style={{fontSize:"12px",fontWeight:600,color:G.accent,marginBottom:"10px"}}>
                 Heures supplémentaires (taux horaire = salaire base ÷ 173,33)
@@ -19895,6 +19912,324 @@ const RH_RappelAbsencesMois = ({employeeId, mois, annee, salaireBase, onDeduire}
   );
 };
 
+// ─── RH LOT 3 : PRÊTS ET AVANCES AU PERSONNEL, MISSIONS ─────────────────────
+// Repris de Gestion Stock Pro : un prêt n'est remboursé que par les
+// mensualités réellement retenues sur une fiche de paie (ou versées à la
+// main) — un mois sans fiche ne compte pas. Le restant dû est toujours
+// recalculé à partir des remboursements, jamais stocké.
+const MSG_TABLES_RH_LOT3 = "Les tables des prêts et missions n'existent pas encore : exécutez le script supabase/migrations/rh/20261007_rh_prets_missions.sql dans le projet Supabase RH (SQL Editor)."
+const estErreurTableLot3 = e => /rh_prets|rh_pret_remboursements|rh_missions|does not exist|schema cache/i.test(e?.message || "")
+const STATUTS_PRET = { actif:["En cours",G.accent], solde:["Soldé","#16a34a"], annule:["Annulé","#64748b"] }
+const STATUTS_MISSION = { demandee:["Demandée",G.yellow], validee:["Validée",G.accent], en_cours:["En cours","#7c3aed"], terminee:["Terminée","#16a34a"], annulee:["Annulée","#64748b"] }
+
+function situationPret(pret, remboursements) {
+  const r=remboursements.filter(x=>x.pret_id===pret.id);
+  const verse=r.reduce((t,x)=>t+(+x.montant||0),0);
+  const restant=Math.max(0,Math.round((+pret.montant_total-verse)*100)/100);
+  const mens=+pret.montant_mensualite||0;
+  return { verse, restant, nbVersements:r.length, mensualitesRestantes:mens>0?Math.ceil(restant/mens):0, prochaine:Math.min(mens,restant), solde:restant<=0 };
+}
+// Échéancier prévu, mois par mois à partir du premier mois de retenue.
+function echeancierPret(pret) {
+  const lignes=[]; let reste=+pret.montant_total; let m=+pret.premier_mois, a=+pret.premiere_annee;
+  for(let i=0;i<+pret.nombre_mensualites && reste>0;i++){
+    const montant=i===+pret.nombre_mensualites-1 ? reste : Math.min(+pret.montant_mensualite,reste);
+    lignes.push({mois:m,annee:a,montant}); reste=Math.round((reste-montant)*100)/100;
+    m++; if(m>12){ m=1; a++; }
+  }
+  return lignes;
+}
+const moisAvant = (m1,a1,m2,a2) => a1<a2 || (a1===a2 && m1<=m2);
+
+// ── PRÊTS ET AVANCES ────────────────────────────────────────────────────────
+const RH_Prets = ({companies}) => {
+  const [compId,setCompId]=useState(companies[0]?.id||"");
+  useEffect(()=>{ if(!compId&&companies.length) setCompId(companies[0].id); },[companies,compId]);
+  const [d,setD]=useState({emps:[],prets:[],remb:[],loading:true,erreur:false});
+  const [form,setForm]=useState(null);
+  const [detail,setDetail]=useState(null);
+  const [filtre,setFiltre]=useState("actif");
+  const comp=companies.find(c=>c.id===compId);
+  const charger=useCallback(async()=>{
+    if(!compId) return;
+    const [{data:e},{data:p,error:ep},{data:r,error:er}]=await Promise.all([
+      supabaseRH.from("employees").select("*").eq("company_id",compId).order("nom"),
+      supabaseRH.from("rh_prets").select("*").eq("company_id",compId).order("date_octroi",{ascending:false}),
+      supabaseRH.from("rh_pret_remboursements").select("*").eq("company_id",compId).order("date_versement"),
+    ]);
+    // Un prêt entièrement remboursé passe de lui-même à « soldé ».
+    for(const pr of (p||[])) if(pr.statut==="actif" && situationPret(pr,r||[]).solde){ pr.statut="solde"; await supabaseRH.from("rh_prets").update({statut:"solde"}).eq("id",pr.id); }
+    setD({emps:e||[],prets:p||[],remb:r||[],loading:false,erreur:estErreurTableLot3(ep)||estErreurTableLot3(er)});
+  },[compId]);
+  useEffect(()=>{ charger(); },[charger]);
+  const empDe=id=>d.emps.find(e=>e.id===id)||{};
+  const actifs=d.emps.filter(e=>e.actif!==false);
+
+  const nouveau=()=>{ if(d.erreur) return rhToast.error(MSG_TABLES_RH_LOT3);
+    const n=new Date(); const suiv=n.getMonth()+2>12?1:n.getMonth()+2;
+    setForm({employee_id:"",nature:"pret",montant_total:"",date_octroi:n.toLocaleDateString("sv-SE"),premier_mois:String(suiv),premiere_annee:String(suiv===1?n.getFullYear()+1:n.getFullYear()),nombre_mensualites:"6",montant_mensualite:"",motif:""}); };
+  const setF=(k,v)=>setForm(f=>{ const n={...f,[k]:v};
+    if(k==="nature"&&v==="avance") n.nombre_mensualites="1";
+    if(["montant_total","nombre_mensualites","nature"].includes(k)){ const t=parseFloat(n.montant_total)||0, nb=parseInt(n.nombre_mensualites)||1; n.montant_mensualite=t?String(Math.ceil(t/nb/5)*5):""; }
+    return n; });
+  const enregistrer=async()=>{
+    const t=parseFloat(form.montant_total)||0, nb=parseInt(form.nombre_mensualites)||0, mens=parseFloat(form.montant_mensualite)||0;
+    if(!form.employee_id) return rhToast.error("Choisissez l'employé.");
+    if(!(t>0&&nb>0&&mens>0)) return rhToast.error("Montant, nombre de mensualités et mensualité doivent être positifs.");
+    if(mens*nb<t) return rhToast.error(`Les ${nb} mensualités de ${fmt(mens)} ne couvrent pas le montant (${fmt(t)}).`);
+    const emp=empDe(form.employee_id);
+    if(mens>(+emp.salaire_base||0)/3 && !confirm(`La mensualité (${fmt(mens)}) dépasse le tiers du salaire de base (${fmt((+emp.salaire_base||0)/3)}). Continuer ?`)) return;
+    const payload={company_id:compId,employee_id:form.employee_id,nature:form.nature,montant_total:t,date_octroi:form.date_octroi,
+      premier_mois:parseInt(form.premier_mois),premiere_annee:parseInt(form.premiere_annee),nombre_mensualites:nb,montant_mensualite:mens,motif:form.motif||null};
+    const {error}=form.id ? await supabaseRH.from("rh_prets").update(payload).eq("id",form.id) : await supabaseRH.from("rh_prets").insert(payload);
+    if(error) return rhToast.error(estErreurTableLot3(error)?MSG_TABLES_RH_LOT3:error.message);
+    rhToast.success("Enregistré"); setForm(null); charger();
+  };
+  const annuler=async p=>{ if(!confirm("Annuler ce prêt ? Les remboursements déjà enregistrés sont conservés.")) return; await supabaseRH.from("rh_prets").update({statut:"annule"}).eq("id",p.id); charger(); };
+  const supprimer=async p=>{ if(!confirm("Supprimer définitivement ce prêt et ses remboursements ?")) return; await supabaseRH.from("rh_prets").delete().eq("id",p.id); setDetail(null); charger(); };
+  const rembManuel=async p=>{ const s=situationPret(p,d.remb); const v=prompt(`Montant versé par l'employé (restant dû : ${fmtN(s.restant)} FCFA)`, String(s.prochaine)); const m=parseFloat(v);
+    if(!(m>0)) return; if(m>s.restant) return rhToast.error("Le montant dépasse le restant dû.");
+    const {error}=await supabaseRH.from("rh_pret_remboursements").insert({pret_id:p.id,company_id:compId,employee_id:p.employee_id,source:"manuel",montant:m,date_versement:new Date().toLocaleDateString("sv-SE")});
+    if(error) return rhToast.error(error.message); rhToast.success("Remboursement enregistré"); charger(); };
+  const imprimer=p=>{ const emp=empDe(p.employee_id), s=situationPret(p,d.remb), ech=echeancierPret(p);
+    const payeLe=l=>d.remb.find(r=>r.pret_id===p.id&&r.source==="paie"&&r.mois===l.mois&&r.annee===l.annee);
+    const html=gabaritDocumentHtml({ comp, titre:p.nature==="avance"?"AVANCE SUR SALAIRE":"CONTRAT DE PRÊT AU PERSONNEL", numero:"", date:dateDoc(p.date_octroi),
+      infos:[["Montant",fcfaDoc(p.montant_total)],["Mensualité",fcfaDoc(p.montant_mensualite)],["Statut",STATUTS_PRET[p.statut]?.[0]]],
+      tiersLabel:"Bénéficiaire", tiers:{nom:`${emp.nom||""} ${emp.prenoms||""}`, adresse:[emp.matricule&&`Matricule ${emp.matricule}`,emp.emploi].filter(Boolean).join(" — ")},
+      avantTableau:`<div class="bloc" style="font-size:10.5pt;line-height:1.6">Je soussigné(e) <strong>${echapHtml(emp.nom)} ${echapHtml(emp.prenoms)}</strong> reconnais avoir reçu de <strong>${echapHtml(comp?.raison_sociale||"l'employeur")}</strong> ${p.nature==="avance"?"une avance sur salaire":"un prêt"} de <strong>${montantEnLettres(p.montant_total)}</strong>${p.motif?` (${echapHtml(p.motif)})`:""}, remboursable par <strong>${p.nombre_mensualites} retenue(s) mensuelle(s)</strong> sur mon salaire à partir de ${MOIS[p.premier_mois]} ${p.premiere_annee}, selon l'échéancier ci-dessous. En cas de rupture du contrat de travail, le restant dû sera retenu sur le solde de tout compte.</div>`,
+      colonnes:[{label:"N°",align:"c",largeur:"8%"},{label:"Échéance"},{label:"Mensualité (FCFA)",align:"d"},{label:"État",largeur:"28%"}],
+      lignes:ech.map((l,i)=>[i+1,`${MOIS[l.mois]} ${l.annee}`,fmtN(l.montant),payeLe(l)?"Retenue sur la paie":""]),
+      totaux:[["Montant",fcfaDoc(p.montant_total)],["Déjà remboursé",fcfaDoc(s.verse)],["Restant dû",fcfaDoc(s.restant),true]],
+      signatures:["Le bénéficiaire (lu et approuvé)","L'employeur"] });
+    openPrintWindow(html,`pret_${emp.matricule||emp.nom||""}`); };
+
+  const visibles=d.prets.filter(p=>!filtre||p.statut===filtre);
+  const totalRestant=d.prets.filter(p=>p.statut==="actif").reduce((t,p)=>t+situationPret(p,d.remb).restant,0);
+  return (
+    <div>
+      <div className="rh-page-header">
+        <h2 style={{fontSize:"22px",fontWeight:700,color:"#1a3a6b"}}>Prêts & avances au personnel</h2>
+        <div className="rh-inline-actions"><RH_SelectSociete companies={companies} compId={compId} setCompId={setCompId}/><RH_Btn onClick={nouveau}>+ Nouveau prêt / avance</RH_Btn></div>
+      </div>
+      {d.erreur && <RH_Card style={{background:"#fffbeb",border:"1px solid #fcd34d"}}><div style={{fontSize:13,color:"#92400e"}}>⚠️ {MSG_TABLES_RH_LOT3}</div></RH_Card>}
+      <RH_Card>
+        <div style={{display:"flex",gap:12,alignItems:"flex-end",flexWrap:"wrap",marginBottom:10}}>
+          <Select label="Afficher" value={filtre} onChange={setFiltre} options={[{value:"actif",label:"En cours"},{value:"solde",label:"Soldés"},{value:"annule",label:"Annulés"},{value:"",label:"Tous"}]}/>
+          <div style={{fontSize:13,paddingBottom:12}}>Encours total à recouvrer : <strong style={{color:G.accent}}>{fmt(totalRestant)}</strong></div>
+        </div>
+        {d.loading ? "Chargement…" : <>
+          <Table cols={[
+            {label:"Employé",render:r=>{ const e=empDe(r.employee_id); return `${e.nom||""} ${e.prenoms||""}`; }},
+            {label:"Nature",render:r=>r.nature==="avance"?"Avance":"Prêt"},
+            {label:"Octroyé le",render:r=>dateDoc(r.date_octroi)},
+            {label:"Montant",render:r=>fmtN(r.montant_total)},
+            {label:"Mensualité",render:r=>`${fmtN(r.montant_mensualite)} × ${r.nombre_mensualites}`},
+            {label:"Remboursé",render:r=>fmtN(situationPret(r,d.remb).verse)},
+            {label:"Restant dû",render:r=><strong>{fmtN(situationPret(r,d.remb).restant)}</strong>},
+            {label:"Statut",render:r=>{ const [l,c]=STATUTS_PRET[r.statut]; return <RH_Badge label={l} color={c}/>; }},
+            {label:"Actions",render:r=>(
+              <div className="rh-btn-group">
+                <RH_Btn small variant="secondary" onClick={e=>{e.stopPropagation();setDetail(r)}}>Échéancier</RH_Btn>
+                <RH_Btn small variant="secondary" onClick={e=>{e.stopPropagation();imprimer(r)}}>🖨️</RH_Btn>
+                {r.statut==="actif" && <RH_Btn small variant="secondary" onClick={e=>{e.stopPropagation();rembManuel(r)}}>Versement</RH_Btn>}
+              </div>
+            )},
+          ]} rows={visibles}/>
+          {!visibles.length && <div style={{fontSize:13,color:G.textDim,padding:8}}>Aucun prêt.</div>}
+        </>}
+      </RH_Card>
+      {form && (
+        <RH_Modal title={form.id?"Modifier le prêt":"Nouveau prêt / avance"} onClose={()=>setForm(null)} width="600px">
+          <div className="rh-form-grid-2">
+            <Select label="Employé *" value={form.employee_id} onChange={v=>setF("employee_id",v)} options={[{value:"",label:"-- Choisir --"},...actifs.map(e=>({value:e.id,label:`${e.nom} ${e.prenoms}`}))]}/>
+            <Select label="Nature" value={form.nature} onChange={v=>setF("nature",v)} options={[{value:"pret",label:"Prêt (plusieurs mensualités)"},{value:"avance",label:"Avance sur salaire"}]}/>
+            <RH_Input label="Montant (FCFA) *" value={form.montant_total} onChange={v=>setF("montant_total",v)} type="number"/>
+            <RH_Input label="Date d'octroi" value={form.date_octroi} onChange={v=>setF("date_octroi",v)} type="date"/>
+            <RH_Input label="Nombre de mensualités" value={form.nombre_mensualites} onChange={v=>setF("nombre_mensualites",v)} type="number"/>
+            <RH_Input label="Mensualité (FCFA)" value={form.montant_mensualite} onChange={v=>setF("montant_mensualite",v)} type="number"/>
+            <Select label="Première retenue — mois" value={form.premier_mois} onChange={v=>setF("premier_mois",v)} options={MOIS.slice(1).map((m,i)=>({value:String(i+1),label:m}))}/>
+            <RH_Input label="Première retenue — année" value={form.premiere_annee} onChange={v=>setF("premiere_annee",v)} type="number"/>
+          </div>
+          <RH_Input label="Motif" value={form.motif||""} onChange={v=>setF("motif",v)}/>
+          <div className="rh-actions-row"><RH_Btn onClick={enregistrer}>Enregistrer</RH_Btn><RH_Btn variant="ghost" onClick={()=>setForm(null)}>Annuler</RH_Btn></div>
+        </RH_Modal>
+      )}
+      {detail && (()=>{ const s=situationPret(detail,d.remb); const emp=empDe(detail.employee_id);
+        const rembs=d.remb.filter(r=>r.pret_id===detail.id);
+        return (
+          <RH_Modal title={`Échéancier — ${emp.nom||""} ${emp.prenoms||""}`} onClose={()=>setDetail(null)} width="640px">
+            <div style={{display:"flex",gap:16,flexWrap:"wrap",fontSize:13,marginBottom:10}}>
+              <span>Montant : <strong>{fmt(detail.montant_total)}</strong></span><span>Remboursé : <strong>{fmt(s.verse)}</strong></span>
+              <span>Restant dû : <strong style={{color:G.accent}}>{fmt(s.restant)}</strong></span><span>Mensualités restantes : <strong>{s.mensualitesRestantes}</strong></span>
+            </div>
+            <table style={{width:"100%",borderCollapse:"collapse",fontSize:12.5}}>
+              <thead><tr style={{background:G.input}}><th style={{padding:6,textAlign:"left"}}>Échéance</th><th style={{padding:6,textAlign:"right"}}>Prévu</th><th style={{padding:6,textAlign:"left"}}>Retenue sur la paie</th></tr></thead>
+              <tbody>{echeancierPret(detail).map((l,i)=>{ const r=rembs.find(x=>x.source==="paie"&&x.mois===l.mois&&x.annee===l.annee);
+                return <tr key={i} style={{borderTop:`1px solid ${G.border}`}}><td style={{padding:6}}>{MOIS[l.mois]} {l.annee}</td><td style={{padding:6,textAlign:"right"}}>{fmtN(l.montant)}</td><td style={{padding:6,color:r?"#16a34a":G.textDim}}>{r?`✔ ${fmtN(r.montant)}`:"—"}</td></tr>; })}</tbody>
+            </table>
+            {rembs.some(r=>r.source==="manuel") && <div style={{fontSize:12.5,marginTop:8}}>Versements manuels : {rembs.filter(r=>r.source==="manuel").map(r=>`${fmtN(r.montant)} le ${dateDoc(r.date_versement)}`).join(" ; ")}</div>}
+            <div className="rh-actions-row" style={{marginTop:12}}>
+              {detail.statut==="actif" && <RH_Btn variant="secondary" onClick={()=>{ setForm({...detail,montant_total:String(detail.montant_total),nombre_mensualites:String(detail.nombre_mensualites),montant_mensualite:String(detail.montant_mensualite),premier_mois:String(detail.premier_mois),premiere_annee:String(detail.premiere_annee)}); setDetail(null); }}>Modifier</RH_Btn>}
+              {detail.statut==="actif" && <RH_Btn variant="secondary" onClick={()=>{ annuler(detail); setDetail(null); }}>Annuler le prêt</RH_Btn>}
+              <RH_Btn variant="danger" onClick={()=>supprimer(detail)}>Supprimer</RH_Btn>
+            </div>
+          </RH_Modal>
+        ); })()}
+    </div>
+  );
+};
+
+// ── MISSIONS ────────────────────────────────────────────────────────────────
+const joursMission = (dep, ret) => { const a=new Date(dep), b=new Date(ret); return isNaN(a)||isNaN(b)||b<a ? 0 : Math.round((b-a)/86400000)+1; };
+const RH_Missions = ({companies}) => {
+  const [compId,setCompId]=useState(companies[0]?.id||"");
+  useEffect(()=>{ if(!compId&&companies.length) setCompId(companies[0].id); },[companies,compId]);
+  const [d,setD]=useState({emps:[],missions:[],loading:true,erreur:false});
+  const [form,setForm]=useState(null);
+  const [annee,setAnnee]=useState(String(CURRENT_YEAR));
+  const comp=companies.find(c=>c.id===compId);
+  const charger=useCallback(async()=>{
+    if(!compId) return;
+    const [{data:e},{data:m,error}]=await Promise.all([
+      supabaseRH.from("employees").select("*").eq("company_id",compId).order("nom"),
+      supabaseRH.from("rh_missions").select("*").eq("company_id",compId).order("date_depart",{ascending:false}),
+    ]);
+    setD({emps:e||[],missions:m||[],loading:false,erreur:estErreurTableLot3(error)});
+  },[compId]);
+  useEffect(()=>{ charger(); },[charger]);
+  const empDe=id=>d.emps.find(e=>e.id===id)||{};
+  const actifs=d.emps.filter(e=>e.actif!==false);
+  const recalc=n=>({...n,indemnites_mission:String(joursMission(n.date_depart,n.date_retour)*(parseFloat(n.indemnite_journaliere)||0))});
+  const nouveau=()=>{ if(d.erreur) return rhToast.error(MSG_TABLES_RH_LOT3); const j=new Date().toLocaleDateString("sv-SE");
+    setForm({employee_id:"",objet:"",lieu:"",date_depart:j,date_retour:j,service_demandeur:"",moyen_transport:"",indemnite_journaliere:"0",indemnites_mission:"0",frais_remboursables:"0",avance_frais:"0",statut:"demandee",compte_rendu:""}); };
+  const setF=(k,v)=>setForm(f=>{ const n={...f,[k]:v}; return ["date_depart","date_retour","indemnite_journaliere"].includes(k)?recalc(n):n; });
+  const enregistrer=async()=>{
+    if(!form.employee_id||!form.objet.trim()) return rhToast.error("L'employé et l'objet de la mission sont obligatoires.");
+    if(form.date_retour<form.date_depart) return rhToast.error("La date de retour doit suivre la date de départ.");
+    let numero=form.numero;
+    if(!numero){ const an=form.date_depart.slice(0,4); const n=d.missions.filter(m=>(m.numero||"").startsWith(`OM-${an}-`)).length+1; numero=`OM-${an}-${String(n).padStart(3,"0")}`; }
+    const num=k=>parseFloat(form[k])||0;
+    const payload={company_id:compId,employee_id:form.employee_id,numero,objet:form.objet.trim(),lieu:form.lieu||null,date_depart:form.date_depart,date_retour:form.date_retour,
+      service_demandeur:form.service_demandeur||null,moyen_transport:form.moyen_transport||null,indemnite_journaliere:num("indemnite_journaliere"),
+      indemnites_mission:num("indemnites_mission"),frais_remboursables:num("frais_remboursables"),avance_frais:num("avance_frais"),statut:form.statut,compte_rendu:form.compte_rendu||null};
+    const {error}=form.id ? await supabaseRH.from("rh_missions").update(payload).eq("id",form.id) : await supabaseRH.from("rh_missions").insert(payload);
+    if(error) return rhToast.error(estErreurTableLot3(error)?MSG_TABLES_RH_LOT3:error.message);
+    rhToast.success(`Mission ${numero} enregistrée`); setForm(null); charger();
+  };
+  const supprimer=async m=>{ if(!confirm("Supprimer cette mission ?")) return; await supabaseRH.from("rh_missions").delete().eq("id",m.id); charger(); };
+  const ordre=m=>{ const emp=empDe(m.employee_id); const j=joursMission(m.date_depart,m.date_retour);
+    openPrintWindow(gabaritDocumentHtml({ comp, titre:"ORDRE DE MISSION", numero:m.numero, date:dateDoc(m.created_at||m.date_depart),
+      infos:[["Départ",dateDoc(m.date_depart)],["Retour",dateDoc(m.date_retour)],["Durée",`${j} jour(s)`]],
+      tiersLabel:"Missionnaire", tiers:{nom:`${emp.nom||""} ${emp.prenoms||""}`, adresse:[emp.matricule&&`Matricule ${emp.matricule}`,emp.emploi].filter(Boolean).join(" — ")},
+      avantTableau:`<div class="bloc" style="font-size:10.5pt;line-height:1.7">Il est ordonné à <strong>${echapHtml(emp.nom)} ${echapHtml(emp.prenoms)}</strong>${emp.emploi?`, ${echapHtml(emp.emploi)}`:""}, de se rendre à <strong>${echapHtml(m.lieu||"—")}</strong> pour la mission suivante : <strong>${echapHtml(m.objet)}</strong>.<br>Moyen de transport : ${echapHtml(m.moyen_transport||"—")}${m.service_demandeur?` — Service demandeur : ${echapHtml(m.service_demandeur)}`:""}.<br>Les autorités civiles et militaires sont priées de faciliter l'accomplissement de cette mission.</div>`,
+      colonnes:[{label:"Frais prévus"},{label:"Montant (FCFA)",align:"d",largeur:"30%"}],
+      lignes:[[`Indemnités de mission (${j} j × ${fmtN(m.indemnite_journaliere)})`,fmtN(m.indemnites_mission)],["Autres frais remboursables",fmtN(m.frais_remboursables)],["Avance versée au départ",fmtN(m.avance_frais)]],
+      totaux:[["Total des frais",fcfaDoc(+m.indemnites_mission + +m.frais_remboursables)],["Reste à verser au retour",fcfaDoc(+m.indemnites_mission + +m.frais_remboursables - +m.avance_frais),true]],
+      signatures:["Le missionnaire","Visa à l'arrivée","Le directeur"] }), `ordre_mission_${m.numero}`); };
+
+  const visibles=d.missions.filter(m=>String(m.date_depart).slice(0,4)===annee);
+  const annees=[...new Set([String(CURRENT_YEAR),...d.missions.map(m=>String(m.date_depart).slice(0,4))])].sort().reverse();
+  return (
+    <div>
+      <div className="rh-page-header">
+        <h2 style={{fontSize:"22px",fontWeight:700,color:"#1a3a6b"}}>Missions</h2>
+        <div className="rh-inline-actions"><RH_SelectSociete companies={companies} compId={compId} setCompId={setCompId}/><RH_Btn onClick={nouveau}>+ Nouvelle mission</RH_Btn></div>
+      </div>
+      {d.erreur && <RH_Card style={{background:"#fffbeb",border:"1px solid #fcd34d"}}><div style={{fontSize:13,color:"#92400e"}}>⚠️ {MSG_TABLES_RH_LOT3}</div></RH_Card>}
+      <RH_Card>
+        <div style={{marginBottom:10}}><Select label="Année" value={annee} onChange={setAnnee} options={annees.map(a=>({value:a,label:a}))}/></div>
+        {d.loading ? "Chargement…" : <>
+          <Table cols={[
+            {key:"numero",label:"N°",dim:true},
+            {label:"Missionnaire",render:r=>{ const e=empDe(r.employee_id); return `${e.nom||""} ${e.prenoms||""}`; }},
+            {label:"Objet / lieu",render:r=>`${r.objet}${r.lieu?` — ${r.lieu}`:""}`},
+            {label:"Période",render:r=>`${dateDoc(r.date_depart)} → ${dateDoc(r.date_retour)}`},
+            {label:"Frais",render:r=>fmtN(+r.indemnites_mission + +r.frais_remboursables)},
+            {label:"Statut",render:r=>{ const [l,c]=STATUTS_MISSION[r.statut]; return <RH_Badge label={l} color={c}/>; }},
+            {label:"Actions",render:r=>(
+              <div className="rh-btn-group">
+                <RH_Btn small variant="secondary" onClick={e=>{e.stopPropagation();ordre(r)}}>🖨️ Ordre</RH_Btn>
+                <RH_Btn small variant="secondary" onClick={e=>{e.stopPropagation();setForm({...r,indemnite_journaliere:String(r.indemnite_journaliere),indemnites_mission:String(r.indemnites_mission),frais_remboursables:String(r.frais_remboursables),avance_frais:String(r.avance_frais)})}}>Modifier</RH_Btn>
+                <RH_Btn small variant="danger" onClick={e=>{e.stopPropagation();supprimer(r)}}>Suppr.</RH_Btn>
+              </div>
+            )},
+          ]} rows={visibles}/>
+          {!visibles.length && <div style={{fontSize:13,color:G.textDim,padding:8}}>Aucune mission en {annee}.</div>}
+        </>}
+      </RH_Card>
+      {form && (
+        <RH_Modal title={form.id?`Mission ${form.numero||""}`:"Nouvelle mission"} onClose={()=>setForm(null)} width="640px">
+          <div className="rh-form-grid-2">
+            <Select label="Missionnaire *" value={form.employee_id} onChange={v=>setF("employee_id",v)} options={[{value:"",label:"-- Choisir --"},...actifs.map(e=>({value:e.id,label:`${e.nom} ${e.prenoms}`}))]}/>
+            <RH_Input label="Objet de la mission *" value={form.objet} onChange={v=>setF("objet",v)}/>
+            <RH_Input label="Lieu" value={form.lieu||""} onChange={v=>setF("lieu",v)}/>
+            <RH_Input label="Moyen de transport" value={form.moyen_transport||""} onChange={v=>setF("moyen_transport",v)}/>
+            <RH_Input label="Départ" value={form.date_depart} onChange={v=>setF("date_depart",v)} type="date"/>
+            <RH_Input label="Retour" value={form.date_retour} onChange={v=>setF("date_retour",v)} type="date"/>
+            <RH_Input label="Indemnité journalière (FCFA)" value={form.indemnite_journaliere} onChange={v=>setF("indemnite_journaliere",v)} type="number"/>
+            <RH_Input label={`Indemnités de mission (${joursMission(form.date_depart,form.date_retour)} j)`} value={form.indemnites_mission} onChange={v=>setF("indemnites_mission",v)} type="number"/>
+            <RH_Input label="Autres frais remboursables" value={form.frais_remboursables} onChange={v=>setF("frais_remboursables",v)} type="number"/>
+            <RH_Input label="Avance versée au départ" value={form.avance_frais} onChange={v=>setF("avance_frais",v)} type="number"/>
+            <RH_Input label="Service demandeur" value={form.service_demandeur||""} onChange={v=>setF("service_demandeur",v)}/>
+            <Select label="Statut" value={form.statut} onChange={v=>setF("statut",v)} options={Object.entries(STATUTS_MISSION).map(([value,[label]])=>({value,label}))}/>
+          </div>
+          <RH_Input label="Compte rendu (au retour)" value={form.compte_rendu||""} onChange={v=>setF("compte_rendu",v)}/>
+          <div className="rh-actions-row"><RH_Btn onClick={enregistrer}>Enregistrer</RH_Btn><RH_Btn variant="ghost" onClick={()=>setForm(null)}>Annuler</RH_Btn></div>
+        </RH_Modal>
+      )}
+    </div>
+  );
+};
+
+// ── RAPPEL DANS LA FICHE DE PAIE : PRÊTS ET MISSIONS DU MOIS ────────────────
+// Mensualités dues ce mois (prêts en cours, commencés, pas encore retenus
+// ce mois) : « Ajouter aux avances » les reporte dans la fiche ; elles sont
+// enregistrées comme remboursements quand la fiche est enregistrée.
+const RH_RappelPretsMissions = ({employeeId, mois, annee, avances, onAppliquer}) => {
+  const [d,setD]=useState(null);
+  const [applique,setApplique]=useState(false);
+  useEffect(()=>{
+    setApplique(false); onAppliquer(null);
+    if(!employeeId||!mois||!annee){ setD(null); return; }
+    const mm=String(mois).padStart(2,"0"), deb=`${annee}-${mm}-01`, fin=`${annee}-${mm}-${String(new Date(annee,mois,0).getDate()).padStart(2,"0")}`;
+    (async()=>{
+      const [{data:p,error},{data:r},{data:m}]=await Promise.all([
+        supabaseRH.from("rh_prets").select("*").eq("employee_id",employeeId).eq("statut","actif"),
+        supabaseRH.from("rh_pret_remboursements").select("*").eq("employee_id",employeeId),
+        supabaseRH.from("rh_missions").select("*").eq("employee_id",employeeId).in("statut",["validee","en_cours","terminee"]).lte("date_depart",fin).gte("date_retour",deb),
+      ]);
+      if(error){ setD(null); return; }
+      const dues=(p||[]).filter(x=>moisAvant(x.premier_mois,x.premiere_annee,mois,annee)).map(x=>{
+        const s=situationPret(x,r||[]); const deja=(r||[]).find(y=>y.pret_id===x.id&&y.source==="paie"&&y.mois===mois&&y.annee===annee);
+        return {pret:x,montant:deja?0:s.prochaine,deja,restant:s.restant}; }).filter(x=>x.deja||x.montant>0);
+      setD({dues,missions:m||[]});
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[employeeId,mois,annee]);
+  if(!d||(!d.dues.length&&!d.missions.length)) return null;
+  const aRetenir=d.dues.filter(x=>!x.deja);
+  const total=aRetenir.reduce((t,x)=>t+x.montant,0);
+  return (
+    <div style={{gridColumn:"1/-1",background:"#eff6ff",border:"1px solid #93c5fd",borderRadius:8,padding:"10px 12px",marginBottom:4,fontSize:12.5}}>
+      {d.dues.length>0 && <>
+        <div style={{fontWeight:700,color:"#1d4ed8",marginBottom:4}}>Prêts et avances — mensualités de {MOIS[mois]} {annee}</div>
+        {d.dues.map(x=><div key={x.pret.id}>• {x.pret.nature==="avance"?"Avance":"Prêt"} de {fmt(x.pret.montant_total)} : {x.deja?`✔ déjà retenue ce mois (${fmt(x.deja.montant)})`:`mensualité ${fmt(x.montant)} — restant dû ${fmt(x.restant)}`}</div>)}
+        {total>0 && <div style={{marginTop:6,display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+          <strong>À retenir : {fmt(total)}</strong>
+          <RH_Btn small disabled={applique} onClick={()=>{ onAppliquer(aRetenir.map(x=>({pret_id:x.pret.id,montant:x.montant})), (parseFloat(avances)||0)+total); setApplique(true); rhToast.info("Mensualités ajoutées aux avances — elles seront enregistrées avec la fiche"); }}>
+            {applique?"✔ Ajoutées aux avances":"Ajouter aux avances de la fiche"}
+          </RH_Btn>
+        </div>}
+      </>}
+      {d.missions.length>0 && <>
+        <div style={{fontWeight:700,color:"#1d4ed8",margin:`${d.dues.length?8:0}px 0 4px`}}>Missions du mois</div>
+        {d.missions.map(m=><div key={m.id}>• {m.numero} — {m.objet} ({dateDoc(m.date_depart)} → {dateDoc(m.date_retour)}) : frais {fmt(+m.indemnites_mission + +m.frais_remboursables)}, avance {fmt(m.avance_frais)}</div>)}
+        <div style={{fontSize:11.5,color:G.textDim,marginTop:3}}>Les frais de mission sont des remboursements, non soumis à cotisations : ils ne sont pas ajoutés au brut.</div>
+      </>}
+    </div>
+  );
+};
+
 function RH_EmployeesWrapper({ companies }) {
   return <><RH_ToastContainer /><Employees companies={companies} /></>
 }
@@ -19921,6 +20256,14 @@ function RH_CongesWrapper({ companies }) {
 
 function RH_AbsencesWrapper({ companies }) {
   return <><RH_ToastContainer /><RH_Absences companies={companies} /></>
+}
+
+function RH_PretsWrapper({ companies }) {
+  return <><RH_ToastContainer /><RH_Prets companies={companies} /></>
+}
+
+function RH_MissionsWrapper({ companies }) {
+  return <><RH_ToastContainer /><RH_Missions companies={companies} /></>
 }
 
 function RH_SimulateurWrapper() {
@@ -20290,7 +20633,7 @@ export default function ComptaPro() {
     prestations:'Prestations', journal_caisse:'Journal Caisse', journal_banque:'Journal Banque',
     suivi_lot:'Suivi de Lot', journal_mobile:'Journal Mobile Money', plan_comptable:'Plan Comptable', grand_livre:'Grand-Livre', ecritures:'Saisie Comptable', balance:'Balance', etats_financiers:'États Financiers',
     rh_employes:'RH — Employés', rh_fiches_paie:'RH — Fiches de Paie', rh_historique:'RH — Historique Paie',
-    rh_declarations:'RH — Déclarations CNSS/ITS', rh_rapport:'RH — Rapport Cabinet', rh_conges:'RH — Congés', rh_absences:'RH — Permissions & absences', rh_tableau_bord:'RH — Tableau de bord', rh_simulateur:'RH — Simulateur Brut ↔ Net',
+    rh_declarations:'RH — Déclarations CNSS/ITS', rh_rapport:'RH — Rapport Cabinet', rh_conges:'RH — Congés', rh_absences:'RH — Permissions & absences', rh_prets:'RH — Prêts & avances', rh_missions:'RH — Missions', rh_tableau_bord:'RH — Tableau de bord', rh_simulateur:'RH — Simulateur Brut ↔ Net',
   }
 
   const renderPage = () => {
@@ -20370,6 +20713,8 @@ export default function ComptaPro() {
       case 'rh_rapport':      return <RH_RapportWrapper user={user} companies={companies} />
       case 'rh_conges':       return <RH_CongesWrapper companies={companies} />
       case 'rh_absences':     return <RH_AbsencesWrapper companies={companies} />
+      case 'rh_prets':        return <RH_PretsWrapper companies={companies} />
+      case 'rh_missions':     return <RH_MissionsWrapper companies={companies} />
       case 'rh_tableau_bord': return <RH_TableauDeBordWrapper companies={companies} />
       case 'rh_simulateur':   return <RH_SimulateurWrapper />
     }
