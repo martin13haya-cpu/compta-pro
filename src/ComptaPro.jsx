@@ -3543,6 +3543,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
   const [filterColValue, setFilterColValue] = useState('')
   const [sortBy, setSortBy] = useState('') // ''=plus récents | 'alpha' | 'contrat'
   const [avances, setAvances] = useState([])
+  const [rembAG, setRembAG] = useState(null) // fonds intrant retenus sur les achats groupés
   // Ouvriers engagés par un producteur (table compta_ouvriers_fournisseur)
   const [ouvriersFourn, setOuvriersFourn] = useState(null)   // fournisseur dont on saisit les ouvriers
   const [ouvriers, setOuvriers] = useState([])
@@ -3751,8 +3752,13 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     }
     const defaults = extraFields ? extraFields.defaults : {}
     setForm(it?{...it}:{...baseDefaults,...defaults}); setModal(it?'edit':'add')
-    setAvances([])
+    setAvances([]); setRembAG(null)
     if (it && table==='compta_fournisseurs') {
+      supabase.from('compta_achats_groupes_lignes').select('fonds_intrant,compta_achats_groupes(numero,statut)').eq('fournisseur_id', it.id)
+        .then(({ data, error }) => { if (error || !data) return
+          const ls = data.filter(l => +l.fonds_intrant > 0 && l.compta_achats_groupes)
+          const somme = st => ls.filter(l => l.compta_achats_groupes.statut === st).reduce((t,l)=>t+(+l.fonds_intrant||0),0)
+          setRembAG({ rembourse:somme('cloture'), enCours:somme('ouvert'), groupes:[...new Set(ls.filter(l => l.compta_achats_groupes.statut !== 'annule').map(l => l.compta_achats_groupes.numero))] }) })
       supabase.from('compta_avances_fournisseur')
         .select('type_avance,quantite_recue,valeur_remboursement')
         .eq('fournisseur_id', it.id)
@@ -5121,6 +5127,13 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
                     </div>
                   </div>
                 </div>
+                {rembAG && (rembAG.rembourse > 0 || rembAG.enCours > 0) && (()=>{ const reste = Math.max(0, Math.round(totalAvance - rembAG.rembourse - rembAG.enCours))
+                  return <div style={{ marginTop:12, padding:'9px 12px', borderRadius:8, fontSize:12.5, lineHeight:1.6, background: reste > 0 ? '#fffbeb' : '#f0fdf4', border:`1px solid ${reste > 0 ? '#fde68a' : '#bbf7d0'}` }}>
+                    Remboursé par les ventes groupées : <strong>{Math.round(rembAG.rembourse).toLocaleString('fr-FR')} FCFA</strong>
+                    {rembAG.enCours > 0 && <> — en cours (groupe ouvert) : <strong>{Math.round(rembAG.enCours).toLocaleString('fr-FR')} FCFA</strong></>}
+                    {' '}— reste à rembourser : <strong style={{ color: reste > 0 ? '#b45309' : '#15803d' }}>{reste > 0 ? `${reste.toLocaleString('fr-FR')} FCFA` : 'avances soldées ✔'}</strong>
+                    {rembAG.groupes.length > 0 && <div style={{ color:'#64748b', fontSize:11.5 }}>Groupes : {rembAG.groupes.join(', ')}</div>}
+                  </div> })()}
               </div>
             )
           })()}
@@ -9939,14 +9952,43 @@ function etatPaiementGroupeHtml(comp, g, p, lignes, repsAvant, repsPaiement) {
     </div></body></html>`
 }
 
+// ── Lots de production et avances (lot 3) ──
+// Un groupe clôturé est versé dans un lot de production : une origine par
+// producteur (compta_lot_origines, référence = n° du groupe), visible dans la
+// traçabilité et la fiche QR du lot. La quantité peut être ajoutée au paddy
+// entrée du lot ; elle est retirée si le groupe est détaché.
+// Avances : reçues (fiche producteur) − fonds intrant retenus sur les groupes
+// clôturés (remboursé) et ouverts (en cours) = reste dû.
+const MSG_SCRIPT_AG_LOTS = "Exécutez d'abord le script supabase/migrations/20261010_achats_groupes_lots.sql dans Supabase (projet ComptaPro, SQL Editor)."
+const estErreurAGLots = e => /lot_id|lot_qte_ajoutee|achat_groupe_id|schema cache|does not exist|column/i.test(e?.message||'')
+const STATUTS_AVANCE_AG = { solde:['Soldée','success'], partiel:['En cours de remboursement','info'], non_rembourse:['Non remboursée','warning'] }
+
+function situationAvancesProducteurs(fournisseurs, avances, lignes, groupes) {
+  const statutDe = Object.fromEntries(groupes.map(g => [g.id, g.statut]))
+  const numeroDe = Object.fromEntries(groupes.map(g => [g.id, g.numero]))
+  return fournisseurs.map(f => {
+    const recu = Math.round(avances.filter(a => String(a.fournisseur_id) === String(f.id)).reduce((t,a)=>t+(+a.valeur_remboursement||0),0))
+    const ls = lignes.filter(l => String(l.fournisseur_id) === String(f.id) && +l.fonds_intrant > 0)
+    const somme = st => Math.round(ls.filter(l => statutDe[l.groupe_id] === st).reduce((t,l)=>t+(+l.fonds_intrant||0),0))
+    const rembourse = somme('cloture'), enCours = somme('ouvert')
+    const reste = Math.max(0, recu - rembourse - enCours)
+    const statut = reste <= 0 && enCours <= 0 ? 'solde' : rembourse + enCours > 0 ? 'partiel' : 'non_rembourse'
+    const prix = +f.prix_contrat || 0
+    return { f, recu, rembourse, enCours, reste, statut, resteKg: prix > 0 ? Math.round(reste / prix * 100) / 100 : null,
+      groupes:[...new Set(ls.filter(l => statutDe[l.groupe_id] !== 'annule').map(l => numeroDe[l.groupe_id]).filter(Boolean))] }
+  }).filter(x => x.recu > 0)
+}
+
 const normAG = s => String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase()
 
 function AchatsGroupesPage({ companies, companyId, toast, readOnly=false }) {
-  const [d, setD] = useState({ groupes:[], lignes:[], fournisseurs:[], avances:[], paiements:[], reps:[], comptes:{}, loading:true, erreur:false, erreurPaie:false })
+  const [d, setD] = useState({ groupes:[], lignes:[], fournisseurs:[], avances:[], paiements:[], reps:[], lots:[], comptes:{}, loading:true, erreur:false, erreurPaie:false })
   const [filtre, setFiltre] = useState({ statut:'ouvert', q:'' })
   const [paie, setPaie] = useState(null)       // versement en saisie
   const [suivi, setSuivi] = useState(null)     // groupe dont on suit les paiements
   const [paieSel, setPaieSel] = useState(null) // versement dont on fait l'émargement
+  const [vers, setVers] = useState(null)       // versement d'un groupe dans un lot de production
+  const [avSit, setAvSit] = useState(null)     // filtres de la situation des avances (null = fermée)
   const [ed, setEd] = useState(null)       // groupe en saisie (avec ses lignes)
   const [choix, setChoix] = useState({ village:'', cooperative:'', mentor:'', q:'', sel:[] })
   const [saving, setSaving] = useState(false)
@@ -9954,15 +9996,16 @@ function AchatsGroupesPage({ companies, companyId, toast, readOnly=false }) {
 
   const charger = useCallback(async () => {
     if (!companyId) { setD(x=>({...x, loading:false})); return }
-    const [{ data:g, error:eg }, { data:l, error:el }, { data:f }, { data:a }, { data:pa, error:ep }, { data:rp, error:er }] = await Promise.all([
+    const [{ data:g, error:eg }, { data:l, error:el }, { data:f }, { data:a }, { data:pa, error:ep }, { data:rp, error:er }, { data:lo }] = await Promise.all([
       supabase.from('compta_achats_groupes').select('*').eq('company_id', companyId).order('date_achat', { ascending:false }),
       fetchAllRows(() => supabase.from('compta_achats_groupes_lignes').select('*').eq('company_id', companyId).order('ordre')),
       fetchAllRows(() => supabase.from('compta_fournisseurs').select('*').eq('company_id', companyId).order('nom')),
       fetchAllRows(() => supabase.from('compta_avances_fournisseur').select('fournisseur_id,valeur_remboursement').eq('company_id', companyId)),
       supabase.from('compta_achats_groupes_paiements').select('*').eq('company_id', companyId).order('date_paiement').order('created_at'),
       fetchAllRows(() => supabase.from('compta_achats_groupes_repartitions').select('*').eq('company_id', companyId)),
+      supabase.from('compta_lots_production').select('id,numero_lot,qte_paddy_entree,statut,date_debut').eq('company_id', companyId).order('date_debut', { ascending:false }),
     ])
-    setD({ groupes:g||[], lignes:l||[], avances:a||[], paiements:pa||[], reps:rp||[], loading:false,
+    setD({ groupes:g||[], lignes:l||[], avances:a||[], paiements:pa||[], reps:rp||[], lots:lo||[], loading:false,
       erreur:estErreurAG(eg)||estErreurAG(el), erreurPaie:estErreurAGPaie(ep)||estErreurAGPaie(er),
       comptes:Object.fromEntries((f||[]).filter(x => x.numero_compte).map(x => [String(x.id), x.numero_compte])),
       fournisseurs:(f||[]).filter(x => x.actif !== false && x.type !== 'morale').sort((x,y)=>nomTiersTraca(x).localeCompare(nomTiersTraca(y),'fr')) })
@@ -10090,6 +10133,7 @@ function AchatsGroupesPage({ companies, companyId, toast, readOnly=false }) {
   const rouvrir = async g => {
     const conflit = lignesDe(g.id).map(l => ({ l, o:groupeOuvertDe(l.fournisseur_id, g.id) })).find(x => x.o)
     if (conflit) return toast.error(`Impossible de rouvrir : ${conflit.l.nom} est dans le groupe ouvert ${conflit.o.numero}.`)
+    if (g.lot_id) return toast.error(`Impossible de rouvrir : le paddy du groupe est versé dans le lot ${lotDe(g.lot_id)?.numero_lot||''}. Détachez-le d'abord.`)
     if (paiementsDe(g.id).length) return toast.error(`Impossible de rouvrir : le groupe a déjà ${paiementsDe(g.id).length} paiement(s). Supprimez-les d'abord (Paiements & émargement).`)
     if (!confirm(`Rouvrir le groupe ${g.numero} pour le modifier ? L'écriture d'achat sera retirée de la comptabilité et repassée à la prochaine clôture.`)) return
     const { error } = await supabase.from('compta_achats_groupes').update({ statut:'ouvert' }).eq('id', g.id)
@@ -10178,6 +10222,73 @@ function AchatsGroupesPage({ companies, companyId, toast, readOnly=false }) {
     openPrintWindow(etatPaiementGroupeHtml(company, g, p, lignesDe(g.id), d.reps.filter(r => avant.has(r.paiement_id)), d.reps.filter(r => r.paiement_id === p.id)), `etat_paiement_${p.numero}`)
   }
 
+  const lotDe = id => d.lots.find(l => String(l.id) === String(id))
+  const ouvrirVersement = g => {
+    if (!lignesDe(g.id).some(l => +l.quantite_kg > 0)) return toast.error('Aucune quantité dans ce groupe.')
+    const enCours = d.lots.filter(l => l.statut === 'en_cours')
+    setVers({ g, mode: enCours.length ? 'existant' : 'nouveau', lot_id: enCours[0]?.id || '', numero_lot:`LOT-${Date.now().toString().slice(-6)}`, ajouter_qte:true })
+  }
+  const verserDansLot = async e => {
+    e.preventDefault()
+    const g = vers.g, ls = lignesDe(g.id).filter(l => +l.quantite_kg > 0), q = totauxAchatGroupe(ls).quantite_kg
+    if (vers.mode === 'existant' && !vers.lot_id) return toast.error('Choisissez le lot de production.')
+    if (vers.mode === 'nouveau' && !vers.numero_lot.trim()) return toast.error('Saisissez le numéro du nouveau lot.')
+    setSaving(true)
+    const uid = (await supabase.auth.getUser()).data?.user?.id
+    const ajout = vers.ajouter_qte ? q : 0
+    let lot, annulerLot
+    if (vers.mode === 'nouveau') {
+      const { data, error } = await supabase.from('compta_lots_production').insert({ company_id:companyId, user_id:uid, numero_lot:vers.numero_lot.trim(),
+        date_debut:today(), qte_paddy_entree:ajout, statut:'en_cours', notes:`Paddy de la vente groupée ${g.numero}${g.village ? ` — ${g.village}` : ''}` }).select('id,numero_lot,qte_paddy_entree').single()
+      if (error) { setSaving(false); return toast.error('Lot non créé : ' + error.message) }
+      lot = data; annulerLot = () => supabase.from('compta_lots_production').delete().eq('id', lot.id)
+    } else {
+      const { data:l } = await supabase.from('compta_lots_production').select('id,numero_lot,qte_paddy_entree').eq('id', vers.lot_id).single()
+      lot = l
+      if (ajout > 0) {
+        const { error } = await supabase.from('compta_lots_production').update({ qte_paddy_entree:Math.round(((+lot.qte_paddy_entree||0) + ajout)*1000)/1000 }).eq('id', lot.id)
+        if (error) { setSaving(false); return toast.error(error.message) }
+      }
+      annulerLot = () => ajout > 0 && supabase.from('compta_lots_production').update({ qte_paddy_entree:+lot.qte_paddy_entree||0 }).eq('id', lot.id)
+    }
+    const { error:eo } = await supabase.from('compta_lot_origines').insert(ls.map(l => ({ company_id:companyId, user_id:uid, lot_id:lot.id,
+      fournisseur_id:l.fournisseur_id||null, producteur_nom:l.nom, quantite_kg:+l.quantite_kg, date_reception:g.date_achat, reference:g.numero,
+      variete:l.variete||g.variete||null, observations:`Vente groupée ${g.numero}${g.village ? ` — ${g.village}` : ''}`, achat_groupe_id:g.id })))
+    if (eo) { await annulerLot(); setSaving(false); return toast.error(estErreurAGLots(eo) ? MSG_SCRIPT_AG_LOTS : eo.message) }
+    const { error:eg } = await supabase.from('compta_achats_groupes').update({ lot_id:lot.id, lot_qte_ajoutee:ajout }).eq('id', g.id)
+    if (eg) { await supabase.from('compta_lot_origines').delete().eq('achat_groupe_id', g.id); await annulerLot(); setSaving(false)
+      return toast.error(estErreurAGLots(eg) ? MSG_SCRIPT_AG_LOTS : eg.message) }
+    setSaving(false); setVers(null)
+    toast.success(`Paddy du groupe ${g.numero} (${fmtKg(q)}, ${ls.length} producteur(s)) versé dans le lot ${lot.numero_lot} — visible dans la traçabilité.`)
+    charger()
+  }
+  const detacherDuLot = async g => {
+    const lot = lotDe(g.lot_id)
+    if (!confirm(`Détacher le groupe ${g.numero} du lot ${lot?.numero_lot||''} ? Les origines producteurs créées pour ce groupe seront retirées du lot${+g.lot_qte_ajoutee > 0 ? `, et ${fmtKg(g.lot_qte_ajoutee)} retirés du paddy entrée` : ''}.`)) return
+    const { error } = await supabase.from('compta_lot_origines').delete().eq('achat_groupe_id', g.id)
+    if (error) return toast.error(estErreurAGLots(error) ? MSG_SCRIPT_AG_LOTS : error.message)
+    if (+g.lot_qte_ajoutee > 0 && g.lot_id) {
+      const { data:l } = await supabase.from('compta_lots_production').select('qte_paddy_entree').eq('id', g.lot_id).single()
+      if (l) await supabase.from('compta_lots_production').update({ qte_paddy_entree:Math.max(0, Math.round(((+l.qte_paddy_entree||0) - (+g.lot_qte_ajoutee))*1000)/1000) }).eq('id', g.lot_id)
+    }
+    await supabase.from('compta_achats_groupes').update({ lot_id:null, lot_qte_ajoutee:0 }).eq('id', g.id)
+    toast.success(`Groupe ${g.numero} détaché du lot.`); charger()
+  }
+  const sitAvances = situationAvancesProducteurs(d.fournisseurs, d.avances, d.lignes, d.groupes)
+  const avVisibles = !avSit ? [] : sitAvances.filter(x => (!avSit.village || (x.f.village||'') === avSit.village) && (!avSit.statut || x.statut === avSit.statut)
+    && (!avSit.q || normAG(`${nomTiersTraca(x.f)} ${x.f.cooperative_affiliee||''}`).includes(normAG(avSit.q))))
+  const totAv = k => avVisibles.reduce((t,x)=>t+x[k],0)
+  const imprimerAvances = () => {
+    openPrintWindow(gabaritDocumentHtml({ comp:company, titre:'SITUATION DES AVANCES', numero:'', date:new Date().toLocaleDateString('fr-FR'),
+      infos:[['Village', avSit.village||'Tous'], ['Statut', avSit.statut ? STATUTS_AVANCE_AG[avSit.statut][0] : 'Tous'], ['Producteurs', String(avVisibles.length)]],
+      tiersLabel:'Fonds intrant des producteurs', tiers:{ nom:'Remboursement par les ventes groupées de paddy' },
+      colonnes:[{label:'Producteur'},{label:'Village'},{label:'Reçu',align:'d'},{label:'Remboursé',align:'d'},{label:'En cours',align:'d'},{label:'Reste dû',align:'d'},{label:'Reste (kg)',align:'d'},{label:'Statut'}],
+      lignes:avVisibles.map(x => [`${echapHtml(nomTiersTraca(x.f))}${x.f.cooperative_affiliee ? `<br><small>${echapHtml(x.f.cooperative_affiliee)}</small>` : ''}`, echapHtml(x.f.village||''),
+        nbFr(x.recu), nbFr(x.rembourse), nbFr(x.enCours), `<strong>${nbFr(x.reste)}</strong>`, x.resteKg != null ? nbFr(x.resteKg) : '—', STATUTS_AVANCE_AG[x.statut][0]]),
+      totaux:[['Avances reçues', fcfaDoc(totAv('recu'))], ['Remboursé (groupes clôturés)', fcfaDoc(totAv('rembourse'))], ['En cours (groupes ouverts)', fcfaDoc(totAv('enCours'))], ['Reste dû', fcfaDoc(totAv('reste')), true]],
+      signatures:['Le Gérant / Comptable', 'Le Président Coopérative / Groupement'] }), 'situation_avances_producteurs')
+  }
+
   const visibles = d.groupes.filter(g => (!filtre.statut || (filtre.statut === 'a_payer' ? g.statut === 'cloture' && sitPaie(g).reste > 0 : g.statut === filtre.statut))
     && (!filtre.q || normAG(`${g.numero} ${g.commune||''} ${g.village||''} ${g.chef_groupe||''} ${lignesDe(g.id).map(l=>l.nom).join(' ')}`).includes(normAG(filtre.q))))
   const ouverts = d.groupes.filter(g => g.statut === 'ouvert')
@@ -10190,7 +10301,10 @@ function AchatsGroupesPage({ companies, companyId, toast, readOnly=false }) {
   return (
     <div>
       <PageHeader title="Achats groupés de paddy" subtitle={company ? `${company.raison_sociale} — ${ouverts.length} groupe(s) ouvert(s) : ${fmtKg(totOuverts.quantite_kg)} — reste à payer sur les groupes clôturés : ${fcfaDoc(resteClotures)}` : "Sélectionnez une société en haut de l'écran"}
-        actions={!readOnly && <Btn onClick={nouveau}>+ Nouveau groupe</Btn>} />
+        actions={<>
+          <Btn sm variant="secondary" onClick={()=>setAvSit({ village:'', statut:'', q:'' })}>📊 Situation des avances</Btn>
+          {!readOnly && <Btn onClick={nouveau}>+ Nouveau groupe</Btn>}
+        </>} />
       {(d.erreur || d.erreurPaie) && <Card style={{ marginBottom:16, background:'#fffbeb', borderColor:'#fcd34d' }}><div style={{ fontSize:13, color:'#92400e' }}>⚠️ {d.erreur ? MSG_SCRIPT_AG : MSG_SCRIPT_AG_PAIE}</div></Card>}
       <Card style={{ marginBottom:16, padding:'12px 20px' }}>
         <div style={{ display:'flex', gap:10, flexWrap:'wrap' }}>
@@ -10214,7 +10328,8 @@ function AchatsGroupesPage({ companies, companyId, toast, readOnly=false }) {
                     <TD right>{nbFr(t.fonds_intrant)}</TD><TD right><strong>{nbFr(t.net_a_percevoir)}</strong></TD>
                     <TD right>{nbFr(sp.percu)}</TD><TD right>{sp.reste > 0 ? <strong style={{ color:'#b45309' }}>{nbFr(sp.reste)}</strong> : '0'}</TD>
                     <TD><Badge type={STATUTS_AG[g.statut]?.[1]||'info'}>{STATUTS_AG[g.statut]?.[0]||g.statut}</Badge>
-                      {g.statut === 'cloture' && <div style={{ marginTop:3 }}><Badge type={STATUTS_PAIE_AG[sp.statut][1]}>{STATUTS_PAIE_AG[sp.statut][0]}</Badge></div>}</TD>
+                      {g.statut === 'cloture' && <div style={{ marginTop:3 }}><Badge type={STATUTS_PAIE_AG[sp.statut][1]}>{STATUTS_PAIE_AG[sp.statut][0]}</Badge></div>}
+                      {g.lot_id && <div style={{ marginTop:3, fontSize:11.5, color:'#0f766e', whiteSpace:'nowrap' }}>🏭 {lotDe(g.lot_id)?.numero_lot || 'Lot'}</div>}</TD>
                     <TD><ActionsMenu sm items={[
                       { couleur:'#0891b2', label: !readOnly && g.statut === 'ouvert' ? '✏️ Ouvrir / modifier' : '👁️ Voir le détail', onClick:()=>ouvrir(g) },
                       { couleur:'#2563eb', label:'🖨️ Registre de vente groupée', onClick:()=>imprimerRegistre(g, ls) },
@@ -10222,6 +10337,8 @@ function AchatsGroupesPage({ companies, companyId, toast, readOnly=false }) {
                       !readOnly && g.statut === 'ouvert' && { couleur:'#16a34a', label:'🔒 Clôturer le groupe', onClick:()=>cloturer(g) },
                       !readOnly && g.statut === 'cloture' && sp.reste > 0 && { couleur:'#16a34a', label:'💰 Payer le groupe', onClick:()=>nouveauPaiement(g) },
                       g.statut === 'cloture' && { couleur:'#0d9488', label:`📋 Paiements & émargement (${np})`, onClick:()=>{ setSuivi(g); setPaieSel(null) } },
+                      !readOnly && g.statut === 'cloture' && !g.lot_id && { couleur:'#0f766e', label:'🏭 Verser dans un lot de production', onClick:()=>ouvrirVersement(g) },
+                      !readOnly && g.lot_id && { couleur:'#64748b', label:`↩️ Détacher du lot ${lotDe(g.lot_id)?.numero_lot||''}`, onClick:()=>detacherDuLot(g) },
                       !readOnly && g.statut === 'cloture' && { couleur:'#4f46e5', label:"📒 Passer l'écriture d'achat", onClick:async()=>{ const { error } = await passerEcrituresAchat(g); error ? toast.error(error.message) : toast.success(`Écriture d'achat ${pieceAchatGroupe(g)} passée au journal des achats.`) } },
                       !readOnly && g.statut === 'cloture' && { couleur:'#b45309', label:'🔓 Rouvrir', onClick:()=>rouvrir(g) },
                       !readOnly && g.statut === 'ouvert' && null,
@@ -10375,6 +10492,70 @@ function AchatsGroupesPage({ companies, companyId, toast, readOnly=false }) {
             <div style={{ fontSize:11.5, color:'#64748b', margin:'8px 0 14px' }}>Chaque part sort du {JOURNAL_LABEL[paie.mode_paiement]} sur le compte du producteur. L'état de paiement et la feuille d'émargement s'impriment à l'enregistrement.</div>
             <Row><Btn variant="secondary" onClick={()=>setPaie(null)}>Annuler</Btn><Btn type="submit" variant="success" disabled={saving || !(m > 0) || m > s.reste}>{saving ? '…' : `Payer ${fcfaDoc(m)} et imprimer l'émargement`}</Btn></Row>
           </form> })()}
+      </Modal>
+
+      <Modal open={!!vers} onClose={()=>setVers(null)} size="md" title={vers ? `Verser le groupe ${vers.g.numero} dans un lot de production` : ''}>
+        {vers && (()=>{ const ls = lignesDe(vers.g.id).filter(l => +l.quantite_kg > 0), q = totauxAchatGroupe(ls).quantite_kg, enCours = d.lots.filter(l => l.statut === 'en_cours')
+          const radio = (v, lib) => <label style={{ display:'flex', gap:8, alignItems:'center', fontSize:13, cursor:'pointer' }}>
+            <input type="radio" name="mode_lot" checked={vers.mode === v} onChange={()=>setVers(x=>({...x, mode:v}))} /> {lib}</label>
+          return <form onSubmit={verserDansLot}>
+            <div style={{ fontSize:12.5, background:'#f0fdfa', borderRadius:8, padding:'8px 12px', marginBottom:12 }}>
+              Paddy du groupe : <strong>{fmtKg(q)}</strong> — {ls.length} producteur(s){vers.g.village ? ` — ${vers.g.village}` : ''}{vers.g.variete ? ` — variété ${vers.g.variete}` : ''}
+            </div>
+            <div style={{ display:'flex', gap:18, flexWrap:'wrap', marginBottom:12 }}>
+              {radio('existant', `Lot en cours (${enCours.length})`)}{radio('nouveau', 'Créer un nouveau lot')}
+            </div>
+            {vers.mode === 'existant'
+              ? <Sel label="Lot de production *" name="lot_id" value={vers.lot_id} onChange={e=>setVers(x=>({...x, lot_id:e.target.value}))}
+                  options={[{ value:'', label: enCours.length ? '— Choisir —' : '— Aucun lot en cours —' }, ...enCours.map(l => ({ value:l.id, label:`${l.numero_lot} — paddy entrée ${fmtKg(l.qte_paddy_entree)}` }))]} />
+              : <Input label="N° du nouveau lot *" name="numero_lot" value={vers.numero_lot} onChange={e=>setVers(x=>({...x, numero_lot:e.target.value}))} required />}
+            <label style={{ display:'flex', gap:8, alignItems:'center', fontSize:13, margin:'4px 0 10px', cursor:'pointer' }}>
+              <input type="checkbox" checked={vers.ajouter_qte} onChange={e=>setVers(x=>({...x, ajouter_qte:e.target.checked}))} />
+              Ajouter {fmtKg(q)} au paddy entrée du lot
+            </label>
+            <div style={{ fontSize:11.5, color:'#64748b', marginBottom:14 }}>Chaque producteur devient une origine du lot (référence {vers.g.numero}) : il apparaît dans la traçabilité, la fiche et le QR code du lot.</div>
+            <Row><Btn variant="secondary" onClick={()=>setVers(null)}>Annuler</Btn><Btn type="submit" variant="success" disabled={saving}>{saving ? '…' : 'Verser dans le lot'}</Btn></Row>
+          </form> })()}
+      </Modal>
+
+      <Modal open={!!avSit} onClose={()=>setAvSit(null)} size="xl" title="Situation des avances des producteurs (fonds intrant)">
+        {avSit && <>
+          <div style={{ display:'flex', gap:8, flexWrap:'wrap', marginBottom:12 }}>
+            <select style={selStyle} value={avSit.village} onChange={e=>setAvSit(x=>({...x, village:e.target.value}))}>
+              <option value="">Tous les villages</option>{[...new Set(sitAvances.map(x => x.f.village).filter(Boolean))].sort().map(v=><option key={v} value={v}>{v}</option>)}
+            </select>
+            <select style={selStyle} value={avSit.statut} onChange={e=>setAvSit(x=>({...x, statut:e.target.value}))}>
+              <option value="">Tous les statuts</option>{Object.entries(STATUTS_AVANCE_AG).map(([k,[l]])=><option key={k} value={k}>{l}</option>)}
+            </select>
+            <input style={{ ...selStyle, flex:'1 1 160px' }} placeholder="Producteur, coopérative…" value={avSit.q} onChange={e=>setAvSit(x=>({...x, q:e.target.value}))} />
+            <Btn sm variant="secondary" onClick={imprimerAvances}>🖨️ Imprimer</Btn>
+          </div>
+          <div style={{ overflowX:'auto', border:'1px solid #e2e8f0', borderRadius:10, maxHeight:'60vh', overflowY:'auto' }}>
+            <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12.5 }}>
+              <thead><tr style={{ background:'#f1f5f9' }}>{['Producteur','Village','Avances reçues','Remboursé','En cours','Reste dû','Reste (kg)','Statut','Groupes'].map((h,i)=>
+                <th key={h} style={{ padding:'7px 8px', textAlign:i>=2&&i<=6?'right':'left', fontSize:11.5, color:'#475569', whiteSpace:'nowrap', position:'sticky', top:0, background:'#f1f5f9' }}>{h}</th>)}</tr></thead>
+              <tbody>
+                {avVisibles.map(x => (
+                  <tr key={x.f.id} style={{ borderTop:'1px solid #f1f5f9' }}>
+                    <td style={{ padding:'6px 8px' }}><strong>{nomTiersTraca(x.f)}</strong>{x.f.cooperative_affiliee && <div style={{ fontSize:11, color:'#64748b' }}>{x.f.cooperative_affiliee}</div>}</td>
+                    <td style={{ padding:'6px 8px' }}>{x.f.village||'—'}</td>
+                    <td style={{ padding:'6px 8px', textAlign:'right' }}>{nbFr(x.recu)}</td><td style={{ padding:'6px 8px', textAlign:'right' }}>{nbFr(x.rembourse)}</td>
+                    <td style={{ padding:'6px 8px', textAlign:'right' }}>{nbFr(x.enCours)}</td>
+                    <td style={{ padding:'6px 8px', textAlign:'right', fontWeight:700, color:x.reste > 0 ? '#b45309' : '#15803d' }}>{nbFr(x.reste)}</td>
+                    <td style={{ padding:'6px 8px', textAlign:'right' }}>{x.resteKg != null ? nbFr(x.resteKg) : '—'}</td>
+                    <td style={{ padding:'6px 8px' }}><Badge type={STATUTS_AVANCE_AG[x.statut][1]}>{STATUTS_AVANCE_AG[x.statut][0]}</Badge></td>
+                    <td style={{ padding:'6px 8px', fontSize:11.5, color:'#64748b' }}>{x.groupes.join(', ') || '—'}</td>
+                  </tr>))}
+                {!avVisibles.length && <tr><td colSpan={9} style={{ padding:16, textAlign:'center', color:'#94a3b8' }}>Aucun producteur avec des avances pour ces filtres.</td></tr>}
+                {avVisibles.length > 0 && <tr style={{ borderTop:'2px solid #cbd5e1', background:'#f8fafc', fontWeight:700 }}>
+                  <td colSpan={2} style={{ padding:'7px 8px' }}>Total — {avVisibles.length} producteur(s)</td>
+                  {['recu','rembourse','enCours','reste'].map(k=><td key={k} style={{ padding:'7px 8px', textAlign:'right' }}>{nbFr(totAv(k))}</td>)}<td colSpan={3}></td>
+                </tr>}
+              </tbody>
+            </table>
+          </div>
+          <div style={{ fontSize:11.5, color:'#64748b', marginTop:8 }}>Reçu = avances saisies sur la fiche du producteur. Remboursé = fonds intrant retenus sur les groupes clôturés ; en cours = sur les groupes encore ouverts. Reste (kg) = reste dû ÷ prix du contrat.</div>
+        </>}
       </Modal>
 
       <Modal open={!!suivi} onClose={()=>{ setSuivi(null); setPaieSel(null) }} size="lg" title={suivi ? `Paiements du groupe ${suivi.numero}${suivi.village ? ` — ${suivi.village}` : ''}` : ''}>
