@@ -2616,6 +2616,7 @@ const NAV = [
   { id:'conditionnement',    icon:'🎁', label:'Conditionnement' },
   { section:'Étuveuses' },
   { id:'etv_repertoire',  icon:'👩', label:'Répertoire' },
+  { id:'etv_envois',      icon:'🚚', label:'Envois aux étuveuses' },
   { id:'etv_avances',     icon:'💰', label:'Avances' },
   { id:'etv_bc',          icon:'📋', label:'Bons de Commande' },
   { id:'etv_br',          icon:'✅', label:'Bons de Réception' },
@@ -8051,7 +8052,7 @@ const ALL_SECTIONS = [
   ['prestations','Prestations'],['suivi_lot','Suivi de lot'],['lots','Lots Production'],
   ['etuvage','Étuvage'],['decorticage','Décorticage'],['calibrage','Calibrage'],
   ['tri_optique','Tri optique'],['conditionnement','Conditionnement'],
-  ['etv_repertoire','Répertoire Étuveuses'],['etv_avances','Avances'],
+  ['etv_repertoire','Répertoire Étuveuses'],['etv_envois','Envois aux étuveuses'],['etv_avances','Avances'],
   ['etv_bc','Bons de Commande'],['etv_br','Bons de Réception'],
   ['etv_entrees','Entrées Magasin'],['etv_sorties','Sorties Magasin'],['etv_inventaire','Inventaire'],['etv_tresorerie','Trésorerie'],
   ['achats','Achats semi-finis'],['lots_semi_finis','Lots Semi-finis'],
@@ -8068,7 +8069,7 @@ const SECTION_GROUPS = [
   {group:'Stock', ids:['stock','mouvements','bons_stock','inventaire']},
   {group:'Commercial', ids:['commercial','reglements_clients','reglements_fourn','prestations']},
   {group:'Production', ids:['suivi_lot','lots','etuvage','decorticage','calibrage','tri_optique','conditionnement']},
-  {group:'Étuveuses', ids:['etv_repertoire','etv_avances','etv_bc','etv_br','etv_entrees','etv_sorties','etv_inventaire','etv_tresorerie']},
+  {group:'Étuveuses', ids:['etv_repertoire','etv_envois','etv_avances','etv_bc','etv_br','etv_entrees','etv_sorties','etv_inventaire','etv_tresorerie']},
   {group:'Achats', ids:['achats','lots_semi_finis','epierrage','etuvage_paiements']},
   {group:'Documents', ids:['docs_admin']},
   {group:'RH & Paie', ids:['rh_employes','rh_fiches_paie','rh_historique','rh_declarations','rh_rapport','rh_dossiers','rh_carriere','rh_conges','rh_absences','rh_prets','rh_missions','rh_centralisation','rh_tableau_bord','rh_simulateur']},
@@ -9658,6 +9659,316 @@ function EtvSortiesPage({ companies, companyId, toast, readOnly=false }) {
           </Grid>
           <Row><Btn variant="secondary" onClick={close}>Annuler</Btn><Btn type="submit" disabled={saving}>{saving?'...':'Enregistrer'}</Btn></Row>
         </form>
+      </Modal>
+    </div>
+  )
+}
+
+// ── ENVOIS DE PADDY AUX ÉTUVEUSES (traçabilité, lot 2) ──────────────────────
+// Repris de CePEA-PSARIZ (« Distribution aux étuveuses ») : un lot de
+// production est réparti entre plusieurs étuveuses ; chaque retour (partiel
+// ou complet) solde une part du paddy envoyé. Le restant et le statut se
+// calculent à partir des retours. Un retour peut créer le cycle d'étuvage
+// correspondant (lot ETUV-…, écart, alerte), ce qui relie la section
+// Étuveuses à la section Production.
+const MSG_SCRIPT_ENVOIS = "Exécutez d'abord le script supabase/migrations/20261008_envois_etuveuses.sql dans Supabase (projet ComptaPro, SQL Editor)."
+const estErreurEnvois = e => /compta_envois_etuveuses|compta_retours_etuveuses|schema cache|does not exist/i.test(e?.message||'')
+
+function situationEnvoi(envoi, retours) {
+  const r = retours.filter(x => x.envoi_id === envoi.id)
+  const traite = r.reduce((t,x)=>t+(+x.paddy_traite_kg||0),0)
+  const recu = r.reduce((t,x)=>t+(+x.riz_etuve_recu_kg||0),0)
+  const dechets = r.reduce((t,x)=>t+(+x.dechets_kg||0),0)
+  const restant = Math.max(0, Math.round(((+envoi.quantite_envoyee_kg||0) - traite) * 1000) / 1000)
+  const statut = envoi.annule ? 'annule' : traite <= 0 ? 'envoye' : restant > 0.0005 ? 'partiel' : 'termine'
+  const jours = Math.round((new Date(r.length ? r.map(x=>x.date_retour).sort().pop() : new Date().toLocaleDateString('sv-SE')) - new Date(envoi.date_envoi)) / 86400000)
+  return { retours:r, traite, recu, dechets, restant, statut, rendement: traite>0 ? Math.round(recu/traite*1000)/10 : null, jours }
+}
+const STATUTS_ENVOI = { envoye:['Chez l\'étuveuse','info'], partiel:['Retour partiel','warning'], termine:['Terminé','success'], annule:['Annulé','secondary'] }
+
+function EtvEnvoisPage({ companies, companyId, toast, readOnly=false }) {
+  const [d, setD] = useState({ envois:[], retours:[], etuveuses:[], lots:[], loading:true, erreur:false })
+  const [filtre, setFiltre] = useState({ lot:'', etuveuse:'', statut:'en_cours' })
+  const [form, setForm] = useState(null)      // envoi en saisie
+  const [retour, setRetour] = useState(null)  // retour en saisie
+  const [detail, setDetail] = useState(null)
+  const [saving, setSaving] = useState(false)
+  const company = companies.find(c => c.id === companyId)
+
+  const charger = useCallback(async () => {
+    if (!companyId) { setD(x=>({...x, loading:false})); return }
+    const [{ data:e, error:ee }, { data:r, error:er }, { data:et }, { data:l }] = await Promise.all([
+      supabase.from('compta_envois_etuveuses').select('*').eq('company_id', companyId).order('date_envoi', { ascending:false }),
+      supabase.from('compta_retours_etuveuses').select('*').eq('company_id', companyId).order('date_retour'),
+      supabase.from('compta_etuveuses').select('id,nom_etuveuse,code_etuveuse,zone,capacite_kg').eq('company_id', companyId).order('nom_etuveuse'),
+      supabase.from('compta_lots_production').select('id,numero_lot,qte_paddy_entree,statut').eq('company_id', companyId).order('created_at', { ascending:false }),
+    ])
+    setD({ envois:e||[], retours:r||[], etuveuses:et||[], lots:l||[], loading:false, erreur:estErreurEnvois(ee)||estErreurEnvois(er) })
+  }, [companyId])
+  useEffect(() => { charger() }, [charger])
+
+  const etvDe = id => d.etuveuses.find(x => String(x.id) === String(id)) || {}
+  const lotDe = id => d.lots.find(x => String(x.id) === String(id)) || {}
+  const sit = e => situationEnvoi(e, d.retours)
+  // Paddy d'un lot pas encore envoyé aux étuveuses.
+  const resteLotEnvoi = (lotId, sauf) => {
+    const lot = lotDe(lotId); if (!(+lot.qte_paddy_entree > 0)) return null
+    const envoye = d.envois.filter(e => String(e.lot_id) === String(lotId) && !e.annule && e.id !== sauf).reduce((t,e)=>t+(+e.quantite_envoyee_kg||0),0)
+    return Math.round((+lot.qte_paddy_entree - envoye) * 1000) / 1000
+  }
+  // Paddy actuellement chez une étuveuse (envoyé, pas encore rendu).
+  const enCoursChez = (etvId, sauf) => d.envois.filter(e => String(e.etuveuse_id) === String(etvId) && !e.annule && e.id !== sauf).reduce((t,e)=>t+sit(e).restant,0)
+
+  const nouveau = () => {
+    if (!companyId) { toast.error("Sélectionnez une société précise (en haut de l'écran)."); return }
+    if (d.erreur) { toast.error(MSG_SCRIPT_ENVOIS); return }
+    setForm({ lot_id:filtre.lot||'', etuveuse_id:filtre.etuveuse||'', date_envoi:today(), quantite_envoyee_kg:'', vehicule:'', convoyeur:'', commentaire:'' })
+  }
+  const enregistrerEnvoi = async e => {
+    e.preventDefault()
+    const q = parseFloat(String(form.quantite_envoyee_kg).replace(',','.')) || 0
+    if (!form.etuveuse_id) return toast.error("Choisissez l'étuveuse.")
+    if (!(q > 0)) return toast.error('Saisissez la quantité de paddy envoyée.')
+    const reste = form.lot_id ? resteLotEnvoi(form.lot_id, form.id) : null
+    if (reste != null && q > reste + 0.001 && !confirm(`La quantité (${fmtKg(q)}) dépasse le paddy du lot pas encore envoyé (${fmtKg(reste)}). Continuer ?`)) return
+    const cap = +etvDe(form.etuveuse_id).capacite_kg || 0
+    if (cap > 0 && enCoursChez(form.etuveuse_id, form.id) + q > cap && !confirm(`Avec cet envoi, l'étuveuse aurait ${fmtKg(enCoursChez(form.etuveuse_id, form.id) + q)} en cours, au-delà de sa capacité (${fmtKg(cap)}). Continuer ?`)) return
+    setSaving(true)
+    const uid = (await supabase.auth.getUser()).data?.user?.id
+    let numero = form.numero
+    if (!numero) {
+      const an = String(form.date_envoi).slice(0,4)
+      const nums = d.envois.map(x => String(x.numero||'').match(new RegExp(`^ENV-${an}-(\\d+)$`))).filter(Boolean).map(m => parseInt(m[1],10))
+      numero = `ENV-${an}-${String((nums.length ? Math.max(...nums) : 0) + 1).padStart(3,'0')}`
+    }
+    const pay = { company_id:companyId, numero, lot_id:form.lot_id||null, etuveuse_id:form.etuveuse_id, date_envoi:form.date_envoi,
+      quantite_envoyee_kg:q, vehicule:form.vehicule||null, convoyeur:form.convoyeur||null, commentaire:form.commentaire||null }
+    const { error } = form.id ? await supabase.from('compta_envois_etuveuses').update(pay).eq('id', form.id)
+                              : await supabase.from('compta_envois_etuveuses').insert({ ...pay, user_id:uid })
+    setSaving(false)
+    if (error) return toast.error(estErreurEnvois(error) ? MSG_SCRIPT_ENVOIS : error.message)
+    toast.success(`Envoi ${numero} enregistré.`)
+    const cree = { ...pay, id:form.id }
+    setForm(null); charger()
+    if (!form.id) imprimerBonEnvoi(cree)
+  }
+
+  const nouveauRetour = envoi => {
+    const s = sit(envoi)
+    setRetour({ envoi, date_retour:today(), paddy_traite_kg:String(s.restant), riz_etuve_recu_kg:'', dechets_kg:'0', humidite:'', observation:'', creer_etuvage:true })
+  }
+  const enregistrerRetour = async e => {
+    e.preventDefault()
+    const env = retour.envoi, s = sit(env)
+    const num = k => parseFloat(String(retour[k]).replace(',','.')) || 0
+    const traite = num('paddy_traite_kg'), recu = num('riz_etuve_recu_kg'), dech = num('dechets_kg')
+    if (!(traite > 0) && !(recu > 0)) return toast.error('Saisissez le paddy traité et le riz étuvé reçu.')
+    if (traite > s.restant + 0.001) return toast.error(`Le paddy traité (${fmtKg(traite)}) dépasse le restant de l'envoi (${fmtKg(s.restant)}).`)
+    setSaving(true)
+    const uid = (await supabase.auth.getUser()).data?.user?.id
+    let etuvage_id = null
+    if (retour.creer_etuvage) {
+      // Cycle d'étuvage créé à partir du retour (même calcul que l'étape).
+      const { data:sp } = await supabase.from('compta_seuils_production').select('etuvage_pct').eq('company_id', companyId).maybeSingle()
+      const seuil = +(sp?.etuvage_pct ?? 5)
+      const an = String(retour.date_retour).slice(0,4)
+      const { data:exist } = await supabase.from('compta_etuvage').select('lot_sortant').eq('company_id', companyId).like('lot_sortant', `ETUV-${an}-%`)
+      const nums = (exist||[]).map(x => String(x.lot_sortant||'').match(new RegExp(`^ETUV-${an}-(\\d+)$`))).filter(Boolean).map(m => parseInt(m[1],10))
+      const ecartPct = traite > 0 ? Math.round((traite - recu - dech) / traite * 10000) / 100 : 0
+      const etv = etvDe(env.etuveuse_id), lot = lotDe(env.lot_id)
+      const { data:et, error:ee } = await supabase.from('compta_etuvage').insert({
+        company_id:companyId, user_id:uid, lot_id:env.lot_id||null, date_etape:retour.date_retour, numero_lot:lot.numero_lot||'',
+        lot_sortant:`ETUV-${an}-${String((nums.length ? Math.max(...nums) : 0) + 1).padStart(3,'0')}`,
+        etuveuse_id:env.etuveuse_id, etuveuse_cooperative:etv.nom_etuveuse||'', cuve:'',
+        paddy_envoye_kg:traite, riz_etuve_recu_kg:recu, dechets_kg:dech, humidite_sortie:num('humidite'),
+        ecart_kg:Math.round((traite-recu)*1000)/1000, taux_rendement:traite>0?Math.round(recu/traite*10000)/100:0,
+        ecart_pct:ecartPct, seuil_alerte_pct:seuil, alerte:Math.abs(ecartPct)>seuil,
+        controle_qualite:'a_verifier', observations:`Retour de l'envoi ${env.numero}${retour.observation?` — ${retour.observation}`:''}`, responsable_section:'',
+      }).select('id').single()
+      if (ee) { setSaving(false); return toast.error(/etuveuse_id|lot_sortant|ecart_pct|schema cache/i.test(ee.message) ? MSG_SCRIPT_ETUVAGE : "Cycle d'étuvage non créé : "+ee.message) }
+      etuvage_id = et.id
+    }
+    const { error } = await supabase.from('compta_retours_etuveuses').insert({
+      company_id:companyId, user_id:uid, envoi_id:env.id, date_retour:retour.date_retour, paddy_traite_kg:traite, riz_etuve_recu_kg:recu,
+      dechets_kg:dech, humidite:retour.humidite===''?null:num('humidite'), observation:retour.observation||null, etuvage_id })
+    setSaving(false)
+    if (error) { if (etuvage_id) await supabase.from('compta_etuvage').delete().eq('id', etuvage_id); return toast.error(error.message) }
+    toast.success(`Retour enregistré${etuvage_id?' — cycle d\'étuvage créé en Production':''}.`)
+    const r = { ...retour, paddy_traite_kg:traite, riz_etuve_recu_kg:recu, dechets_kg:dech }
+    setRetour(null)
+    imprimerFicheRetrait(env, r, true)
+    charger()
+  }
+  const supprimerRetour = async r => {
+    if (!confirm(`Supprimer ce retour du ${dateDoc(r.date_retour)} ?${r.etuvage_id?" Le cycle d'étuvage créé à partir de ce retour sera aussi supprimé.":''}`)) return
+    if (r.etuvage_id) await supabase.from('compta_etuvage').delete().eq('id', r.etuvage_id)
+    await supabase.from('compta_retours_etuveuses').delete().eq('id', r.id)
+    toast.success('Retour supprimé.'); charger()
+  }
+  const supprimerEnvoi = async env => {
+    const s = sit(env)
+    if (s.retours.length) { if (!confirm(`L'envoi ${env.numero} a ${s.retours.length} retour(s). L'annuler ? (les retours et cycles d'étuvage sont conservés)`)) return
+      await supabase.from('compta_envois_etuveuses').update({ annule:true }).eq('id', env.id) }
+    else { if (!confirm(`Supprimer l'envoi ${env.numero} ?`)) return; await supabase.from('compta_envois_etuveuses').delete().eq('id', env.id) }
+    charger()
+  }
+
+  // ── Impressions (gabarit commun des documents) ──
+  const imprimerBonEnvoi = env => {
+    const etv = etvDe(env.etuveuse_id), lot = lotDe(env.lot_id)
+    openPrintWindow(gabaritDocumentHtml({ comp:company, titre:"BON D'ENVOI À L'ÉTUVAGE", numero:env.numero, date:dateDoc(env.date_envoi),
+      infos:[['Lot de production', lot.numero_lot||'—'], ['Véhicule', env.vehicule||''], ['Convoyeur', env.convoyeur||'']],
+      tiersLabel:'Étuveuse', tiers:{ nom:`${etv.code_etuveuse?etv.code_etuveuse+' — ':''}${etv.nom_etuveuse||''}`, adresse:etv.zone },
+      colonnes:[{label:'Désignation'},{label:'Quantité (kg)',align:'d',largeur:'25%'}],
+      lignes:[[`Paddy à étuver${lot.numero_lot?` — lot ${echapHtml(lot.numero_lot)}`:''}`, `<strong>${nbFr(env.quantite_envoyee_kg)}</strong>`]],
+      totaux:[['Paddy confié', fmtKg(env.quantite_envoyee_kg), true]], notes:env.commentaire,
+      signatures:["L'expéditeur (magasin)", 'Le convoyeur', "L'étuveuse (reçu)"] }), `bon_envoi_${env.numero}`)
+  }
+  // ajout : retour qui vient d'être enregistré, pas encore dans d.retours.
+  const imprimerFicheRetrait = (env, r, ajout = false) => {
+    const etv = etvDe(env.etuveuse_id), lot = lotDe(env.lot_id), s = situationEnvoi(env, ajout ? [...d.retours, { ...r, envoi_id:env.id }] : d.retours)
+    const ecart = (+r.paddy_traite_kg||0) - (+r.riz_etuve_recu_kg||0) - (+r.dechets_kg||0)
+    openPrintWindow(gabaritDocumentHtml({ comp:company, titre:'FICHE DE RETRAIT', numero:env.numero, date:dateDoc(r.date_retour),
+      infos:[['Envoi du', dateDoc(env.date_envoi)], ['Lot de production', lot.numero_lot||'—'], ['Statut de l\'envoi', STATUTS_ENVOI[s.statut][0]]],
+      tiersLabel:'Étuveuse', tiers:{ nom:`${etv.code_etuveuse?etv.code_etuveuse+' — ':''}${etv.nom_etuveuse||''}`, adresse:etv.zone },
+      colonnes:[{label:'Retrait'},{label:'Quantité (kg)',align:'d',largeur:'25%'}],
+      lignes:[['Paddy traité (soldé sur l\'envoi)', nbFr(r.paddy_traite_kg)], ['<strong>Riz étuvé reçu</strong>', `<strong>${nbFr(r.riz_etuve_recu_kg)}</strong>`], ['Déchets', nbFr(r.dechets_kg)],
+        ['Écart non justifié', nbFr(Math.round(ecart*1000)/1000)], ...(r.humidite?[['Humidité (%)', nbFr(r.humidite)]]:[])],
+      totaux:[['Paddy confié', fmtKg(env.quantite_envoyee_kg)], ['Déjà soldé', fmtKg(s.traite)], ['Restant chez l\'étuveuse', fmtKg(s.restant), true]],
+      notes:r.observation, signatures:["L'étuveuse", 'Le réceptionnaire (magasin)'] }), `fiche_retrait_${env.numero}`)
+  }
+  const imprimerListeLot = () => {
+    const lot = lotDe(filtre.lot), envois = d.envois.filter(e => String(e.lot_id) === String(filtre.lot) && !e.annule)
+    const tot = envois.reduce((t,e)=>{ const s=sit(e); return { env:t.env+(+e.quantite_envoyee_kg||0), traite:t.traite+s.traite, recu:t.recu+s.recu, rest:t.rest+s.restant } }, { env:0, traite:0, recu:0, rest:0 })
+    openPrintWindow(gabaritDocumentHtml({ comp:company, titre:'RÉPARTITION AUX ÉTUVEUSES', numero:lot.numero_lot||'', date:new Date().toLocaleDateString('fr-FR'),
+      infos:[['Paddy du lot', fmtKg(lot.qte_paddy_entree)], ['Envoyé', fmtKg(tot.env)], ['Non envoyé', fmtKg(resteLotEnvoi(filtre.lot) ?? 0)]],
+      tiersLabel:'Lot de production', tiers:{ nom:lot.numero_lot||'—' },
+      colonnes:[{label:'Envoi',largeur:'13%'},{label:'Étuveuse'},{label:'Date',largeur:'11%'},{label:'Envoyé',align:'d'},{label:'Soldé',align:'d'},{label:'Riz reçu',align:'d'},{label:'Restant',align:'d'},{label:'Statut',largeur:'13%'}],
+      lignes:envois.map(e=>{ const s=sit(e), etv=etvDe(e.etuveuse_id); return [e.numero, echapHtml(etv.nom_etuveuse||''), dateDoc(e.date_envoi), nbFr(e.quantite_envoyee_kg), nbFr(s.traite), nbFr(s.recu), `<strong>${nbFr(s.restant)}</strong>`, STATUTS_ENVOI[s.statut][0]] }),
+      totaux:[['Riz étuvé reçu', fmtKg(tot.recu)], ['Rendement', tot.traite>0?`${(tot.recu/tot.traite*100).toFixed(1)} %`:'—'], ['Restant chez les étuveuses', fmtKg(tot.rest), true]],
+      signatures:['Le responsable étuvage', 'Le contrôleur'] }), `repartition_${lot.numero_lot||'lot'}`)
+  }
+
+  const visibles = d.envois.filter(e => {
+    if (filtre.lot && String(e.lot_id) !== String(filtre.lot)) return false
+    if (filtre.etuveuse && String(e.etuveuse_id) !== String(filtre.etuveuse)) return false
+    const st = sit(e).statut
+    if (filtre.statut === 'en_cours') return st === 'envoye' || st === 'partiel'
+    return !filtre.statut || st === filtre.statut
+  })
+  const totalChez = d.envois.filter(e=>!e.annule).reduce((t,e)=>t+sit(e).restant,0)
+  const selStyle = { padding:'8px 12px', borderRadius:8, border:'1px solid #d1d5db', fontSize:13 }
+  return (
+    <div>
+      <PageHeader title="Envois aux étuveuses" subtitle={company ? `${company.raison_sociale} — paddy actuellement chez les étuveuses : ${fmtKg(totalChez)}` : "Sélectionnez une société en haut de l'écran"}
+        actions={<>
+          {filtre.lot && <Btn sm variant="secondary" onClick={imprimerListeLot}>🖨️ Répartition du lot</Btn>}
+          {!readOnly && <Btn onClick={nouveau}>+ Nouvel envoi</Btn>}
+        </>} />
+      {d.erreur && <Card style={{ marginBottom:16, background:'#fffbeb', borderColor:'#fcd34d' }}><div style={{ fontSize:13, color:'#92400e' }}>⚠️ {MSG_SCRIPT_ENVOIS}</div></Card>}
+      <Card style={{ marginBottom:16, padding:'12px 20px' }}>
+        <div style={{ display:'flex', gap:10, flexWrap:'wrap' }}>
+          <select style={selStyle} value={filtre.lot} onChange={e=>setFiltre(f=>({...f, lot:e.target.value}))}>
+            <option value="">Tous les lots</option>{d.lots.map(l=><option key={l.id} value={l.id}>{l.numero_lot}</option>)}
+          </select>
+          <select style={selStyle} value={filtre.etuveuse} onChange={e=>setFiltre(f=>({...f, etuveuse:e.target.value}))}>
+            <option value="">Toutes les étuveuses</option>{d.etuveuses.map(x=><option key={x.id} value={x.id}>{x.nom_etuveuse}</option>)}
+          </select>
+          <select style={selStyle} value={filtre.statut} onChange={e=>setFiltre(f=>({...f, statut:e.target.value}))}>
+            <option value="en_cours">En cours (chez l'étuveuse ou partiel)</option><option value="termine">Terminés</option><option value="annule">Annulés</option><option value="">Tous</option>
+          </select>
+        </div>
+      </Card>
+      {d.loading ? <Card>Chargement…</Card> : (
+        <TableWrap><div style={{ overflowX:'auto' }}>
+          <table style={{ width:'100%', borderCollapse:'collapse' }}>
+            <thead><tr><TH>N° envoi</TH><TH>Date</TH><TH>Lot</TH><TH>Étuveuse</TH><TH right>Envoyé</TH><TH right>Soldé</TH><TH right>Riz reçu</TH><TH right>Restant</TH><TH right>Rendement</TH><TH>Statut</TH><TH>Actions</TH></tr></thead>
+            <tbody>
+              {visibles.map(e => { const s = sit(e), etv = etvDe(e.etuveuse_id); const retard = s.statut!=='termine' && !e.annule && s.jours > 15
+                return (
+                  <TR key={e.id}>
+                    <TD bold>{e.numero}</TD><TD sm>{dateDoc(e.date_envoi)}{retard && <div style={{ color:'#dc2626', fontSize:11 }}>⚠️ {s.jours} j</div>}</TD>
+                    <TD>{lotDe(e.lot_id).numero_lot||'—'}</TD><TD>{etv.nom_etuveuse||'—'}</TD>
+                    <TD right>{nbFr(e.quantite_envoyee_kg)}</TD><TD right>{nbFr(s.traite)}</TD><TD right>{nbFr(s.recu)}</TD>
+                    <TD right><strong>{nbFr(s.restant)}</strong></TD><TD right>{s.rendement!=null?`${s.rendement} %`:'—'}</TD>
+                    <TD><Badge type={STATUTS_ENVOI[s.statut][1]}>{STATUTS_ENVOI[s.statut][0]}</Badge></TD>
+                    <TD><ActionsMenu sm items={[
+                      !readOnly && !e.annule && s.restant > 0 && { couleur:'#16a34a', label:'📥 Enregistrer un retour', onClick:()=>nouveauRetour(e) },
+                      { couleur:'#0891b2', label:`📋 Retours (${s.retours.length})`, onClick:()=>setDetail(e) },
+                      { couleur:'#2563eb', label:"🖨️ Bon d'envoi", onClick:()=>imprimerBonEnvoi(e) },
+                      !readOnly && !s.retours.length && { couleur:'#b45309', label:'✏️ Modifier', onClick:()=>setForm({ ...e, quantite_envoyee_kg:String(e.quantite_envoyee_kg) }) },
+                      !readOnly && null,
+                      !readOnly && !e.annule && { label: s.retours.length ? '🚫 Annuler l\'envoi' : '🗑️ Supprimer', danger:true, onClick:()=>supprimerEnvoi(e) },
+                    ]} /></TD>
+                  </TR>) })}
+              {!visibles.length && <tr><td colSpan={11} style={{ padding:20, textAlign:'center', color:'#94a3b8' }}>{companyId ? 'Aucun envoi.' : "Sélectionnez une société."}</td></tr>}
+            </tbody>
+          </table>
+        </div></TableWrap>
+      )}
+
+      <Modal open={!!form} onClose={()=>setForm(null)} title={form?.id ? `Modifier l'envoi ${form.numero}` : 'Nouvel envoi de paddy'} size="md">
+        {form && <form onSubmit={enregistrerEnvoi}>
+          <Grid cols={2} gap={14} style={{ marginBottom:12 }}>
+            <Sel label="Lot de production" name="lot_id" value={form.lot_id} onChange={e=>setForm(f=>({...f, lot_id:e.target.value}))}
+              options={[{value:'',label:'— Sans lot —'}, ...d.lots.map(l=>({value:l.id,label:l.numero_lot}))]} />
+            <Sel label="Étuveuse *" name="etuveuse_id" value={form.etuveuse_id} onChange={e=>setForm(f=>({...f, etuveuse_id:e.target.value}))}
+              options={[{value:'',label:d.etuveuses.length?'— Choisir —':'— Aucune étuveuse au répertoire —'}, ...d.etuveuses.map(x=>({value:x.id,label:`${x.code_etuveuse?x.code_etuveuse+' — ':''}${x.nom_etuveuse}`}))]} />
+            <Input label="Date d'envoi *" name="date_envoi" type="date" value={form.date_envoi} onChange={e=>setForm(f=>({...f, date_envoi:e.target.value}))} required />
+            <Input label="Paddy envoyé (kg) *" name="quantite_envoyee_kg" type="number" step="0.001" min="0" value={form.quantite_envoyee_kg} onChange={e=>setForm(f=>({...f, quantite_envoyee_kg:e.target.value}))} required />
+            <Input label="Véhicule" name="vehicule" value={form.vehicule||''} onChange={e=>setForm(f=>({...f, vehicule:e.target.value}))} />
+            <Input label="Convoyeur" name="convoyeur" value={form.convoyeur||''} onChange={e=>setForm(f=>({...f, convoyeur:e.target.value}))} />
+          </Grid>
+          <Input label="Commentaire" name="commentaire" value={form.commentaire||''} onChange={e=>setForm(f=>({...f, commentaire:e.target.value}))} />
+          <div style={{ fontSize:12.5, color:'#475569', background:'#f8fafc', borderRadius:8, padding:'8px 12px', margin:'4px 0 14px' }}>
+            {form.lot_id && resteLotEnvoi(form.lot_id, form.id) != null && <div>Paddy du lot pas encore envoyé : <strong>{fmtKg(resteLotEnvoi(form.lot_id, form.id))}</strong></div>}
+            {form.etuveuse_id && <div>Déjà chez cette étuveuse : <strong>{fmtKg(enCoursChez(form.etuveuse_id, form.id))}</strong>{+etvDe(form.etuveuse_id).capacite_kg>0 && ` — capacité ${fmtKg(etvDe(form.etuveuse_id).capacite_kg)}`}</div>}
+          </div>
+          <Row><Btn variant="secondary" onClick={()=>setForm(null)}>Annuler</Btn><Btn type="submit" disabled={saving}>{saving?'…':form.id?'Enregistrer':"Enregistrer et imprimer le bon d'envoi"}</Btn></Row>
+        </form>}
+      </Modal>
+
+      <Modal open={!!retour} onClose={()=>setRetour(null)} title={retour ? `Retour — envoi ${retour.envoi.numero} (${etvDe(retour.envoi.etuveuse_id).nom_etuveuse||''})` : ''} size="md">
+        {retour && (()=>{ const s = sit(retour.envoi); const n = k => parseFloat(String(retour[k]).replace(',','.'))||0
+          const ecart = n('paddy_traite_kg') - n('riz_etuve_recu_kg') - n('dechets_kg'); const pct = n('paddy_traite_kg')>0 ? ecart/n('paddy_traite_kg')*100 : 0
+          return <form onSubmit={enregistrerRetour}>
+            <div style={{ fontSize:12.5, background:'#f0f9ff', borderRadius:8, padding:'8px 12px', marginBottom:12 }}>
+              Envoyé : <strong>{fmtKg(retour.envoi.quantite_envoyee_kg)}</strong> — déjà soldé : <strong>{fmtKg(s.traite)}</strong> — restant : <strong>{fmtKg(s.restant)}</strong>
+            </div>
+            <Grid cols={2} gap={14} style={{ marginBottom:12 }}>
+              <Input label="Date du retour *" name="date_retour" type="date" value={retour.date_retour} onChange={e=>setRetour(r=>({...r, date_retour:e.target.value}))} required />
+              <Input label="Paddy traité, soldé sur l'envoi (kg)" name="paddy_traite_kg" type="number" step="0.001" min="0" value={retour.paddy_traite_kg} onChange={e=>setRetour(r=>({...r, paddy_traite_kg:e.target.value}))} />
+              <Input label="Riz étuvé reçu (kg) *" name="riz_etuve_recu_kg" type="number" step="0.001" min="0" value={retour.riz_etuve_recu_kg} onChange={e=>setRetour(r=>({...r, riz_etuve_recu_kg:e.target.value}))} required />
+              <Input label="Déchets (kg)" name="dechets_kg" type="number" step="0.001" min="0" value={retour.dechets_kg} onChange={e=>setRetour(r=>({...r, dechets_kg:e.target.value}))} />
+              <Input label="Humidité (%)" name="humidite" type="number" step="0.1" min="0" value={retour.humidite} onChange={e=>setRetour(r=>({...r, humidite:e.target.value}))} />
+              <Input label="Observation" name="observation" value={retour.observation} onChange={e=>setRetour(r=>({...r, observation:e.target.value}))} />
+            </Grid>
+            <div style={{ fontSize:12.5, marginBottom:10, color:Math.abs(pct)>5?'#b91c1c':'#334155' }}>Écart non justifié : <strong>{nbFr(Math.round(ecart*1000)/1000)} kg ({pct.toFixed(2)} %)</strong></div>
+            <label style={{ display:'flex', gap:8, alignItems:'center', fontSize:13, marginBottom:14, cursor:'pointer' }}>
+              <input type="checkbox" checked={retour.creer_etuvage} onChange={e=>setRetour(r=>({...r, creer_etuvage:e.target.checked}))} />
+              Créer le cycle d'étuvage correspondant en Production (lot ETUV-…, écart et alerte)
+            </label>
+            <Row><Btn variant="secondary" onClick={()=>setRetour(null)}>Annuler</Btn><Btn type="submit" variant="success" disabled={saving}>{saving?'…':'Enregistrer et imprimer la fiche de retrait'}</Btn></Row>
+          </form> })()}
+      </Modal>
+
+      <Modal open={!!detail} onClose={()=>setDetail(null)} title={detail ? `Retours de l'envoi ${detail.numero}` : ''} size="md">
+        {detail && (()=>{ const s = sit(detail); return <>
+          {!s.retours.length ? <div style={{ color:'#94a3b8', fontSize:13 }}>Aucun retour pour cet envoi.</div> :
+            <table style={{ width:'100%', borderCollapse:'collapse', fontSize:13 }}>
+              <thead><tr style={{ background:'#f8fafc' }}>{['Date','Soldé','Riz reçu','Déchets','Étuvage',''].map(h=><th key={h} style={{ padding:7, textAlign:'left' }}>{h}</th>)}</tr></thead>
+              <tbody>{s.retours.map(r=>(
+                <tr key={r.id} style={{ borderTop:'1px solid #f1f5f9' }}>
+                  <td style={{ padding:7 }}>{dateDoc(r.date_retour)}</td><td style={{ padding:7 }}>{nbFr(r.paddy_traite_kg)}</td><td style={{ padding:7 }}>{nbFr(r.riz_etuve_recu_kg)}</td>
+                  <td style={{ padding:7 }}>{nbFr(r.dechets_kg)}</td><td style={{ padding:7 }}>{r.etuvage_id?'✔ créé':'—'}</td>
+                  <td style={{ padding:7, whiteSpace:'nowrap' }}>
+                    <Btn sm variant="secondary" onClick={()=>imprimerFicheRetrait(detail, r)}>🖨️</Btn>{' '}
+                    {!readOnly && <Btn sm variant="danger" onClick={()=>supprimerRetour(r)}>🗑️</Btn>}
+                  </td>
+                </tr>))}</tbody>
+            </table>}
+          <div style={{ fontSize:12.5, marginTop:10 }}>Soldé {fmtKg(s.traite)} sur {fmtKg(detail.quantite_envoyee_kg)} — riz étuvé reçu {fmtKg(s.recu)}{s.rendement!=null?` (rendement ${s.rendement} %)`:''} — restant {fmtKg(s.restant)}</div>
+        </> })()}
       </Modal>
     </div>
   )
@@ -21200,7 +21511,7 @@ export default function ComptaPro() {
     commercial:'Documents commerciaux', 'commercial-view':'Détail document', lots:'Lots Production',
     etuvage:'Étuvage', decorticage:'Décorticage', calibrage:'Calibrage',
     tri_optique:'Tri Optique', conditionnement:'Conditionnement',
-    etv_repertoire:'Répertoire Étuveuses', etv_avances:'Avances sur Commande',
+    etv_repertoire:'Répertoire Étuveuses', etv_envois:'Envois aux étuveuses', etv_avances:'Avances sur Commande',
     etv_bc:'Bons de Commande', etv_br:'Bons de Réception',
     etv_entrees:'Entrées Magasin', etv_sorties:'Sorties Magasin', etv_inventaire:'Inventaire Étuveuses', etv_tresorerie:'Trésorerie Étuveuses',
     achats:'Achats Semi-finis', lots_semi_finis:'Lots Semi-finis', epierrage:'Épierrage', reglements_clients:'Règlements Clients', reglements_fourn:'Règlements Fournisseurs', etuvage_paiements:'Paiements Étuvage',
@@ -21250,6 +21561,7 @@ export default function ComptaPro() {
       case 'lots':          return <LotsProductionPage {...sp} />
       case 'suivi_lot':     return <SuiviLotPage {...sp} />
       case 'etv_repertoire':  return <EtvRepertoirePage {...sp} readOnly={getReadOnly('etv_repertoire')} />
+      case 'etv_envois':      return <EtvEnvoisPage {...sp} readOnly={getReadOnly('etv_envois')} />
       case 'etv_avances':     return <EtvAvancesPage {...sp} readOnly={getReadOnly('etv_avances')} />
       case 'etv_bc':          return <EtvBCPage {...sp} readOnly={getReadOnly('etv_bc')} />
       case 'etv_br':          return <EtvBRPage {...sp} readOnly={getReadOnly('etv_br')} />
