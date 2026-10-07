@@ -9832,11 +9832,121 @@ function fichesAchatPaddyHtml(comp, g, lignes) {
     </body></html>`
 }
 
+// ── Paiements par groupe (lot 2) ──
+// Un versement au groupe est réparti entre les producteurs au prorata de ce
+// qui reste dû à chacun (net à percevoir − déjà perçu) : au premier versement,
+// c'est le prorata du net de sa vente ; quand le groupe est soldé, chacun a
+// perçu exactement son net. Arrondi au franc par la méthode du plus fort reste,
+// pour que la somme des parts égale le versement.
+// Comptabilité : à la clôture, pièce JA « AG-<n° groupe> » — débit 602 (achats
+// de matières premières) du montant des ventes, crédit du compte de chaque
+// producteur ; le fonds intrant retenu est porté au débit de son compte et au
+// crédit du 409 (avances versées). Chaque part payée sort de la caisse, de la
+// banque ou du mobile money sur le compte du producteur (comme un règlement
+// fournisseur) : la balance des producteurs se solde avec les paiements.
+const MSG_SCRIPT_AG_PAIE = "Exécutez d'abord le script supabase/migrations/20261009_achats_groupes_paiements.sql dans Supabase (projet ComptaPro, SQL Editor)."
+const estErreurAGPaie = e => /compta_achats_groupes_(paiements|repartitions)|schema cache|does not exist/i.test(e?.message||'')
+const COMPTE_ACHAT_PADDY = '602', COMPTE_FONDS_INTRANT = '409'
+const pieceAchatGroupe = g => `AG-${g.numero}`
+
+function repartirPaiementGroupe(montant, dus) {
+  const pos = dus.map(x => ({ ...x, du:Math.max(0, Math.round(+x.du || 0)) }))
+  const total = pos.reduce((t,x)=>t+x.du,0)
+  const m = Math.min(Math.max(0, Math.round(+montant || 0)), total)
+  if (!(m > 0)) return pos.map(x => ({ ...x, part:0 }))
+  const brut = pos.map(x => { const v = m * x.du / total; return { ...x, part:Math.floor(v), frac:v - Math.floor(v) } })
+  let manque = m - brut.reduce((t,x)=>t+x.part,0)
+  brut.map((x,i)=>i).sort((a,b)=>brut[b].frac - brut[a].frac || brut[b].du - brut[a].du)
+    .forEach(i => { if (manque > 0 && brut[i].part < brut[i].du) { brut[i].part++; manque-- } })
+  return brut.map(({ frac, ...x }) => x)
+}
+// Situation de paiement d'un groupe : par producteur (net, perçu, reste) et global.
+function situationPaiementGroupe(lignes, repartitions) {
+  const parLigne = lignes.map(l => { const net = calculLigneAchatGroupe(l).net_a_percevoir
+    const percu = repartitions.filter(r => r.ligne_id === l.id).reduce((t,r)=>t+(+r.montant||0),0)
+    return { ligne:l, net, percu, reste:Math.max(0, net - percu) } })
+  const net = parLigne.reduce((t,x)=>t+x.net,0), percu = parLigne.reduce((t,x)=>t+x.percu,0)
+  const reste = parLigne.reduce((t,x)=>t+x.reste,0)
+  return { parLigne, net, percu, reste, statut: net <= 0 ? 'rien' : percu <= 0 ? 'non_paye' : reste > 0 ? 'partiel' : 'solde' }
+}
+const STATUTS_PAIE_AG = { rien:['Rien à payer','secondary'], non_paye:['Non payé','warning'], partiel:['Payé en partie','info'], solde:['Soldé','success'] }
+// Lignes de la pièce comptable d'achat du groupe (débit = crédit).
+function ecrituresAchatGroupe(g, lignes, compteDe) {
+  const lib = `Achat paddy groupé ${g.numero}${g.village ? ` — ${g.village}` : ''}`
+  const calc = lignes.map(l => ({ l, c:calculLigneAchatGroupe(l), cpt:compteDe(l.fournisseur_id) || COLLECTIF_FOURNISSEUR }))
+  const montant = calc.reduce((t,x)=>t+x.c.montant,0), fonds = calc.reduce((t,x)=>t+x.c.fonds_intrant,0)
+  const rows = [{ numero_compte:COMPTE_ACHAT_PADDY, compte_libelle:'Achats de matières premières (riz paddy)', libelle:lib, debit:montant, credit:0 }]
+  calc.forEach(({ l, c, cpt }) => {
+    rows.push({ numero_compte:cpt, compte_libelle:l.nom, libelle:`${lib} — ${l.nom} (${nbFr(c.quantite_kg)} kg)`, debit:0, credit:c.montant })
+    if (c.fonds_intrant > 0) rows.push({ numero_compte:cpt, compte_libelle:l.nom, libelle:`Fonds intrant retenu — ${l.nom}`, debit:c.fonds_intrant, credit:0 })
+  })
+  if (fonds > 0) rows.push({ numero_compte:COMPTE_FONDS_INTRANT, compte_libelle:'Fournisseurs, avances versées (fonds intrant)', libelle:`Fonds intrant retenus — ${g.numero}`, debit:0, credit:fonds })
+  return rows.filter(r => r.debit > 0 || r.credit > 0)
+}
+
+// État de paiement et feuille d'émargement d'un versement (A4 paysage).
+function etatPaiementGroupeHtml(comp, g, p, lignes, repsAvant, repsPaiement) {
+  const lignesEtat = lignes.map((l,i) => { const c = calculLigneAchatGroupe(l)
+    const avant = repsAvant.filter(r => r.ligne_id === l.id).reduce((t,r)=>t+(+r.montant||0),0)
+    const part = repsPaiement.filter(r => r.ligne_id === l.id).reduce((t,r)=>t+(+r.montant||0),0)
+    return { i, l, c, avant, part, reste:Math.max(0, c.net_a_percevoir - avant - part) } })
+  const tot = k => lignesEtat.reduce((t,x)=>t+x[k],0)
+  const totNet = lignesEtat.reduce((t,x)=>t+x.c.net_a_percevoir,0)
+  const corps = lignesEtat.map(x => `<tr><td class="c">${x.i+1}</td><td>${echapHtml(x.l.nom)}</td><td>${echapHtml(x.l.telephone||'')}</td><td>${echapHtml(x.l.cip||'')}</td>
+    <td class="d">${nbFr(x.c.quantite_kg)}</td><td class="d">${nbFr(x.c.net_a_percevoir)}</td><td class="d">${nbFr(x.avant)}</td>
+    <td class="d"><b>${nbFr(x.part)}</b></td><td class="d">${nbFr(x.reste)}</td><td></td></tr>`).join('')
+  return `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><title>État de paiement ${echapHtml(p.numero)}</title>
+    <style>${CSS_ACHAT_GROUPE}
+      @page { size: A4 landscape; margin: 10mm; }
+      body { font-size: 9.5pt; }
+      .page { padding: 2mm; }
+      .lieu { display: flex; gap: 30px; font-size: 10.5pt; margin-top: 8px; flex-wrap: wrap; }
+      .lieu .droite { margin-left: auto; text-align: right; font-size: 9.5pt; }
+      table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+      th { border: 1px solid #111827; background: #e5e7eb; padding: 5px 4px; font-size: 8.5pt; text-align: center; }
+      td { border: 1px solid #111827; padding: 0 4px; height: 10mm; font-size: 9pt; }
+      td.d { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+      td.c { text-align: center; }
+      tr.total td { font-weight: 700; background: #f3f4f6; height: 8mm; }
+      .arrete { margin-top: 8px; font-size: 9.5pt; }
+    </style></head><body>
+    <button class="print-btn" onclick="window.print()">🖨️ Imprimer / PDF</button>
+    <div class="page">
+      ${enteteCepea(comp, g.commune)}
+      <h1>ÉTAT DE PAIEMENT ET FEUILLE D'ÉMARGEMENT — VENTE GROUPÉE DU RIZ PADDY</h1>
+      <div class="lieu">
+        <div>Groupe : <span class="pointille">${echapHtml(g.numero)}</span></div>
+        <div>Commune de : <span class="pointille">${echapHtml(g.commune||'')}</span></div>
+        <div>Village : <span class="pointille">${echapHtml(g.village||'')}</span></div>
+        <div class="droite">Paiement <b>${echapHtml(p.numero)}</b> du ${dateDoc(p.date_paiement)} — ${echapHtml(JOURNAL_LABEL[p.mode_paiement]||p.mode_paiement||'')}${p.reference ? ` (réf. ${echapHtml(p.reference)})` : ''}
+          ${p.remis_a ? `<br>Remis à : <b>${echapHtml(p.remis_a)}</b>` : ''}</div>
+      </div>
+      <table>
+        <thead><tr><th style="width:3%">N°</th><th style="width:19%">Nom et prénom du Producteur</th><th style="width:9%">N° Téléphone</th><th style="width:9%">N° CIP</th>
+          <th style="width:8%">Quantité vendue (kg)</th><th style="width:9%">Net à percevoir</th><th style="width:9%">Déjà perçu</th><th style="width:10%">Perçu ce jour</th>
+          <th style="width:9%">Reste à percevoir</th><th style="width:15%">Signature / Empreinte</th></tr></thead>
+        <tbody>${corps}
+          <tr class="total"><td colspan="4" class="d">TOTAL</td><td class="d">${nbFr(lignesEtat.reduce((t,x)=>t+x.c.quantite_kg,0))}</td><td class="d">${nbFr(totNet)}</td>
+            <td class="d">${nbFr(tot('avant'))}</td><td class="d">${nbFr(tot('part'))}</td><td class="d">${nbFr(tot('reste'))}</td><td></td></tr>
+        </tbody>
+      </table>
+      <div class="arrete">Arrêté le présent état à la somme de : <b>${montantEnLettres(tot('part'))}</b>, répartie au prorata de ce qui restait dû à chaque producteur.</div>
+      <div class="signatures">
+        <div>Le Chef de groupe<small>${echapHtml(g.chef_groupe||'')}</small></div>
+        <div>Le Gérant / Comptable (payeur)<small>&nbsp;</small></div>
+        <div>Le Président Coopérative / Groupement<small>&nbsp;</small></div>
+      </div>
+    </div></body></html>`
+}
+
 const normAG = s => String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase()
 
 function AchatsGroupesPage({ companies, companyId, toast, readOnly=false }) {
-  const [d, setD] = useState({ groupes:[], lignes:[], fournisseurs:[], avances:[], loading:true, erreur:false })
+  const [d, setD] = useState({ groupes:[], lignes:[], fournisseurs:[], avances:[], paiements:[], reps:[], comptes:{}, loading:true, erreur:false, erreurPaie:false })
   const [filtre, setFiltre] = useState({ statut:'ouvert', q:'' })
+  const [paie, setPaie] = useState(null)       // versement en saisie
+  const [suivi, setSuivi] = useState(null)     // groupe dont on suit les paiements
+  const [paieSel, setPaieSel] = useState(null) // versement dont on fait l'émargement
   const [ed, setEd] = useState(null)       // groupe en saisie (avec ses lignes)
   const [choix, setChoix] = useState({ village:'', cooperative:'', mentor:'', q:'', sel:[] })
   const [saving, setSaving] = useState(false)
@@ -9844,13 +9954,17 @@ function AchatsGroupesPage({ companies, companyId, toast, readOnly=false }) {
 
   const charger = useCallback(async () => {
     if (!companyId) { setD(x=>({...x, loading:false})); return }
-    const [{ data:g, error:eg }, { data:l, error:el }, { data:f }, { data:a }] = await Promise.all([
+    const [{ data:g, error:eg }, { data:l, error:el }, { data:f }, { data:a }, { data:pa, error:ep }, { data:rp, error:er }] = await Promise.all([
       supabase.from('compta_achats_groupes').select('*').eq('company_id', companyId).order('date_achat', { ascending:false }),
       fetchAllRows(() => supabase.from('compta_achats_groupes_lignes').select('*').eq('company_id', companyId).order('ordre')),
       fetchAllRows(() => supabase.from('compta_fournisseurs').select('*').eq('company_id', companyId).order('nom')),
       fetchAllRows(() => supabase.from('compta_avances_fournisseur').select('fournisseur_id,valeur_remboursement').eq('company_id', companyId)),
+      supabase.from('compta_achats_groupes_paiements').select('*').eq('company_id', companyId).order('date_paiement').order('created_at'),
+      fetchAllRows(() => supabase.from('compta_achats_groupes_repartitions').select('*').eq('company_id', companyId)),
     ])
-    setD({ groupes:g||[], lignes:l||[], avances:a||[], loading:false, erreur:estErreurAG(eg)||estErreurAG(el),
+    setD({ groupes:g||[], lignes:l||[], avances:a||[], paiements:pa||[], reps:rp||[], loading:false,
+      erreur:estErreurAG(eg)||estErreurAG(el), erreurPaie:estErreurAGPaie(ep)||estErreurAGPaie(er),
+      comptes:Object.fromEntries((f||[]).filter(x => x.numero_compte).map(x => [String(x.id), x.numero_compte])),
       fournisseurs:(f||[]).filter(x => x.actif !== false && x.type !== 'morale').sort((x,y)=>nomTiersTraca(x).localeCompare(nomTiersTraca(y),'fr')) })
   }, [companyId])
   useEffect(() => { charger() }, [charger])
@@ -9959,20 +10073,35 @@ function AchatsGroupesPage({ companies, companyId, toast, readOnly=false }) {
     if (!confirm(`Clôturer le groupe ${g.numero} ? Il ne sera plus modifiable et ses producteurs pourront entrer dans un nouveau groupe.`)) return
     const { error } = await supabase.from('compta_achats_groupes').update({ statut:'cloture' }).eq('id', g.id)
     if (error) return toast.error(error.message)
-    toast.success(`Groupe ${g.numero} clôturé.`); charger()
+    const { error:ee } = await passerEcrituresAchat(g)
+    if (ee) toast.error(`Groupe clôturé, mais écriture d'achat non passée : ${ee.message}`)
+    else toast.success(`Groupe ${g.numero} clôturé — achat passé en comptabilité (journal des achats, pièce ${pieceAchatGroupe(g)}).`)
+    charger()
+  }
+  const compteDe = fid => d.comptes[String(fid)] || null
+  const passerEcrituresAchat = async g => {
+    const uid = (await supabase.auth.getUser()).data?.user?.id
+    const piece_id = pieceAchatGroupe(g)
+    await supabase.from('compta_ecritures').delete().eq('piece_id', piece_id).eq('company_id', companyId)
+    const rows = ecrituresAchatGroupe(g, lignesDe(g.id), compteDe).map(r => ({ ...r, company_id:companyId, user_id:uid, piece_id,
+      journal:'JA', date_ecriture:g.date_achat, numero_piece:g.numero, numero_facture:'', reference:'' }))
+    return rows.length ? await supabase.from('compta_ecritures').insert(rows) : { error:null }
   }
   const rouvrir = async g => {
     const conflit = lignesDe(g.id).map(l => ({ l, o:groupeOuvertDe(l.fournisseur_id, g.id) })).find(x => x.o)
     if (conflit) return toast.error(`Impossible de rouvrir : ${conflit.l.nom} est dans le groupe ouvert ${conflit.o.numero}.`)
-    if (!confirm(`Rouvrir le groupe ${g.numero} pour le modifier ?`)) return
+    if (paiementsDe(g.id).length) return toast.error(`Impossible de rouvrir : le groupe a déjà ${paiementsDe(g.id).length} paiement(s). Supprimez-les d'abord (Paiements & émargement).`)
+    if (!confirm(`Rouvrir le groupe ${g.numero} pour le modifier ? L'écriture d'achat sera retirée de la comptabilité et repassée à la prochaine clôture.`)) return
     const { error } = await supabase.from('compta_achats_groupes').update({ statut:'ouvert' }).eq('id', g.id)
     if (error) return toast.error(error.message)
+    await supabase.from('compta_ecritures').delete().eq('piece_id', pieceAchatGroupe(g)).eq('company_id', companyId)
     charger()
   }
   const supprimer = async g => {
     if (!confirm(`Supprimer le groupe ${g.numero} et ses ${lignesDe(g.id).length} producteur(s) ? Les fonds intrant retenus redeviennent disponibles.`)) return
     const { error } = await supabase.from('compta_achats_groupes').delete().eq('id', g.id)
     if (error) return toast.error(error.message)
+    await supabase.from('compta_ecritures').delete().eq('piece_id', pieceAchatGroupe(g)).eq('company_id', companyId)
     toast.success(`Groupe ${g.numero} supprimé.`); charger()
   }
 
@@ -9985,23 +10114,88 @@ function AchatsGroupesPage({ companies, companyId, toast, readOnly=false }) {
     openPrintWindow(fichesAchatPaddyHtml(company, g, ls), ls.length === 1 ? `fiche_achat_${g.numero||''}_${ls[0].nom}` : `fiches_achat_${g.numero||'brouillon'}`)
   }
 
-  const visibles = d.groupes.filter(g => (!filtre.statut || g.statut === filtre.statut)
+  const paiementsDe = gid => d.paiements.filter(p => p.groupe_id === gid)
+  const repsDe = gid => d.reps.filter(r => r.groupe_id === gid)
+  const sitPaie = g => situationPaiementGroupe(lignesDe(g.id), repsDe(g.id))
+
+  const nouveauPaiement = g => {
+    if (d.erreurPaie) return toast.error(MSG_SCRIPT_AG_PAIE)
+    const s = sitPaie(g)
+    if (s.reste <= 0) return toast.error(`Le groupe ${g.numero} est déjà entièrement payé.`)
+    setPaie({ g, date_paiement:today(), montant:String(s.reste), mode_paiement:'caisse', reference:'',
+      remis_a: g.chef_groupe ? `Chef de groupe : ${g.chef_groupe}` : 'Paiement individuel', observations:'' })
+  }
+  const partsPaie = paie ? repartirPaiementGroupe(numFR(paie.montant), sitPaie(paie.g).parLigne.map(x => ({ ligne:x.ligne, net:x.net, percu:x.percu, du:x.reste }))) : []
+  const enregistrerPaiement = async e => {
+    e.preventDefault()
+    const g = paie.g, s = sitPaie(g), m = Math.round(numFR(paie.montant))
+    if (!(m > 0)) return toast.error('Saisissez le montant versé.')
+    if (m > s.reste) return toast.error(`Le montant dépasse ce qui reste dû au groupe (${fcfaDoc(s.reste)}).`)
+    setSaving(true)
+    const solde = await getSoldeCompte(paie.mode_paiement, companyId)
+    if (m > solde) { setSaving(false); return toast.error(`Paiement impossible : solde insuffisant (${JOURNAL_LABEL[paie.mode_paiement]} : ${fcfaDoc(solde)}).`) }
+    const uid = (await supabase.auth.getUser()).data?.user?.id
+    const an = String(paie.date_paiement).slice(0,4)
+    const nums = d.paiements.map(x => String(x.numero||'').match(new RegExp(`^PAG-${an}-(\\d+)$`))).filter(Boolean).map(x => parseInt(x[1],10))
+    const numero = `PAG-${an}-${String((nums.length ? Math.max(...nums) : 0) + 1).padStart(3,'0')}`
+    const { data:pa, error } = await supabase.from('compta_achats_groupes_paiements').insert({ company_id:companyId, user_id:uid, groupe_id:g.id, numero,
+      date_paiement:paie.date_paiement, montant:m, mode_paiement:paie.mode_paiement, reference:paie.reference||null, remis_a:paie.remis_a||null,
+      observations:paie.observations||null }).select('*').single()
+    if (error) { setSaving(false); return toast.error(estErreurAGPaie(error) ? MSG_SCRIPT_AG_PAIE : error.message) }
+    const annuler = async msg => { await supabase.from('compta_achats_groupes_paiements').delete().eq('id', pa.id); setSaving(false); toast.error(msg) }
+    const { data:reps, error:er } = await supabase.from('compta_achats_groupes_repartitions').insert(partsPaie.filter(x => x.part > 0).map(x => ({
+      company_id:companyId, user_id:uid, paiement_id:pa.id, groupe_id:g.id, ligne_id:x.ligne.id, fournisseur_id:x.ligne.fournisseur_id||null,
+      nom:x.ligne.nom, montant:x.part }))).select('*')
+    if (er) return annuler('Paiement non enregistré : ' + er.message)
+    // Une sortie de trésorerie par producteur, sur son compte : comme un règlement fournisseur.
+    const { error:ej } = await supabase.from(JOURNAL_TABLE[paie.mode_paiement]).insert(reps.map(r => ({
+      company_id:companyId, user_id:uid, date_operation:paie.date_paiement, numero_piece:numero,
+      libelle:`Paiement groupé ${g.numero} (${numero}) — ${r.nom}`, tiers:r.nom, type_operation:'sortie', montant:Math.round(+r.montant||0),
+      reference:paie.reference||'', source_type:'paiement_groupe', source_id:r.id, numero_compte:compteDe(r.fournisseur_id) || COLLECTIF_FOURNISSEUR })))
+    if (ej) return annuler('Paiement non enregistré : sortie de trésorerie impossible — ' + ej.message)
+    setSaving(false); setPaie(null)
+    toast.success(`Paiement ${numero} enregistré — ${fcfaDoc(m)} répartis entre ${reps.length} producteur(s), sortie ${JOURNAL_LABEL[paie.mode_paiement]}.`)
+    openPrintWindow(etatPaiementGroupeHtml(company, g, pa, lignesDe(g.id), repsDe(g.id), reps), `etat_paiement_${numero}`)
+    charger()
+  }
+  const supprimerPaiement = async p => {
+    const ids = d.reps.filter(r => r.paiement_id === p.id).map(r => r.id)
+    if (!confirm(`Supprimer le paiement ${p.numero} (${fcfaDoc(p.montant)}) ? Ses ${ids.length} sortie(s) de trésorerie seront annulées.`)) return
+    for (const t of Object.values(JOURNAL_TABLE)) if (ids.length) await supabase.from(t).delete().eq('source_type', 'paiement_groupe').in('source_id', ids)
+    const { error } = await supabase.from('compta_achats_groupes_paiements').delete().eq('id', p.id)
+    if (error) return toast.error(error.message)
+    if (paieSel === p.id) setPaieSel(null)
+    toast.success(`Paiement ${p.numero} supprimé.`); charger()
+  }
+  const basculerEmargement = async r => {
+    const { error } = await supabase.from('compta_achats_groupes_repartitions').update({ emarge:!r.emarge, date_emargement:!r.emarge ? today() : null }).eq('id', r.id)
+    if (error) return toast.error(error.message)
+    setD(x => ({ ...x, reps:x.reps.map(y => y.id === r.id ? { ...y, emarge:!r.emarge, date_emargement:!r.emarge ? today() : null } : y) }))
+  }
+  const imprimerEtat = (g, p) => {
+    const ordre = paiementsDe(g.id), rang = ordre.findIndex(x => x.id === p.id)
+    const avant = new Set(ordre.slice(0, rang).map(x => x.id))
+    openPrintWindow(etatPaiementGroupeHtml(company, g, p, lignesDe(g.id), d.reps.filter(r => avant.has(r.paiement_id)), d.reps.filter(r => r.paiement_id === p.id)), `etat_paiement_${p.numero}`)
+  }
+
+  const visibles = d.groupes.filter(g => (!filtre.statut || (filtre.statut === 'a_payer' ? g.statut === 'cloture' && sitPaie(g).reste > 0 : g.statut === filtre.statut))
     && (!filtre.q || normAG(`${g.numero} ${g.commune||''} ${g.village||''} ${g.chef_groupe||''} ${lignesDe(g.id).map(l=>l.nom).join(' ')}`).includes(normAG(filtre.q))))
   const ouverts = d.groupes.filter(g => g.statut === 'ouvert')
   const totOuverts = totauxAchatGroupe(d.lignes.filter(l => ouverts.some(g => g.id === l.groupe_id)))
+  const resteClotures = d.groupes.filter(g => g.statut === 'cloture').reduce((t,g)=>t+sitPaie(g).reste,0)
   const selStyle = { padding:'8px 12px', borderRadius:8, border:'1px solid #d1d5db', fontSize:13 }
   const numStyle = { width:'100%', minWidth:70, padding:'5px 6px', borderRadius:6, border:'1px solid #d1d5db', fontSize:13, textAlign:'right' }
   const tEd = ed ? totauxAchatGroupe(ed.lignes) : null
 
   return (
     <div>
-      <PageHeader title="Achats groupés de paddy" subtitle={company ? `${company.raison_sociale} — ${ouverts.length} groupe(s) ouvert(s) : ${fmtKg(totOuverts.quantite_kg)}, net à payer ${fcfaDoc(totOuverts.net_a_percevoir)}` : "Sélectionnez une société en haut de l'écran"}
+      <PageHeader title="Achats groupés de paddy" subtitle={company ? `${company.raison_sociale} — ${ouverts.length} groupe(s) ouvert(s) : ${fmtKg(totOuverts.quantite_kg)} — reste à payer sur les groupes clôturés : ${fcfaDoc(resteClotures)}` : "Sélectionnez une société en haut de l'écran"}
         actions={!readOnly && <Btn onClick={nouveau}>+ Nouveau groupe</Btn>} />
-      {d.erreur && <Card style={{ marginBottom:16, background:'#fffbeb', borderColor:'#fcd34d' }}><div style={{ fontSize:13, color:'#92400e' }}>⚠️ {MSG_SCRIPT_AG}</div></Card>}
+      {(d.erreur || d.erreurPaie) && <Card style={{ marginBottom:16, background:'#fffbeb', borderColor:'#fcd34d' }}><div style={{ fontSize:13, color:'#92400e' }}>⚠️ {d.erreur ? MSG_SCRIPT_AG : MSG_SCRIPT_AG_PAIE}</div></Card>}
       <Card style={{ marginBottom:16, padding:'12px 20px' }}>
         <div style={{ display:'flex', gap:10, flexWrap:'wrap' }}>
           <select style={selStyle} value={filtre.statut} onChange={e=>setFiltre(f=>({...f, statut:e.target.value}))}>
-            <option value="ouvert">Groupes ouverts</option><option value="cloture">Groupes clôturés</option><option value="">Tous les groupes</option>
+            <option value="ouvert">Groupes ouverts</option><option value="a_payer">Clôturés, reste à payer</option><option value="cloture">Groupes clôturés</option><option value="">Tous les groupes</option>
           </select>
           <input style={{ ...selStyle, flex:'1 1 220px' }} placeholder="Rechercher : n°, village, chef, producteur…" value={filtre.q} onChange={e=>setFiltre(f=>({...f, q:e.target.value}))} />
         </div>
@@ -10009,27 +10203,32 @@ function AchatsGroupesPage({ companies, companyId, toast, readOnly=false }) {
       {d.loading ? <Card>Chargement…</Card> : (
         <TableWrap><div style={{ overflowX:'auto' }}>
           <table style={{ width:'100%', borderCollapse:'collapse' }}>
-            <thead><tr><TH>N° groupe</TH><TH>Date</TH><TH>Commune / village</TH><TH>Chef de groupe</TH><TH right>Producteurs</TH><TH right>Quantité</TH><TH right>Montant</TH><TH right>Fonds intrant</TH><TH right>Net à percevoir</TH><TH>Statut</TH><TH>Actions</TH></tr></thead>
+            <thead><tr><TH>N° groupe</TH><TH>Date</TH><TH>Commune / village</TH><TH>Chef de groupe</TH><TH right>Producteurs</TH><TH right>Quantité</TH><TH right>Montant</TH><TH right>Fonds intrant</TH><TH right>Net à percevoir</TH><TH right>Payé</TH><TH right>Reste</TH><TH>Statut</TH><TH>Actions</TH></tr></thead>
             <tbody>
-              {visibles.map(g => { const ls = lignesDe(g.id), t = totauxAchatGroupe(ls)
+              {visibles.map(g => { const ls = lignesDe(g.id), t = totauxAchatGroupe(ls), sp = sitPaie(g), np = paiementsDe(g.id).length
                 return (
                   <TR key={g.id}>
                     <TD bold>{g.numero}</TD><TD sm>{dateDoc(g.date_achat)}</TD>
                     <TD>{[g.commune, g.village].filter(Boolean).join(' / ') || '—'}</TD><TD>{g.chef_groupe||'—'}</TD>
                     <TD right>{ls.length}</TD><TD right>{nbFr(t.quantite_kg)} kg</TD><TD right>{nbFr(t.montant)}</TD>
                     <TD right>{nbFr(t.fonds_intrant)}</TD><TD right><strong>{nbFr(t.net_a_percevoir)}</strong></TD>
-                    <TD><Badge type={STATUTS_AG[g.statut]?.[1]||'info'}>{STATUTS_AG[g.statut]?.[0]||g.statut}</Badge></TD>
+                    <TD right>{nbFr(sp.percu)}</TD><TD right>{sp.reste > 0 ? <strong style={{ color:'#b45309' }}>{nbFr(sp.reste)}</strong> : '0'}</TD>
+                    <TD><Badge type={STATUTS_AG[g.statut]?.[1]||'info'}>{STATUTS_AG[g.statut]?.[0]||g.statut}</Badge>
+                      {g.statut === 'cloture' && <div style={{ marginTop:3 }}><Badge type={STATUTS_PAIE_AG[sp.statut][1]}>{STATUTS_PAIE_AG[sp.statut][0]}</Badge></div>}</TD>
                     <TD><ActionsMenu sm items={[
                       { couleur:'#0891b2', label: !readOnly && g.statut === 'ouvert' ? '✏️ Ouvrir / modifier' : '👁️ Voir le détail', onClick:()=>ouvrir(g) },
                       { couleur:'#2563eb', label:'🖨️ Registre de vente groupée', onClick:()=>imprimerRegistre(g, ls) },
                       { couleur:'#7c3aed', label:`🖨️ Fiches d'achat (${ls.length})`, onClick:()=>imprimerFiches(g, ls) },
                       !readOnly && g.statut === 'ouvert' && { couleur:'#16a34a', label:'🔒 Clôturer le groupe', onClick:()=>cloturer(g) },
+                      !readOnly && g.statut === 'cloture' && sp.reste > 0 && { couleur:'#16a34a', label:'💰 Payer le groupe', onClick:()=>nouveauPaiement(g) },
+                      g.statut === 'cloture' && { couleur:'#0d9488', label:`📋 Paiements & émargement (${np})`, onClick:()=>{ setSuivi(g); setPaieSel(null) } },
+                      !readOnly && g.statut === 'cloture' && { couleur:'#4f46e5', label:"📒 Passer l'écriture d'achat", onClick:async()=>{ const { error } = await passerEcrituresAchat(g); error ? toast.error(error.message) : toast.success(`Écriture d'achat ${pieceAchatGroupe(g)} passée au journal des achats.`) } },
                       !readOnly && g.statut === 'cloture' && { couleur:'#b45309', label:'🔓 Rouvrir', onClick:()=>rouvrir(g) },
                       !readOnly && g.statut === 'ouvert' && null,
                       !readOnly && g.statut === 'ouvert' && { label:'🗑️ Supprimer', danger:true, onClick:()=>supprimer(g) },
                     ]} /></TD>
                   </TR>) })}
-              {!visibles.length && <tr><td colSpan={11} style={{ padding:20, textAlign:'center', color:'#94a3b8' }}>{companyId ? 'Aucun groupe.' : 'Sélectionnez une société.'}</td></tr>}
+              {!visibles.length && <tr><td colSpan={13} style={{ padding:20, textAlign:'center', color:'#94a3b8' }}>{companyId ? 'Aucun groupe.' : 'Sélectionnez une société.'}</td></tr>}
             </tbody>
           </table>
         </div></TableWrap>
@@ -10137,6 +10336,101 @@ function AchatsGroupesPage({ companies, companyId, toast, readOnly=false }) {
             </div>
           </div>
         </>}
+      </Modal>
+
+      <Modal open={!!paie} onClose={()=>setPaie(null)} size="lg" title={paie ? `Payer le groupe ${paie.g.numero}${paie.g.village ? ` — ${paie.g.village}` : ''}` : ''}>
+        {paie && (()=>{ const s = sitPaie(paie.g), m = Math.round(numFR(paie.montant)), totParts = partsPaie.reduce((t,x)=>t+x.part,0)
+          return <form onSubmit={enregistrerPaiement}>
+            <div style={{ fontSize:12.5, background:'#f0f9ff', borderRadius:8, padding:'8px 12px', marginBottom:12 }}>
+              Net à percevoir du groupe : <strong>{fcfaDoc(s.net)}</strong> — déjà payé : <strong>{fcfaDoc(s.percu)}</strong> — reste dû : <strong>{fcfaDoc(s.reste)}</strong>
+            </div>
+            <Grid cols={3} gap={12} style={{ marginBottom:12 }}>
+              <Input label="Date du paiement *" name="date_paiement" type="date" value={paie.date_paiement} onChange={e=>setPaie(x=>({...x, date_paiement:e.target.value}))} required />
+              <Input label="Montant versé au groupe (FCFA) *" name="montant" type="number" min="0" step="1" value={paie.montant} onChange={e=>setPaie(x=>({...x, montant:e.target.value}))} required />
+              <Sel label="Payé par *" name="mode_paiement" value={paie.mode_paiement} onChange={e=>setPaie(x=>({...x, mode_paiement:e.target.value}))} options={COMPTE_OPTIONS} />
+              <Input label="Référence (chèque, transaction…)" name="reference" value={paie.reference} onChange={e=>setPaie(x=>({...x, reference:e.target.value}))} />
+              <Sel label="Remis à" name="remis_a" value={paie.remis_a} onChange={e=>setPaie(x=>({...x, remis_a:e.target.value}))}
+                options={[...(paie.g.chef_groupe ? [{ value:`Chef de groupe : ${paie.g.chef_groupe}`, label:`Chef de groupe : ${paie.g.chef_groupe}` }] : []), { value:'Paiement individuel', label:'Chaque producteur (paiement individuel)' }]} />
+              <Input label="Observations" name="observations" value={paie.observations} onChange={e=>setPaie(x=>({...x, observations:e.target.value}))} />
+            </Grid>
+            {m > s.reste && <div style={{ fontSize:12.5, color:'#b91c1c', marginBottom:8 }}>Le montant dépasse ce qui reste dû ({fcfaDoc(s.reste)}).</div>}
+            <div style={{ fontWeight:700, fontSize:13, margin:'4px 0 6px', color:'#334155' }}>Répartition au prorata de ce qui reste dû à chaque producteur</div>
+            <div style={{ overflowX:'auto', border:'1px solid #e2e8f0', borderRadius:10, maxHeight:300, overflowY:'auto' }}>
+              <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12.5 }}>
+                <thead><tr style={{ background:'#f1f5f9' }}>{['Producteur','Net à percevoir','Déjà perçu','Reste dû','Part de ce paiement','Reste après'].map((h,i)=>
+                  <th key={h} style={{ padding:'7px 8px', textAlign:i?'right':'left', fontSize:11.5, color:'#475569', whiteSpace:'nowrap' }}>{h}</th>)}</tr></thead>
+                <tbody>{partsPaie.map(x => (
+                  <tr key={x.ligne.id} style={{ borderTop:'1px solid #f1f5f9' }}>
+                    <td style={{ padding:'6px 8px' }}>{x.ligne.nom}</td><td style={{ padding:'6px 8px', textAlign:'right' }}>{nbFr(x.net)}</td>
+                    <td style={{ padding:'6px 8px', textAlign:'right' }}>{nbFr(x.percu)}</td><td style={{ padding:'6px 8px', textAlign:'right' }}>{nbFr(x.du)}</td>
+                    <td style={{ padding:'6px 8px', textAlign:'right', color:'#15803d' }}><strong>{nbFr(x.part)}</strong></td><td style={{ padding:'6px 8px', textAlign:'right' }}>{nbFr(x.du - x.part)}</td>
+                  </tr>))}
+                  <tr style={{ borderTop:'2px solid #cbd5e1', background:'#f8fafc', fontWeight:700 }}>
+                    <td style={{ padding:'7px 8px' }}>Total</td><td style={{ padding:'7px 8px', textAlign:'right' }}>{nbFr(s.net)}</td><td style={{ padding:'7px 8px', textAlign:'right' }}>{nbFr(s.percu)}</td>
+                    <td style={{ padding:'7px 8px', textAlign:'right' }}>{nbFr(s.reste)}</td><td style={{ padding:'7px 8px', textAlign:'right', color:'#15803d' }}>{nbFr(totParts)}</td><td style={{ padding:'7px 8px', textAlign:'right' }}>{nbFr(s.reste - totParts)}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div style={{ fontSize:11.5, color:'#64748b', margin:'8px 0 14px' }}>Chaque part sort du {JOURNAL_LABEL[paie.mode_paiement]} sur le compte du producteur. L'état de paiement et la feuille d'émargement s'impriment à l'enregistrement.</div>
+            <Row><Btn variant="secondary" onClick={()=>setPaie(null)}>Annuler</Btn><Btn type="submit" variant="success" disabled={saving || !(m > 0) || m > s.reste}>{saving ? '…' : `Payer ${fcfaDoc(m)} et imprimer l'émargement`}</Btn></Row>
+          </form> })()}
+      </Modal>
+
+      <Modal open={!!suivi} onClose={()=>{ setSuivi(null); setPaieSel(null) }} size="lg" title={suivi ? `Paiements du groupe ${suivi.numero}${suivi.village ? ` — ${suivi.village}` : ''}` : ''}>
+        {suivi && (()=>{ const g = d.groupes.find(x => x.id === suivi.id) || suivi, s = sitPaie(g), ps = paiementsDe(g.id)
+          const repsSel = paieSel ? d.reps.filter(r => r.paiement_id === paieSel) : []
+          const td = { padding:'6px 8px', borderTop:'1px solid #f1f5f9' }
+          return <>
+            <div style={{ display:'flex', gap:10, flexWrap:'wrap', alignItems:'center', marginBottom:12 }}>
+              <div style={{ fontSize:12.5, background:'#f0f9ff', borderRadius:8, padding:'8px 12px', flex:1 }}>
+                Net à percevoir : <strong>{fcfaDoc(s.net)}</strong> — payé : <strong>{fcfaDoc(s.percu)}</strong> — reste : <strong>{fcfaDoc(s.reste)}</strong>{' '}
+                <Badge type={STATUTS_PAIE_AG[s.statut][1]}>{STATUTS_PAIE_AG[s.statut][0]}</Badge>
+              </div>
+              {!readOnly && s.reste > 0 && <Btn sm variant="success" onClick={()=>nouveauPaiement(g)}>💰 Nouveau paiement</Btn>}
+            </div>
+            <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12.5, marginBottom:14 }}>
+              <thead><tr style={{ background:'#f1f5f9' }}>{['N°','Date','Payé par','Remis à','Montant','Émargés',''].map((h,i)=><th key={h||i} style={{ padding:'7px 8px', textAlign:i===4||i===5?'right':'left', fontSize:11.5, color:'#475569' }}>{h}</th>)}</tr></thead>
+              <tbody>
+                {ps.map(p => { const rp = d.reps.filter(r => r.paiement_id === p.id), em = rp.filter(r => r.emarge).length
+                  return (
+                    <tr key={p.id} style={{ background: paieSel === p.id ? '#ecfeff' : undefined }}>
+                      <td style={td}><strong>{p.numero}</strong></td><td style={td}>{dateDoc(p.date_paiement)}</td>
+                      <td style={td}>{JOURNAL_LABEL[p.mode_paiement]||p.mode_paiement}{p.reference ? ` — ${p.reference}` : ''}</td><td style={td}>{p.remis_a||'—'}</td>
+                      <td style={{ ...td, textAlign:'right' }}>{nbFr(p.montant)}</td>
+                      <td style={{ ...td, textAlign:'right', color: em === rp.length ? '#15803d' : '#b45309' }}>{em} / {rp.length}</td>
+                      <td style={{ ...td, whiteSpace:'nowrap', textAlign:'right' }}>
+                        <Btn sm variant="info" onClick={()=>setPaieSel(paieSel === p.id ? null : p.id)}>✍️ Émargement</Btn>{' '}
+                        <Btn sm variant="secondary" onClick={()=>imprimerEtat(g, p)}>🖨️</Btn>{' '}
+                        {!readOnly && <Btn sm variant="danger" onClick={()=>supprimerPaiement(p)}>🗑️</Btn>}
+                      </td>
+                    </tr>) })}
+                {!ps.length && <tr><td colSpan={7} style={{ ...td, textAlign:'center', color:'#94a3b8', padding:14 }}>Aucun paiement pour ce groupe.</td></tr>}
+              </tbody>
+            </table>
+            {paieSel ? <>
+              <div style={{ fontWeight:700, fontSize:13, marginBottom:6, color:'#334155' }}>Émargement du paiement {ps.find(p => p.id === paieSel)?.numero} — cochez quand le producteur a signé ou apposé son empreinte</div>
+              <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12.5 }}>
+                <thead><tr style={{ background:'#f1f5f9' }}>{['Producteur','Montant perçu','A signé','Date'].map((h,i)=><th key={h} style={{ padding:'7px 8px', textAlign:i===1?'right':'left', fontSize:11.5, color:'#475569' }}>{h}</th>)}</tr></thead>
+                <tbody>{repsSel.map(r => (
+                  <tr key={r.id}>
+                    <td style={td}>{r.nom}</td><td style={{ ...td, textAlign:'right' }}>{nbFr(r.montant)}</td>
+                    <td style={td}><input type="checkbox" checked={!!r.emarge} disabled={readOnly} onChange={()=>basculerEmargement(r)} style={{ width:16, height:16, cursor:readOnly?'default':'pointer' }} /></td>
+                    <td style={td}>{r.date_emargement ? dateDoc(r.date_emargement) : '—'}</td>
+                  </tr>))}</tbody>
+              </table>
+            </> : <>
+              <div style={{ fontWeight:700, fontSize:13, marginBottom:6, color:'#334155' }}>Situation par producteur</div>
+              <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12.5 }}>
+                <thead><tr style={{ background:'#f1f5f9' }}>{['Producteur','Net à percevoir','Perçu','Reste'].map((h,i)=><th key={h} style={{ padding:'7px 8px', textAlign:i?'right':'left', fontSize:11.5, color:'#475569' }}>{h}</th>)}</tr></thead>
+                <tbody>{s.parLigne.map(x => (
+                  <tr key={x.ligne.id}>
+                    <td style={td}>{x.ligne.nom}</td><td style={{ ...td, textAlign:'right' }}>{nbFr(x.net)}</td><td style={{ ...td, textAlign:'right' }}>{nbFr(x.percu)}</td>
+                    <td style={{ ...td, textAlign:'right', fontWeight:700, color:x.reste > 0 ? '#b45309' : '#15803d' }}>{nbFr(x.reste)}</td>
+                  </tr>))}</tbody>
+              </table>
+            </>}
+          </> })()}
       </Modal>
     </div>
   )
