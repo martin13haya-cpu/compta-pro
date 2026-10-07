@@ -2628,6 +2628,7 @@ const NAV = [
   { id:'etv_inventaire',  icon:'📊', label:'Inventaire' },
   { id:'etv_tresorerie',  icon:'💼', label:'Trésorerie' },
   { section:'Achats' },
+  { id:'achats_groupes',     icon:'🌾', label:'Achats groupés de paddy' },
   { id:'achats',             icon:'🛒', label:'Achats semi-finis' },
   { id:'lots_semi_finis',    icon:'📦', label:'Lots Semi-finis' },
   { id:'epierrage',          icon:'🪨', label:'Épierrage' },
@@ -8058,7 +8059,7 @@ const ALL_SECTIONS = [
   ['etv_repertoire','Répertoire Étuveuses'],['etv_envois','Envois aux étuveuses'],['etv_performance','Performance des étuveuses'],['etv_avances','Avances'],
   ['etv_bc','Bons de Commande'],['etv_br','Bons de Réception'],
   ['etv_entrees','Entrées Magasin'],['etv_sorties','Sorties Magasin'],['etv_inventaire','Inventaire'],['etv_tresorerie','Trésorerie'],
-  ['achats','Achats semi-finis'],['lots_semi_finis','Lots Semi-finis'],
+  ['achats_groupes','Achats groupés de paddy'],['achats','Achats semi-finis'],['lots_semi_finis','Lots Semi-finis'],
   ['epierrage','Épierrage'],['etuvage_paiements','Paiements étuvage'],
   ['docs_admin','Documents administratifs'],
   ['rh_employes','Employés'],['rh_fiches_paie','Fiches de Paie'],['rh_historique','Historique Paie'],
@@ -8073,7 +8074,7 @@ const SECTION_GROUPS = [
   {group:'Commercial', ids:['commercial','reglements_clients','reglements_fourn','prestations']},
   {group:'Production', ids:['suivi_lot','tracabilite','lots','etuvage','decorticage','calibrage','tri_optique','conditionnement']},
   {group:'Étuveuses', ids:['etv_repertoire','etv_envois','etv_performance','etv_avances','etv_bc','etv_br','etv_entrees','etv_sorties','etv_inventaire','etv_tresorerie']},
-  {group:'Achats', ids:['achats','lots_semi_finis','epierrage','etuvage_paiements']},
+  {group:'Achats', ids:['achats_groupes','achats','lots_semi_finis','epierrage','etuvage_paiements']},
   {group:'Documents', ids:['docs_admin']},
   {group:'RH & Paie', ids:['rh_employes','rh_fiches_paie','rh_historique','rh_declarations','rh_rapport','rh_dossiers','rh_carriere','rh_conges','rh_absences','rh_prets','rh_missions','rh_centralisation','rh_tableau_bord','rh_simulateur']},
   {group:'Comptabilité', ids:['journal_caisse','journal_banque','journal_mobile','plan_comptable','grand_livre','ecritures','balance','etats_financiers']},
@@ -9674,6 +9675,473 @@ function EtvSortiesPage({ companies, companyId, toast, readOnly=false }) {
 // calculent à partir des retours. Un retour peut créer le cycle d'étuvage
 // correspondant (lot ETUV-…, écart, alerte), ce qui relie la section
 // Étuveuses à la section Production.
+// ── ACHATS GROUPÉS DE RIZ PADDY (lot 1 : groupes et registre) ───────────────
+// Un groupe = un registre de vente groupée (commune + village). Par producteur :
+//  • montant            = quantité × prix au kg ;
+//  • fonds intrant      = ses avances (compta_avances_fournisseur) pas encore
+//                         retenues sur un autre groupe, plafonné au montant ;
+//  • remboursement (kg) = fonds intrant ÷ prix au kg ;
+//  • net à percevoir    = montant − fonds intrant.
+// Un producteur ne peut être que dans un seul groupe ouvert à la fois.
+const MSG_SCRIPT_AG = "Exécutez d'abord le script supabase/migrations/20261009_achats_groupes.sql dans Supabase (projet ComptaPro, SQL Editor)."
+const estErreurAG = e => /compta_achats_groupes|schema cache|does not exist/i.test(e?.message||'')
+const STATUTS_AG = { ouvert:['Ouvert','info'], cloture:['Clôturé','success'], annule:['Annulé','secondary'] }
+
+function calculLigneAchatGroupe(l) {
+  const q = numFR(l.quantite_kg), pu = numFR(l.prix_unitaire)
+  const montant = Math.round(q * pu)
+  const fonds = Math.max(0, Math.min(Math.round(numFR(l.fonds_intrant)), montant))
+  return { quantite_kg:q, prix_unitaire:pu, montant, fonds_intrant:fonds,
+    remboursement_kg: pu > 0 ? Math.round(fonds / pu * 100) / 100 : 0,
+    net_a_percevoir: montant - fonds }
+}
+function totauxAchatGroupe(lignes) {
+  const t = lignes.map(calculLigneAchatGroupe).reduce((t,c)=>({ quantite_kg:t.quantite_kg+c.quantite_kg, montant:t.montant+c.montant,
+    fonds_intrant:t.fonds_intrant+c.fonds_intrant, remboursement_kg:t.remboursement_kg+c.remboursement_kg, net_a_percevoir:t.net_a_percevoir+c.net_a_percevoir }),
+    { quantite_kg:0, montant:0, fonds_intrant:0, remboursement_kg:0, net_a_percevoir:0 })
+  return { ...t, quantite_kg:Math.round(t.quantite_kg*1000)/1000, remboursement_kg:Math.round(t.remboursement_kg*100)/100 }
+}
+// Avances du producteur pas encore retenues sur un autre groupe (le groupe « sauf » est exclu).
+function fondsIntrantDisponible(fournisseurId, { avances, lignes, groupes }, sauf) {
+  const total = avances.filter(a => String(a.fournisseur_id) === String(fournisseurId)).reduce((t,a)=>t+(+a.valeur_remboursement||0),0)
+  const annules = new Set(groupes.filter(g => g.statut === 'annule').map(g => g.id))
+  const retenu = lignes.filter(l => String(l.fournisseur_id) === String(fournisseurId) && l.groupe_id !== sauf && !annules.has(l.groupe_id))
+    .reduce((t,l)=>t+(+l.fonds_intrant||0),0)
+  return Math.max(0, Math.round(total - retenu))
+}
+
+const CSS_ACHAT_GROUPE = `
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: Tahoma, 'Segoe UI', Arial, sans-serif; color: #111827; background: #fff; }
+  .ent { display: flex; align-items: center; gap: 12px; }
+  .ent img { height: 54px; max-width: 120px; object-fit: contain; }
+  .ent .soc { font-size: 10.5pt; line-height: 1.5; }
+  .ent .soc b { font-size: 12pt; }
+  h1 { text-align: center; font-size: 15pt; font-weight: 800; letter-spacing: 1px; margin: 14px 0 4px; text-decoration: underline; }
+  .ref { text-align: center; font-size: 9pt; color: #475569; margin-bottom: 12px; }
+  .pointille { display: inline-block; min-width: 40mm; border-bottom: 1px dotted #475569; font-weight: 700; padding: 0 4px; }
+  .signatures { display: flex; justify-content: space-between; gap: 20px; margin-top: 22px; }
+  .signatures div { flex: 1; text-align: center; font-size: 9.5pt; font-weight: 700; }
+  .signatures div small { display: block; font-weight: 400; margin-top: 40px; border-top: 1px dotted #475569; padding-top: 3px; }
+  .print-btn { position: fixed; top: 12px; right: 12px; background: #2563eb; color: white; border: none; padding: 10px 20px; border-radius: 6px; font-size: 13px; cursor: pointer; z-index: 999; }
+  @media print { .print-btn { display: none; } }
+`
+const enteteCepea = (comp, commune='') => `<div class="ent">${comp?.logo_url ? `<img src="${comp.logo_url}" alt="logo">` : ''}
+  <div class="soc"><b>${echapHtml(comp?.raison_sociale || 'CePEA')}</b>${comp?.tel ? `, Tél : ${echapHtml(comp.tel)}` : ''}${commune ? ` ; Commune : ${echapHtml(commune)}` : ''}${comp?.adresse ? `<br>${echapHtml(comp.adresse)}` : ''}</div></div>`
+
+// Registre de vente groupée — reprend le modèle Word (A4 paysage, 12 colonnes).
+function registreVenteGroupeeHtml(comp, g, lignes) {
+  const t = totauxAchatGroupe(lignes)
+  const corps = lignes.map((l,i) => { const c = calculLigneAchatGroupe(l)
+    return `<tr><td class="c">${i+1}</td><td>${echapHtml(l.nom)}</td><td>${echapHtml(l.telephone||'')}</td><td>${echapHtml(l.cip||'')}</td>
+      <td>${echapHtml(l.village||'')}</td><td>${echapHtml(l.cooperative||'')}</td><td class="d">${nbFr(c.quantite_kg)}</td><td class="d">${nbFr(c.prix_unitaire)}</td>
+      <td class="d">${nbFr(c.montant)}</td><td class="d">${nbFr(c.fonds_intrant)}</td><td class="d"><b>${nbFr(c.net_a_percevoir)}</b></td><td></td></tr>` })
+  for (let i = lignes.length; i < 10; i++) corps.push(`<tr><td class="c">${i+1}</td>${'<td></td>'.repeat(11)}</tr>`)
+  return `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><title>Registre de vente groupée ${echapHtml(g.numero||'')}</title>
+    <style>${CSS_ACHAT_GROUPE}
+      @page { size: A4 landscape; margin: 10mm; }
+      body { font-size: 9.5pt; }
+      .page { padding: 2mm; }
+      .lieu { display: flex; gap: 30px; font-size: 10.5pt; margin-top: 8px; }
+      .lieu .droite { margin-left: auto; text-align: right; font-size: 9.5pt; }
+      table { width: 100%; border-collapse: collapse; }
+      th { border: 1px solid #111827; background: #e5e7eb; padding: 5px 4px; font-size: 8.5pt; text-align: center; }
+      td { border: 1px solid #111827; padding: 0 4px; height: 8.5mm; font-size: 9pt; }
+      td.d { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+      td.c { text-align: center; }
+      tr.total td { font-weight: 700; background: #f3f4f6; }
+    </style></head><body>
+    <button class="print-btn" onclick="window.print()">🖨️ Imprimer / PDF</button>
+    <div class="page">
+      ${enteteCepea(comp)}
+      <h1>REGISTRE DE VENTE GROUPÉE DU RIZ PADDY</h1>
+      <div class="lieu">
+        <div>CePEA : <span class="pointille">${echapHtml(comp?.raison_sociale||'')}</span></div>
+        <div>Commune de : <span class="pointille">${echapHtml(g.commune||'')}</span></div>
+        <div>Village : <span class="pointille">${echapHtml(g.village||'')}</span></div>
+        <div class="droite">N° <b>${echapHtml(g.numero||'—')}</b> du ${dateDoc(g.date_achat)}${g.chef_groupe ? `<br>Chef de groupe : <b>${echapHtml(g.chef_groupe)}</b>` : ''}</div>
+      </div>
+      <table style="margin-top:10px">
+        <thead><tr><th style="width:3%">N°</th><th style="width:16%">Nom et prénom du Producteur</th><th style="width:8.5%">N° Téléphone</th><th style="width:8.5%">N° CIP</th>
+          <th style="width:8.5%">Village</th><th style="width:10%">Coopérative</th><th style="width:7%">Quantité vendue (kg)</th><th style="width:6%">Prix unitaire</th>
+          <th style="width:8%">Montant</th><th style="width:7.5%">Fonds intrant</th><th style="width:8.5%">Montant à percevoir</th><th style="width:8.5%">Signature</th></tr></thead>
+        <tbody>${corps.join('')}
+          <tr class="total"><td colspan="6" class="d">TOTAL</td><td class="d">${nbFr(t.quantite_kg)}</td><td></td><td class="d">${nbFr(t.montant)}</td>
+            <td class="d">${nbFr(t.fonds_intrant)}</td><td class="d">${nbFr(t.net_a_percevoir)}</td><td></td></tr>
+        </tbody>
+      </table>
+      <div class="signatures">
+        <div>Le Chef de groupe<small>${echapHtml(g.chef_groupe||'')}</small></div>
+        <div>Le Gérant / Comptable<small>&nbsp;</small></div>
+        <div>Le Président Coopérative / Groupement<small>&nbsp;</small></div>
+      </div>
+    </div></body></html>`
+}
+
+// Fiches d'achat du riz paddy — une page portrait par producteur, sur le modèle Word.
+function fichesAchatPaddyHtml(comp, g, lignes) {
+  const lieu = g.lieu_collecte || g.village || g.commune || ''
+  const fiche = (l, i) => { const c = calculLigneAchatGroupe(l)
+    const ligne = (lib, val, unite, fort) => `<tr><th>${lib}</th><td class="d">${fort ? `<b>${val}</b>` : val}</td><td class="u">${unite}</td></tr>`
+    return `<div class="fiche">
+      ${enteteCepea(comp, g.commune)}
+      <h1>FICHE D'ACHAT DU RIZ PADDY</h1>
+      <div class="ref">Vente groupée ${echapHtml(g.numero||'')} du ${dateDoc(g.date_achat)} — producteur n° ${i+1}</div>
+      <div class="prod">
+        <div>Nom et Prénom : <span class="pointille">${echapHtml(l.nom)}</span></div>
+        <div>Groupement/Coopérative : <span class="pointille">${echapHtml(l.cooperative||'')}</span></div>
+        <div>Numéro CIP/CNI : <span class="pointille">${echapHtml(l.cip||'')}</span></div>
+        <div>Téléphone : <span class="pointille">${echapHtml(l.telephone||'')}</span></div>
+      </div>
+      <table>
+        <tr><th>Désignation du Produit et variété</th><td colspan="2"><b>${echapHtml(g.produit||'Riz paddy')}${(l.variete||g.variete) ? ` — ${echapHtml(l.variete||g.variete)}` : ''}</b></td></tr>
+        ${ligne('Quantité (poids)', nbFr(c.quantite_kg), 'Kg')}
+        ${ligne('Prix unitaire', nbFr(c.prix_unitaire), 'FCFA/Kg')}
+        ${ligne('Montant', nbFr(c.montant), 'FCFA', true)}
+        ${ligne('Remboursement en nature (poids)', nbFr(c.remboursement_kg), 'kg')}
+        ${ligne('Prix unitaire', nbFr(c.prix_unitaire), 'FCFA')}
+        ${ligne('Montant total à rembourser', nbFr(c.fonds_intrant), 'FCFA')}
+        <tr class="net"><th>Net à percevoir</th><td class="d">${nbFr(c.net_a_percevoir)}</td><td class="u">FCFA</td></tr>
+      </table>
+      <div class="arrete">Arrêté le net à percevoir à la somme de : <b>${montantEnLettres(c.net_a_percevoir)}</b></div>
+      <div class="date">${echapHtml(lieu) || '……………………'}, le ${dateDoc(g.date_achat)}</div>
+      <div class="signatures">
+        <div>Signature Producteur/Productrice<small>${echapHtml(l.nom)}</small></div>
+        <div>Signature du Gérant/Comptable<small>&nbsp;</small></div>
+      </div>
+      <div class="signatures" style="justify-content:flex-end"><div style="flex:0 0 50%">Signature du Président Coopérative/Groupement<small>&nbsp;</small></div></div>
+    </div>` }
+  return `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><title>Fiches d'achat ${echapHtml(g.numero||'')}</title>
+    <style>${CSS_ACHAT_GROUPE}
+      @page { size: A4; margin: 14mm 16mm; }
+      body { font-size: 10.5pt; }
+      .fiche { max-width: 178mm; margin: 0 auto; padding: 2mm; }
+      .prod { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 18px; margin: 10px 0 16px; }
+      .prod .pointille { min-width: 30mm; }
+      table { width: 100%; border-collapse: collapse; }
+      th, td { border: 1px solid #111827; padding: 9px 10px; font-size: 10.5pt; }
+      th { text-align: left; font-weight: 400; width: 52%; }
+      td.d { text-align: right; font-variant-numeric: tabular-nums; font-size: 11.5pt; }
+      td.u { width: 15%; }
+      tr.net th, tr.net td { font-weight: 800; background: #f3f4f6; font-size: 12pt; }
+      .arrete { margin-top: 10px; font-size: 9.5pt; }
+      .date { margin-top: 18px; text-align: right; }
+    </style></head><body>
+    <button class="print-btn" onclick="window.print()">🖨️ Imprimer / PDF</button>
+    ${lignes.map((l,i) => fiche(l, i) + (i < lignes.length-1 ? '<div style="page-break-after:always;"></div>' : '')).join('')}
+    </body></html>`
+}
+
+const normAG = s => String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase()
+
+function AchatsGroupesPage({ companies, companyId, toast, readOnly=false }) {
+  const [d, setD] = useState({ groupes:[], lignes:[], fournisseurs:[], avances:[], loading:true, erreur:false })
+  const [filtre, setFiltre] = useState({ statut:'ouvert', q:'' })
+  const [ed, setEd] = useState(null)       // groupe en saisie (avec ses lignes)
+  const [choix, setChoix] = useState({ village:'', cooperative:'', mentor:'', q:'', sel:[] })
+  const [saving, setSaving] = useState(false)
+  const company = companies.find(c => c.id === companyId)
+
+  const charger = useCallback(async () => {
+    if (!companyId) { setD(x=>({...x, loading:false})); return }
+    const [{ data:g, error:eg }, { data:l, error:el }, { data:f }, { data:a }] = await Promise.all([
+      supabase.from('compta_achats_groupes').select('*').eq('company_id', companyId).order('date_achat', { ascending:false }),
+      fetchAllRows(() => supabase.from('compta_achats_groupes_lignes').select('*').eq('company_id', companyId).order('ordre')),
+      fetchAllRows(() => supabase.from('compta_fournisseurs').select('*').eq('company_id', companyId).order('nom')),
+      fetchAllRows(() => supabase.from('compta_avances_fournisseur').select('fournisseur_id,valeur_remboursement').eq('company_id', companyId)),
+    ])
+    setD({ groupes:g||[], lignes:l||[], avances:a||[], loading:false, erreur:estErreurAG(eg)||estErreurAG(el),
+      fournisseurs:(f||[]).filter(x => x.actif !== false && x.type !== 'morale').sort((x,y)=>nomTiersTraca(x).localeCompare(nomTiersTraca(y),'fr')) })
+  }, [companyId])
+  useEffect(() => { charger() }, [charger])
+
+  const lignesDe = gid => d.lignes.filter(l => l.groupe_id === gid)
+  const groupeOuvertDe = (fid, sauf) => {
+    const l = d.lignes.find(x => fid && String(x.fournisseur_id) === String(fid) && x.groupe_id !== sauf && d.groupes.find(g => g.id === x.groupe_id)?.statut === 'ouvert')
+    return l ? d.groupes.find(g => g.id === l.groupe_id) : null
+  }
+  const verrou = !ed || readOnly || (ed.statut && ed.statut !== 'ouvert')
+
+  const nouveau = () => {
+    if (!companyId) { toast.error("Sélectionnez une société précise (en haut de l'écran)."); return }
+    if (d.erreur) { toast.error(MSG_SCRIPT_AG); return }
+    setEd({ date_achat:today(), commune:'', village:'', lieu_collecte:'', chef_groupe:'', chef_telephone:'', variete:'', prix_unitaire:'', observations:'', statut:'ouvert', lignes:[] })
+    setChoix({ village:'', cooperative:'', mentor:'', q:'', sel:[] })
+  }
+  const ouvrir = g => {
+    setEd({ ...g, prix_unitaire:String(g.prix_unitaire||''), lignes:lignesDe(g.id).map(l => ({ ...l, cle:l.id,
+      quantite_kg:String(l.quantite_kg), prix_unitaire:String(l.prix_unitaire), fonds_intrant:String(l.fonds_intrant),
+      fonds_dispo: l.fournisseur_id ? fondsIntrantDisponible(l.fournisseur_id, d, g.id) : +l.fonds_intrant||0 })) })
+    setChoix({ village:g.village||'', cooperative:'', mentor:'', q:'', sel:[] })
+  }
+  const setChamp = (k, v) => setEd(e => ({ ...e, [k]:v }))
+  const setLigne = (i, k, v) => setEd(e => ({ ...e, lignes:e.lignes.map((l,j) => j === i ? { ...l, [k]:v } : l) }))
+  const retirerLigne = i => {
+    const l = ed.lignes[i]
+    if (numFR(l.quantite_kg) > 0 && !confirm(`Retirer ${l.nom} du groupe ?`)) return
+    setEd(e => ({ ...e, lignes:e.lignes.filter((_,j) => j !== i), chef_groupe: e.chef_groupe === l.nom ? '' : e.chef_groupe }))
+  }
+  const appliquerPrix = () => {
+    if (!numFR(ed.prix_unitaire)) return toast.error('Saisissez d\'abord le prix unitaire du groupe.')
+    setEd(e => ({ ...e, lignes:e.lignes.map(l => ({ ...l, prix_unitaire:e.prix_unitaire })) }))
+  }
+
+  // Producteurs proposés à l'ajout (filtres village / coopérative / mentor / recherche).
+  const dansEd = new Set((ed?.lignes||[]).map(l => String(l.fournisseur_id)))
+  const candidats = !ed ? [] : d.fournisseurs.filter(f => !dansEd.has(String(f.id))
+    && (!choix.village || (f.village||'') === choix.village)
+    && (!choix.cooperative || (f.cooperative_affiliee||'') === choix.cooperative)
+    && (!choix.mentor || (f.mentor_nom||'') === choix.mentor)
+    && (!choix.q || normAG(`${nomTiersTraca(f)} ${f.telephone||''} ${f.cip||''}`).includes(normAG(choix.q))))
+  const valeurs = k => [...new Set(d.fournisseurs.map(f => f[k]).filter(Boolean))].sort((a,b)=>String(a).localeCompare(String(b),'fr'))
+  const libres = candidats.filter(f => !groupeOuvertDe(f.id, ed?.id))
+  const basculer = id => setChoix(c => ({ ...c, sel:c.sel.includes(id) ? c.sel.filter(x => x !== id) : [...c.sel, id] }))
+  const ajouterSelection = () => {
+    const ajout = d.fournisseurs.filter(f => choix.sel.includes(f.id) && !dansEd.has(String(f.id)))
+    if (!ajout.length) return toast.error('Cochez au moins un producteur.')
+    setEd(e => ({ ...e,
+      village: e.village || ajout[0].village || '', commune: e.commune || ajout[0].commune || '',
+      lignes:[...e.lignes, ...ajout.map(f => { const dispo = fondsIntrantDisponible(f.id, d, e.id)
+        return { cle:`n${f.id}`, fournisseur_id:f.id, nom:nomTiersTraca(f), telephone:f.telephone||'', cip:f.cip||'', village:f.village||'',
+          cooperative:f.cooperative_affiliee||'', variete:'', quantite_kg:'', prix_unitaire: e.prix_unitaire || String(f.prix_contrat||''),
+          fonds_intrant:String(dispo), fonds_dispo:dispo } })] }))
+    setChoix(c => ({ ...c, sel:[] }))
+  }
+
+  const enregistrer = async () => {
+    if (!ed.date_achat) return toast.error("Saisissez la date d'achat.")
+    if (!ed.lignes.length) return toast.error('Ajoutez au moins un producteur au groupe.')
+    const conflit = ed.lignes.map(l => ({ l, g:groupeOuvertDe(l.fournisseur_id, ed.id) })).find(x => x.g)
+    if (conflit) return toast.error(`${conflit.l.nom} est déjà dans le groupe ouvert ${conflit.g.numero}.`)
+    const trop = ed.lignes.find(l => numFR(l.fonds_intrant) > (l.fonds_dispo||0) + 0.5)
+    if (trop && !confirm(`Le fonds intrant retenu à ${trop.nom} (${fcfaDoc(numFR(trop.fonds_intrant))}) dépasse ses avances non encore remboursées (${fcfaDoc(trop.fonds_dispo||0)}). Continuer ?`)) return
+    setSaving(true)
+    const uid = (await supabase.auth.getUser()).data?.user?.id
+    let numero = ed.numero
+    if (!numero) {
+      const an = String(ed.date_achat).slice(0,4)
+      const nums = d.groupes.map(x => String(x.numero||'').match(new RegExp(`^GRP-${an}-(\\d+)$`))).filter(Boolean).map(m => parseInt(m[1],10))
+      numero = `GRP-${an}-${String((nums.length ? Math.max(...nums) : 0) + 1).padStart(3,'0')}`
+    }
+    const pay = { company_id:companyId, numero, date_achat:ed.date_achat, commune:ed.commune||null, village:ed.village||null, lieu_collecte:ed.lieu_collecte||null,
+      chef_groupe:ed.chef_groupe||null, chef_telephone:ed.chef_telephone||null, produit:'Riz paddy', variete:ed.variete||null,
+      prix_unitaire:numFR(ed.prix_unitaire), observations:ed.observations||null }
+    let gid = ed.id
+    if (gid) {
+      const { error } = await supabase.from('compta_achats_groupes').update(pay).eq('id', gid)
+      if (error) { setSaving(false); return toast.error(estErreurAG(error) ? MSG_SCRIPT_AG : error.message) }
+    } else {
+      const { data, error } = await supabase.from('compta_achats_groupes').insert({ ...pay, user_id:uid, statut:'ouvert' }).select('id').single()
+      if (error) { setSaving(false); return toast.error(estErreurAG(error) ? MSG_SCRIPT_AG : /duplicate|unique/i.test(error.message) ? `Le numéro ${numero} existe déjà : rechargez la page.` : error.message) }
+      gid = data.id
+    }
+    // Nouvelles lignes d'abord, anciennes supprimées ensuite : rien n'est perdu si l'écriture échoue.
+    const anciennes = lignesDe(gid).map(l => l.id)
+    const rows = ed.lignes.map((l,i) => ({ groupe_id:gid, company_id:companyId, user_id:uid, fournisseur_id:l.fournisseur_id||null, ordre:i+1,
+      nom:l.nom, telephone:l.telephone||null, cip:l.cip||null, village:l.village||null, cooperative:l.cooperative||null, variete:ed.variete||null,
+      ...calculLigneAchatGroupe(l) }))
+    const { error:ei } = await supabase.from('compta_achats_groupes_lignes').insert(rows)
+    if (ei) {
+      if (!ed.id) await supabase.from('compta_achats_groupes').delete().eq('id', gid)
+      setSaving(false); return toast.error('Producteurs non enregistrés : ' + ei.message)
+    }
+    if (anciennes.length) await supabase.from('compta_achats_groupes_lignes').delete().in('id', anciennes)
+    setSaving(false)
+    toast.success(`Groupe ${numero} enregistré (${rows.length} producteur${rows.length>1?'s':''}).`)
+    setEd(null); charger()
+  }
+
+  const cloturer = async g => {
+    const ls = lignesDe(g.id)
+    const incomplet = ls.find(l => !(+l.quantite_kg > 0) || !(+l.prix_unitaire > 0))
+    if (!ls.length) return toast.error('Le groupe ne contient aucun producteur.')
+    if (incomplet) return toast.error(`Quantité ou prix manquant pour ${incomplet.nom} : complétez le groupe avant de le clôturer.`)
+    if (!confirm(`Clôturer le groupe ${g.numero} ? Il ne sera plus modifiable et ses producteurs pourront entrer dans un nouveau groupe.`)) return
+    const { error } = await supabase.from('compta_achats_groupes').update({ statut:'cloture' }).eq('id', g.id)
+    if (error) return toast.error(error.message)
+    toast.success(`Groupe ${g.numero} clôturé.`); charger()
+  }
+  const rouvrir = async g => {
+    const conflit = lignesDe(g.id).map(l => ({ l, o:groupeOuvertDe(l.fournisseur_id, g.id) })).find(x => x.o)
+    if (conflit) return toast.error(`Impossible de rouvrir : ${conflit.l.nom} est dans le groupe ouvert ${conflit.o.numero}.`)
+    if (!confirm(`Rouvrir le groupe ${g.numero} pour le modifier ?`)) return
+    const { error } = await supabase.from('compta_achats_groupes').update({ statut:'ouvert' }).eq('id', g.id)
+    if (error) return toast.error(error.message)
+    charger()
+  }
+  const supprimer = async g => {
+    if (!confirm(`Supprimer le groupe ${g.numero} et ses ${lignesDe(g.id).length} producteur(s) ? Les fonds intrant retenus redeviennent disponibles.`)) return
+    const { error } = await supabase.from('compta_achats_groupes').delete().eq('id', g.id)
+    if (error) return toast.error(error.message)
+    toast.success(`Groupe ${g.numero} supprimé.`); charger()
+  }
+
+  const imprimerRegistre = (g, ls) => {
+    if (!ls.length) return toast.error('Aucun producteur dans ce groupe.')
+    openPrintWindow(registreVenteGroupeeHtml(company, g, ls), `registre_vente_groupee_${g.numero||'brouillon'}`)
+  }
+  const imprimerFiches = (g, ls) => {
+    if (!ls.length) return toast.error('Aucun producteur dans ce groupe.')
+    openPrintWindow(fichesAchatPaddyHtml(company, g, ls), ls.length === 1 ? `fiche_achat_${g.numero||''}_${ls[0].nom}` : `fiches_achat_${g.numero||'brouillon'}`)
+  }
+
+  const visibles = d.groupes.filter(g => (!filtre.statut || g.statut === filtre.statut)
+    && (!filtre.q || normAG(`${g.numero} ${g.commune||''} ${g.village||''} ${g.chef_groupe||''} ${lignesDe(g.id).map(l=>l.nom).join(' ')}`).includes(normAG(filtre.q))))
+  const ouverts = d.groupes.filter(g => g.statut === 'ouvert')
+  const totOuverts = totauxAchatGroupe(d.lignes.filter(l => ouverts.some(g => g.id === l.groupe_id)))
+  const selStyle = { padding:'8px 12px', borderRadius:8, border:'1px solid #d1d5db', fontSize:13 }
+  const numStyle = { width:'100%', minWidth:70, padding:'5px 6px', borderRadius:6, border:'1px solid #d1d5db', fontSize:13, textAlign:'right' }
+  const tEd = ed ? totauxAchatGroupe(ed.lignes) : null
+
+  return (
+    <div>
+      <PageHeader title="Achats groupés de paddy" subtitle={company ? `${company.raison_sociale} — ${ouverts.length} groupe(s) ouvert(s) : ${fmtKg(totOuverts.quantite_kg)}, net à payer ${fcfaDoc(totOuverts.net_a_percevoir)}` : "Sélectionnez une société en haut de l'écran"}
+        actions={!readOnly && <Btn onClick={nouveau}>+ Nouveau groupe</Btn>} />
+      {d.erreur && <Card style={{ marginBottom:16, background:'#fffbeb', borderColor:'#fcd34d' }}><div style={{ fontSize:13, color:'#92400e' }}>⚠️ {MSG_SCRIPT_AG}</div></Card>}
+      <Card style={{ marginBottom:16, padding:'12px 20px' }}>
+        <div style={{ display:'flex', gap:10, flexWrap:'wrap' }}>
+          <select style={selStyle} value={filtre.statut} onChange={e=>setFiltre(f=>({...f, statut:e.target.value}))}>
+            <option value="ouvert">Groupes ouverts</option><option value="cloture">Groupes clôturés</option><option value="">Tous les groupes</option>
+          </select>
+          <input style={{ ...selStyle, flex:'1 1 220px' }} placeholder="Rechercher : n°, village, chef, producteur…" value={filtre.q} onChange={e=>setFiltre(f=>({...f, q:e.target.value}))} />
+        </div>
+      </Card>
+      {d.loading ? <Card>Chargement…</Card> : (
+        <TableWrap><div style={{ overflowX:'auto' }}>
+          <table style={{ width:'100%', borderCollapse:'collapse' }}>
+            <thead><tr><TH>N° groupe</TH><TH>Date</TH><TH>Commune / village</TH><TH>Chef de groupe</TH><TH right>Producteurs</TH><TH right>Quantité</TH><TH right>Montant</TH><TH right>Fonds intrant</TH><TH right>Net à percevoir</TH><TH>Statut</TH><TH>Actions</TH></tr></thead>
+            <tbody>
+              {visibles.map(g => { const ls = lignesDe(g.id), t = totauxAchatGroupe(ls)
+                return (
+                  <TR key={g.id}>
+                    <TD bold>{g.numero}</TD><TD sm>{dateDoc(g.date_achat)}</TD>
+                    <TD>{[g.commune, g.village].filter(Boolean).join(' / ') || '—'}</TD><TD>{g.chef_groupe||'—'}</TD>
+                    <TD right>{ls.length}</TD><TD right>{nbFr(t.quantite_kg)} kg</TD><TD right>{nbFr(t.montant)}</TD>
+                    <TD right>{nbFr(t.fonds_intrant)}</TD><TD right><strong>{nbFr(t.net_a_percevoir)}</strong></TD>
+                    <TD><Badge type={STATUTS_AG[g.statut]?.[1]||'info'}>{STATUTS_AG[g.statut]?.[0]||g.statut}</Badge></TD>
+                    <TD><ActionsMenu sm items={[
+                      { couleur:'#0891b2', label: !readOnly && g.statut === 'ouvert' ? '✏️ Ouvrir / modifier' : '👁️ Voir le détail', onClick:()=>ouvrir(g) },
+                      { couleur:'#2563eb', label:'🖨️ Registre de vente groupée', onClick:()=>imprimerRegistre(g, ls) },
+                      { couleur:'#7c3aed', label:`🖨️ Fiches d'achat (${ls.length})`, onClick:()=>imprimerFiches(g, ls) },
+                      !readOnly && g.statut === 'ouvert' && { couleur:'#16a34a', label:'🔒 Clôturer le groupe', onClick:()=>cloturer(g) },
+                      !readOnly && g.statut === 'cloture' && { couleur:'#b45309', label:'🔓 Rouvrir', onClick:()=>rouvrir(g) },
+                      !readOnly && g.statut === 'ouvert' && null,
+                      !readOnly && g.statut === 'ouvert' && { label:'🗑️ Supprimer', danger:true, onClick:()=>supprimer(g) },
+                    ]} /></TD>
+                  </TR>) })}
+              {!visibles.length && <tr><td colSpan={11} style={{ padding:20, textAlign:'center', color:'#94a3b8' }}>{companyId ? 'Aucun groupe.' : 'Sélectionnez une société.'}</td></tr>}
+            </tbody>
+          </table>
+        </div></TableWrap>
+      )}
+
+      <Modal open={!!ed} onClose={()=>setEd(null)} size="xl"
+        title={ed ? (ed.id ? `Groupe ${ed.numero}${verrou ? ` — ${STATUTS_AG[ed.statut]?.[0]||''}` : ''}` : "Nouveau groupe d'achat") : ''}>
+        {ed && <>
+          <fieldset disabled={verrou} style={{ border:0, padding:0, margin:0, minWidth:0 }}>
+            <Grid cols={4} gap={12} style={{ marginBottom:12 }}>
+              <Input label="Date d'achat *" name="date_achat" type="date" value={ed.date_achat} onChange={e=>setChamp('date_achat', e.target.value)} required />
+              <Input label="Commune" name="commune" value={ed.commune||''} onChange={e=>setChamp('commune', e.target.value)} />
+              <Input label="Village" name="village" value={ed.village||''} onChange={e=>setChamp('village', e.target.value)} />
+              <Input label="Lieu de collecte" name="lieu_collecte" value={ed.lieu_collecte||''} onChange={e=>setChamp('lieu_collecte', e.target.value)} />
+              <Sel label="Chef de groupe" name="chef_groupe" value={ed.chef_groupe||''}
+                onChange={e=>{ const l = ed.lignes.find(x => x.nom === e.target.value); setEd(x => ({ ...x, chef_groupe:e.target.value, chef_telephone:l?.telephone || x.chef_telephone })) }}
+                options={[{ value:'', label: ed.lignes.length ? '— Choisir parmi les producteurs —' : '— Ajoutez d\'abord des producteurs —' }, ...ed.lignes.map(l => ({ value:l.nom, label:l.nom }))]} />
+              <Input label="Tél. du chef de groupe" name="chef_telephone" value={ed.chef_telephone||''} onChange={e=>setChamp('chef_telephone', e.target.value)} />
+              <Input label="Variété" name="variete" value={ed.variete||''} onChange={e=>setChamp('variete', e.target.value)} />
+              <div>
+                <Input label="Prix du groupe (FCFA/kg)" name="prix_unitaire" type="number" min="0" step="1" value={ed.prix_unitaire} onChange={e=>setChamp('prix_unitaire', e.target.value)} />
+                {!verrou && ed.lignes.length > 0 && <button type="button" onClick={appliquerPrix} style={{ marginTop:-6, fontSize:11.5, color:'#2563eb', background:'none', border:'none', cursor:'pointer', padding:0 }}>↓ Appliquer à tous les producteurs</button>}
+              </div>
+            </Grid>
+            <Input label="Observations" name="observations" value={ed.observations||''} onChange={e=>setChamp('observations', e.target.value)} />
+
+            {!verrou && <div style={{ border:'1px solid #e2e8f0', borderRadius:10, padding:12, margin:'6px 0 14px', background:'#f8fafc' }}>
+              <div style={{ fontWeight:700, fontSize:13, marginBottom:8, color:'#334155' }}>Ajouter des producteurs</div>
+              <div style={{ display:'flex', gap:8, flexWrap:'wrap', marginBottom:8 }}>
+                <select style={selStyle} value={choix.village} onChange={e=>setChoix(c=>({...c, village:e.target.value, sel:[]}))}>
+                  <option value="">Tous les villages</option>{valeurs('village').map(v=><option key={v} value={v}>{v}</option>)}
+                </select>
+                <select style={selStyle} value={choix.cooperative} onChange={e=>setChoix(c=>({...c, cooperative:e.target.value, sel:[]}))}>
+                  <option value="">Toutes les coopératives</option>{valeurs('cooperative_affiliee').map(v=><option key={v} value={v}>{v}</option>)}
+                </select>
+                <select style={selStyle} value={choix.mentor} onChange={e=>setChoix(c=>({...c, mentor:e.target.value, sel:[]}))}>
+                  <option value="">Tous les mentors</option>{valeurs('mentor_nom').map(v=><option key={v} value={v}>{v}</option>)}
+                </select>
+                <input style={{ ...selStyle, flex:'1 1 160px' }} placeholder="Nom, téléphone, CIP…" value={choix.q} onChange={e=>setChoix(c=>({...c, q:e.target.value}))} />
+              </div>
+              <div style={{ maxHeight:210, overflowY:'auto', background:'#fff', border:'1px solid #e2e8f0', borderRadius:8 }}>
+                {candidats.length > 0 && <label style={{ display:'flex', gap:8, alignItems:'center', padding:'6px 10px', fontSize:12.5, fontWeight:600, borderBottom:'1px solid #f1f5f9', cursor:'pointer' }}>
+                  <input type="checkbox" checked={libres.length > 0 && libres.every(f => choix.sel.includes(f.id))}
+                    onChange={e=>setChoix(c=>({...c, sel:e.target.checked ? libres.map(f=>f.id) : []}))} />
+                  Tout cocher ({libres.length} disponible{libres.length>1?'s':''})
+                </label>}
+                {candidats.map(f => { const autre = groupeOuvertDe(f.id, ed.id), dispo = fondsIntrantDisponible(f.id, d, ed.id)
+                  return (
+                    <label key={f.id} style={{ display:'flex', gap:8, alignItems:'center', padding:'5px 10px', fontSize:12.5, borderBottom:'1px solid #f8fafc', cursor:autre?'not-allowed':'pointer', color:autre?'#94a3b8':'#1e293b' }}>
+                      <input type="checkbox" disabled={!!autre} checked={choix.sel.includes(f.id)} onChange={()=>basculer(f.id)} />
+                      <span style={{ flex:1 }}><strong>{nomTiersTraca(f)}</strong>{f.village ? ` — ${f.village}` : ''}{f.cooperative_affiliee ? ` — ${f.cooperative_affiliee}` : ''}</span>
+                      {autre ? <span style={{ fontSize:11.5 }}>déjà dans {autre.numero}</span>
+                        : dispo > 0 && <span style={{ fontSize:11.5, color:'#b45309' }}>avances : {nbFr(dispo)} F</span>}
+                    </label>) })}
+                {!candidats.length && <div style={{ padding:12, fontSize:12.5, color:'#94a3b8', textAlign:'center' }}>{d.fournisseurs.length ? 'Aucun producteur pour ces filtres.' : 'Aucun producteur dans Fournisseurs.'}</div>}
+              </div>
+              <div style={{ marginTop:8, textAlign:'right' }}><Btn sm variant="info" onClick={ajouterSelection} disabled={!choix.sel.length}>+ Ajouter la sélection ({choix.sel.length})</Btn></div>
+            </div>}
+
+            <div style={{ overflowX:'auto', border:'1px solid #e2e8f0', borderRadius:10 }}>
+              <table style={{ width:'100%', borderCollapse:'collapse', fontSize:13 }}>
+                <thead><tr style={{ background:'#f1f5f9' }}>
+                  {['N°','Producteur','Village / coopérative','Quantité (kg)','Prix (F/kg)','Montant','Fonds intrant','Rembours. (kg)','Net à percevoir',''].map((h,i)=>
+                    <th key={i} style={{ padding:'8px 6px', textAlign: i>=3 && i<=8 ? 'right' : 'left', fontSize:11.5, color:'#475569', whiteSpace:'nowrap' }}>{h}</th>)}
+                </tr></thead>
+                <tbody>
+                  {ed.lignes.map((l,i) => { const c = calculLigneAchatGroupe(l)
+                    return (
+                      <tr key={l.cle} style={{ borderTop:'1px solid #f1f5f9' }}>
+                        <td style={{ padding:6, color:'#64748b' }}>{i+1}</td>
+                        <td style={{ padding:6 }}><strong>{l.nom}</strong>{ed.chef_groupe === l.nom && <span style={{ marginLeft:6, fontSize:10.5, background:'#dbeafe', color:'#1d4ed8', borderRadius:4, padding:'1px 5px' }}>chef</span>}
+                          <div style={{ fontSize:11.5, color:'#64748b' }}>{[l.telephone, l.cip && `CIP ${l.cip}`].filter(Boolean).join(' — ')}</div></td>
+                        <td style={{ padding:6, fontSize:12 }}>{l.village||'—'}<div style={{ color:'#64748b' }}>{l.cooperative||''}</div></td>
+                        <td style={{ padding:6 }}><input type="number" min="0" step="0.001" style={numStyle} value={l.quantite_kg} onChange={e=>setLigne(i,'quantite_kg',e.target.value)} /></td>
+                        <td style={{ padding:6 }}><input type="number" min="0" step="1" style={numStyle} value={l.prix_unitaire} onChange={e=>setLigne(i,'prix_unitaire',e.target.value)} /></td>
+                        <td style={{ padding:6, textAlign:'right', whiteSpace:'nowrap' }}>{nbFr(c.montant)}</td>
+                        <td style={{ padding:6 }}><input type="number" min="0" step="1" style={numStyle} value={l.fonds_intrant} onChange={e=>setLigne(i,'fonds_intrant',e.target.value)} />
+                          <div style={{ fontSize:10.5, color: numFR(l.fonds_intrant) > c.montant ? '#b91c1c' : '#64748b', textAlign:'right' }}>
+                            {numFR(l.fonds_intrant) > c.montant ? `plafonné à ${nbFr(c.montant)}` : `avances dues : ${nbFr(l.fonds_dispo||0)}`}</div></td>
+                        <td style={{ padding:6, textAlign:'right' }}>{nbFr(c.remboursement_kg)}</td>
+                        <td style={{ padding:6, textAlign:'right', whiteSpace:'nowrap' }}><strong>{nbFr(c.net_a_percevoir)}</strong></td>
+                        <td style={{ padding:6, whiteSpace:'nowrap' }}>
+                          {!verrou && <button type="button" title="Retirer du groupe" onClick={()=>retirerLigne(i)} style={{ border:'none', background:'none', cursor:'pointer', fontSize:14 }}>🗑️</button>}
+                        </td>
+                      </tr>) })}
+                  {!ed.lignes.length && <tr><td colSpan={10} style={{ padding:16, textAlign:'center', color:'#94a3b8' }}>Aucun producteur dans ce groupe.</td></tr>}
+                  {ed.lignes.length > 0 && <tr style={{ borderTop:'2px solid #cbd5e1', background:'#f8fafc', fontWeight:700 }}>
+                    <td colSpan={3} style={{ padding:8 }}>Total — {ed.lignes.length} producteur{ed.lignes.length>1?'s':''}</td>
+                    <td style={{ padding:8, textAlign:'right' }}>{nbFr(tEd.quantite_kg)}</td><td></td>
+                    <td style={{ padding:8, textAlign:'right' }}>{nbFr(tEd.montant)}</td><td style={{ padding:8, textAlign:'right' }}>{nbFr(tEd.fonds_intrant)}</td>
+                    <td style={{ padding:8, textAlign:'right' }}>{nbFr(tEd.remboursement_kg)}</td><td style={{ padding:8, textAlign:'right', color:'#15803d' }}>{nbFr(tEd.net_a_percevoir)}</td><td></td>
+                  </tr>}
+                </tbody>
+              </table>
+            </div>
+          </fieldset>
+          <div style={{ display:'flex', gap:8, flexWrap:'wrap', justifyContent:'space-between', marginTop:16 }}>
+            <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+              <Btn sm variant="secondary" onClick={()=>imprimerRegistre(ed, ed.lignes)}>🖨️ Registre</Btn>
+              <Btn sm variant="secondary" onClick={()=>imprimerFiches(ed, ed.lignes)}>🖨️ Fiches d'achat</Btn>
+            </div>
+            <div style={{ display:'flex', gap:8 }}>
+              <Btn variant="secondary" onClick={()=>setEd(null)}>{verrou ? 'Fermer' : 'Annuler'}</Btn>
+              {!verrou && <Btn onClick={enregistrer} disabled={saving}>{saving ? '…' : 'Enregistrer le groupe'}</Btn>}
+            </div>
+          </div>
+        </>}
+      </Modal>
+    </div>
+  )
+}
+
 const MSG_SCRIPT_ENVOIS = "Exécutez d'abord le script supabase/migrations/20261008_envois_etuveuses.sql dans Supabase (projet ComptaPro, SQL Editor)."
 const estErreurEnvois = e => /compta_envois_etuveuses|compta_retours_etuveuses|schema cache|does not exist/i.test(e?.message||'')
 
@@ -21892,7 +22360,7 @@ export default function ComptaPro() {
     etv_repertoire:'Répertoire Étuveuses', etv_envois:'Envois aux étuveuses', etv_performance:'Performance des étuveuses', etv_avances:'Avances sur Commande',
     etv_bc:'Bons de Commande', etv_br:'Bons de Réception',
     etv_entrees:'Entrées Magasin', etv_sorties:'Sorties Magasin', etv_inventaire:'Inventaire Étuveuses', etv_tresorerie:'Trésorerie Étuveuses',
-    achats:'Achats Semi-finis', lots_semi_finis:'Lots Semi-finis', epierrage:'Épierrage', reglements_clients:'Règlements Clients', reglements_fourn:'Règlements Fournisseurs', etuvage_paiements:'Paiements Étuvage',
+    achats_groupes:'Achats groupés de paddy', achats:'Achats Semi-finis', lots_semi_finis:'Lots Semi-finis', epierrage:'Épierrage', reglements_clients:'Règlements Clients', reglements_fourn:'Règlements Fournisseurs', etuvage_paiements:'Paiements Étuvage',
     docs_admin:'Documents administratifs', parametres:'Paramètres',
     prestations:'Prestations', journal_caisse:'Journal Caisse', journal_banque:'Journal Banque',
     suivi_lot:'Suivi de Lot', tracabilite:'Traçabilité des lots', journal_mobile:'Journal Mobile Money', plan_comptable:'Plan Comptable', grand_livre:'Grand-Livre', ecritures:'Saisie Comptable', balance:'Balance', etats_financiers:'États Financiers',
@@ -21939,6 +22407,7 @@ export default function ComptaPro() {
       case 'lots':          return <LotsProductionPage {...sp} />
       case 'suivi_lot':     return <SuiviLotPage {...sp} />
       case 'tracabilite':   return <TracabilitePage {...sp} readOnly={getReadOnly('tracabilite')} />
+      case 'achats_groupes': return <AchatsGroupesPage {...sp} readOnly={getReadOnly('achats_groupes')} />
       case 'etv_repertoire':  return <EtvRepertoirePage {...sp} readOnly={getReadOnly('etv_repertoire')} />
       case 'etv_envois':      return <EtvEnvoisPage {...sp} readOnly={getReadOnly('etv_envois')} />
       case 'etv_performance': return <EtvPerformancePage {...sp} />
