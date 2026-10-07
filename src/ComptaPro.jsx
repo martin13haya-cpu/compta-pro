@@ -2642,6 +2642,7 @@ const NAV = [
   { id:'rh_absences',        icon:'🕒', label:'Permissions & absences' },
   { id:'rh_prets',           icon:'🤝', label:'Prêts & avances' },
   { id:'rh_missions',        icon:'🧳', label:'Missions' },
+  { id:'rh_centralisation',  icon:'📒', label:'Centralisation comptable' },
   { id:'rh_tableau_bord',    icon:'📈', label:'Tableau de bord RH' },
   { id:'rh_simulateur',      icon:'🧮', label:'Simulateur Brut ↔ Net' },
   { section:'Comptabilité' },
@@ -7944,7 +7945,7 @@ const ALL_SECTIONS = [
   ['epierrage','Épierrage'],['etuvage_paiements','Paiements étuvage'],
   ['docs_admin','Documents administratifs'],
   ['rh_employes','Employés'],['rh_fiches_paie','Fiches de Paie'],['rh_historique','Historique Paie'],
-  ['rh_declarations','Déclarations CNSS/ITS'],['rh_rapport','Rapport Cabinet'],['rh_dossiers','Dossier du personnel'],['rh_carriere','Carrière'],['rh_conges','Congés'],['rh_absences','Permissions & absences'],['rh_prets','Prêts & avances'],['rh_missions','Missions'],['rh_tableau_bord','Tableau de bord RH'],['rh_simulateur','Simulateur Brut ↔ Net'],
+  ['rh_declarations','Déclarations CNSS/ITS'],['rh_rapport','Rapport Cabinet'],['rh_dossiers','Dossier du personnel'],['rh_carriere','Carrière'],['rh_conges','Congés'],['rh_absences','Permissions & absences'],['rh_prets','Prêts & avances'],['rh_missions','Missions'],['rh_centralisation','Centralisation comptable de la paie'],['rh_tableau_bord','Tableau de bord RH'],['rh_simulateur','Simulateur Brut ↔ Net'],
   ['journal_caisse','Journal Caisse'],['journal_banque','Journal Banque'],
   ['journal_mobile','Journal Mobile Money'],['plan_comptable','Plan Comptable'],['grand_livre','Grand-Livre'],['ecritures','Saisie Comptable'],['balance','Balance'],['etats_financiers','États Financiers'],
 ]
@@ -7957,7 +7958,7 @@ const SECTION_GROUPS = [
   {group:'Étuveuses', ids:['etv_repertoire','etv_avances','etv_bc','etv_br','etv_entrees','etv_sorties','etv_inventaire','etv_tresorerie']},
   {group:'Achats', ids:['achats','lots_semi_finis','epierrage','etuvage_paiements']},
   {group:'Documents', ids:['docs_admin']},
-  {group:'RH & Paie', ids:['rh_employes','rh_fiches_paie','rh_historique','rh_declarations','rh_rapport','rh_dossiers','rh_carriere','rh_conges','rh_absences','rh_prets','rh_missions','rh_tableau_bord','rh_simulateur']},
+  {group:'RH & Paie', ids:['rh_employes','rh_fiches_paie','rh_historique','rh_declarations','rh_rapport','rh_dossiers','rh_carriere','rh_conges','rh_absences','rh_prets','rh_missions','rh_centralisation','rh_tableau_bord','rh_simulateur']},
   {group:'Comptabilité', ids:['journal_caisse','journal_banque','journal_mobile','plan_comptable','grand_livre','ecritures','balance','etats_financiers']},
 ]
 
@@ -10035,6 +10036,7 @@ const JOURNAUX_COMPTA = [
   { code:'OD', label:'Opérations Diverses' },
   { code:'JB', label:'Journal de Banque' },
   { code:'JC', label:'Journal de Caisse' },
+  { code:'JS', label:'Journal des Salaires' },
 ]
 const journalLabel = c => (JOURNAUX_COMPTA.find(j=>j.code===c)?.label) || c
 
@@ -10113,9 +10115,13 @@ function ComptabilitePage({ companies, companyId, toast, readOnly=false }) {
     setModal(false); load()
   }
 
-  const delPiece = async(pid)=>{
+  const delPiece = async(pid, cid)=>{
     if(!window.confirm('Supprimer cette pièce comptable (toutes ses lignes) ?')) return
-    await supabase.from('compta_ecritures').delete().eq('piece_id',pid)
+    // Limitée à la société de la pièce : deux sociétés peuvent avoir une
+    // pièce de même identifiant (n° de facture d'une prestation).
+    let q = supabase.from('compta_ecritures').delete().eq('piece_id',pid)
+    if (cid) q = q.eq('company_id', cid)
+    await q
     toast.success('Pièce supprimée.'); load()
   }
 
@@ -10190,7 +10196,7 @@ function ComptabilitePage({ companies, companyId, toast, readOnly=false }) {
                     <Badge type="info">{p.journal}</Badge> &nbsp;{journalLabel(p.journal)} &nbsp;·&nbsp; {p.date_ecriture} {p.numero_piece?`· Pièce ${p.numero_piece}`:''} {p.numero_facture?`· Fact. ${p.numero_facture}`:''}
                     {p.libelle?<span style={{fontWeight:400,opacity:.85}}> — {p.libelle}</span>:null}
                   </div>
-                  {!readOnly && <button onClick={()=>delPiece(p.piece_id)} style={{background:'#dc2626',border:'none',color:'white',borderRadius:6,padding:'4px 10px',cursor:'pointer',fontSize:12}}>🗑️ Supprimer</button>}
+                  {!readOnly && <button onClick={()=>delPiece(p.piece_id, p.lignes[0]?.company_id)} style={{background:'#dc2626',border:'none',color:'white',borderRadius:6,padding:'4px 10px',cursor:'pointer',fontSize:12}}>🗑️ Supprimer</button>}
                 </div>
                 <div style={{overflowX:'auto'}}>
                   <table style={{width:'100%',borderCollapse:'collapse',minWidth:560,fontSize:13}}>
@@ -20502,6 +20508,173 @@ const RH_Dossiers = ({companies}) => {
   );
 };
 
+// ─── RH LOT 5 : CENTRALISATION COMPTABLE DE LA PAIE ─────────────────────────
+// Repris de Gestion Stock Pro : les fiches de paie d'un mois deviennent UNE
+// écriture au journal des salaires (JS), datée du dernier jour du mois,
+// numéro de pièce « PAIE-AAAA-MM ». On ne la retouche pas à la main : on
+// l'annule et on recentralise. Ventilation SYSCOHADA révisé :
+//   DÉBIT   6611 Appointements et salaires (brut)
+//           6641 Charges sociales patronales (CNSS employeur)
+//           6413 Taxes sur salaires (VPS)
+//   CRÉDIT  422  Personnel, rémunérations dues (net à payer)
+//           431  Sécurité sociale (CNSS salariale + patronale)
+//           447  État, impôts retenus (ITS + taxe radio + VPS)
+//           421  Personnel, avances et acomptes (avances et prêts retenus)
+//           423  Personnel, oppositions et saisies-arrêts
+//           438  Organismes sociaux (assurance santé retenue)
+// Équilibre garanti : brut = net à payer + toutes les retenues.
+const JOURNAL_SALAIRES = "JS"
+const COMPTES_PAIE = [
+  // [compte, libellé, sens, calcul à partir des totaux]
+  ["6611","Appointements et salaires","D",t=>t.brut],
+  ["6641","Charges sociales patronales (CNSS)","D",t=>t.cnssPat],
+  ["6413","Taxes sur salaires (VPS)","D",t=>t.vps],
+  ["422","Personnel, rémunérations dues","C",t=>t.netAPayer],
+  ["431","Sécurité sociale (CNSS salariale et patronale)","C",t=>t.cnssOuv+t.cnssPat],
+  ["447","État, impôts retenus (ITS, taxe radio, VPS)","C",t=>t.its+t.radio+t.vps],
+  ["421","Personnel, avances et acomptes","C",t=>t.avances],
+  ["423","Personnel, oppositions et saisies-arrêts","C",t=>t.saisies],
+  ["438","Organismes sociaux (assurance santé)","C",t=>t.assurance],
+]
+const pieceIdPaie = (companyId, mois, annee) => `PAIE-${annee}-${String(mois).padStart(2,"0")}-${companyId}`
+const numeroPiecePaie = (mois, annee) => `PAIE-${annee}-${String(mois).padStart(2,"0")}`
+const dernierJourMois = (mois, annee) => `${annee}-${String(mois).padStart(2,"0")}-${String(new Date(annee,mois,0).getDate()).padStart(2,"0")}`
+
+function totauxPaie(fiches) {
+  const s=k=>fiches.reduce((t,f)=>t+Math.round(parseFloat(f[k])||0),0);
+  const t={ brut:s("salaire_brut"), cnssOuv:s("cnss_ouvriere"), its:s("its"), radio:s("taxe_radio"), net:s("salaire_net"),
+    avances:s("avances"), saisies:s("saisie_arret"), assurance:s("assurance_sante"), netAPayer:s("remuneration_due"),
+    cnssPat:s("cnss_patronale"), vps:s("vps") };
+  // Les arrondis fiche par fiche peuvent laisser un franc d'écart : le brut
+  // est reconstitué depuis le net à payer et les retenues, comme dans
+  // Gestion Stock Pro, pour que l'écriture tombe toujours juste.
+  t.brutComptable = t.netAPayer + t.avances + t.saisies + t.assurance + t.cnssOuv + t.its + t.radio;
+  return t;
+}
+function lignesCentralisation(t) {
+  const tc={...t, brut:t.brutComptable};
+  return COMPTES_PAIE.map(([compte,libelle,sens,f])=>({compte,libelle,debit:sens==="D"?f(tc):0,credit:sens==="C"?f(tc):0}))
+    .filter(l=>l.debit>0||l.credit>0);
+}
+
+const RH_Centralisation = ({companies}) => {
+  const [compId,setCompId]=useState(companies[0]?.id||"");
+  useEffect(()=>{ if(!compId&&companies.length) setCompId(companies[0].id); },[companies,compId]);
+  const maintenant=new Date();
+  const [mois,setMois]=useState(String(maintenant.getMonth()+1));
+  const [annee,setAnnee]=useState(String(maintenant.getFullYear()));
+  const [d,setD]=useState({fiches:[],ecriture:[],historique:[],loading:true});
+  const [enCours,setEnCours]=useState(false);
+  const comp=companies.find(c=>c.id===compId);
+  const m=parseInt(mois), a=parseInt(annee);
+  const charger=useCallback(async()=>{
+    if(!compId) return;
+    setD(x=>({...x,loading:true}));
+    const [{data:f},{data:e},{data:h}]=await Promise.all([
+      supabaseRH.from("payrolls").select("*, employees(nom,prenoms,matricule)").eq("company_id",compId).eq("mois",m).eq("annee",a),
+      supabase.from("compta_ecritures").select("*").eq("company_id",compId).eq("piece_id",pieceIdPaie(compId,m,a)),
+      supabase.from("compta_ecritures").select("numero_piece,date_ecriture,debit").eq("company_id",compId).eq("journal",JOURNAL_SALAIRES).like("numero_piece","PAIE-%"),
+    ]);
+    const parPiece={}; (h||[]).forEach(r=>{ (parPiece[r.numero_piece]||=( {numero:r.numero_piece,date:r.date_ecriture,montant:0} )).montant+=+r.debit||0; });
+    setD({fiches:f||[],ecriture:e||[],historique:Object.values(parPiece).sort((x,y)=>String(y.numero).localeCompare(String(x.numero))),loading:false});
+  },[compId,m,a]);
+  useEffect(()=>{ charger(); },[charger]);
+
+  const t=totauxPaie(d.fiches);
+  const lignes=lignesCentralisation(t);
+  const totalD=lignes.reduce((s,l)=>s+l.debit,0), totalC=lignes.reduce((s,l)=>s+l.credit,0);
+  const dejaFaite=d.ecriture.length>0;
+  const montantEcriture=d.ecriture.reduce((s,l)=>s+(+l.debit||0),0);
+  const perimee=dejaFaite && Math.round(montantEcriture)!==Math.round(totalD);
+
+  const centraliser=async(remplacer=false)=>{
+    if(!d.fiches.length) return rhToast.error(`Aucune fiche de paie pour ${MOIS[m]} ${a}.`);
+    if(totalD!==totalC) return rhToast.error(`Écriture non équilibrée (débit ${fmtN(totalD)} ≠ crédit ${fmtN(totalC)}).`);
+    if(remplacer && !confirm(`Remplacer l'écriture ${numeroPiecePaie(m,a)} existante par une nouvelle, calculée sur les ${d.fiches.length} fiche(s) actuelles ?`)) return;
+    setEnCours(true);
+    const {data:ad}=await supabase.auth.getUser(); const uid=ad?.user?.id;
+    const pid=pieceIdPaie(compId,m,a), num=numeroPiecePaie(m,a), date=dernierJourMois(m,a);
+    if(remplacer) await supabase.from("compta_ecritures").delete().eq("company_id",compId).eq("piece_id",pid);
+    const libelle=`Centralisation de la paie — ${MOIS[m]} ${a} (${d.fiches.length} salarié${d.fiches.length>1?"s":""})`;
+    const {error}=await supabase.from("compta_ecritures").insert(lignes.map(l=>({
+      company_id:compId, user_id:uid, piece_id:pid, journal:JOURNAL_SALAIRES, date_ecriture:date,
+      numero_piece:num, numero_facture:"", reference:num, libelle, numero_compte:l.compte, compte_libelle:l.libelle,
+      debit:l.debit, credit:l.credit })));
+    setEnCours(false);
+    if(error) return rhToast.error("Centralisation impossible : "+error.message);
+    rhToast.success(`Paie de ${MOIS[m]} ${a} centralisée au journal des salaires (${fmt(totalD)}).`);
+    charger();
+  };
+  const annuler=async()=>{
+    if(!confirm(`Annuler la centralisation de ${MOIS[m]} ${a} ? L'écriture ${numeroPiecePaie(m,a)} sera supprimée de la comptabilité.`)) return;
+    const {error}=await supabase.from("compta_ecritures").delete().eq("company_id",compId).eq("piece_id",pieceIdPaie(compId,m,a));
+    if(error) return rhToast.error(error.message);
+    rhToast.success("Centralisation annulée."); charger();
+  };
+  const imprimer=()=>{
+    openPrintWindow(gabaritDocumentHtml({ comp, titre:"CENTRALISATION DE LA PAIE", numero:numeroPiecePaie(m,a), date:dateDoc(dernierJourMois(m,a)),
+      infos:[["Journal","JS — Salaires"],["Période",`${MOIS[m]} ${a}`],["Salariés",String(d.fiches.length)]],
+      tiersLabel:"Récapitulatif", tiers:{nom:`${d.fiches.length} fiche(s) de paie`, adresse:`Brut ${fmt(t.brutComptable)} — net à payer ${fmt(t.netAPayer)}`},
+      colonnes:[{label:"Compte",largeur:"12%"},{label:"Libellé"},{label:"Débit",align:"d",largeur:"18%"},{label:"Crédit",align:"d",largeur:"18%"}],
+      lignes:lignes.map(l=>[l.compte,echapHtml(l.libelle),l.debit?fmtN(l.debit):"",l.credit?fmtN(l.credit):""]),
+      totaux:[["Total débit",fcfaDoc(totalD)],["Total crédit",fcfaDoc(totalC),true]],
+      apresTotaux:`<div class="bloc"><div class="lib">Détail par salarié</div><table class="grille"><tr><th>Salarié</th><th>Brut</th><th>CNSS sal.</th><th>ITS</th><th>Net à payer</th><th>CNSS pat.</th><th>VPS</th></tr>${
+        d.fiches.map(f=>`<tr><td>${echapHtml(`${f.employees?.nom||""} ${f.employees?.prenoms||""}`)}</td>${[f.salaire_brut,f.cnss_ouvriere,f.its,f.remuneration_due,f.cnss_patronale,f.vps].map(v=>`<td style="text-align:right">${fmtN(v)}</td>`).join("")}</tr>`).join("")}</table></div>`,
+      signatures:["Le comptable","Le responsable de la paie"] }), `centralisation_paie_${numeroPiecePaie(m,a)}`);
+  };
+  const annees=[a-1,a,a+1].filter((x,i,arr)=>arr.indexOf(x)===i).map(String);
+  return (
+    <div>
+      <div className="rh-page-header">
+        <h2 style={{fontSize:"22px",fontWeight:700,color:"#1a3a6b"}}>Centralisation comptable de la paie</h2>
+        <div className="rh-inline-actions"><RH_SelectSociete companies={companies} compId={compId} setCompId={setCompId}/></div>
+      </div>
+      <RH_Card>
+        <div style={{display:"flex",gap:12,alignItems:"flex-end",flexWrap:"wrap"}}>
+          <Select label="Mois" value={mois} onChange={setMois} options={MOIS.slice(1).map((x,i)=>({value:String(i+1),label:x}))}/>
+          <Select label="Année" value={annee} onChange={setAnnee} options={[...new Set([String(CURRENT_YEAR-1),String(CURRENT_YEAR),...annees])].sort().map(x=>({value:x,label:x}))}/>
+          <div style={{fontSize:13,paddingBottom:12,color:G.textDim}}>{d.loading?"Chargement…":`${d.fiches.length} fiche(s) de paie — écriture datée du ${dateDoc(dernierJourMois(m,a))}, journal JS (salaires)`}</div>
+        </div>
+        {!d.loading && (dejaFaite
+          ? <div style={{background:perimee?"#fffbeb":"#ecfdf5",border:`1px solid ${perimee?"#fcd34d":"#86efac"}`,borderRadius:8,padding:"10px 12px",fontSize:13,marginBottom:12}}>
+              {perimee
+                ? <>⚠️ Une écriture {numeroPiecePaie(m,a)} existe déjà ({fmt(montantEcriture)}), mais les fiches ont changé depuis ({fmt(totalD)}). <strong>Recentralisez</strong> pour la mettre à jour.</>
+                : <>✔ Paie de {MOIS[m]} {a} déjà centralisée : écriture {numeroPiecePaie(m,a)} de {fmt(montantEcriture)} au journal des salaires.</>}
+            </div>
+          : d.fiches.length>0 && <div style={{background:G.input,borderRadius:8,padding:"10px 12px",fontSize:13,marginBottom:12}}>Aperçu de l'écriture qui sera passée en comptabilité :</div>)}
+        {!d.loading && d.fiches.length>0 && <>
+          <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
+            <thead><tr style={{background:G.input}}>{["Compte","Libellé","Débit","Crédit"].map((h,i)=><th key={h} style={{padding:"7px 8px",textAlign:i>1?"right":"left"}}>{h}</th>)}</tr></thead>
+            <tbody>
+              {lignes.map(l=><tr key={l.compte} style={{borderTop:`1px solid ${G.border}`}}>
+                <td style={{padding:"6px 8px",fontWeight:700}}>{l.compte}</td><td style={{padding:"6px 8px"}}>{l.libelle}</td>
+                <td style={{padding:"6px 8px",textAlign:"right"}}>{l.debit?fmtN(l.debit):""}</td><td style={{padding:"6px 8px",textAlign:"right"}}>{l.credit?fmtN(l.credit):""}</td></tr>)}
+              <tr style={{borderTop:`2px solid ${G.text}`,fontWeight:800}}>
+                <td colSpan={2} style={{padding:"7px 8px"}}>Totaux {totalD===totalC?"— équilibrée ✔":"— DÉSÉQUILIBRÉE"}</td>
+                <td style={{padding:"7px 8px",textAlign:"right"}}>{fmtN(totalD)}</td><td style={{padding:"7px 8px",textAlign:"right"}}>{fmtN(totalC)}</td>
+              </tr>
+            </tbody>
+          </table>
+          {t.brutComptable!==t.brut && <div style={{fontSize:11.5,color:G.textDim,marginTop:6}}>Brut des fiches : {fmt(t.brut)} — brut comptabilisé : {fmt(t.brutComptable)} (reconstitué depuis le net et les retenues, écart d'arrondi de {fmtN(t.brutComptable-t.brut)} F).</div>}
+          <div className="rh-actions-row" style={{marginTop:14}}>
+            {!dejaFaite && <RH_Btn onClick={()=>centraliser(false)} disabled={enCours}>{enCours?"…":"📒 Centraliser en comptabilité"}</RH_Btn>}
+            {dejaFaite && <RH_Btn onClick={()=>centraliser(true)} disabled={enCours} variant={perimee?"primary":"secondary"}>🔄 Recentraliser</RH_Btn>}
+            {dejaFaite && <RH_Btn onClick={annuler} variant="danger">Annuler la centralisation</RH_Btn>}
+            <RH_Btn onClick={imprimer} variant="secondary">🖨️ Imprimer</RH_Btn>
+          </div>
+        </>}
+        {!d.loading && !d.fiches.length && <div style={{fontSize:13,color:G.textDim,padding:"10px 0"}}>Aucune fiche de paie pour {MOIS[m]} {a} : rien à centraliser.</div>}
+        <div style={{fontSize:11.5,color:G.textDim,marginTop:10}}>Le paiement des salaires (débit 422 / crédit banque ou caisse) se saisit ensuite au journal de banque ou de caisse, comme d'habitude.</div>
+      </RH_Card>
+      {d.historique.length>0 && <RH_Card>
+        <div style={{fontWeight:700,color:G.text,marginBottom:8}}>Paies déjà centralisées</div>
+        {d.historique.map(h=><div key={h.numero} style={{display:"flex",justifyContent:"space-between",fontSize:13,padding:"5px 0",borderBottom:`1px solid ${G.border}`}}>
+          <span>{h.numero} — {dateDoc(h.date)}</span><span>{fmt(h.montant)}</span></div>)}
+      </RH_Card>}
+    </div>
+  );
+};
+
 function RH_EmployeesWrapper({ companies }) {
   return <><RH_ToastContainer /><Employees companies={companies} /></>
 }
@@ -20544,6 +20717,10 @@ function RH_CarriereWrapper({ companies }) {
 
 function RH_DossiersWrapper({ companies }) {
   return <><RH_ToastContainer /><RH_Dossiers companies={companies} /></>
+}
+
+function RH_CentralisationWrapper({ companies }) {
+  return <><RH_ToastContainer /><RH_Centralisation companies={companies} /></>
 }
 
 function RH_SimulateurWrapper() {
@@ -20913,7 +21090,7 @@ export default function ComptaPro() {
     prestations:'Prestations', journal_caisse:'Journal Caisse', journal_banque:'Journal Banque',
     suivi_lot:'Suivi de Lot', journal_mobile:'Journal Mobile Money', plan_comptable:'Plan Comptable', grand_livre:'Grand-Livre', ecritures:'Saisie Comptable', balance:'Balance', etats_financiers:'États Financiers',
     rh_employes:'RH — Employés', rh_fiches_paie:'RH — Fiches de Paie', rh_historique:'RH — Historique Paie',
-    rh_declarations:'RH — Déclarations CNSS/ITS', rh_rapport:'RH — Rapport Cabinet', rh_dossiers:'RH — Dossier du personnel', rh_carriere:'RH — Carrière', rh_conges:'RH — Congés', rh_absences:'RH — Permissions & absences', rh_prets:'RH — Prêts & avances', rh_missions:'RH — Missions', rh_tableau_bord:'RH — Tableau de bord', rh_simulateur:'RH — Simulateur Brut ↔ Net',
+    rh_declarations:'RH — Déclarations CNSS/ITS', rh_rapport:'RH — Rapport Cabinet', rh_dossiers:'RH — Dossier du personnel', rh_carriere:'RH — Carrière', rh_conges:'RH — Congés', rh_absences:'RH — Permissions & absences', rh_prets:'RH — Prêts & avances', rh_missions:'RH — Missions', rh_centralisation:'RH — Centralisation comptable', rh_tableau_bord:'RH — Tableau de bord', rh_simulateur:'RH — Simulateur Brut ↔ Net',
   }
 
   const renderPage = () => {
@@ -20997,6 +21174,7 @@ export default function ComptaPro() {
       case 'rh_absences':     return <RH_AbsencesWrapper companies={companies} />
       case 'rh_prets':        return <RH_PretsWrapper companies={companies} />
       case 'rh_missions':     return <RH_MissionsWrapper companies={companies} />
+      case 'rh_centralisation': return <RH_CentralisationWrapper companies={companies} />
       case 'rh_tableau_bord': return <RH_TableauDeBordWrapper companies={companies} />
       case 'rh_simulateur':   return <RH_SimulateurWrapper />
     }
