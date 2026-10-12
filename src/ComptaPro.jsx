@@ -10266,53 +10266,80 @@ function AchatsGroupesPage({ companies, companyId, toast, readOnly=false }) {
   // ── Entrée en stock (bon d'entrée en magasin, comme la page des bons) ──
   const tiersBonGroupe = g => `Achat groupé ${g.numero}`
   const bonDe = g => d.bons.find(b => b.tiers === tiersBonGroupe(g))
+  // Article paddy existant, sinon création de « RIZ PADDY » (kg) ; quantité
+  // du groupe en kg au prix moyen payé.
+  const valeursEntreeStock = g => {
+    const t = totauxAchatGroupe(lignesDe(g.id))
+    const article = d.articles.find(a => /paddy/i.test(a.designation))
+    return { article_id:article?.id || '__nouveau_paddy__', date_bon: g.date_achat > today() ? today() : g.date_achat,
+      quantite:String(t.quantite_kg), prix_unitaire:String(t.quantite_kg > 0 ? Math.round(t.montant / t.quantite_kg * 100) / 100 : 0) }
+  }
   const ouvrirEntreeStock = g => {
     const ls = lignesDe(g.id), t = totauxAchatGroupe(ls)
     if (!(t.quantite_kg > 0)) return toast.error('Aucune quantité dans ce groupe.')
     if (bonDe(g)) return toast.error(`Le paddy du groupe ${g.numero} est déjà entré en stock (bon ${bonDe(g).numero}).`)
-    const article = d.articles.find(a => /paddy/i.test(a.designation)) || null
-    setEntreeStock({ g, article_id:article?.id || '', date_bon: g.date_achat > today() ? today() : g.date_achat,
-      quantite:String(t.quantite_kg), prix_unitaire:String(t.quantite_kg > 0 ? Math.round(t.montant / t.quantite_kg * 100) / 100 : 0) })
+    setEntreeStock({ g, ...valeursEntreeStock(g) })
   }
-  const enregistrerEntreeStock = async e => {
-    e.preventDefault()
-    const { g } = entreeStock, q = numFR(entreeStock.quantite), pu = numFR(entreeStock.prix_unitaire)
-    if (!entreeStock.article_id) return toast.error("Choisissez l'article du stock (ex. RIZ PADDY).")
-    if (!(q > 0)) return toast.error('Saisissez la quantité entrée en stock.')
-    if (!entreeStock.date_bon || entreeStock.date_bon > today()) return toast.error("La date d'entrée ne peut pas être postérieure à aujourd'hui.")
-    setSaving(true)
+  // Entre le paddy d'un groupe en stock : bon d'entrée BE-…, mouvement, stock
+  // de l'article et prix d'achat au coût moyen pondéré (c'est ce prix qui
+  // valorise l'inventaire). Renvoie le bon créé, ou null (message affiché).
+  const entrerEnStock = async (g, { article_id, date_bon, quantite, prix_unitaire }) => {
+    const q = numFR(quantite), pu = numFR(prix_unitaire)
+    if (!article_id) { toast.error("Choisissez l'article du stock (ex. RIZ PADDY)."); return null }
+    if (!(q > 0)) { toast.error('Saisissez la quantité entrée en stock.'); return null }
+    if (!date_bon || date_bon > today()) { toast.error("La date d'entrée ne peut pas être postérieure à aujourd'hui."); return null }
     const uid = (await supabase.auth.getUser()).data?.user?.id
     const { data:existant } = await supabase.from('compta_bons_stock').select('numero').eq('company_id', companyId).eq('tiers', tiersBonGroupe(g)).limit(1)
-    if (existant?.length) { setSaving(false); charger(); return toast.error(`Déjà entré en stock (bon ${existant[0].numero}).`) }
-    const { data:art } = await supabase.from('compta_articles').select('id,designation,unite,stock_actuel').eq('id', entreeStock.article_id).single()
-    const prefixe = `BE-${entreeStock.date_bon.replace(/-/g, '')}-`
+    if (existant?.length) { toast.error(`Déjà entré en stock (bon ${existant[0].numero}).`); return null }
+    let art
+    if (article_id === '__nouveau_paddy__') {
+      const { data, error } = await supabase.from('compta_articles').insert({ company_id:companyId, user_id:uid, code:'PADDY', designation:'RIZ PADDY',
+        categorie:'riz_paddy', unite:'kg', prix_achat:pu, prix_vente:0, stock_min:0, stock_actuel:0, actif:true }).select('id,designation,unite,stock_actuel,prix_achat').single()
+      if (error) { toast.error("Article RIZ PADDY non créé : " + error.message); return null }
+      art = data
+    } else {
+      const { data } = await supabase.from('compta_articles').select('id,designation,unite,stock_actuel,prix_achat').eq('id', article_id).single()
+      art = data
+    }
+    const prefixe = `BE-${date_bon.replace(/-/g, '')}-`
     const { data:der } = await supabase.from('compta_bons_stock').select('numero').eq('company_id', companyId).like('numero', `${prefixe}%`).order('numero', { ascending:false }).limit(1)
     const numero = `${prefixe}${String((der?.[0]?.numero ? parseInt(der[0].numero.slice(prefixe.length), 10) || 0 : 0) + 1).padStart(4, '0')}`
     const ls = lignesDe(g.id)
     const ligne = { article_id:art.id, designation:art.designation || '', unite:art.unite || '', quantite:q, prix_unitaire:pu, montant:Math.round(q * pu),
       observation:`Achat groupé ${g.numero}` }
-    const bon = { company_id:companyId, user_id:uid, numero, type:'entree', date_bon:entreeStock.date_bon, tiers:tiersBonGroupe(g), motif:'achat',
+    const bon = { company_id:companyId, user_id:uid, numero, type:'entree', date_bon, tiers:tiersBonGroupe(g), motif:'achat',
       observations:`Vente groupée ${g.numero}${g.village ? ` — ${g.village}` : ''}${g.commune ? ` (${g.commune})` : ''} : ${ls.length} producteur(s)${g.chef_groupe ? `, chef de groupe ${g.chef_groupe}` : ''}.`,
       lignes:[ligne], total:ligne.montant }
     const { error } = await supabase.from('compta_bons_stock').insert(bon)
-    if (error) { setSaving(false); return toast.error(/compta_bons_stock|does not exist|schema cache/i.test(error.message) ? MSG_TABLE_BONS : error.message) }
+    if (error) { toast.error(/compta_bons_stock|does not exist|schema cache/i.test(error.message) ? MSG_TABLE_BONS : error.message); return null }
     const { error:em } = await supabase.from('compta_mouvements_stock').insert({ article_id:art.id, company_id:companyId, user_id:uid, type:'entree', motif:'achat',
-      quantite:q, prix_unitaire:pu, montant:ligne.montant, reference:numero, date_mvt:entreeStock.date_bon })
+      quantite:q, prix_unitaire:pu, montant:ligne.montant, reference:numero, date_mvt:date_bon })
     if (em) {
       await supabase.from('compta_bons_stock').delete().eq('company_id', companyId).eq('numero', numero)
-      setSaving(false); return toast.error('Entrée en stock non enregistrée : ' + em.message)
+      toast.error('Entrée en stock non enregistrée : ' + em.message); return null
     }
-    await supabase.from('compta_articles').update({ stock_actuel:(+art.stock_actuel || 0) + q }).eq('id', art.id)
-    setSaving(false); setEntreeStock(null)
-    toast.success(`Bon d'entrée ${numero} : ${nbFr(q)} ${art.unite || ''} de ${art.designation} entrés en stock.`)
-    imprimerBonStock(company, { ...bon, created_at:new Date().toISOString() })
+    const ancien = Math.max(0, +art.stock_actuel || 0), pa = +art.prix_achat || 0
+    const prixMoyen = ancien > 0 && pa > 0 ? Math.round((ancien * pa + q * pu) / (ancien + q) * 100) / 100 : pu
+    await supabase.from('compta_articles').update({ stock_actuel:(+art.stock_actuel || 0) + q, prix_achat:prixMoyen }).eq('id', art.id)
+    return { ...bon, created_at:new Date().toISOString(), _article:art }
+  }
+  const enregistrerEntreeStock = async e => {
+    e.preventDefault()
+    setSaving(true)
+    const bon = await entrerEnStock(entreeStock.g, entreeStock)
+    setSaving(false)
+    if (!bon) return charger()
+    setEntreeStock(null)
+    toast.success(`Bon d'entrée ${bon.numero} : ${nbFr(bon.lignes[0].quantite)} ${bon.lignes[0].unite} de ${bon.lignes[0].designation} entrés en stock.`)
+    imprimerBonStock(company, bon)
     charger()
   }
   const ouvrirVersement = g => {
     if (!lignesDe(g.id).some(l => +l.quantite_kg > 0)) return toast.error('Aucune quantité dans ce groupe.')
     const enCours = d.lots.filter(l => l.statut === 'en_cours')
     // Le lot créé pour le groupe porte le numéro de l'achat : LOT-GRP-2026-001.
-    setVers({ g, mode: enCours.length ? 'existant' : 'nouveau', lot_id: enCours[0]?.id || '', numero_lot:`LOT-${g.numero}`, ajouter_qte:true })
+    setVers({ g, mode: enCours.length ? 'existant' : 'nouveau', lot_id: enCours[0]?.id || '', numero_lot:`LOT-${g.numero}`, ajouter_qte:true,
+      entrer_stock: !bonDe(g), ...valeursEntreeStock(g) })
   }
   const verserDansLot = async e => {
     e.preventDefault()
@@ -10344,8 +10371,13 @@ function AchatsGroupesPage({ companies, companyId, toast, readOnly=false }) {
     const { error:eg } = await supabase.from('compta_achats_groupes').update({ lot_id:lot.id, lot_qte_ajoutee:ajout }).eq('id', g.id)
     if (eg) { await supabase.from('compta_lot_origines').delete().eq('achat_groupe_id', g.id); await annulerLot(); setSaving(false)
       return toast.error(estErreurAGLots(eg) ? MSG_SCRIPT_AG_LOTS : eg.message) }
+    // Le paddy versé dans le lot entre aussi en stock : il compte dans la
+    // valeur de l'inventaire.
+    let bon = null
+    if (vers.entrer_stock && !bonDe(g)) bon = await entrerEnStock({ ...g, lot_id:lot.id }, vers)
     setSaving(false); setVers(null)
-    toast.success(`Paddy du groupe ${g.numero} (${fmtKg(q)}, ${ls.length} producteur(s)) versé dans le lot ${lot.numero_lot} — visible dans la traçabilité.`)
+    toast.success(`Paddy du groupe ${g.numero} (${fmtKg(q)}, ${ls.length} producteur(s)) versé dans le lot ${lot.numero_lot}${bon ? ` et entré en stock (bon ${bon.numero})` : ''}.`)
+    if (bon) imprimerBonStock(company, bon)
     charger()
   }
   const detacherDuLot = async g => {
@@ -10591,7 +10623,8 @@ function AchatsGroupesPage({ companies, companyId, toast, readOnly=false }) {
             </div>
             <Grid cols={2} gap={12} style={{ marginBottom:8 }}>
               <Span2><Sel label="Article du stock *" name="article_id" value={entreeStock.article_id} onChange={e=>setEntreeStock(x=>({...x, article_id:e.target.value}))}
-                options={[{ value:'', label: d.articles.length ? '— Choisir (ex. RIZ PADDY) —' : '— Aucun article : créez-le dans Articles & Stock —' }, ...d.articles.map(a => ({ value:a.id, label:`${a.designation}${a.unite ? ` (${a.unite})` : ''} — stock ${nbFr(a.stock_actuel)}` }))]} /></Span2>
+                options={[{ value:'', label:'— Choisir —' }, ...(d.articles.some(a => /paddy/i.test(a.designation)) ? [] : [{ value:'__nouveau_paddy__', label:'+ Créer l\'article « RIZ PADDY » (kg)' }]),
+                  ...d.articles.map(a => ({ value:a.id, label:`${a.designation}${a.unite ? ` (${a.unite})` : ''} — stock ${nbFr(a.stock_actuel)}` }))]} /></Span2>
               <Input label="Date d'entrée *" name="date_bon" type="date" value={entreeStock.date_bon} onChange={e=>setEntreeStock(x=>({...x, date_bon:e.target.value}))} required />
               <Input label={`Quantité${art?.unite ? ` (${art.unite})` : ''} *`} name="quantite" type="number" step="0.001" min="0" value={entreeStock.quantite} onChange={e=>setEntreeStock(x=>({...x, quantite:e.target.value}))} required />
               <Input label="Prix unitaire (FCFA)" name="prix_unitaire" type="number" step="0.01" min="0" value={entreeStock.prix_unitaire} onChange={e=>setEntreeStock(x=>({...x, prix_unitaire:e.target.value}))} />
@@ -10622,6 +10655,21 @@ function AchatsGroupesPage({ companies, companyId, toast, readOnly=false }) {
               <input type="checkbox" checked={vers.ajouter_qte} onChange={e=>setVers(x=>({...x, ajouter_qte:e.target.checked}))} />
               Ajouter {fmtKg(q)} au paddy entrée du lot
             </label>
+            {bonDe(vers.g)
+              ? <div style={{ fontSize:12.5, color:'#1d4ed8', marginBottom:10 }}>📦 Déjà entré en stock (bon {bonDe(vers.g).numero}) : il compte dans la valeur du stock.</div>
+              : <div style={{ border:'1px solid #bfdbfe', background:'#eff6ff', borderRadius:8, padding:'8px 12px', marginBottom:10 }}>
+                  <label style={{ display:'flex', gap:8, alignItems:'center', fontSize:13, cursor:'pointer', fontWeight:600 }}>
+                    <input type="checkbox" checked={vers.entrer_stock} onChange={e=>setVers(x=>({...x, entrer_stock:e.target.checked}))} />
+                    Entrer aussi ce paddy en stock (bon d'entrée) — il comptera dans la valeur du stock
+                  </label>
+                  {vers.entrer_stock && <Grid cols={2} gap={10} style={{ marginTop:8 }}>
+                    <Span2><Sel label="Article du stock" name="article_id" value={vers.article_id} onChange={e=>setVers(x=>({...x, article_id:e.target.value}))}
+                      options={[...(d.articles.some(a => /paddy/i.test(a.designation)) ? [] : [{ value:'__nouveau_paddy__', label:"+ Créer l'article « RIZ PADDY » (kg)" }]),
+                        ...d.articles.map(a => ({ value:a.id, label:`${a.designation}${a.unite ? ` (${a.unite})` : ''} — stock ${nbFr(a.stock_actuel)}` }))]} /></Span2>
+                    <Input label="Quantité" name="quantite" type="number" step="0.001" min="0" value={vers.quantite} onChange={e=>setVers(x=>({...x, quantite:e.target.value}))} />
+                    <Input label="Prix unitaire (FCFA)" name="prix_unitaire" type="number" step="0.01" min="0" value={vers.prix_unitaire} onChange={e=>setVers(x=>({...x, prix_unitaire:e.target.value}))} />
+                  </Grid>}
+                </div>}
             <div style={{ fontSize:11.5, color:'#64748b', marginBottom:14 }}>Chaque producteur devient une origine du lot (référence {vers.g.numero}) : il apparaît dans la traçabilité, la fiche et le QR code du lot.</div>
             <Row><Btn variant="secondary" onClick={()=>setVers(null)}>Annuler</Btn><Btn type="submit" variant="success" disabled={saving}>{saving ? '…' : 'Verser dans le lot'}</Btn></Row>
           </form> })()}
