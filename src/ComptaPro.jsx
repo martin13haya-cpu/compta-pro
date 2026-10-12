@@ -6778,6 +6778,8 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
   const [dateTo,     setDateTo]   = useState('')
   const [rowPreview, setRowPreview] = useState(null)
   const [localLots,  setLocalLots]  = useState([])  // lots chargés selon companyId effectif
+  const [originesLots, setOriginesLots] = useState({}) // lot_id → { refs, producteurs, kg }
+  const [groupesAchat, setGroupesAchat] = useState([]) // achats groupés (GRP-…) et leur lot
   // Traçabilité (lot 1, repris de CePEA-PSARIZ) : étuveuses du répertoire,
   // seuils d'alerte d'écart par étape et par société.
   const etape = tableName.replace('compta_','')
@@ -6812,9 +6814,25 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
       else if (companyId) q=q.eq('user_id',uid).eq('company_id',companyId)
       else q=q.eq('user_id',uid)
       const { data }=await q; setLocalLots(data||[])
+      // Origine du paddy de chaque lot : réceptions producteurs et achats
+      // groupés versés dans le lot (tables facultatives : ignorées si absentes).
+      const ids = (data||[]).map(l=>l.id)
+      if (!ids.length) { setOriginesLots({}); setGroupesAchat([]); return }
+      const [{ data:og }, { data:gr }] = await Promise.all([
+        supabase.from('compta_lot_origines').select('lot_id,reference,quantite_kg,fournisseur_id,producteur_nom').in('lot_id', ids),
+        companyId ? supabase.from('compta_achats_groupes').select('id,numero,village,date_achat,statut,lot_id').eq('company_id', companyId).neq('statut','annule').order('date_achat',{ascending:false}) : Promise.resolve({ data:[] }),
+      ])
+      const parLot = {}
+      ;(og||[]).forEach(o=>{ const x = parLot[o.lot_id] ||= { refs:new Set(), producteurs:new Set(), kg:0 }
+        if (o.reference) x.refs.add(o.reference); x.producteurs.add(o.fournisseur_id||o.producteur_nom); x.kg += +o.quantite_kg||0 })
+      setOriginesLots(Object.fromEntries(Object.entries(parLot).map(([k,x])=>[k,{ refs:[...x.refs], producteurs:x.producteurs.size, kg:Math.round(x.kg*1000)/1000 }])))
+      setGroupesAchat(gr||[])
     }
     fetchLots()
   },[companyId])
+  // « GRP-2026-001, BR-12 · 3 producteurs · 2 050 kg »
+  const origineLot = id => { const o = originesLots[id]; if (!o) return ''
+    return `${o.refs.slice(0,3).join(', ')}${o.refs.length>3?'…':''}${o.refs.length?' · ':''}${o.producteurs} producteur${o.producteurs>1?'s':''} · ${fmtKg(o.kg)}` }
 
   const load = useCallback(async()=>{
     const { data:authD } = await supabase.auth.getUser()
@@ -7066,7 +7084,8 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
               {items.map(it=>(
                 <TR key={it.id}>
                   <TD sm>{it.date_etape||it.date_reception}</TD>
-                  <TD>{it.compta_lots_production?.numero_lot||it.numero_lot||'—'}</TD>
+                  <TD>{it.compta_lots_production?.numero_lot||it.numero_lot||'—'}
+                    {it.lot_id && originesLots[it.lot_id]?.refs?.length>0 && <div style={{fontSize:11,color:'#0f766e'}}>{originesLots[it.lot_id].refs.slice(0,2).join(', ')}{originesLots[it.lot_id].refs.length>2?'…':''}</div>}</TD>
                   {estEtuvage && <TD sm>{it.lot_sortant||'—'}</TD>}
                   {summaryFields.map(f=>(
                     <TD key={f.name} right={f.type==='number'}>
@@ -7113,9 +7132,22 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
             </div>
           )}
           <Grid cols={2} gap={14} style={{marginBottom:16}}>
+            {groupesAchat.length>0 && <Span2>
+              <Sel label="Achat d'origine (achat groupé)" name="groupe_origine" value={groupesAchat.find(g=>g.lot_id && String(g.lot_id)===String(form.lot_id))?.id||''}
+                onChange={e=>{ const g = groupesAchat.find(x=>x.id===e.target.value); if (!g) return
+                  if (!g.lot_id) { toast.error(`Le groupe ${g.numero} n'est pas encore versé dans un lot de production : faites-le depuis Achats > Achats groupés de paddy (🏭 Verser dans un lot).`); return }
+                  set({ target:{ name:'lot_id', value:g.lot_id } }) }}
+                options={[{value:'',label:'— Retrouver le lot par son achat groupé —'},...groupesAchat.map(g=>{ const lot = localLots.find(l=>String(l.id)===String(g.lot_id))
+                  return {value:g.id,label:`${g.numero}${g.village?' — '+g.village:''} → ${lot ? lot.numero_lot : 'pas encore versé dans un lot'}`} })]} />
+            </Span2>}
             <Sel label="Lot de production" name="lot_id" value={form.lot_id||''} onChange={set}
-              options={[{value:'',label:localLots.length===0?'— Aucun lot disponible —':'— Choisir un lot —'},...localLots.map(l=>({value:l.id,label:`${l.numero_lot}${l.statut?' ('+l.statut+')':''}`}))]} />
+              options={[{value:'',label:localLots.length===0?'— Aucun lot disponible —':'— Choisir un lot —'},...localLots.map(l=>({value:l.id,label:`${l.numero_lot}${l.statut?' ('+l.statut+')':''}${origineLot(l.id)?' — '+origineLot(l.id):''}`}))]} />
             <Input label="Date" name="date_etape" type="date" value={form.date_etape||''} onChange={set} />
+            {form.lot_id && <Span2><div style={{fontSize:12.5,padding:'7px 12px',borderRadius:8,background:originesLots[form.lot_id]?'#f0fdf4':'#fffbeb',color:originesLots[form.lot_id]?'#166534':'#92400e',marginTop:-6}}>
+              {originesLots[form.lot_id]
+                ? <>Origine du paddy : <strong>{originesLots[form.lot_id].refs.join(', ')||'réceptions producteurs'}</strong> — {originesLots[form.lot_id].producteurs} producteur(s), {fmtKg(originesLots[form.lot_id].kg)}</>
+                : <>Aucun achat relié à ce lot : versez-y un achat groupé (Achats groupés de paddy) ou ajoutez ses producteurs dans Traçabilité (QR).</>}
+            </div></Span2>}
             {estEtuvage && form.lot_id && resteLot(form.lot_id) != null && (()=>{ const reste = resteLot(form.lot_id); const envoye = parseFloat(form.paddy_envoye_kg)||0
               return <Span2><div style={{fontSize:12.5,padding:'8px 12px',borderRadius:8,background:envoye>reste+0.001?'#fef2f2':'#f0f9ff',color:envoye>reste+0.001?'#b91c1c':'#0c4a6e'}}>
                 Paddy du lot : <strong>{fmtKg(localLots.find(l=>l.id===form.lot_id)?.qte_paddy_entree)}</strong> — reste à envoyer à l'étuvage : <strong>{fmtKg(reste)}</strong>
@@ -10226,7 +10258,8 @@ function AchatsGroupesPage({ companies, companyId, toast, readOnly=false }) {
   const ouvrirVersement = g => {
     if (!lignesDe(g.id).some(l => +l.quantite_kg > 0)) return toast.error('Aucune quantité dans ce groupe.')
     const enCours = d.lots.filter(l => l.statut === 'en_cours')
-    setVers({ g, mode: enCours.length ? 'existant' : 'nouveau', lot_id: enCours[0]?.id || '', numero_lot:`LOT-${Date.now().toString().slice(-6)}`, ajouter_qte:true })
+    // Le lot créé pour le groupe porte le numéro de l'achat : LOT-GRP-2026-001.
+    setVers({ g, mode: enCours.length ? 'existant' : 'nouveau', lot_id: enCours[0]?.id || '', numero_lot:`LOT-${g.numero}`, ajouter_qte:true })
   }
   const verserDansLot = async e => {
     e.preventDefault()
