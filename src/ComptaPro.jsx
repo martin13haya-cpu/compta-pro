@@ -5564,6 +5564,32 @@ const MOTIFS_BON = {
   entree: ['achat', 'production', 'retour', 'ajustement'],
   sortie: ['vente', 'production', 'ajustement', 'perte'],
 }
+// Bon d'entrée / de sortie imprimé (page des bons et achats groupés).
+function imprimerBonStock(company, b) {
+  const sortie = b.type === 'sortie'
+  const lignes = b.lignes || []
+  const enregistre = b.created_at ? new Date(b.created_at).toLocaleString('fr-FR', { dateStyle:'short', timeStyle:'short' }) : ''
+  const html = gabaritDocumentHtml({
+    comp: company,
+    titre: sortie ? 'BON DE SORTIE' : "BON D'ENTRÉE EN MAGASIN",
+    numero: b.numero,
+    date: '', // la date du bon est la date d'entrée / de sortie ci-dessous
+    infos: [
+      [sortie ? 'Date de sortie' : "Date d'entrée", dateDoc(b.date_bon)],
+      ['Enregistré le', enregistre],
+      ['Motif', b.motif ? b.motif.charAt(0).toUpperCase() + b.motif.slice(1) : ''],
+    ],
+    tiersLabel: sortie ? 'Destinataire' : 'Provenance / fournisseur',
+    tiers: { nom: b.tiers },
+    colonnes: [{ label:'N°', align:'c', largeur:'6%' }, { label:'Désignation' }, { label:'Unité', align:'c', largeur:'9%' }, { label:'Quantité', align:'d', largeur:'11%' }, { label:'P.U. (FCFA)', align:'d', largeur:'13%' }, { label:'Montant (FCFA)', align:'d', largeur:'15%' }, { label:'Observation', largeur:'18%' }],
+    lignes: lignes.map((l, i) => [i + 1, echapHtml(l.designation), echapHtml(l.unite), nbFr(l.quantite), Math.round(l.prix_unitaire || 0).toLocaleString('fr-FR'), Math.round(l.montant || 0).toLocaleString('fr-FR'), echapHtml(l.observation)]),
+    totaux: [['Articles', String(lignes.length)], ['Quantité totale', nbFr(lignes.reduce((s2, l) => s2 + (Number(l.quantite) || 0), 0))], ['Valeur', fcfaDoc(b.total), true]],
+    notes: b.observations,
+    signatures: sortie ? ['Le magasinier', 'Le réceptionnaire (bon pour réception)', 'Le contrôleur'] : ['Le livreur', 'Le magasinier (bon pour réception)', 'Le contrôleur'],
+  })
+  openPrintWindow(html, `${sortie ? 'bon_sortie' : 'bon_entree'}_${b.numero}`)
+}
+
 const ligneBonVide = () => ({ article_id:'', quantite:'', prix_unitaire:'', observation:'' })
 const numFrBon = v => parseFloat(String(v ?? '').replace(/\s/g, '').replace(',', '.')) || 0
 const dateFr = d => d ? String(d).slice(0, 10).split('-').reverse().join('/') : ''
@@ -5700,30 +5726,7 @@ function BonsStockPage({ companies, companyId, toast, readOnly=false }) {
     charger()
   }
 
-  const imprimer = b => {
-    const sortie = b.type === 'sortie'
-    const lignes = b.lignes || []
-    const enregistre = b.created_at ? new Date(b.created_at).toLocaleString('fr-FR', { dateStyle:'short', timeStyle:'short' }) : ''
-    const html = gabaritDocumentHtml({
-      comp: company,
-      titre: sortie ? 'BON DE SORTIE' : "BON D'ENTRÉE EN MAGASIN",
-      numero: b.numero,
-      date: '', // la date du bon est la date d'entrée / de sortie ci-dessous
-      infos: [
-        [sortie ? 'Date de sortie' : "Date d'entrée", dateDoc(b.date_bon)],
-        ['Enregistré le', enregistre],
-        ['Motif', b.motif ? b.motif.charAt(0).toUpperCase() + b.motif.slice(1) : ''],
-      ],
-      tiersLabel: sortie ? 'Destinataire' : 'Provenance / fournisseur',
-      tiers: { nom: b.tiers },
-      colonnes: [{ label:'N°', align:'c', largeur:'6%' }, { label:'Désignation' }, { label:'Unité', align:'c', largeur:'9%' }, { label:'Quantité', align:'d', largeur:'11%' }, { label:'P.U. (FCFA)', align:'d', largeur:'13%' }, { label:'Montant (FCFA)', align:'d', largeur:'15%' }, { label:'Observation', largeur:'18%' }],
-      lignes: lignes.map((l, i) => [i + 1, echapHtml(l.designation), echapHtml(l.unite), nbFr(l.quantite), Math.round(l.prix_unitaire || 0).toLocaleString('fr-FR'), Math.round(l.montant || 0).toLocaleString('fr-FR'), echapHtml(l.observation)]),
-      totaux: [['Articles', String(lignes.length)], ['Quantité totale', nbFr(lignes.reduce((s2, l) => s2 + (Number(l.quantite) || 0), 0))], ['Valeur', fcfaDoc(b.total), true]],
-      notes: b.observations,
-      signatures: sortie ? ['Le magasinier', 'Le réceptionnaire (bon pour réception)', 'Le contrôleur'] : ['Le livreur', 'Le magasinier (bon pour réception)', 'Le contrôleur'],
-    })
-    openPrintWindow(html, `${sortie ? 'bon_sortie' : 'bon_entree'}_${b.numero}`)
-  }
+  const imprimer = b => imprimerBonStock(company, b)
 
   // ── Formulaire de saisie ──
   if (form) {
@@ -10014,12 +10017,13 @@ function situationAvancesProducteurs(fournisseurs, avances, lignes, groupes) {
 const normAG = s => String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase()
 
 function AchatsGroupesPage({ companies, companyId, toast, readOnly=false }) {
-  const [d, setD] = useState({ groupes:[], lignes:[], fournisseurs:[], avances:[], paiements:[], reps:[], lots:[], comptes:{}, loading:true, erreur:false, erreurPaie:false })
+  const [d, setD] = useState({ groupes:[], lignes:[], fournisseurs:[], avances:[], paiements:[], reps:[], lots:[], articles:[], bons:[], comptes:{}, loading:true, erreur:false, erreurPaie:false })
   const [filtre, setFiltre] = useState({ statut:'ouvert', q:'' })
   const [paie, setPaie] = useState(null)       // versement en saisie
   const [suivi, setSuivi] = useState(null)     // groupe dont on suit les paiements
   const [paieSel, setPaieSel] = useState(null) // versement dont on fait l'émargement
   const [vers, setVers] = useState(null)       // versement d'un groupe dans un lot de production
+  const [entreeStock, setEntreeStock] = useState(null) // bon d'entrée en magasin du paddy d'un groupe
   const [avSit, setAvSit] = useState(null)     // filtres de la situation des avances (null = fermée)
   const [ed, setEd] = useState(null)       // groupe en saisie (avec ses lignes)
   const [choix, setChoix] = useState({ village:'', cooperative:'', mentor:'', q:'', sel:[] })
@@ -10028,7 +10032,7 @@ function AchatsGroupesPage({ companies, companyId, toast, readOnly=false }) {
 
   const charger = useCallback(async () => {
     if (!companyId) { setD(x=>({...x, loading:false})); return }
-    const [{ data:g, error:eg }, { data:l, error:el }, { data:f }, { data:a }, { data:pa, error:ep }, { data:rp, error:er }, { data:lo }] = await Promise.all([
+    const [{ data:g, error:eg }, { data:l, error:el }, { data:f }, { data:a }, { data:pa, error:ep }, { data:rp, error:er }, { data:lo }, { data:ar }, { data:bo }] = await Promise.all([
       supabase.from('compta_achats_groupes').select('*').eq('company_id', companyId).order('date_achat', { ascending:false }),
       fetchAllRows(() => supabase.from('compta_achats_groupes_lignes').select('*').eq('company_id', companyId).order('ordre')),
       fetchAllRows(() => supabase.from('compta_fournisseurs').select('*').eq('company_id', companyId).order('nom')),
@@ -10036,8 +10040,11 @@ function AchatsGroupesPage({ companies, companyId, toast, readOnly=false }) {
       supabase.from('compta_achats_groupes_paiements').select('*').eq('company_id', companyId).order('date_paiement').order('created_at'),
       fetchAllRows(() => supabase.from('compta_achats_groupes_repartitions').select('*').eq('company_id', companyId)),
       supabase.from('compta_lots_production').select('id,numero_lot,qte_paddy_entree,statut,date_debut').eq('company_id', companyId).order('date_debut', { ascending:false }),
+      supabase.from('compta_articles').select('id,designation,unite,stock_actuel').eq('company_id', companyId).eq('actif', true).order('designation'),
+      // Bons d'entrée créés depuis un groupe : tiers « Achat groupé GRP-… ».
+      supabase.from('compta_bons_stock').select('*').eq('company_id', companyId).eq('type', 'entree').like('tiers', 'Achat groupé GRP-%'),
     ])
-    setD({ groupes:g||[], lignes:l||[], avances:a||[], paiements:pa||[], reps:rp||[], lots:lo||[], loading:false,
+    setD({ groupes:g||[], lignes:l||[], avances:a||[], paiements:pa||[], reps:rp||[], lots:lo||[], articles:ar||[], bons:bo||[], loading:false,
       erreur:estErreurAG(eg)||estErreurAG(el), erreurPaie:estErreurAGPaie(ep)||estErreurAGPaie(er),
       comptes:Object.fromEntries((f||[]).filter(x => x.numero_compte).map(x => [String(x.id), x.numero_compte])),
       fournisseurs:(f||[]).filter(x => x.actif !== false && x.type !== 'morale').sort((x,y)=>nomTiersTraca(x).localeCompare(nomTiersTraca(y),'fr')) })
@@ -10165,6 +10172,7 @@ function AchatsGroupesPage({ companies, companyId, toast, readOnly=false }) {
   const rouvrir = async g => {
     const conflit = lignesDe(g.id).map(l => ({ l, o:groupeOuvertDe(l.fournisseur_id, g.id) })).find(x => x.o)
     if (conflit) return toast.error(`Impossible de rouvrir : ${conflit.l.nom} est dans le groupe ouvert ${conflit.o.numero}.`)
+    if (bonDe(g)) return toast.error(`Impossible de rouvrir : le paddy du groupe est entré en stock (bon ${bonDe(g).numero}). Annulez d'abord ce bon dans Stock > Bons d'entrée / sortie.`)
     if (g.lot_id) return toast.error(`Impossible de rouvrir : le paddy du groupe est versé dans le lot ${lotDe(g.lot_id)?.numero_lot||''}. Détachez-le d'abord.`)
     if (paiementsDe(g.id).length) return toast.error(`Impossible de rouvrir : le groupe a déjà ${paiementsDe(g.id).length} paiement(s). Supprimez-les d'abord (Paiements & émargement).`)
     if (!confirm(`Rouvrir le groupe ${g.numero} pour le modifier ? L'écriture d'achat sera retirée de la comptabilité et repassée à la prochaine clôture.`)) return
@@ -10255,6 +10263,51 @@ function AchatsGroupesPage({ companies, companyId, toast, readOnly=false }) {
   }
 
   const lotDe = id => d.lots.find(l => String(l.id) === String(id))
+  // ── Entrée en stock (bon d'entrée en magasin, comme la page des bons) ──
+  const tiersBonGroupe = g => `Achat groupé ${g.numero}`
+  const bonDe = g => d.bons.find(b => b.tiers === tiersBonGroupe(g))
+  const ouvrirEntreeStock = g => {
+    const ls = lignesDe(g.id), t = totauxAchatGroupe(ls)
+    if (!(t.quantite_kg > 0)) return toast.error('Aucune quantité dans ce groupe.')
+    if (bonDe(g)) return toast.error(`Le paddy du groupe ${g.numero} est déjà entré en stock (bon ${bonDe(g).numero}).`)
+    const article = d.articles.find(a => /paddy/i.test(a.designation)) || null
+    setEntreeStock({ g, article_id:article?.id || '', date_bon: g.date_achat > today() ? today() : g.date_achat,
+      quantite:String(t.quantite_kg), prix_unitaire:String(t.quantite_kg > 0 ? Math.round(t.montant / t.quantite_kg * 100) / 100 : 0) })
+  }
+  const enregistrerEntreeStock = async e => {
+    e.preventDefault()
+    const { g } = entreeStock, q = numFR(entreeStock.quantite), pu = numFR(entreeStock.prix_unitaire)
+    if (!entreeStock.article_id) return toast.error("Choisissez l'article du stock (ex. RIZ PADDY).")
+    if (!(q > 0)) return toast.error('Saisissez la quantité entrée en stock.')
+    if (!entreeStock.date_bon || entreeStock.date_bon > today()) return toast.error("La date d'entrée ne peut pas être postérieure à aujourd'hui.")
+    setSaving(true)
+    const uid = (await supabase.auth.getUser()).data?.user?.id
+    const { data:existant } = await supabase.from('compta_bons_stock').select('numero').eq('company_id', companyId).eq('tiers', tiersBonGroupe(g)).limit(1)
+    if (existant?.length) { setSaving(false); charger(); return toast.error(`Déjà entré en stock (bon ${existant[0].numero}).`) }
+    const { data:art } = await supabase.from('compta_articles').select('id,designation,unite,stock_actuel').eq('id', entreeStock.article_id).single()
+    const prefixe = `BE-${entreeStock.date_bon.replace(/-/g, '')}-`
+    const { data:der } = await supabase.from('compta_bons_stock').select('numero').eq('company_id', companyId).like('numero', `${prefixe}%`).order('numero', { ascending:false }).limit(1)
+    const numero = `${prefixe}${String((der?.[0]?.numero ? parseInt(der[0].numero.slice(prefixe.length), 10) || 0 : 0) + 1).padStart(4, '0')}`
+    const ls = lignesDe(g.id)
+    const ligne = { article_id:art.id, designation:art.designation || '', unite:art.unite || '', quantite:q, prix_unitaire:pu, montant:Math.round(q * pu),
+      observation:`Achat groupé ${g.numero}` }
+    const bon = { company_id:companyId, user_id:uid, numero, type:'entree', date_bon:entreeStock.date_bon, tiers:tiersBonGroupe(g), motif:'achat',
+      observations:`Vente groupée ${g.numero}${g.village ? ` — ${g.village}` : ''}${g.commune ? ` (${g.commune})` : ''} : ${ls.length} producteur(s)${g.chef_groupe ? `, chef de groupe ${g.chef_groupe}` : ''}.`,
+      lignes:[ligne], total:ligne.montant }
+    const { error } = await supabase.from('compta_bons_stock').insert(bon)
+    if (error) { setSaving(false); return toast.error(/compta_bons_stock|does not exist|schema cache/i.test(error.message) ? MSG_TABLE_BONS : error.message) }
+    const { error:em } = await supabase.from('compta_mouvements_stock').insert({ article_id:art.id, company_id:companyId, user_id:uid, type:'entree', motif:'achat',
+      quantite:q, prix_unitaire:pu, montant:ligne.montant, reference:numero, date_mvt:entreeStock.date_bon })
+    if (em) {
+      await supabase.from('compta_bons_stock').delete().eq('company_id', companyId).eq('numero', numero)
+      setSaving(false); return toast.error('Entrée en stock non enregistrée : ' + em.message)
+    }
+    await supabase.from('compta_articles').update({ stock_actuel:(+art.stock_actuel || 0) + q }).eq('id', art.id)
+    setSaving(false); setEntreeStock(null)
+    toast.success(`Bon d'entrée ${numero} : ${nbFr(q)} ${art.unite || ''} de ${art.designation} entrés en stock.`)
+    imprimerBonStock(company, { ...bon, created_at:new Date().toISOString() })
+    charger()
+  }
   const ouvrirVersement = g => {
     if (!lignesDe(g.id).some(l => +l.quantite_kg > 0)) return toast.error('Aucune quantité dans ce groupe.')
     const enCours = d.lots.filter(l => l.statut === 'en_cours')
@@ -10362,7 +10415,8 @@ function AchatsGroupesPage({ companies, companyId, toast, readOnly=false }) {
                     <TD right>{nbFr(sp.percu)}</TD><TD right>{sp.reste > 0 ? <strong style={{ color:'#b45309' }}>{nbFr(sp.reste)}</strong> : '0'}</TD>
                     <TD><Badge type={STATUTS_AG[g.statut]?.[1]||'info'}>{STATUTS_AG[g.statut]?.[0]||g.statut}</Badge>
                       {g.statut === 'cloture' && <div style={{ marginTop:3 }}><Badge type={STATUTS_PAIE_AG[sp.statut][1]}>{STATUTS_PAIE_AG[sp.statut][0]}</Badge></div>}
-                      {g.lot_id && <div style={{ marginTop:3, fontSize:11.5, color:'#0f766e', whiteSpace:'nowrap' }}>🏭 {lotDe(g.lot_id)?.numero_lot || 'Lot'}</div>}</TD>
+                      {g.lot_id && <div style={{ marginTop:3, fontSize:11.5, color:'#0f766e', whiteSpace:'nowrap' }}>🏭 {lotDe(g.lot_id)?.numero_lot || 'Lot'}</div>}
+                      {bonDe(g) && <div style={{ marginTop:3, fontSize:11.5, color:'#1d4ed8', whiteSpace:'nowrap' }}>📦 {bonDe(g).numero}</div>}</TD>
                     <TD><ActionsMenu sm items={[
                       { couleur:'#0891b2', label: !readOnly && g.statut === 'ouvert' ? '✏️ Ouvrir / modifier' : '👁️ Voir le détail', onClick:()=>ouvrir(g) },
                       { couleur:'#2563eb', label:'🖨️ Registre de vente groupée', onClick:()=>imprimerRegistre(g, ls) },
@@ -10370,6 +10424,8 @@ function AchatsGroupesPage({ companies, companyId, toast, readOnly=false }) {
                       !readOnly && g.statut === 'ouvert' && { couleur:'#16a34a', label:'🔒 Clôturer le groupe', onClick:()=>cloturer(g) },
                       !readOnly && g.statut === 'cloture' && sp.reste > 0 && { couleur:'#16a34a', label:'💰 Payer le groupe', onClick:()=>nouveauPaiement(g) },
                       g.statut === 'cloture' && { couleur:'#0d9488', label:`📋 Paiements & émargement (${np})`, onClick:()=>{ setSuivi(g); setPaieSel(null) } },
+                      !readOnly && g.statut === 'cloture' && !bonDe(g) && { couleur:'#1d4ed8', label:"📦 Entrer en stock (bon d'entrée)", onClick:()=>ouvrirEntreeStock(g) },
+                      bonDe(g) && { couleur:'#1d4ed8', label:`🖨️ Bon d'entrée ${bonDe(g).numero}`, onClick:()=>imprimerBonStock(company, bonDe(g)) },
                       !readOnly && g.statut === 'cloture' && !g.lot_id && { couleur:'#0f766e', label:'🏭 Verser dans un lot de production', onClick:()=>ouvrirVersement(g) },
                       !readOnly && g.lot_id && { couleur:'#64748b', label:`↩️ Détacher du lot ${lotDe(g.lot_id)?.numero_lot||''}`, onClick:()=>detacherDuLot(g) },
                       !readOnly && g.statut === 'cloture' && { couleur:'#4f46e5', label:"📒 Passer l'écriture d'achat", onClick:async()=>{ const { error } = await passerEcrituresAchat(g); error ? toast.error(error.message) : toast.success(`Écriture d'achat ${pieceAchatGroupe(g)} passée au journal des achats.`) } },
@@ -10524,6 +10580,26 @@ function AchatsGroupesPage({ companies, companyId, toast, readOnly=false }) {
             </div>
             <div style={{ fontSize:11.5, color:'#64748b', margin:'8px 0 14px' }}>Chaque part sort du {JOURNAL_LABEL[paie.mode_paiement]} sur le compte du producteur. L'état de paiement et la feuille d'émargement s'impriment à l'enregistrement.</div>
             <Row><Btn variant="secondary" onClick={()=>setPaie(null)}>Annuler</Btn><Btn type="submit" variant="success" disabled={saving || !(m > 0) || m > s.reste}>{saving ? '…' : `Payer ${fcfaDoc(m)} et imprimer l'émargement`}</Btn></Row>
+          </form> })()}
+      </Modal>
+
+      <Modal open={!!entreeStock} onClose={()=>setEntreeStock(null)} size="md" title={entreeStock ? `Entrer en stock le paddy du groupe ${entreeStock.g.numero}` : ''}>
+        {entreeStock && (()=>{ const t = totauxAchatGroupe(lignesDe(entreeStock.g.id)), art = d.articles.find(a => a.id === entreeStock.article_id)
+          return <form onSubmit={enregistrerEntreeStock}>
+            <div style={{ fontSize:12.5, background:'#eff6ff', borderRadius:8, padding:'8px 12px', marginBottom:12 }}>
+              Groupe : <strong>{fmtKg(t.quantite_kg)}</strong> achetés pour <strong>{fcfaDoc(t.montant)}</strong> — {lignesDe(entreeStock.g.id).length} producteur(s){entreeStock.g.village ? ` — ${entreeStock.g.village}` : ''}
+            </div>
+            <Grid cols={2} gap={12} style={{ marginBottom:8 }}>
+              <Span2><Sel label="Article du stock *" name="article_id" value={entreeStock.article_id} onChange={e=>setEntreeStock(x=>({...x, article_id:e.target.value}))}
+                options={[{ value:'', label: d.articles.length ? '— Choisir (ex. RIZ PADDY) —' : '— Aucun article : créez-le dans Articles & Stock —' }, ...d.articles.map(a => ({ value:a.id, label:`${a.designation}${a.unite ? ` (${a.unite})` : ''} — stock ${nbFr(a.stock_actuel)}` }))]} /></Span2>
+              <Input label="Date d'entrée *" name="date_bon" type="date" value={entreeStock.date_bon} onChange={e=>setEntreeStock(x=>({...x, date_bon:e.target.value}))} required />
+              <Input label={`Quantité${art?.unite ? ` (${art.unite})` : ''} *`} name="quantite" type="number" step="0.001" min="0" value={entreeStock.quantite} onChange={e=>setEntreeStock(x=>({...x, quantite:e.target.value}))} required />
+              <Input label="Prix unitaire (FCFA)" name="prix_unitaire" type="number" step="0.01" min="0" value={entreeStock.prix_unitaire} onChange={e=>setEntreeStock(x=>({...x, prix_unitaire:e.target.value}))} />
+              <div style={{ alignSelf:'end', fontSize:12.5, paddingBottom:14 }}>Valeur : <strong>{fcfaDoc(numFR(entreeStock.quantite) * numFR(entreeStock.prix_unitaire))}</strong></div>
+            </Grid>
+            {art?.unite && !/^k?g|kilo/i.test(art.unite) && <div style={{ fontSize:12, color:'#b45309', marginBottom:8 }}>L'article est géré en « {art.unite} » : la quantité proposée est en kg, convertissez-la si besoin (et le prix unitaire).</div>}
+            <div style={{ fontSize:11.5, color:'#64748b', marginBottom:14 }}>Un bon d'entrée en magasin (BE-…) est créé et imprimé, le mouvement de stock passé et le stock de l'article augmenté. Pour annuler : Stock › Bons d'entrée / sortie.</div>
+            <Row><Btn variant="secondary" onClick={()=>setEntreeStock(null)}>Annuler</Btn><Btn type="submit" disabled={saving}>{saving ? '…' : 'Entrer en stock et imprimer le bon'}</Btn></Row>
           </form> })()}
       </Modal>
 
