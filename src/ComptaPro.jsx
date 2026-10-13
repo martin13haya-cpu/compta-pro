@@ -3528,6 +3528,19 @@ const UNITES_AVANCE = { Labour:'ha', Semences:'kg', Engrais:'sac', Herbicide:'L'
 // quand la commune du fournisseur correspond à l'une de ces 5 communes du projet.
 const CEPEA_BP = { kouande:'208', natitingou:'106', tanguieta:'838', ouake:'413', kerou:'834' }
 
+// Catégories de fournisseurs (NULL en base = non classé).
+const CATEGORIES_FOURNISSEUR = [
+  ['producteur', '🌾 Producteur', 'success'],
+  ['prestataire', '🛠️ Prestataire de services', 'info'],
+  ['commercant', '🏪 Commerçant / fournisseur de biens', 'warning'],
+  ['transporteur', '🚚 Transporteur', 'secondary'],
+  ['autre', 'Autre', 'secondary'],
+]
+const libelleCategorieFrs = c => CATEGORIES_FOURNISSEUR.find(x => x[0] === c)?.[1] || 'Non classé'
+const MSG_SCRIPT_CATEGORIE = "Exécutez d'abord le script supabase/migrations/20261013_categorie_fournisseurs.sql dans Supabase (projet ComptaPro, SQL Editor)."
+// Un fournisseur sans catégorie compte comme producteur (achats groupés…).
+const estProducteur = f => !f?.categorie || f.categorie === 'producteur'
+
 function TiersPage({ table, title, titleSingle, icon, companies, companyId, toast, extraFields, readOnly=false }) {
   const [items,      setItems]     = useState([])
   const [modal,      setModal]     = useState(null)
@@ -3537,6 +3550,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
   const [filterType, setFilterType]= useState('')   // clients: physique|morale
   const [filterProv, setFilterProv]= useState('')   // provenance (clients)
   const [filterCommune, setFilterCommune]= useState('')   // commune (fournisseurs)
+  const [filterCategorie, setFilterCategorie] = useState('') // catégorie (fournisseurs) ; 'aucune' = non classé
   const [filterGenre, setFilterGenre] = useState('') // Homme|Femme
   const [filterHandicap, setFilterHandicap] = useState('') // oui|non
   const [filterCol, setFilterCol] = useState('') // filtre generique par colonne (entete de la liste)
@@ -3647,6 +3661,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
 
   const tiersVal = (it,c) => ({
     'Type': it.type==='morale'?'Société':'Physique',
+    'Catégorie': libelleCategorieFrs(it.categorie).replace(/^\S+\s/, ''),
     'Nom': displayName(it),
     'Prénom': it.prenom||'',
     'Téléphone': it.telephone||'',
@@ -3706,6 +3721,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
       if (!s.toLowerCase().includes(search.toLowerCase())) return false
     }
     if (filterType && it.type !== filterType) return false
+    if (table==='compta_fournisseurs' && filterCategorie && (filterCategorie==='aucune' ? !!it.categorie : it.categorie !== filterCategorie)) return false
     if (table==='compta_fournisseurs') {
       if (filterCommune && it.commune !== filterCommune) return false
     } else if (filterProv && it.provenance !== filterProv) return false
@@ -3751,7 +3767,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
       return
     }
     const defaults = extraFields ? extraFields.defaults : {}
-    setForm(it?{...it}:{...baseDefaults,...defaults}); setModal(it?'edit':'add')
+    setForm(it?{...it}:{...baseDefaults,...defaults,...(table==='compta_fournisseurs'?{categorie:'producteur'}:{})}); setModal(it?'edit':'add')
     setAvances([]); setRembAG(null)
     if (it && table==='compta_fournisseurs') {
       supabase.from('compta_achats_groupes_lignes').select('fonds_intrant,compta_achats_groupes(numero,statut)').eq('fournisseur_id', it.id)
@@ -3789,7 +3805,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     const isPhysique = (form.type||'physique')!=='morale'
     const mentorFields = table==='compta_fournisseurs' && isPhysique ? ['mentor_nom','mentor_telephone','mentor_cip','mentor_age'] : []
     const locFields = table==='compta_fournisseurs' ? ['departement','commune','arrondissement','village','nom_bas_fonds','superficie_bas_fonds','cooperative_affiliee','numero_contrat'] : []
-    const fournExtra = table==='compta_fournisseurs' ? ['prix_contrat'] : []
+    const fournExtra = table==='compta_fournisseurs' ? ['prix_contrat', 'categorie'] : []
     const jeuneFields = table==='compta_fournisseurs' ? [
       'date_naissance','age','tranche_age','nationalite','niveau_instruction',
       'reside_localite','disponible_formation','accepte_bonnes_pratiques','accepte_partenariat','a_deja_cultive_riz','cooperative_partenaire',
@@ -3802,6 +3818,9 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
       if (!(k in pay)) return
       pay[k] = (pay[k]===''||pay[k]==null) ? null : numFR(pay[k])
     })
+    // Date de naissance facultative : laissée vide, la base refusait la chaîne
+    // vide (« invalid input syntax for type date ») et bloquait la fiche.
+    if ('date_naissance' in pay && !pay.date_naissance) pay.date_naissance = null
     // Validation bloquante des identifiants numériques (facultatifs, mais mal formés = refusés)
     if (!isValidCIP(pay.cip)) { toast.error('N° CIP invalide : il doit contenir exactement 10 chiffres.'); setSaving(false); return }
     if (!isValidIFU(pay.ifu)) { toast.error('N° IFU invalide : il doit contenir exactement 13 chiffres.'); setSaving(false); return }
@@ -3830,7 +3849,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     }
     if (modal==='add') {
       const { data:ins, error } = await supabase.from(table).insert({...pay,user_id:uid}).select('id').single()
-      if (error) { setSaving(false); toast.error(error.message); return }
+      if (error) { setSaving(false); toast.error(/categorie/i.test(error.message) ? MSG_SCRIPT_CATEGORIE : error.message); return }
       // Numero de compte (fournisseur 4011… / client 4111…) : n'existe que si le CIP
       // (personne physique) ou l'IFU (personne morale) est renseigne.
       if (table==='compta_fournisseurs' || table==='compta_clients') {
@@ -3848,7 +3867,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
       toast.success(`${titleSingle} enregistré(e) !`); close(); load(); return
     }
     const { error } = await supabase.from(table).update(pay).eq('id',form.id)
-    if (error) { setSaving(false); toast.error(error.message); return }
+    if (error) { setSaving(false); toast.error(/categorie/i.test(error.message) ? MSG_SCRIPT_CATEGORIE : error.message); return }
     if (table==='compta_fournisseurs' || table==='compta_clients') {
       const isFourn = table==='compta_fournisseurs'
       const isMorale = form.type==='morale'
@@ -4703,7 +4722,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
 
   // ── Colonnes disponibles pour les exports PDF & Excel (filtrables) ────────
   const allColumns = [
-    {key:'Type', w:6},{key:'Nom', w:16},
+    {key:'Type', w:6},...(isFourn?[{key:'Catégorie', w:9}]:[]),{key:'Nom', w:16},
     ...(isFourn?[{key:'Prénom', w:12}]:[]),
     {key:'Téléphone', w:9},{key:'Provenance', w:9},
     ...(isFourn?[{key:'Coopérative', w:8},{key:'N° Contrat', w:7}]:[]),
@@ -4826,6 +4845,14 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
               <option value='morale'>Personne morale</option>
             </select>
           )}
+          {table==='compta_fournisseurs' && (
+            <select value={filterCategorie} onChange={e=>setFilterCategorie(e.target.value)}
+              style={{padding:'8px 12px',borderRadius:8,border:'1px solid #d1d5db',fontSize:13,background:'white'}}>
+              <option value=''>Toutes catégories</option>
+              {CATEGORIES_FOURNISSEUR.map(([v,l])=><option key={v} value={v}>{l} ({items.filter(i=>i.categorie===v).length})</option>)}
+              <option value='aucune'>Non classés ({items.filter(i=>!i.categorie).length})</option>
+            </select>
+          )}
           {table==='compta_fournisseurs' ? (
             communes.length > 0 && (
               <select value={filterCommune} onChange={e=>setFilterCommune(e.target.value)}
@@ -4875,7 +4902,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
             </>
           )}
           {(search||filterType||filterProv||filterCommune||filterGenre||filterHandicap||filterCol) && (
-            <button onClick={()=>{setSearch('');setFilterType('');setFilterProv('');setFilterCommune('');setFilterGenre('');setFilterHandicap('');setFilterCol('');setFilterColValue('')}}
+            <button onClick={()=>{setSearch('');setFilterCategorie('');setFilterType('');setFilterProv('');setFilterCommune('');setFilterGenre('');setFilterHandicap('');setFilterCol('');setFilterColValue('')}}
               style={{padding:'8px 12px',borderRadius:8,border:'1px solid #e2e8f0',fontSize:12,cursor:'pointer',background:'#f8fafc',color:'#64748b'}}>
               ✕ Réinitialiser
             </button>
@@ -4904,6 +4931,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
             <table style={{width:'100%',borderCollapse:'collapse',minWidth:600}}>
             <thead><tr>
               {(table==='compta_clients'||table==='compta_fournisseurs') && <TH>Type</TH>}
+              {table==='compta_fournisseurs' && <TH>Catégorie</TH>}
               <TH>Nom</TH><TH>Téléphone</TH><TH>Provenance</TH>
               {extraFields?.headers?.map((h,i)=><TH key={i}>{h}</TH>)}
               <TH>IFU</TH><TH>CIP</TH><TH>Actions</TH>
@@ -4912,6 +4940,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
               {filtered.map(it=>(
                 <TR key={it.id}>
                   {(table==='compta_clients'||table==='compta_fournisseurs') && <TD><Badge type={it.type==='morale'?'info':'success'}>{it.type==='morale'?'Société':'Physique'}</Badge></TD>}
+                  {table==='compta_fournisseurs' && <TD>{it.categorie ? <Badge type={CATEGORIES_FOURNISSEUR.find(x=>x[0]===it.categorie)?.[2]||'secondary'}>{libelleCategorieFrs(it.categorie)}</Badge> : <span style={{fontSize:12,color:'#b45309'}}>Non classé</span>}</TD>}
                   <TD bold>{displayName(it)}</TD>
                   <TD>{it.telephone||'—'}</TD>
                   <TD>{it.provenance||'—'}</TD>
@@ -4921,9 +4950,9 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
                   <TD>
                     <ActionsMenu sm items={[
                       { couleur:'#0891b2', label:'📥 Fiche PDF', onClick:()=>printFicheTiers(it, isFourn?'fournisseur':'client') },
-                      isFourn && it.type!=='morale' && { couleur:'#0369a1', label:'📄 PV de réception', onClick:()=>printPvReception(it) },
-                      isFourn && it.type!=='morale' && { couleur:'#16a34a', label:'📝 Contrat', onClick:()=>openContratModal(it) },
-                      isFourn && it.type!=='morale' && { couleur:'#ea580c', label:'👷 Ouvriers', onClick:()=>ouvrirOuvriers(it) },
+                      isFourn && it.type!=='morale' && estProducteur(it) && { couleur:'#0369a1', label:'📄 PV de réception', onClick:()=>printPvReception(it) },
+                      isFourn && it.type!=='morale' && estProducteur(it) && { couleur:'#16a34a', label:'📝 Contrat', onClick:()=>openContratModal(it) },
+                      isFourn && it.type!=='morale' && estProducteur(it) && { couleur:'#ea580c', label:'👷 Ouvriers', onClick:()=>ouvrirOuvriers(it) },
                       !readOnly && null,
                       !readOnly && { couleur:'#b45309', label:'✏️ Modifier', onClick:()=>open(it) },
                       !readOnly && { label:'🗑️ Supprimer', danger:true, onClick:()=>archive(it.id) },
@@ -4943,6 +4972,10 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
             {(table==='compta_clients'||table==='compta_fournisseurs') && (
               <Sel label="Type de personne" name="type" value={form.type||'physique'} onChange={set}
                 options={[{value:'physique',label:'👤 Personne physique'},{value:'morale',label:'🏢 Personne morale'}]} />
+            )}
+            {table==='compta_fournisseurs' && (
+              <Sel label="Catégorie *" name="categorie" value={form.categorie||''} onChange={set}
+                options={[{value:'',label:'— Non classé —'}, ...CATEGORIES_FOURNISSEUR.map(([v,l])=>({value:v,label:l}))]} />
             )}
             {(table==='compta_clients'||table==='compta_fournisseurs') && (form.type||'physique')==='morale' ? (
               <Span2><Input label="Raison sociale *" name="nom_societe" value={form.nom_societe||''} onChange={set} required /></Span2>
@@ -10051,7 +10084,7 @@ function AchatsGroupesPage({ companies, companyId, toast, readOnly=false }) {
     setD({ groupes:g||[], lignes:l||[], avances:a||[], paiements:pa||[], reps:rp||[], lots:lo||[], articles:ar||[], bons:bo||[], loading:false,
       erreur:estErreurAG(eg)||estErreurAG(el), erreurPaie:estErreurAGPaie(ep)||estErreurAGPaie(er),
       comptes:Object.fromEntries((f||[]).filter(x => x.numero_compte).map(x => [String(x.id), x.numero_compte])),
-      fournisseurs:(f||[]).filter(x => x.actif !== false && x.type !== 'morale').sort((x,y)=>nomTiersTraca(x).localeCompare(nomTiersTraca(y),'fr')) })
+      fournisseurs:(f||[]).filter(x => x.actif !== false && x.type !== 'morale' && estProducteur(x)).sort((x,y)=>nomTiersTraca(x).localeCompare(nomTiersTraca(y),'fr')) })
   }, [companyId])
   useEffect(() => { charger() }, [charger])
 
