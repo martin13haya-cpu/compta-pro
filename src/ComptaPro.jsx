@@ -7638,6 +7638,7 @@ function AchatsSemisPage({ companies, companyId, toast, readOnly=false }) {
   const [fournModal, setFournModal] = useState(false)
   const [fournForm, setFournForm]   = useState({})
   const [fournSaving, setFournSaving] = useState(false)
+  const [pointAchats, setPointAchats] = useState(false)
 
   const load = useCallback(async()=>{
     const uid = (await supabase.auth.getUser()).data?.user?.id
@@ -7775,9 +7776,11 @@ function AchatsSemisPage({ companies, companyId, toast, readOnly=false }) {
     <div>
       <PageHeader title="Achats Semi-finis" subtitle={`${items.length} achat(s) — Total : ${fcfa(total)}`}
         actions={<>
+          <Btn sm variant="info" onClick={()=>companyId ? setPointAchats(true) : toast.error("Sélectionnez une société en haut de l'écran.")}>📥 Point des achats</Btn>
           <Btn sm variant="danger" onClick={printFilteredA}>🖨️ PDF liste</Btn>
           {!readOnly && <Btn onClick={openAdd}>+ Nouvel Achat</Btn>}
         </>} />
+      {pointAchats && <PointAchatsModal companies={companies} companyId={companyId} toast={toast} onClose={()=>setPointAchats(false)} />}
       <PeriodFilter dateFrom={dateFrom} dateTo={dateTo} onFrom={setDateFrom} onTo={setDateTo} onReset={()=>{setDateFrom('');setDateTo('')}} />
       <div style={{background:'white',borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
         {items.length===0 ? (
@@ -10024,6 +10027,7 @@ function AchatsGroupesPage({ companies, companyId, toast, readOnly=false }) {
   const [paieSel, setPaieSel] = useState(null) // versement dont on fait l'émargement
   const [vers, setVers] = useState(null)       // versement d'un groupe dans un lot de production
   const [entreeStock, setEntreeStock] = useState(null) // bon d'entrée en magasin du paddy d'un groupe
+  const [pointAchats, setPointAchats] = useState(false)
   const [avSit, setAvSit] = useState(null)     // filtres de la situation des avances (null = fermée)
   const [ed, setEd] = useState(null)       // groupe en saisie (avec ses lignes)
   const [choix, setChoix] = useState({ village:'', cooperative:'', mentor:'', q:'', sel:[] })
@@ -10420,6 +10424,7 @@ function AchatsGroupesPage({ companies, companyId, toast, readOnly=false }) {
     <div>
       <PageHeader title="Achats groupés de paddy" subtitle={company ? `${company.raison_sociale} — ${ouverts.length} groupe(s) ouvert(s) : ${fmtKg(totOuverts.quantite_kg)} — reste à payer sur les groupes clôturés : ${fcfaDoc(resteClotures)}` : "Sélectionnez une société en haut de l'écran"}
         actions={<>
+          <Btn sm variant="info" onClick={()=>companyId ? setPointAchats(true) : toast.error("Sélectionnez une société en haut de l'écran.")}>📥 Point des achats</Btn>
           <Btn sm variant="secondary" onClick={()=>setAvSit({ village:'', statut:'', q:'' })}>📊 Situation des avances</Btn>
           {!readOnly && <Btn onClick={nouveau}>+ Nouveau groupe</Btn>}
         </>} />
@@ -10615,6 +10620,7 @@ function AchatsGroupesPage({ companies, companyId, toast, readOnly=false }) {
           </form> })()}
       </Modal>
 
+      {pointAchats && <PointAchatsModal companies={companies} companyId={companyId} toast={toast} onClose={()=>setPointAchats(false)} />}
       <Modal open={!!entreeStock} onClose={()=>setEntreeStock(null)} size="md" title={entreeStock ? `Entrer en stock le paddy du groupe ${entreeStock.g.numero}` : ''}>
         {entreeStock && (()=>{ const t = totauxAchatGroupe(lignesDe(entreeStock.g.id)), art = d.articles.find(a => a.id === entreeStock.article_id)
           return <form onSubmit={enregistrerEntreeStock}>
@@ -10771,6 +10777,189 @@ function AchatsGroupesPage({ companies, companyId, toast, readOnly=false }) {
           </> })()}
       </Modal>
     </div>
+  )
+}
+
+// ── POINT DES ACHATS (achats groupés + achats individuels, sur une période) ──
+// Achats groupés : une ligne par producteur du groupe (montant, fonds intrant
+// retenu, net, déjà payé au prorata, reste). Achats individuels : les achats
+// de la page « Achats semi-finis » (montant, payé, reste). Téléchargeable en
+// Excel (détail + récapitulatif par fournisseur) et en PDF (A4 paysage).
+const premierDuMois = () => `${today().slice(0, 8)}01`
+
+async function chargerPointAchats(companyId, { du, au }) {
+  const dansPeriode = q => { if (du) q = q.gte('date_achat', du); if (au) q = q.lte('date_achat', au); return q }
+  const [{ data:groupes }, { data:indiv }] = await Promise.all([
+    dansPeriode(supabase.from('compta_achats_groupes').select('id,numero,date_achat,commune,village,statut').eq('company_id', companyId).neq('statut', 'annule')),
+    fetchAllRows(() => dansPeriode(supabase.from('compta_achats_semi_finis').select('*').eq('company_id', companyId))),
+  ])
+  const ids = (groupes || []).map(g => g.id)
+  let lignes = [], reps = []
+  if (ids.length) {
+    const [{ data:l }, { data:r }] = await Promise.all([
+      fetchAllRows(() => supabase.from('compta_achats_groupes_lignes').select('*').in('groupe_id', ids)),
+      fetchAllRows(() => supabase.from('compta_achats_groupes_repartitions').select('ligne_id,montant').in('groupe_id', ids)),
+    ])
+    lignes = l || []; reps = r || []
+  }
+  const groupeDe = Object.fromEntries((groupes || []).map(g => [g.id, g]))
+  const percu = {}
+  reps.forEach(r => { percu[r.ligne_id] = (percu[r.ligne_id] || 0) + (+r.montant || 0) })
+  const rows = [
+    ...lignes.map(l => { const g = groupeDe[l.groupe_id] || {}, c = calculLigneAchatGroupe(l), paye = Math.round(percu[l.id] || 0)
+      return { type:'Groupé', date:g.date_achat, reference:g.numero, statut:g.statut === 'cloture' ? 'Clôturé' : 'Ouvert', fournisseur:l.nom, village:l.village || g.village || '',
+        cooperative:l.cooperative || '', produit:`Riz paddy${l.variete ? ` ${l.variete}` : ''}`, quantite:c.quantite_kg, prix:c.prix_unitaire, montant:c.montant,
+        fonds:c.fonds_intrant, net:c.net_a_percevoir, paye, reste:Math.max(0, c.net_a_percevoir - paye) } }),
+    ...(indiv || []).map(a => { const montant = Math.round(+a.montant || 0), paye = Math.round(+a.montant_paye || 0)
+      return { type:'Individuel', date:a.date_achat, reference:a.numero_fact || '', statut:a.statut || '', fournisseur:a.nom_fournisseur || '', village:a.provenance || '',
+        cooperative:'', produit:a.nature_produit || '', quantite:+a.quantite || 0, prix:+a.prix_unitaire || 0, montant, fonds:0, net:montant, paye, reste:Math.max(0, montant - paye) } }),
+  ].sort((x, y) => String(x.date).localeCompare(String(y.date)) || String(x.reference).localeCompare(String(y.reference)))
+  return { rows, nbGroupes:(groupes || []).length }
+}
+
+function totauxPointAchats(rows) {
+  const t = { lignes:rows.length, quantite:0, montant:0, fonds:0, net:0, paye:0, reste:0 }
+  rows.forEach(r => { t.quantite += r.quantite; t.montant += r.montant; t.fonds += r.fonds; t.net += r.net; t.paye += r.paye; t.reste += r.reste })
+  t.quantite = Math.round(t.quantite * 1000) / 1000
+  return t
+}
+// Récapitulatif par fournisseur / producteur.
+function recapFournisseursPoint(rows) {
+  const m = new Map()
+  rows.forEach(r => { const k = r.fournisseur.trim().toUpperCase() || '—'
+    const x = m.get(k) || { fournisseur:r.fournisseur || '—', village:r.village, achats:0, quantite:0, montant:0, fonds:0, net:0, paye:0, reste:0 }
+    x.achats++; ['quantite', 'montant', 'fonds', 'net', 'paye', 'reste'].forEach(c => { x[c] += r[c] }); m.set(k, x) })
+  return [...m.values()].sort((a, b) => b.montant - a.montant)
+}
+
+function pointAchatsHtml(comp, { du, au, type }, rows) {
+  const t = totauxPointAchats(rows), tg = totauxPointAchats(rows.filter(r => r.type === 'Groupé')), ti = totauxPointAchats(rows.filter(r => r.type === 'Individuel'))
+  const periode = `${du ? `du ${dateDoc(du)}` : 'depuis le début'} ${au ? `au ${dateDoc(au)}` : "à aujourd'hui"}`
+  const corps = rows.map((r, i) => `<tr><td class="c">${i + 1}</td><td>${dateDoc(r.date)}</td><td>${r.type}</td><td>${echapHtml(r.reference)}</td><td>${echapHtml(r.fournisseur)}</td>
+    <td>${echapHtml(r.village)}</td><td>${echapHtml(r.produit)}</td><td class="d">${nbFr(r.quantite)}</td><td class="d">${nbFr(r.prix)}</td><td class="d">${nbFr(r.montant)}</td>
+    <td class="d">${r.fonds ? nbFr(r.fonds) : ''}</td><td class="d">${nbFr(r.net)}</td><td class="d">${nbFr(r.paye)}</td><td class="d"><b>${nbFr(r.reste)}</b></td></tr>`).join('')
+  const ligneTot = (lib, x) => `<tr class="total"><td colspan="7" class="d">${lib} (${x.lignes} ligne${x.lignes > 1 ? 's' : ''})</td><td class="d">${nbFr(x.quantite)}</td><td></td><td class="d">${nbFr(x.montant)}</td>
+    <td class="d">${nbFr(x.fonds)}</td><td class="d">${nbFr(x.net)}</td><td class="d">${nbFr(x.paye)}</td><td class="d">${nbFr(x.reste)}</td></tr>`
+  return `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><title>Point des achats ${echapHtml(periode)}</title>
+    <style>${CSS_ACHAT_GROUPE}
+      @page { size: A4 landscape; margin: 9mm; }
+      body { font-size: 8.5pt; }
+      .page { padding: 2mm; }
+      .sous { text-align: center; font-size: 10pt; color: #334155; margin-bottom: 8px; }
+      table { width: 100%; border-collapse: collapse; }
+      th { border: 1px solid #111827; background: #e5e7eb; padding: 4px 3px; font-size: 7.5pt; text-align: center; }
+      td { border: 1px solid #9ca3af; padding: 3px 4px; font-size: 8pt; }
+      td.d { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+      td.c { text-align: center; }
+      tr.total td { font-weight: 700; background: #f3f4f6; border-color: #111827; }
+    </style></head><body>
+    <button class="print-btn" onclick="window.print()">🖨️ Imprimer / PDF</button>
+    <div class="page">
+      ${enteteCepea(comp)}
+      <h1>POINT DES ACHATS</h1>
+      <div class="sous">${periode} — ${type === 'groupe' ? 'achats groupés' : type === 'individuel' ? 'achats individuels' : 'achats groupés et individuels'}</div>
+      <table>
+        <thead><tr><th>N°</th><th>Date</th><th>Type</th><th>Référence</th><th>Producteur / fournisseur</th><th>Village / provenance</th><th>Produit</th><th>Quantité</th>
+          <th>P.U.</th><th>Montant</th><th>Fonds intrant</th><th>Net</th><th>Payé</th><th>Reste à payer</th></tr></thead>
+        <tbody>${corps || '<tr><td colspan="14" class="c">Aucun achat sur la période</td></tr>'}
+          ${type === 'tous' && tg.lignes && ti.lignes ? ligneTot('Achats groupés', tg) + ligneTot('Achats individuels', ti) : ''}
+          ${ligneTot('TOTAL', t)}
+        </tbody>
+      </table>
+      <div class="signatures"><div>Le Gérant / Comptable<small>&nbsp;</small></div><div>Le Directeur<small>&nbsp;</small></div></div>
+    </div></body></html>`
+}
+
+function PointAchatsModal({ companies, companyId, toast, onClose, typeInitial = 'tous' }) {
+  const [f, setF] = useState({ du:premierDuMois(), au:today(), type:typeInitial, q:'' })
+  const [res, setRes] = useState({ rows:[], nbGroupes:0, loading:true })
+  const company = companies.find(c => c.id === companyId)
+  useEffect(() => {
+    if (!companyId) return
+    let actif = true
+    setRes(r => ({ ...r, loading:true }))
+    chargerPointAchats(companyId, f).then(r => { if (actif) setRes({ ...r, loading:false }) })
+    return () => { actif = false }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [companyId, f.du, f.au])
+  const rows = res.rows.filter(r => (f.type === 'tous' || (f.type === 'groupe' ? r.type === 'Groupé' : r.type === 'Individuel'))
+    && (!f.q || normAG(`${r.fournisseur} ${r.reference} ${r.village} ${r.produit}`).includes(normAG(f.q))))
+  const t = totauxPointAchats(rows)
+  const nomFichier = `point_achats_${f.du || 'debut'}_${f.au || 'aujourdhui'}`
+
+  const telechargerExcel = async () => {
+    if (!rows.length) return toast.error('Aucun achat sur la période.')
+    const XLSX = await import('https://cdn.sheetjs.com/xlsx-0.20.0/package/xlsx.mjs')
+    const entete = ['Date', 'Type', 'Référence', 'Statut', 'Producteur / fournisseur', 'Village / provenance', 'Coopérative', 'Produit', 'Quantité', 'Prix unitaire', 'Montant', 'Fonds intrant', 'Net', 'Payé', 'Reste à payer']
+    const titre = [[`Point des achats — ${company?.raison_sociale || ''}`], [`Période : ${f.du ? dateDoc(f.du) : 'début'} au ${f.au ? dateDoc(f.au) : "aujourd'hui"} — exporté le ${new Date().toLocaleDateString('fr-FR')}`], []]
+    const detail = XLSX.utils.aoa_to_sheet([...titre, entete,
+      ...rows.map(r => [dateDoc(r.date), r.type, r.reference, r.statut, r.fournisseur, r.village, r.cooperative, r.produit, r.quantite, r.prix, r.montant, r.fonds, r.net, r.paye, r.reste]),
+      ['TOTAL', '', '', '', '', '', '', '', t.quantite, '', t.montant, t.fonds, t.net, t.paye, t.reste]])
+    detail['!cols'] = [10, 10, 16, 9, 28, 18, 18, 16, 11, 10, 13, 12, 13, 13, 13].map(w => ({ wch:w }))
+    const recap = recapFournisseursPoint(rows)
+    const parFrs = XLSX.utils.aoa_to_sheet([...titre, ['Producteur / fournisseur', 'Village / provenance', "Nombre d'achats", 'Quantité', 'Montant', 'Fonds intrant', 'Net', 'Payé', 'Reste à payer'],
+      ...recap.map(x => [x.fournisseur, x.village, x.achats, Math.round(x.quantite * 1000) / 1000, x.montant, x.fonds, x.net, x.paye, x.reste]),
+      ['TOTAL', '', rows.length, t.quantite, t.montant, t.fonds, t.net, t.paye, t.reste]])
+    parFrs['!cols'] = [30, 20, 10, 12, 14, 13, 14, 14, 14].map(w => ({ wch:w }))
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, detail, 'Détail des achats')
+    XLSX.utils.book_append_sheet(wb, parFrs, 'Par fournisseur')
+    XLSX.writeFile(wb, `${nomFichier}.xlsx`)
+    toast.success('Fichier Excel téléchargé.')
+  }
+  const telechargerPdf = () => {
+    if (!rows.length) return toast.error('Aucun achat sur la période.')
+    openPrintWindow(pointAchatsHtml(company, f, rows), nomFichier)
+  }
+
+  const selStyle = { padding:'7px 10px', borderRadius:8, border:'1px solid #d1d5db', fontSize:13 }
+  const carte = (lib, val, coul = '#0f172a') => <div style={{ background:'#f8fafc', border:'1px solid #e2e8f0', borderRadius:10, padding:'8px 12px', minWidth:130, flex:'1 1 130px' }}>
+    <div style={{ fontSize:11.5, color:'#64748b' }}>{lib}</div><div style={{ fontSize:16, fontWeight:800, color:coul }}>{val}</div></div>
+  return (
+    <Modal open onClose={onClose} size="xl" title="Point des achats sur une période">
+      <div style={{ display:'flex', gap:8, flexWrap:'wrap', alignItems:'center', marginBottom:12 }}>
+        <span style={{ fontSize:13 }}>Du</span><input type="date" style={selStyle} value={f.du} onChange={e=>setF(x=>({...x, du:e.target.value}))} />
+        <span style={{ fontSize:13 }}>au</span><input type="date" style={selStyle} value={f.au} onChange={e=>setF(x=>({...x, au:e.target.value}))} />
+        {[['Ce mois', premierDuMois(), today()], ['Cette année', `${today().slice(0, 4)}-01-01`, today()], ['Tout', '', '']].map(([lib, du, au]) =>
+          <button key={lib} type="button" onClick={()=>setF(x=>({...x, du, au}))} style={{ ...selStyle, cursor:'pointer', background:f.du===du&&f.au===au?'#ede9fe':'#fff' }}>{lib}</button>)}
+        <select style={selStyle} value={f.type} onChange={e=>setF(x=>({...x, type:e.target.value}))}>
+          <option value="tous">Achats groupés et individuels</option><option value="groupe">Achats groupés seulement</option><option value="individuel">Achats individuels seulement</option>
+        </select>
+        <input style={{ ...selStyle, flex:'1 1 150px' }} placeholder="Fournisseur, village, produit…" value={f.q} onChange={e=>setF(x=>({...x, q:e.target.value}))} />
+      </div>
+      <div style={{ display:'flex', gap:8, flexWrap:'wrap', marginBottom:12 }}>
+        {carte('Lignes d\'achat', `${t.lignes}${res.nbGroupes && f.type !== 'individuel' ? ` (${res.nbGroupes} groupe${res.nbGroupes > 1 ? 's' : ''})` : ''}`)}
+        {carte('Quantité', nbFr(t.quantite))}
+        {carte('Montant des achats', fcfaDoc(t.montant), '#1d4ed8')}
+        {carte('Fonds intrant retenus', fcfaDoc(t.fonds), '#b45309')}
+        {carte('Payé', fcfaDoc(t.paye), '#15803d')}
+        {carte('Reste à payer', fcfaDoc(t.reste), t.reste > 0 ? '#dc2626' : '#15803d')}
+      </div>
+      <div style={{ overflowX:'auto', border:'1px solid #e2e8f0', borderRadius:10, maxHeight:'50vh', overflowY:'auto' }}>
+        <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
+          <thead><tr style={{ background:'#f1f5f9' }}>{['Date','Type','Référence','Producteur / fournisseur','Village','Produit','Qté','P.U.','Montant','Fonds','Net','Payé','Reste'].map((h,i)=>
+            <th key={h} style={{ padding:'7px 6px', textAlign:i>=6?'right':'left', fontSize:11, color:'#475569', whiteSpace:'nowrap', position:'sticky', top:0, background:'#f1f5f9' }}>{h}</th>)}</tr></thead>
+          <tbody>
+            {res.loading ? <tr><td colSpan={13} style={{ padding:16, textAlign:'center', color:'#94a3b8' }}>Chargement…</td></tr>
+              : rows.map((r, i) => (
+                <tr key={i} style={{ borderTop:'1px solid #f1f5f9' }}>
+                  <td style={{ padding:'5px 6px', whiteSpace:'nowrap' }}>{dateDoc(r.date)}</td>
+                  <td style={{ padding:'5px 6px' }}><Badge type={r.type === 'Groupé' ? 'info' : 'secondary'}>{r.type}</Badge></td>
+                  <td style={{ padding:'5px 6px', whiteSpace:'nowrap' }}>{r.reference}</td><td style={{ padding:'5px 6px' }}>{r.fournisseur}</td>
+                  <td style={{ padding:'5px 6px' }}>{r.village}</td><td style={{ padding:'5px 6px' }}>{r.produit}</td>
+                  {['quantite','prix','montant','fonds','net','paye'].map(k => <td key={k} style={{ padding:'5px 6px', textAlign:'right', whiteSpace:'nowrap' }}>{k === 'fonds' && !r.fonds ? '' : nbFr(r[k])}</td>)}
+                  <td style={{ padding:'5px 6px', textAlign:'right', fontWeight:700, color:r.reste > 0 ? '#b45309' : '#15803d' }}>{nbFr(r.reste)}</td>
+                </tr>))}
+            {!res.loading && !rows.length && <tr><td colSpan={13} style={{ padding:16, textAlign:'center', color:'#94a3b8' }}>Aucun achat sur la période.</td></tr>}
+          </tbody>
+        </table>
+      </div>
+      <div style={{ display:'flex', gap:8, justifyContent:'flex-end', marginTop:14, flexWrap:'wrap' }}>
+        <Btn variant="secondary" onClick={onClose}>Fermer</Btn>
+        <Btn variant="success" onClick={telechargerExcel}>📥 Télécharger en Excel</Btn>
+        <Btn variant="danger" onClick={telechargerPdf}>🖨️ PDF / imprimer</Btn>
+      </div>
+    </Modal>
   )
 }
 
