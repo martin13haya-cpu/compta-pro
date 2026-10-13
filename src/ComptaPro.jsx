@@ -11137,6 +11137,23 @@ function EtvEnvoisPage({ companies, companyId, toast, readOnly=false }) {
     else { if (!confirm(`Supprimer l'envoi ${env.numero} ?`)) return; await supabase.from('compta_envois_etuveuses').delete().eq('id', env.id) }
     charger()
   }
+  // Envoi annulé : le rétablir (erreur d'annulation) ou le supprimer pour de bon,
+  // avec ses retours et les cycles d'étuvage créés à partir de ces retours.
+  const retablirEnvoi = async env => {
+    if (!confirm(`Rétablir l'envoi ${env.numero} ? Il redevient actif (paddy chez l'étuveuse, retours comptés).`)) return
+    const { error } = await supabase.from('compta_envois_etuveuses').update({ annule:false }).eq('id', env.id)
+    if (error) return toast.error(error.message)
+    toast.success(`Envoi ${env.numero} rétabli.`); charger()
+  }
+  const supprimerDefinitivement = async env => {
+    const s = sit(env), cycles = s.retours.filter(r => r.etuvage_id).length
+    if (!confirm(`Supprimer définitivement l'envoi ${env.numero} ?${s.retours.length ? `\n\nSes ${s.retours.length} retour(s)${cycles ? ` et les ${cycles} cycle(s) d'étuvage créé(s) à partir de ces retours` : ''} seront aussi supprimés.` : ''}\n\nCette suppression est irréversible.`)) return
+    for (const r of s.retours) if (r.etuvage_id) await supabase.from('compta_etuvage').delete().eq('id', r.etuvage_id)
+    if (s.retours.length) await supabase.from('compta_retours_etuveuses').delete().eq('envoi_id', env.id)
+    const { error } = await supabase.from('compta_envois_etuveuses').delete().eq('id', env.id)
+    if (error) return toast.error(error.message)
+    toast.success(`Envoi ${env.numero} supprimé.`); charger()
+  }
 
   // ── Impressions (gabarit commun des documents) ──
   const imprimerBonEnvoi = env => {
@@ -11224,6 +11241,8 @@ function EtvEnvoisPage({ companies, companyId, toast, readOnly=false }) {
                       !readOnly && !s.retours.length && { couleur:'#b45309', label:'✏️ Modifier', onClick:()=>setForm({ ...e, quantite_envoyee_kg:String(e.quantite_envoyee_kg) }) },
                       !readOnly && null,
                       !readOnly && !e.annule && { label: s.retours.length ? '🚫 Annuler l\'envoi' : '🗑️ Supprimer', danger:true, onClick:()=>supprimerEnvoi(e) },
+                      !readOnly && e.annule && { couleur:'#16a34a', label:"♻️ Rétablir l'envoi", onClick:()=>retablirEnvoi(e) },
+                      !readOnly && e.annule && { label:'🗑️ Supprimer définitivement', danger:true, onClick:()=>supprimerDefinitivement(e) },
                     ]} /></TD>
                   </TR>) })}
               {!visibles.length && <tr><td colSpan={11} style={{ padding:20, textAlign:'center', color:'#94a3b8' }}>{companyId ? 'Aucun envoi.' : "Sélectionnez une société."}</td></tr>}
