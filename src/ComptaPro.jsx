@@ -2985,7 +2985,9 @@ function CompaniesPage({ companies, refresh, toast, isSuperAdmin=false, currentU
     }
     setForm(c?{...c}:{raison_sociale:'',rccm:'',ifu:'',adresse:'',tel:'',email:'',logo_url:'',type_activite:'industrielle',
       taux_cnss_patronale:'0.194',cnss_employeur:'',nouvelle_entreprise:false,date_premier_exercice:'',signataire:'',fonction_signataire:'',
-      intitule_projet:'',financement:'',structure_pilote:'',campagne_agricole:''})
+      intitule_projet:'',financement:'',structure_pilote:'',campagne_agricole:'',
+      // Code société demandé dès que la codification est installée.
+      ...(companies.some(x => 'code' in x) ? { code:'' } : {})})
     setModal(c?'edit':'add')
   }
   const close = () => setModal(null)
@@ -3005,11 +3007,17 @@ function CompaniesPage({ companies, refresh, toast, isSuperAdmin=false, currentU
       financement: form.financement||null,
       structure_pilote: form.structure_pilote||null,
       campagne_agricole: form.campagne_agricole||null }
+    // Code société (préfixe des codes de traçabilité) : présent dès que le
+    // script de codification est passé.
+    if ('code' in form) {
+      if (form.code && !/^[A-Z0-9]{2,5}$/.test(form.code)) { toast.error('Code société : 2 à 5 lettres ou chiffres, sans espace (ex. KOU).'); setSaving(false); return }
+      pay.code = form.code || null
+    }
     const { error } = modal==='add'
       ? await supabase.from('compta_companies').insert({...pay,user_id:uid})
       : await supabase.from('compta_companies').update(pay).eq('id',form.id)
     setSaving(false)
-    if (error) { toast.error(error.message); return }
+    if (error) { toast.error(/ux_companies_code|duplicate key/i.test(error.message) ? `Le code société « ${pay.code} » est déjà pris par une autre société : choisissez-en un autre.` : error.message); return }
     toast.success(modal==='add'?'Société ajoutée !':'Société mise à jour !'); close(); refresh()
   }
 
@@ -3062,6 +3070,8 @@ function CompaniesPage({ companies, refresh, toast, isSuperAdmin=false, currentU
         <form onSubmit={save}>
           <Grid cols={2} gap={14} style={{marginBottom:16}}>
             <Span2><Input label="Raison sociale" name="raison_sociale" value={form.raison_sociale} onChange={set} required /></Span2>
+            {'code' in form && <Span2><Input label="Code société (2 à 5 lettres ou chiffres, unique — ex. KOU)" name="code" value={form.code||''} onChange={e=>setForm(f=>({...f, code:e.target.value.toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,5)}))} />
+              <div style={{fontSize:11.5,color:'#64748b',marginTop:-8,marginBottom:8}}>Préfixe de tous les codes de la société (producteurs, étuveuses, groupes, lots, passages). Les codes déjà attribués gardent l'ancien préfixe : choisissez-le une fois pour toutes.</div></Span2>}
             <Input label="RCCM" name="rccm" value={form.rccm} onChange={set} />
             <Input label="N° IFU" name="ifu" value={form.ifu||''} onChange={set} />
             <Input label="Téléphone" name="tel" type="tel" value={form.tel} onChange={setTel} />
@@ -3850,6 +3860,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     if (modal==='add') {
       const { data:ins, error } = await supabase.from(table).insert({...pay,user_id:uid}).select('id').single()
       if (error) { setSaving(false); toast.error(/categorie/i.test(error.message) ? MSG_SCRIPT_CATEGORIE : error.message); return }
+      if (table==='compta_fournisseurs') await attribuerCodeTrace('compta_fournisseurs', ins.id, pay.company_id, 'P')
       // Numero de compte (fournisseur 4011… / client 4111…) : n'existe que si le CIP
       // (personne physique) ou l'IFU (personne morale) est renseigne.
       if (table==='compta_fournisseurs' || table==='compta_clients') {
@@ -4147,6 +4158,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
       if(rows.length===0){ toast.error('Aucune ligne valide trouvée'); setImporting(false); return }
       const { data:insRows, error } = await supabase.from(table).insert(rows).select('id,type,nom,nom_societe')
       if(error){ toast.error('Erreur import : '+error.message); setImporting(false); return }
+      if (table==='compta_fournisseurs') for (const r of insRows||[]) await attribuerCodeTrace('compta_fournisseurs', r.id, cid, 'P')
       // Attribution automatique des numéros de compte (séquentiel)
       if (table==='compta_fournisseurs' || table==='compta_clients') {
         const isFourn = table==='compta_fournisseurs'
@@ -4941,7 +4953,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
                 <TR key={it.id}>
                   {(table==='compta_clients'||table==='compta_fournisseurs') && <TD><Badge type={it.type==='morale'?'info':'success'}>{it.type==='morale'?'Société':'Physique'}</Badge></TD>}
                   {table==='compta_fournisseurs' && <TD>{it.categorie ? <Badge type={CATEGORIES_FOURNISSEUR.find(x=>x[0]===it.categorie)?.[2]||'secondary'}>{libelleCategorieFrs(it.categorie)}</Badge> : <span style={{fontSize:12,color:'#b45309'}}>Non classé</span>}</TD>}
-                  <TD bold>{displayName(it)}</TD>
+                  <TD bold>{displayName(it)}<CodeTrace code={it.code_trace} /></TD>
                   <TD>{it.telephone||'—'}</TD>
                   <TD>{it.provenance||'—'}</TD>
                   {extraFields?.names?.map(k=><TD key={k}>{it[k]||'—'}</TD>)}
@@ -6633,7 +6645,8 @@ function LotsProductionPage({ companies, companyId, toast, readOnly=false }) {
     if (!company_id) company_id = await getEffectiveCompanyId(companyId, companies)
     if (!company_id) { toast.error('Veuillez sélectionner une société.'); setSaving(false); return }
     const pay = { company_id,numero_lot,date_debut,date_fin:date_fin||null,statut,qte_paddy_entree:+qte_paddy_entree,notes }
-    const { error } = modal==='add' ? await supabase.from('compta_lots_production').insert({...pay,user_id:uid}) : await supabase.from('compta_lots_production').update(pay).eq('id',form.id)
+    const { data:insLot, error } = modal==='add' ? await supabase.from('compta_lots_production').insert({...pay,user_id:uid}).select('id').single() : await supabase.from('compta_lots_production').update(pay).eq('id',form.id)
+    if (!error && modal==='add') await attribuerCodeTrace('compta_lots_production', insLot.id, company_id, 'L', { annee:String(date_debut||today()).slice(0,4) })
     setSaving(false)
     if (error) { toast.error(error.message); return }
     toast.success('Lot enregistré !'); close(); load()
@@ -6682,7 +6695,7 @@ function LotsProductionPage({ companies, companyId, toast, readOnly=false }) {
                 </body></html>`
                 return (
                 <TR key={l.id}>
-                  <TD bold>{l.numero_lot}</TD><TD>{l.date_debut}</TD><TD>{l.date_fin||'—'}</TD>
+                  <TD bold>{l.numero_lot}<CodeTrace code={l.code_trace} /></TD><TD>{l.date_debut}</TD><TD>{l.date_fin||'—'}</TD>
                   <TD right>{(l.qte_paddy_entree||0).toFixed(2)}</TD>
                   <TD><Badge type={{en_cours:'warning',termine:'success',annule:'danger'}[l.statut]||'secondary'}>{l.statut}</Badge></TD>
                   <TD>
@@ -7013,9 +7026,13 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
         tiers:`Étuvage ${et?.nom_etuveuse || pay.etuveuse_cooperative || 'interne'}`, observations:`Cycle d'étuvage ${pay.lot_sortant}${pay.numero_lot ? ` — lot ${pay.numero_lot}` : ''}` })
       if (!sortie.ok) { setSaving(false); return }
     }
-    const { error } = editItem
+    const { data:insEtape, error } = editItem
       ? await supabase.from(tableName).update(pay).eq('id', editItem.id)
-      : await supabase.from(tableName).insert({...pay, user_id:uid})
+      : await supabase.from(tableName).insert({...pay, user_id:uid}).select('id').single()
+    if (!error && estEtuvage && !editItem) {
+      const code = await codePassageEtuvage(cid, pay.lot_id, pay.etuveuse_id)
+      if (code) await supabase.from(tableName).update({ code_trace:code }).eq('id', insEtape.id)
+    }
     if (error) {
       if (stockDirect) await annulerBonsStockAuto(cid, cle)
       setSaving(false)
@@ -7159,7 +7176,7 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
                   <TD sm>{it.date_etape||it.date_reception}</TD>
                   <TD>{it.compta_lots_production?.numero_lot||it.numero_lot||'—'}
                     {it.lot_id && originesLots[it.lot_id]?.refs?.length>0 && <div style={{fontSize:11,color:'#0f766e'}}>{originesLots[it.lot_id].refs.slice(0,2).join(', ')}{originesLots[it.lot_id].refs.length>2?'…':''}</div>}</TD>
-                  {estEtuvage && <TD sm>{it.lot_sortant||'—'}
+                  {estEtuvage && <TD sm>{it.lot_sortant||'—'}<CodeTrace code={it.code_trace} />
                     {cycleDepuisRetour(it) && <div style={{fontSize:11,color:'#7c3aed'}} title="Cycle créé par le retour d'une étuveuse">↩ {(it.observations.match(/ENV-\d{4}-\d+/)||[])[0]||'retour'}</div>}</TD>}
                   {summaryFields.map(f=>(
                     <TD key={f.name} right={f.type==='number'}>
@@ -8570,13 +8587,14 @@ function EtvRepertoirePage({ companies, companyId, toast, readOnly=false }) {
     e.preventDefault(); setSaving(true)
     const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
     const cid = form.company_id||companyId||companies[0]?.id
-    const { error }=await supabase.from('compta_etuveuses').insert({
+    const { data:insEtv, error }=await supabase.from('compta_etuveuses').insert({
       company_id:cid, user_id:uid,
       ifu:form.ifu, nom_etuveuse:form.nom_etuveuse,
       code_etuveuse:form.code_etuveuse, date_contrat:form.date_contrat,
       capacite_kg:parseFloat(form.capacite_kg)||0,
       zone:form.zone, observations:form.observations
-    })
+    }).select('id').single()
+    if(!error) await attribuerCodeTrace('compta_etuveuses', insEtv.id, cid, 'E')
     setSaving(false)
     if(error){ toast.error(error.message); return }
     toast.success('Étuveuse enregistrée !'); close(); load()
@@ -8620,7 +8638,7 @@ function EtvRepertoirePage({ companies, companyId, toast, readOnly=false }) {
               {items.map(r=>(
                 <TR key={r.id}>
                   <TD bold>{r.code_etuveuse||'—'}</TD>
-                  <TD>{getEtvDisplayName(r)}</TD>
+                  <TD>{getEtvDisplayName(r)}<CodeTrace code={r.code_trace} /></TD>
                   <TD sm>{r.date_contrat||'—'}</TD>
                   <TD sm>{r.zone||'—'}</TD>
                   <TD right>{(r.capacite_kg||0).toLocaleString('fr-FR')} kg</TD>
@@ -9915,6 +9933,7 @@ function fichesAchatPaddyHtml(comp, g, lignes) {
         <div>Groupement/Coopérative : <span class="pointille">${echapHtml(l.cooperative||'')}</span></div>
         <div>Numéro CIP/CNI : <span class="pointille">${echapHtml(l.cip||'')}</span></div>
         <div>Téléphone : <span class="pointille">${echapHtml(l.telephone||'')}</span></div>
+        ${l.code ? `<div>Code producteur : <span class="pointille">${echapHtml(l.code)}</span></div>` : ''}${g.code_trace ? `<div>Code du groupe : <span class="pointille">${echapHtml(g.code_trace)}</span></div>` : ''}
       </div>
       <table>
         <tr><th>Désignation du Produit et variété</th><td colspan="2"><b>${echapHtml(g.produit||'Riz paddy')}${(l.variete||g.variete) ? ` — ${echapHtml(l.variete||g.variete)}` : ''}</b></td></tr>
@@ -10192,8 +10211,10 @@ function AchatsGroupesPage({ companies, companyId, toast, readOnly=false }) {
     let numero = ed.numero
     if (!numero) {
       const an = String(ed.date_achat).slice(0,4)
+      // Compteur en base (aucun doublon possible) ; à défaut, plus grand n° + 1.
+      const n = await prochainNumeroBase(companyId, `GRP:${an}`)
       const nums = d.groupes.map(x => String(x.numero||'').match(new RegExp(`^GRP-${an}-(\\d+)$`))).filter(Boolean).map(m => parseInt(m[1],10))
-      numero = `GRP-${an}-${String((nums.length ? Math.max(...nums) : 0) + 1).padStart(3,'0')}`
+      numero = `GRP-${an}-${String(n || (nums.length ? Math.max(...nums) : 0) + 1).padStart(3,'0')}`
     }
     const pay = { company_id:companyId, numero, date_achat:ed.date_achat, commune:ed.commune||null, village:ed.village||null, lieu_collecte:ed.lieu_collecte||null,
       chef_groupe:ed.chef_groupe||null, chef_telephone:ed.chef_telephone||null, produit:'Riz paddy', variete:ed.variete||null,
@@ -10206,6 +10227,8 @@ function AchatsGroupesPage({ companies, companyId, toast, readOnly=false }) {
       const { data, error } = await supabase.from('compta_achats_groupes').insert({ ...pay, user_id:uid, statut:'ouvert' }).select('id').single()
       if (error) { setSaving(false); return toast.error(estErreurAG(error) ? MSG_SCRIPT_AG : /duplicate|unique/i.test(error.message) ? `Le numéro ${numero} existe déjà : rechargez la page.` : error.message) }
       gid = data.id
+      const soc = await codeSocieteDe(companyId)
+      if (soc) await supabase.from('compta_achats_groupes').update({ code_trace:`${soc}-G${numero.slice(6, 8)}${numero.split('-').pop()}` }).eq('id', gid).is('code_trace', null)
     }
     // Nouvelles lignes d'abord, anciennes supprimées ensuite : rien n'est perdu si l'écriture échoue.
     const anciennes = lignesDe(gid).map(l => l.id)
@@ -10271,6 +10294,8 @@ function AchatsGroupesPage({ companies, companyId, toast, readOnly=false }) {
   }
   const imprimerFiches = (g, ls) => {
     if (!ls.length) return toast.error('Aucun producteur dans ce groupe.')
+    const codeFrs = Object.fromEntries(d.fournisseurs.map(f => [String(f.id), f.code_trace]))
+    ls = ls.map(l => ({ ...l, code:codeFrs[String(l.fournisseur_id)] || '' }))
     openPrintWindow(fichesAchatPaddyHtml(company, g, ls), ls.length === 1 ? `fiche_achat_${g.numero||''}_${ls[0].nom}` : `fiches_achat_${g.numero||'brouillon'}`)
   }
 
@@ -10431,6 +10456,7 @@ function AchatsGroupesPage({ companies, companyId, toast, readOnly=false }) {
         date_debut:today(), qte_paddy_entree:ajout, statut:'en_cours', notes:`Paddy de l'achat groupé ${g.numero}${g.village ? ` — ${g.village}` : ''}` }).select('id,numero_lot,qte_paddy_entree').single()
       if (error) { setSaving(false); return toast.error('Lot non créé : ' + error.message) }
       lot = data; annulerLot = () => supabase.from('compta_lots_production').delete().eq('id', lot.id)
+      await attribuerCodeTrace('compta_lots_production', lot.id, companyId, 'L', { annee:today().slice(0,4) })
     } else {
       const { data:l } = await supabase.from('compta_lots_production').select('id,numero_lot,qte_paddy_entree').eq('id', vers.lot_id).single()
       lot = l
@@ -10517,7 +10543,7 @@ function AchatsGroupesPage({ companies, companyId, toast, readOnly=false }) {
               {visibles.map(g => { const ls = lignesDe(g.id), t = totauxAchatGroupe(ls), sp = sitPaie(g), np = paiementsDe(g.id).length
                 return (
                   <TR key={g.id}>
-                    <TD bold>{g.numero}</TD><TD sm>{dateDoc(g.date_achat)}</TD>
+                    <TD bold>{g.numero}<CodeTrace code={g.code_trace} /></TD><TD sm>{dateDoc(g.date_achat)}</TD>
                     <TD>{[g.commune, g.village].filter(Boolean).join(' / ') || '—'}</TD><TD>{g.chef_groupe||'—'}</TD>
                     <TD right>{ls.length}</TD><TD right>{nbFr(t.quantite_kg)} kg</TD><TD right>{nbFr(t.montant)}</TD>
                     <TD right>{nbFr(t.fonds_intrant)}</TD><TD right><strong>{nbFr(t.net_a_percevoir)}</strong></TD>
@@ -11035,6 +11061,75 @@ function PointAchatsModal({ companies, companyId, toast, onClose, typeInitial = 
   )
 }
 
+// ── CODIFICATION UNIQUE (script 20261014_codification.sql) ──────────────────
+// Code société (KOU) + code de chaque acteur : producteur KOU-P00042, étuveuse
+// KOU-E007, groupe KOU-G26001, lot KOU-L26001 ; passage à l'étuvage
+// KOU-G26001-E007-1 (société, origine du lot, étuveuse, n° de passage).
+// Les numéros viennent de compta_prochain_numero() : compteur en base,
+// atomique, donc jamais deux fois le même numéro ; les index uniques
+// refusent tout doublon. Le code est posé juste après l'enregistrement de la
+// fiche : sans le script, la fiche s'enregistre quand même, sans code.
+const padCode = (n, l) => String(n).padStart(l, '0')
+async function prochainNumeroBase(companyId, cle) {
+  try {
+    const { data, error } = await supabase.rpc('compta_prochain_numero', { p_company_id:companyId, p_cle:cle })
+    return error || !(data > 0) ? null : data
+  } catch { return null }
+}
+async function codeSocieteDe(companyId) {
+  const { data, error } = await supabase.from('compta_companies').select('code').eq('id', companyId).maybeSingle()
+  return error ? null : data?.code || null
+}
+// type : 'P' producteur/fournisseur, 'E' étuveuse, 'L' lot (annee = AAAA).
+async function nouveauCodeTrace(companyId, type, { annee } = {}) {
+  const soc = await codeSocieteDe(companyId)
+  if (!soc) return null
+  if (type === 'L') {
+    const aa = String(annee || new Date().getFullYear()).slice(2)
+    const n = await prochainNumeroBase(companyId, `L:${aa}`)
+    return n ? `${soc}-L${aa}${padCode(n, 3)}` : null
+  }
+  const n = await prochainNumeroBase(companyId, type)
+  return n ? `${soc}-${type}${padCode(n, type === 'P' ? 5 : 3)}` : null
+}
+async function attribuerCodeTrace(table, id, companyId, type, extra) {
+  try {
+    const code = await nouveauCodeTrace(companyId, type, extra)
+    if (!code) return null
+    const { error } = await supabase.from(table).update({ code_trace:code }).eq('id', id).is('code_trace', null)
+    return error ? null : code
+  } catch { return null }
+}
+// Origine d'un lot pour le code de passage : le groupe s'il est seul, sinon
+// le producteur s'il est seul, sinon le lot lui-même.
+async function origineCodeLot(lotId) {
+  if (!lotId) return 'X'
+  const { data:grs } = await supabase.from('compta_achats_groupes').select('code_trace').eq('lot_id', lotId).neq('statut', 'annule')
+  if ((grs || []).length === 1 && grs[0].code_trace) return grs[0].code_trace.split('-').pop()
+  const { data:og } = await supabase.from('compta_lot_origines').select('fournisseur_id').eq('lot_id', lotId)
+  const frs = [...new Set((og || []).map(o => o.fournisseur_id).filter(Boolean))]
+  if (frs.length === 1) {
+    const { data:f } = await supabase.from('compta_fournisseurs').select('code_trace').eq('id', frs[0]).maybeSingle()
+    if (f?.code_trace) return f.code_trace.split('-').pop()
+  }
+  const { data:l } = await supabase.from('compta_lots_production').select('code_trace').eq('id', lotId).maybeSingle()
+  return l?.code_trace ? l.code_trace.split('-').pop() : 'X'
+}
+// Code d'un passage à l'étuvage : KOU-G26001-E007-1.
+async function codePassageEtuvage(companyId, lotId, etuveuseId) {
+  try {
+    const soc = await codeSocieteDe(companyId)
+    if (!soc) return null
+    const orig = await origineCodeLot(lotId)
+    const { data:e } = etuveuseId ? await supabase.from('compta_etuveuses').select('code_trace').eq('id', etuveuseId).maybeSingle() : { data:null }
+    const prefixe = `${soc}-${orig}-${e?.code_trace ? e.code_trace.split('-').pop() : 'E000'}`
+    const n = await prochainNumeroBase(companyId, `PASS:${prefixe}`)
+    return n ? `${prefixe}-${n}` : null
+  } catch { return null }
+}
+// Petit libellé de code, sous un nom ou un numéro.
+const CodeTrace = ({ code }) => code ? <div style={{ fontSize:11, color:'#0f766e', fontFamily:'Consolas, monospace', letterSpacing:.3 }}>{code}</div> : null
+
 // ── STOCK AUTOMATIQUE DE L'ÉTUVAGE ───────────────────────────────────────────
 // Envoi à une étuveuse  → bon de SORTIE du paddy (motif production) ;
 // retour d'étuveuse     → bon d'ENTRÉE du riz étuvé, valorisé au coût du paddy
@@ -11258,12 +11353,19 @@ function EtvEnvoisPage({ companies, companyId, toast, readOnly=false }) {
     const sortie = await sortiePaddyEtuvage({ companyId, uid, quantite:q, date:form.date_envoi, tiers:`Étuveuse ${etv.nom_etuveuse||''}`.trim(), cle, toast,
       observations:`Envoi à l'étuvage ${numero}${lot.numero_lot ? ` — lot ${lot.numero_lot}` : ''}` })
     if (!sortie.ok) { setSaving(false); return }
-    const { error } = form.id ? await supabase.from('compta_envois_etuveuses').update(pay).eq('id', form.id)
-                              : await supabase.from('compta_envois_etuveuses').insert({ ...pay, user_id:uid })
+    const { data:insEnv, error } = form.id ? await supabase.from('compta_envois_etuveuses').update(pay).eq('id', form.id)
+                              : await supabase.from('compta_envois_etuveuses').insert({ ...pay, user_id:uid }).select('id').single()
+    if (error) { setSaving(false); await annulerBonsStockAuto(companyId, cle); return toast.error(estErreurEnvois(error) ? MSG_SCRIPT_ENVOIS : error.message) }
+    // Code du passage : nouveau, ou recalculé si le lot ou l'étuveuse a changé.
+    const avant = form.id ? d.envois.find(x => x.id === form.id) : null
+    let codeTrace = avant?.code_trace || null
+    if (!avant || !avant.code_trace || String(avant.lot_id||'') !== String(pay.lot_id||'') || String(avant.etuveuse_id) !== String(pay.etuveuse_id)) {
+      const nouveauCode = await codePassageEtuvage(companyId, pay.lot_id, pay.etuveuse_id)
+      if (nouveauCode) { const { error:ec } = await supabase.from('compta_envois_etuveuses').update({ code_trace:nouveauCode }).eq('id', form.id || insEnv.id); if (!ec) codeTrace = nouveauCode }
+    }
     setSaving(false)
-    if (error) { await annulerBonsStockAuto(companyId, cle); return toast.error(estErreurEnvois(error) ? MSG_SCRIPT_ENVOIS : error.message) }
     toast.success(`Envoi ${numero} enregistré${sortie.numero ? ` — ${fmtKg(q)} de paddy sortis du stock (bon ${sortie.numero})` : sortie.sansStock ? ' (sans sortie de stock)' : ''}.`)
-    const cree = { ...pay, id:form.id }
+    const cree = { ...pay, id:form.id || insEnv?.id, code_trace:codeTrace }
     setForm(null); charger()
     if (!form.id) imprimerBonEnvoi(cree)
   }
@@ -11302,6 +11404,7 @@ function EtvEnvoisPage({ companies, companyId, toast, readOnly=false }) {
       }).select('id').single()
       if (ee) { setSaving(false); return toast.error(/etuveuse_id|lot_sortant|ecart_pct|schema cache/i.test(ee.message) ? MSG_SCRIPT_ETUVAGE : "Cycle d'étuvage non créé : "+ee.message) }
       etuvage_id = et.id
+      if (env.code_trace) await supabase.from('compta_etuvage').update({ code_trace:env.code_trace }).eq('id', et.id)
     }
     const { data:ret, error } = await supabase.from('compta_retours_etuveuses').insert({
       company_id:companyId, user_id:uid, envoi_id:env.id, date_retour:retour.date_retour, paddy_traite_kg:traite, riz_etuve_recu_kg:recu,
@@ -11360,7 +11463,7 @@ function EtvEnvoisPage({ companies, companyId, toast, readOnly=false }) {
   const imprimerBonEnvoi = env => {
     const etv = etvDe(env.etuveuse_id), lot = lotDe(env.lot_id)
     openPrintWindow(gabaritDocumentHtml({ comp:company, titre:"BON D'ENVOI À L'ÉTUVAGE", numero:env.numero, date:dateDoc(env.date_envoi),
-      infos:[['Lot de production', lot.numero_lot||'—'], ['Véhicule', env.vehicule||''], ['Convoyeur', env.convoyeur||'']],
+      infos:[['Code traçabilité', env.code_trace||''], ['Lot de production', lot.numero_lot||'—'], ['Véhicule', env.vehicule||''], ['Convoyeur', env.convoyeur||'']],
       tiersLabel:'Étuveuse', tiers:{ nom:`${etv.code_etuveuse?etv.code_etuveuse+' — ':''}${etv.nom_etuveuse||''}`, adresse:etv.zone },
       colonnes:[{label:'Désignation'},{label:'Quantité (kg)',align:'d',largeur:'25%'}],
       lignes:[[`Paddy à étuver${lot.numero_lot?` — lot ${echapHtml(lot.numero_lot)}`:''}`, `<strong>${nbFr(env.quantite_envoyee_kg)}</strong>`]],
@@ -11371,7 +11474,7 @@ function EtvEnvoisPage({ companies, companyId, toast, readOnly=false }) {
   const ticketEnvoi = env => {
     const etv = etvDe(env.etuveuse_id), lot = lotDe(env.lot_id)
     openPrintWindow(ticketHtml(company, { titre:"BON D'ENVOI À L'ÉTUVAGE", numero:env.numero, date:dateDoc(env.date_envoi),
-      lignes:[['Étuveuse', `${etv.code_etuveuse?etv.code_etuveuse+' ':''}${etv.nom_etuveuse||''}`], ...(etv.zone?[['Zone', etv.zone]]:[]),
+      lignes:[...(env.code_trace?[['Code', env.code_trace, true]]:[]), ['Étuveuse', `${etv.code_etuveuse?etv.code_etuveuse+' ':''}${etv.nom_etuveuse||''}`], ...(etv.zone?[['Zone', etv.zone]]:[]),
         ['Lot', lot.numero_lot||'—'], ...(orig.origines[env.lot_id]?.refs?.length?[['Achat', orig.origines[env.lot_id].refs.join(', ')]]:[]),
         ...(env.vehicule?[['Véhicule', env.vehicule]]:[]), ...(env.convoyeur?[['Convoyeur', env.convoyeur]]:[]), null, ['Produit', 'Paddy à étuver']],
       total:['PADDY CONFIÉ', fmtKg(env.quantite_envoyee_kg)], mentions:env.commentaire,
@@ -11382,7 +11485,7 @@ function EtvEnvoisPage({ companies, companyId, toast, readOnly=false }) {
     const etv = etvDe(env.etuveuse_id), lot = lotDe(env.lot_id), s = situationEnvoi(env, ajout ? [...d.retours, { ...r, envoi_id:env.id }] : d.retours)
     const traite = +r.paddy_traite_kg||0, recu = +r.riz_etuve_recu_kg||0
     openPrintWindow(ticketHtml(company, { titre:'BON DE RÉCEPTION (RETOUR ÉTUVEUSE)', numero:env.numero, date:dateDoc(r.date_retour),
-      lignes:[['Étuveuse', etv.nom_etuveuse||''], ['Lot', lot.numero_lot||'—'], ['Envoi du', dateDoc(env.date_envoi)], null,
+      lignes:[...(env.code_trace?[['Code', env.code_trace, true]]:[]), ['Étuveuse', etv.nom_etuveuse||''], ['Lot', lot.numero_lot||'—'], ['Envoi du', dateDoc(env.date_envoi)], null,
         ['Paddy traité', fmtKg(traite)], ['Riz étuvé reçu', fmtKg(recu), true], ['Déchets', fmtKg(r.dechets_kg)],
         ['Rendement', traite>0?`${(recu/traite*100).toFixed(1)} %`:'—'], ...(r.humidite?[['Humidité', `${nbFr(r.humidite)} %`]]:[]), null,
         ['Paddy confié', fmtKg(env.quantite_envoyee_kg)], ['Déjà soldé', fmtKg(s.traite)]],
@@ -11394,7 +11497,7 @@ function EtvEnvoisPage({ companies, companyId, toast, readOnly=false }) {
     const etv = etvDe(env.etuveuse_id), lot = lotDe(env.lot_id), s = situationEnvoi(env, ajout ? [...d.retours, { ...r, envoi_id:env.id }] : d.retours)
     const ecart = (+r.paddy_traite_kg||0) - (+r.riz_etuve_recu_kg||0) - (+r.dechets_kg||0)
     openPrintWindow(gabaritDocumentHtml({ comp:company, titre:'FICHE DE RETRAIT', numero:env.numero, date:dateDoc(r.date_retour),
-      infos:[['Envoi du', dateDoc(env.date_envoi)], ['Lot de production', lot.numero_lot||'—'], ['Statut de l\'envoi', STATUTS_ENVOI[s.statut][0]]],
+      infos:[['Code traçabilité', env.code_trace||''], ['Envoi du', dateDoc(env.date_envoi)], ['Lot de production', lot.numero_lot||'—'], ['Statut de l\'envoi', STATUTS_ENVOI[s.statut][0]]],
       tiersLabel:'Étuveuse', tiers:{ nom:`${etv.code_etuveuse?etv.code_etuveuse+' — ':''}${etv.nom_etuveuse||''}`, adresse:etv.zone },
       colonnes:[{label:'Retrait'},{label:'Quantité (kg)',align:'d',largeur:'25%'}],
       lignes:[['Paddy traité (soldé sur l\'envoi)', nbFr(r.paddy_traite_kg)], ['<strong>Riz étuvé reçu</strong>', `<strong>${nbFr(r.riz_etuve_recu_kg)}</strong>`], ['Déchets', nbFr(r.dechets_kg)],
@@ -11452,7 +11555,7 @@ function EtvEnvoisPage({ companies, companyId, toast, readOnly=false }) {
               {visibles.map(e => { const s = sit(e), etv = etvDe(e.etuveuse_id); const retard = s.statut!=='termine' && !e.annule && s.jours > 15
                 return (
                   <TR key={e.id}>
-                    <TD bold>{e.numero}</TD><TD sm>{dateDoc(e.date_envoi)}{retard && <div style={{ color:'#dc2626', fontSize:11 }}>⚠️ {s.jours} j</div>}</TD>
+                    <TD bold>{e.numero}<CodeTrace code={e.code_trace} /></TD><TD sm>{dateDoc(e.date_envoi)}{retard && <div style={{ color:'#dc2626', fontSize:11 }}>⚠️ {s.jours} j</div>}</TD>
                     <TD>{lotDe(e.lot_id).numero_lot||'—'}</TD><TD>{etv.nom_etuveuse||'—'}</TD>
                     <TD right>{nbFr(e.quantite_envoyee_kg)}</TD><TD right>{nbFr(s.traite)}</TD><TD right>{nbFr(s.recu)}</TD>
                     <TD right><strong>{nbFr(s.restant)}</strong></TD><TD right>{s.rendement!=null?`${s.rendement} %`:'—'}</TD>
