@@ -57,26 +57,23 @@ CREATE TABLE IF NOT EXISTS compta_compteurs (
   valeur     INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (company_id, cle)
 );
--- Accès : mêmes règles que les fournisseurs de la société.
-DO $$
-DECLARE pol RECORD; rls_on BOOLEAN;
-BEGIN
-  FOR pol IN SELECT policyname FROM pg_policies WHERE schemaname='public' AND tablename='compta_compteurs' LOOP
-    EXECUTE format('DROP POLICY IF EXISTS %I ON compta_compteurs', pol.policyname);
-  END LOOP;
-  SELECT relrowsecurity INTO rls_on FROM pg_class WHERE oid = 'public.compta_fournisseurs'::regclass;
-  IF rls_on THEN
-    ALTER TABLE compta_compteurs ENABLE ROW LEVEL SECURITY;
-    FOR pol IN SELECT * FROM pg_policies WHERE schemaname='public' AND tablename='compta_fournisseurs' LOOP
-      EXECUTE format('CREATE POLICY %I ON compta_compteurs AS %s FOR %s TO %s %s %s',
-        pol.policyname, pol.permissive, pol.cmd,
-        (SELECT string_agg(quote_ident(r), ', ') FROM unnest(pol.roles) r),
-        -- les règles des fournisseurs citent parfois user_id : sans objet ici
-        CASE WHEN pol.qual IS NOT NULL THEN 'USING (' || replace(pol.qual, 'user_id', 'NULL::uuid') || ')' ELSE '' END,
-        CASE WHEN pol.with_check IS NOT NULL THEN 'WITH CHECK (' || replace(pol.with_check, 'user_id', 'NULL::uuid') || ')' ELSE '' END);
-    END LOOP;
-  END IF;
-END $$;
+-- Accès : utilisateurs de la société (même règle que les bons de stock).
+ALTER TABLE compta_compteurs ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "p_compteurs" ON compta_compteurs;
+CREATE POLICY "p_compteurs" ON compta_compteurs
+  FOR ALL TO authenticated
+  USING (
+    is_super_admin()
+    OR company_id IN (SELECT id FROM compta_companies WHERE user_id = auth.uid())
+    OR company_id = get_my_company_id()
+    OR has_assigned_company_access(company_id)
+  )
+  WITH CHECK (
+    is_super_admin()
+    OR company_id IN (SELECT id FROM compta_companies WHERE user_id = auth.uid())
+    OR company_id = get_my_company_id()
+    OR has_assigned_company_access(company_id)
+  );
 GRANT SELECT, INSERT, UPDATE ON compta_compteurs TO authenticated;
 
 -- Numéro suivant pour (société, clé) : 1, 2, 3… sans trou ni doublon.
