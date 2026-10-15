@@ -3672,6 +3672,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
   const tiersVal = (it,c) => ({
     'Type': it.type==='morale'?'Société':'Physique',
     'Catégorie': libelleCategorieFrs(it.categorie).replace(/^\S+\s/, ''),
+    'Code': it.code_trace||'',
     'Nom': displayName(it),
     'Prénom': it.prenom||'',
     'Téléphone': it.telephone||'',
@@ -4412,6 +4413,40 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     setMentorModalOpen(false)
   }
 
+  // ── LISTE DES CODES PRODUCTEURS (PDF / Excel), selon les filtres en cours ──
+  const listeCodesProducteurs = () => (isFourn ? filtered : [])
+    .filter(i => filterCategorie ? true : estProducteur(i))
+    .sort((a,b) => String(a.code_trace||'~').localeCompare(String(b.code_trace||'~'), 'fr', { numeric:true }))
+  const colonnesCodes = ['N°', 'Code producteur', 'Nom et prénom(s)', 'Téléphone', 'E-mail', 'N° IFU', 'N° CIP', 'Village / commune', 'Coopérative']
+  const ligneCode = (it, i) => [i+1, it.code_trace||'', displayName(it), it.telephone||'', it.email||'', it.ifu||'', it.cip||'',
+    [it.village, it.commune].filter(Boolean).join(' / '), it.cooperative_affiliee||'']
+  const exportCodesExcel = async () => {
+    const liste = listeCodesProducteurs()
+    if (!liste.length) { toast.error('Aucun producteur dans la liste filtrée.'); return }
+    const XLSX = await import('https://cdn.sheetjs.com/xlsx-0.20.0/package/xlsx.mjs')
+    const ws = XLSX.utils.aoa_to_sheet([
+      ['Liste des codes producteurs'],
+      [`${companyName} — ${liste.length} producteur(s) — ${liste.filter(i=>i.email).length} avec e-mail — exporté le ${new Date().toLocaleDateString('fr-FR')}`],
+      [],
+      colonnesCodes,
+      ...liste.map(ligneCode),
+    ])
+    ws['!cols'] = [5, 14, 30, 14, 30, 16, 13, 22, 22].map(w => ({ wch:w }))
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, 'Codes producteurs')
+    XLSX.writeFile(wb, `codes_producteurs_${(companyName||'societe').replace(/[^A-Za-z0-9]+/g,'_').slice(0,40)}.xlsx`)
+    toast.success('Fichier Excel téléchargé !')
+  }
+  const exportCodesPdf = () => {
+    const liste = listeCodesProducteurs()
+    if (!liste.length) { toast.error('Aucun producteur dans la liste filtrée.'); return }
+    printFilteredList({ title:'Liste des codes producteurs', companyName,
+      subtitle:`${liste.length} producteur(s) — ${liste.filter(i=>i.email).length} avec e-mail — ${liste.filter(i=>i.ifu).length} avec IFU`,
+      headers:colonnesCodes.map(label => ({ label })),
+      rows:liste.map((it,i) => ligneCode(it,i).map(v => echapHtml(v))),
+      filename:'codes_producteurs' })
+  }
+
   const exportExcelMentors = () => {
     if (mentors.length===0) { toast.error('Aucun fournisseur n\'a de mentor renseigné.'); return }
     const rows = mentors.map(m => {
@@ -4734,7 +4769,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
 
   // ── Colonnes disponibles pour les exports PDF & Excel (filtrables) ────────
   const allColumns = [
-    {key:'Type', w:6},...(isFourn?[{key:'Catégorie', w:9}]:[]),{key:'Nom', w:16},
+    {key:'Type', w:6},...(isFourn?[{key:'Catégorie', w:9},{key:'Code', w:9}]:[]),{key:'Nom', w:16},
     ...(isFourn?[{key:'Prénom', w:12}]:[]),
     {key:'Téléphone', w:9},{key:'Provenance', w:9},
     ...(isFourn?[{key:'Coopérative', w:8},{key:'N° Contrat', w:7}]:[]),
@@ -4822,6 +4857,8 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
               isFourn && items.length>0 && { couleur:'#7c3aed', label:'🎓 Fiches Mentors', onClick:openMentorModal },
               isFourn && items.length>0 && { couleur:'#7c3aed', label:'🖨️ Toutes les fiches Mentors', onClick:openMentorModalAll },
               isFourn && items.length>0 && { couleur:'#16a34a', label:'📊 Liste Mentors', onClick:exportExcelMentors },
+              isFourn && items.length>0 && { couleur:'#0f766e', label:'🏷️ Codes producteurs (PDF)', onClick:exportCodesPdf },
+              isFourn && items.length>0 && { couleur:'#0f766e', label:'🏷️ Codes producteurs (Excel)', onClick:exportCodesExcel },
               isFourn && items.length>0 && { couleur:'#0369a1', label:`📄 Toutes les PV de réception (${filtered.filter(i=>i.type!=='morale').length})`, onClick:printPvReceptionTout },
               isFourn && items.length>0 && null,
               isFourn && items.length>0 && { couleur:'#ea580c', label:'👷 Liste des ouvriers (PDF)', onClick:printListeOuvriers },
@@ -4957,7 +4994,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
                   <TD>{it.telephone||'—'}</TD>
                   <TD>{it.provenance||'—'}</TD>
                   {extraFields?.names?.map(k=><TD key={k}>{it[k]||'—'}</TD>)}
-                  <TD sm>{it.ifu||'—'}</TD>
+                  <TD sm>{it.ifu||'—'}{it.email && <div style={{fontSize:11,color:'#2563eb',wordBreak:'break-all'}}>✉ {it.email}</div>}</TD>
                   <TD sm>{it.cip||'—'}</TD>
                   <TD>
                     <ActionsMenu sm items={[
