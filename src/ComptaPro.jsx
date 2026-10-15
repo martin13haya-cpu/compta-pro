@@ -2607,9 +2607,11 @@ const NAV = [
   { id:'reglements_clients',   icon:'💳', label:'Règlements Clients' },
   { id:'reglements_fourn',     icon:'💸', label:'Règlements Fournisseurs' },
   { id:'prestations',        icon:'🛠️',  label:'Prestations' },
+  { section:'Traçabilité' },
+  { id:'registre_tracabilite', icon:'📒', label:'Registre de traçabilité (13 fiches)' },
+  { id:'tracabilite',        icon:'🔗', label:'Traçabilité des lots (QR)' },
   { section:'Production' },
   { id:'suivi_lot',          icon:'🔎', label:'Suivi de lot' },
-  { id:'tracabilite',        icon:'🔗', label:'Traçabilité (QR)' },
   { id:'lots',               icon:'🏭', label:'Lots Production' },
   { id:'etuvage',            icon:'🔥', label:'Étuvage' },
   { id:'decorticage',        icon:'⚙️',  label:'Décorticage' },
@@ -8230,7 +8232,7 @@ const ALL_SECTIONS = [
   ['dashboard','Tableau de bord'],['companies','Sociétés'],['clients','Clients'],
   ['fournisseurs','Fournisseurs'],['stock','Articles & Stock'],['mouvements','Mouvements'],['bons_stock',"Bons d'entrée / sortie"],
   ['inventaire','Inventaire'],['commercial','Documents commerciaux'],['reglements_clients','Règlements Clients'],['reglements_fourn','Règlements Fournisseurs'],
-  ['prestations','Prestations'],['suivi_lot','Suivi de lot'],['tracabilite','Traçabilité (QR)'],['lots','Lots Production'],
+  ['prestations','Prestations'],['suivi_lot','Suivi de lot'],['registre_tracabilite','Registre de traçabilité'],['tracabilite','Traçabilité (QR)'],['lots','Lots Production'],
   ['etuvage','Étuvage'],['decorticage','Décorticage'],['calibrage','Calibrage'],
   ['tri_optique','Tri optique'],['conditionnement','Conditionnement'],
   ['etv_repertoire','Répertoire Étuveuses'],['etv_envois','Envois aux étuveuses'],['etv_performance','Performance des étuveuses'],['etv_avances','Avances'],
@@ -8249,7 +8251,8 @@ const SECTION_GROUPS = [
   {group:'Référentiel', ids:['companies','clients','fournisseurs']},
   {group:'Stock', ids:['stock','mouvements','bons_stock','inventaire']},
   {group:'Commercial', ids:['commercial','reglements_clients','reglements_fourn','prestations']},
-  {group:'Production', ids:['suivi_lot','tracabilite','lots','etuvage','decorticage','calibrage','tri_optique','conditionnement']},
+  {group:'Traçabilité', ids:['registre_tracabilite','tracabilite']},
+  {group:'Production', ids:['suivi_lot','lots','etuvage','decorticage','calibrage','tri_optique','conditionnement']},
   {group:'Étuveuses', ids:['etv_repertoire','etv_envois','etv_performance','etv_avances','etv_bc','etv_br','etv_entrees','etv_sorties','etv_inventaire','etv_tresorerie']},
   {group:'Achats', ids:['achats_groupes','achats','lots_semi_finis','epierrage','etuvage_paiements']},
   {group:'Documents', ids:['docs_admin']},
@@ -11308,6 +11311,362 @@ async function chargerOriginesLots(companyId, lotIds) {
   return { groupes:gr || [], origines:Object.fromEntries(Object.entries(parLot).map(([k, x]) => [k, { refs:[...x.refs], producteurs:x.producteurs.size, kg:Math.round(x.kg * 1000) / 1000 }])) }
 }
 const texteOrigineLot = o => !o ? '' : `${o.refs.slice(0, 3).join(', ')}${o.refs.length > 3 ? '…' : ''}${o.refs.length ? ' · ' : ''}${o.producteurs} producteur${o.producteurs > 1 ? 's' : ''} · ${fmtKg(o.kg)}`
+
+// ── REGISTRE DE TRAÇABILITÉ DU RIZ PARBOILISÉ (13 fiches) ────────────────────
+// Reprend le modèle « Fiches_Tracabilite_Riz_Completee » : producteur →
+// parcelle → semence → cultures → récolte → séchage → stockage → vente →
+// transformation (10.1 à 10.6) → conditionnement → sac → client. Les fiches
+// sont reliées par les codes (producteur, parcelle, lot, sac). Une ligne =
+// un enregistrement de compta_tracabilite_registres (donnees JSON).
+// Types de colonne : t texte, n nombre, d date, dt date et heure, on oui/non,
+// s liste (o = options), c calculée (f), code (src : producteur | parcelle | lot).
+const MSG_SCRIPT_REGISTRE = "Exécutez d'abord le script supabase/migrations/20261015_registre_tracabilite.sql dans Supabase (projet ComptaPro, SQL Editor)."
+const nbT = v => { const n = parseFloat(String(v ?? '').replace(/\s/g, '').replace(',', '.')); return isFinite(n) ? n : 0 }
+const ratioT = (a, b, k = 1, dec = 2) => nbT(b) > 0 && nbT(a) > 0 ? Math.round(nbT(a) / nbT(b) * k * 10 ** dec) / 10 ** dec : ''
+const joursEntre = (d1, d2) => d1 && d2 ? Math.max(0, Math.round((new Date(d2) - new Date(d1)) / 86400000)) + ' j' : ''
+const ON = ['Oui', 'Non']
+const FICHES_TRACA = [
+  { id:'f1', num:'1', titre:'IDENTIFICATION DU PRODUCTEUR', aide:'Renseigner un producteur par ligne — minimum 20 producteurs', cols:[
+    { k:'nom', l:'Nom et prénom', t:'t', req:true, w:16 }, { k:'nb_emploi', l:"Nbre d'emploi", t:'n' }, { k:'code_producteur', l:'Code producteur', t:'code', src:'producteur', w:11 },
+    { k:'village', l:'Village / Localité', t:'t' }, { k:'cooperative', l:'Coopérative / Groupement', t:'t' }, { k:'contact', l:'Contact', t:'t' },
+    { k:'sexe', l:'Sexe', t:'s', o:['Homme', 'Femme'] }, { k:'age', l:'Âge', t:'n' }, { k:'situation_matrimoniale', l:'Situation matrimoniale', t:'s', o:['Célibataire', 'Marié(e)', 'Veuf(ve)', 'Divorcé(e)'] },
+    { k:'nb_enfants', l:"Nombre d'enfants", t:'n' }, { k:'personnes_charge', l:'Personnes à charge', t:'n' }, { k:'handicap', l:'Situation de handicap', t:'on' },
+    { k:'superficie', l:'Superficie totale exploitée (ha)', t:'n' }, { k:'campagne_agricole', l:'Campagne agricole', t:'t' }, { k:'kit', l:'Bénéficiaire du kit (Oui/Non)', t:'on' },
+    { k:'responsable', l:'Responsable enregistrement', t:'t' }] },
+  { id:'f2', num:'2', titre:'PARCELLE / BAS-FOND', aide:'Une ligne par parcelle ou bas-fond — minimum 20 parcelles', cols:[
+    { k:'code_producteur', l:'Code producteur', t:'code', src:'producteur', req:true }, { k:'code_parcelle', l:'Code unique parcelle', t:'t', req:true, auto:'parcelle' },
+    { k:'nom_bas_fond', l:'Nom du bas-fond', t:'t' }, { k:'localisation', l:'Localisation', t:'t' }, { k:'superficie', l:'Superficie (ha)', t:'n' },
+    { k:'type_sol', l:'Type de sol', t:'s', o:['Argileux', 'Limoneux', 'Sableux', 'Argilo-limoneux', 'Limono-sableux', 'Autre'] },
+    { k:'hydrologie', l:'Situation hydrologique', t:'s', o:['Bas-fond inondable', 'Bas-fond non inondable', 'Plaine', 'Plateau', 'Autre'] },
+    { k:'irrigation', l:"Système d'irrigation", t:'s', o:['Pluvial', 'Gravitaire', 'Pompage', 'Maîtrise totale', 'Aucun'] },
+    { k:'date_mise_culture', l:'Date mise en culture', t:'d' }, { k:'precedent', l:'Précédent cultural', t:'t' }, { k:'gps', l:'Coordonnées GPS', t:'t' }] },
+  { id:'f3', num:'3', titre:'TRAÇABILITÉ DE LA SEMENCE', aide:'Une ligne par lot de semence — minimum 20 lots', cols:[
+    { k:'code_parcelle', l:'Code producteur / parcelle', t:'code', src:'parcelle', req:true }, { k:'variete', l:'Variété de riz', t:'t' },
+    { k:'origine', l:'Origine de la semence', t:'s', o:['Semence certifiée', 'Semence propre', 'Achat marché', 'Don / projet', 'Autre'] },
+    { k:'fournisseur', l:'Fournisseur', t:'t' }, { k:'numero_lot', l:'Numéro de lot', t:'t' }, { k:'quantite', l:'Quantité utilisée (kg)', t:'n' },
+    { k:'date_reception', l:'Date de réception', t:'d' }, { k:'date_semis', l:'Date de semis', t:'d' }, { k:'traitement', l:'Traitement des semences', t:'t' }] },
+  { id:'f4', num:'4', titre:'OPÉRATIONS CULTURALES', aide:'Une ligne par opération réalisée — minimum 20 opérations', cols:[
+    { k:'code_parcelle', l:'Code parcelle', t:'code', src:'parcelle', req:true },
+    { k:'operation', l:'Opération', t:'s', o:['Labour', 'Mise en boue', 'Planage', 'Pépinière', 'Semis', 'Repiquage', 'Désherbage', 'Fertilisation NPK', 'Fertilisation urée', 'Traitement phytosanitaire', 'Irrigation', 'Gardiennage', 'Autre'] },
+    { k:'date', l:'Date', t:'d' }, { k:'produit', l:'Produit / Technique', t:'t' }, { k:'dose', l:'Quantité / Dose', t:'t' }, { k:'responsable', l:'Responsable', t:'t' }, { k:'observations', l:'Observations', t:'t' }] },
+  { id:'f5', num:'5', titre:'SUIVI DE LA CULTURE', aide:'Une ligne par observation / passage sur la parcelle — minimum 20 observations', cols:[
+    { k:'code_parcelle', l:'Code parcelle', t:'code', src:'parcelle', req:true }, { k:'date_levee', l:'Date de levée', t:'d' }, { k:'date_repiquage', l:'Date de repiquage', t:'d' },
+    { k:'stade', l:'Stade de développement', t:'s', o:['Levée', 'Tallage', 'Montaison', 'Épiaison', 'Floraison', 'Maturation'] },
+    { k:'maladies', l:'Maladies observées', t:'t' }, { k:'ravageurs', l:'Ravageurs observés', t:'t' }, { k:'traitements', l:'Traitements effectués', t:'t' },
+    { k:'incidents', l:'Incidents climatiques', t:'s', o:['Aucun', 'Inondation', 'Sécheresse', 'Vent', 'Autre'] }, { k:'main_oeuvre', l:"Main-d'œuvre utilisée", t:'t' }, { k:'observations', l:'Observations', t:'t' }] },
+  { id:'f6', num:'6', titre:'RÉCOLTE ET RENDEMENT', aide:'Une ligne par récolte — minimum 20 récoltes', cols:[
+    { k:'code_parcelle', l:'Code parcelle', t:'code', src:'parcelle', req:true }, { k:'date_recolte', l:'Date de récolte', t:'d' }, { k:'superficie', l:'Superficie récoltée (ha)', t:'n' },
+    { k:'quantite', l:'Quantité paddy récoltée (kg)', t:'n' }, { k:'nb_sacs', l:'Nombre de sacs', t:'n' },
+    { k:'poids_moyen', l:'Poids moyen du sac (kg)', t:'c', f:r => ratioT(r.quantite, r.nb_sacs) }, { k:'rendement', l:'Rendement (kg/ha)', t:'c', f:r => ratioT(r.quantite, r.superficie, 1, 0) },
+    { k:'methode', l:'Méthode de récolte', t:'s', o:['Manuelle', 'Mécanique', 'Mixte'] }, { k:'lot_recolte', l:'Identifiant lot de récolte', t:'t', auto:'recolte' }] },
+  { id:'f7', num:'7', titre:'SÉCHAGE', aide:'Une ligne par lot séché — minimum 20 lots', cols:[
+    { k:'code_lot', l:'Code du lot', t:'code', src:'lot', req:true }, { k:'date_debut', l:'Date début séchage', t:'d' }, { k:'date_fin', l:'Date fin séchage', t:'d' },
+    { k:'methode', l:'Méthode', t:'s', o:['Aire de séchage', 'Bâche', 'Séchoir', 'Autre'] }, { k:'hum_init', l:'Humidité initiale (%)', t:'n' }, { k:'hum_fin', l:'Humidité finale (%)', t:'n' },
+    { k:'duree', l:'Durée', t:'c', f:r => joursEntre(r.date_debut, r.date_fin) }, { k:'responsable', l:'Responsable', t:'t' }, { k:'pertes', l:'Pertes éventuelles', t:'t' }] },
+  { id:'f8', num:'8', titre:'STOCKAGE DU PADDY', aide:'Une ligne par mouvement de stock — minimum 20 mouvements', cols:[
+    { k:'code_lot', l:'Code du lot', t:'code', src:'lot', req:true }, { k:'magasin', l:'Magasin', t:'t' }, { k:'emplacement', l:'Emplacement', t:'t' }, { k:'date_entree', l:"Date d'entrée", t:'d' },
+    { k:'qte_entree', l:'Quantité entrée (kg)', t:'n' }, { k:'qte_restante', l:'Quantité restante (kg)', t:'n' }, { k:'conditions', l:'Conditions de stockage', t:'t' },
+    { k:'traitement', l:'Traitement anti-insectes', t:'t' }, { k:'date_sortie', l:'Date de sortie', t:'d' }, { k:'destination', l:'Destination du lot', t:'t' }] },
+  { id:'f9', num:'9', titre:'VENTE DU PADDY', aide:'Une ligne par mouvement de vente — minimum 20 mouvements', cols:[
+    { k:'code_lot', l:'Code du lot', t:'code', src:'lot', req:true }, { k:'magasin', l:'Magasin', t:'t' }, { k:'emplacement', l:'Emplacement', t:'t' }, { k:'date_vente', l:'Date de la vente', t:'d' },
+    { k:'qte_vendue', l:'Quantité vendue (kg)', t:'n' }, { k:'qte_restante', l:'Quantité restante (kg)', t:'n' },
+    { k:'mode_vente', l:'Mode de vente', t:'s', o:['Achat groupé', 'Vente individuelle', 'Contrat', 'Autre'] }, { k:'mode_paiement', l:'Mode de paiement', t:'s', o:['Espèces', 'Mobile money', 'Virement', 'Chèque', 'Crédit'] },
+    { k:'intrants', l:'Constitution des intrants (Oui/Non)', t:'on' }, { k:'motif', l:'Motif (cas de non renouvellement)', t:'t' }] },
+  { id:'f10_1', num:'10.1', groupe:'10', titre:'RÉCEPTION DU PADDY', aide:'Un lien direct doit être établi entre le lot de paddy entrant et le lot de riz fini produit — chaque étape fait l\'objet d\'un enregistrement distinct, minimum 20 lots', cols:[
+    { k:'code_lot', l:'Code lot paddy entrant', t:'code', src:'lot', req:true }, { k:'date_heure', l:'Date et heure de réception', t:'dt' }, { k:'origine', l:'Origine du lot (producteur/magasin)', t:'t' },
+    { k:'quantite', l:'Quantité reçue (kg)', t:'n' }, { k:'humidite', l:'Humidité à réception (%)', t:'n' }, { k:'impuretes', l:"Taux d'impuretés (%)", t:'n' },
+    { k:'aspect', l:'Aspect visuel (couleur, odeur)', t:'t' }, { k:'controleur', l:'Contrôleur réception', t:'t' }] },
+  { id:'f10_2', num:'10.2', groupe:'10', titre:'ÉTUVAGE', cols:[
+    { k:'code_lot', l:'Code lot', t:'code', src:'lot', req:true }, { k:'date_heure', l:'Date/heure début étuvage', t:'dt' }, { k:'trempage_h', l:'Durée de trempage (h)', t:'n' },
+    { k:'temp_trempage', l:'Température trempage (°C)', t:'n' }, { k:'cuisson_min', l:'Durée cuisson vapeur (min)', t:'n' }, { k:'temp_vapeur', l:'Température vapeur (°C)', t:'n' },
+    { k:'quantite', l:'Quantité étuvée (kg)', t:'n' }, { k:'nb_emploi', l:"Nbre d'emploi", t:'n' }, { k:'etuveuse', l:"Nom et prénoms de l'Étuveuse", t:'t' },
+    { k:'personnes_charge', l:'Nbre de personnes à charge', t:'n' }, { k:'observations', l:'Observations', t:'t' }, { k:'operateur', l:'Opérateur', t:'t' }] },
+  { id:'f10_3', num:'10.3', groupe:'10', titre:'SÉCHAGE (APRÈS ÉTUVAGE)', cols:[
+    { k:'code_lot', l:'Code lot', t:'code', src:'lot', req:true }, { k:'date_heure', l:'Date/heure début séchage', t:'dt' },
+    { k:'methode', l:'Méthode de séchage', t:'s', o:['Aire de séchage', 'Bâche', 'Séchoir', 'Autre'] }, { k:'hum_avant', l:'Humidité avant séchage (%)', t:'n' },
+    { k:'hum_apres', l:'Humidité après séchage (%)', t:'n' }, { k:'duree_h', l:'Durée du séchage (h)', t:'n' }, { k:'temperature', l:'Température ambiante/séchoir (°C)', t:'n' }, { k:'operateur', l:'Opérateur', t:'t' }] },
+  { id:'f10_4', num:'10.4', groupe:'10', titre:'DÉCORTICAGE', cols:[
+    { k:'code_lot', l:'Code lot', t:'code', src:'lot', req:true }, { k:'date_heure', l:'Date/heure décorticage', t:'dt' }, { k:'machine', l:'Machine utilisée', t:'t' },
+    { k:'qte_entree', l:'Quantité entrée (kg)', t:'n' }, { k:'taux_usinage', l:"Taux d'usinage (%)", t:'c', f:r => ratioT(r.qte_obtenue, r.qte_entree, 100, 1) },
+    { k:'qte_obtenue', l:'Quantité riz étuvé obtenue (kg)', t:'n' }, { k:'brisures', l:'Quantité brisures (kg)', t:'n' }, { k:'sous_produits', l:'Sous-produits (son, balle)', t:'t' }, { k:'operateur', l:'Opérateur', t:'t' }] },
+  { id:'f10_5', num:'10.5', groupe:'10', titre:'TRI / CALIBRAGE', cols:[
+    { k:'code_lot', l:'Code lot', t:'code', src:'lot', req:true }, { k:'date_heure', l:'Date/heure de tri', t:'dt' },
+    { k:'methode', l:'Méthode de tri', t:'s', o:['Manuel', 'Trieur optique', 'Calibreur', 'Mixte'] }, { k:'qte_triee', l:'Quantité triée (kg)', t:'n' },
+    { k:'premier_choix', l:'Riz premier choix obtenu (kg)', t:'n' }, { k:'ecarts', l:'Brisures/écarts triés (kg)', t:'n' },
+    { k:'taux_tri', l:'Taux de tri (%)', t:'c', f:r => ratioT(r.premier_choix, r.qte_triee, 100, 1) }, { k:'responsable', l:'Responsable du tri', t:'t' }] },
+  { id:'f10_6', num:'10.6', groupe:'10', titre:'BILAN GLOBAL DE LA TRANSFORMATION', cols:[
+    { k:'lot_paddy', l:'Code lot paddy entrant', t:'code', src:'lot', req:true }, { k:'lot_fini', l:'Code nouveau lot riz fini', t:'t', auto:'fini' },
+    { k:'qte_paddy', l:'Quantité totale paddy entrée (kg)', t:'n' }, { k:'qte_fini', l:'Quantité totale riz fini obtenue (kg)', t:'n' },
+    { k:'pertes', l:'Pertes totales de transformation (kg)', t:'c', f:r => nbT(r.qte_paddy) > 0 ? Math.round((nbT(r.qte_paddy) - nbT(r.qte_fini)) * 100) / 100 : '' },
+    { k:'rendement', l:'Rendement global (%)', t:'c', f:r => ratioT(r.qte_fini, r.qte_paddy, 100, 1) }, { k:'responsable', l:'Responsable de la transformation', t:'t' }] },
+  { id:'f11', num:'11', titre:'CONDITIONNEMENT', aide:'Une ligne par lot conditionné — minimum 20 lots', cols:[
+    { k:'code_lot', l:'Code du lot', t:'code', src:'lot', req:true }, { k:'variete', l:'Variété', t:'t' }, { k:'date', l:'Date de conditionnement', t:'d' },
+    { k:'poids_unitaire', l:'Poids unitaire (kg)', t:'n' }, { k:'nb_sacs', l:'Nombre de sacs', t:'n' },
+    { k:'poids_total', l:'Poids total (kg)', t:'c', f:r => nbT(r.poids_unitaire) && nbT(r.nb_sacs) ? Math.round(nbT(r.poids_unitaire) * nbT(r.nb_sacs) * 100) / 100 : '' },
+    { k:'code_trace', l:'N° série / code traçabilité', t:'t' }, { k:'operateur', l:'Opérateur', t:'t' },
+    { k:'emballage', l:"Type d'emballage", t:'s', o:['Sac tissé PP', 'Sac jute', 'Sachet', 'Autre'] }, { k:'date_production', l:'Date de production', t:'d' }, { k:'dlc', l:'DLC / conservation', t:'t' }] },
+  { id:'f12', num:'12', titre:'TRAÇABILITÉ DU SAC INDIVIDUEL', aide:'Une ligne par sac / code de traçabilité — minimum 20 sacs (ex : BF15-26-RIZ-0037)', cols:[
+    { k:'code_sac', l:'Code du sac', t:'t', req:true }, { k:'lot_fini', l:'Code lot riz fini', t:'t' }, { k:'code_transfo', l:'Code transformation', t:'t' },
+    { k:'lot_paddy', l:'Code lot paddy', t:'code', src:'lot' }, { k:'code_producteur', l:'Code producteur', t:'code', src:'producteur' },
+    { k:'code_parcelle', l:'Code parcelle / bas-fond', t:'code', src:'parcelle' }, { k:'variete', l:'Variété semence', t:'t' },
+    { k:'date_recolte', l:'Date de récolte', t:'d' }, { k:'rendement', l:'Rendement (kg/ha)', t:'n' }] },
+  { id:'f13', num:'13', titre:'REGISTRE DE SORTIE ET COMMERCIALISATION', aide:'Une ligne par sortie / vente — minimum 20 sorties', cols:[
+    { k:'code_lot_sac', l:'Code du lot / sac', t:'t', req:true }, { k:'nb_sacs', l:'Nombre de sacs vendus', t:'n' }, { k:'poids', l:'Poids (kg)', t:'n' },
+    { k:'date_sortie', l:'Date de sortie', t:'d' }, { k:'client', l:'Client / Acheteur', t:'code', src:'client' }, { k:'destination', l:'Destination', t:'t' },
+    { k:'facture', l:'N° facture / bon de livraison', t:'t' }, { k:'transporteur', l:'Transporteur', t:'t' }, { k:'vehicule', l:'Véhicule', t:'t' }, { k:'responsable', l:'Responsable livraison', t:'t' }] },
+]
+const ficheTitre = f => `FICHE ${f.groupe ? `${f.groupe} — TRANSFORMATION DU PADDY · ${f.num}` : f.num} — ${f.titre}`
+const valeurCol = (c, r) => c.t === 'c' ? c.f(r) : c.t === 'd' ? dateDoc(r[c.k]) : c.t === 'dt' ? (r[c.k] ? `${dateDoc(String(r[c.k]).slice(0, 10))} ${String(r[c.k]).slice(11, 16)}` : '') : (r[c.k] ?? '')
+const campagneCourante = () => { const d = new Date(), a = d.getFullYear(); return d.getMonth() >= 3 ? `${a}-${a + 1}` : `${a - 1}-${a}` }
+
+function registreTracaHtml(comp, campagne, fiches, lignesDe) {
+  const c = comp || {}
+  const blocs = fiches.map((f, i) => {
+    const ls = lignesDe(f.id)
+    const corps = ls.map((r, j) => `<tr><td class="c">${j + 1}</td>${f.cols.map(col => `<td class="${['n', 'c'].includes(col.t) ? 'd' : ''}">${echapHtml(valeurCol(col, r))}</td>`).join('')}</tr>`)
+    for (let j = ls.length; j < 20; j++) corps.push(`<tr><td class="c">${j + 1}</td>${f.cols.map(() => '<td></td>').join('')}</tr>`)
+    return `<section${i ? ' class="saut"' : ''}>
+      <h2>${echapHtml(ficheTitre(f))}${f.id === 'f1' ? ` <span class="camp">(campagne de production ${echapHtml(campagne)})</span>` : ''}</h2>
+      ${f.aide ? `<div class="aide">${echapHtml(f.aide)}</div>` : ''}
+      <table><thead><tr><th style="width:3%">N°</th>${f.cols.map(col => `<th>${echapHtml(col.l)}</th>`).join('')}</tr></thead><tbody>${corps.join('')}</tbody></table>
+      <div class="pied"><span>${echapHtml(c.raison_sociale || '')} — campagne ${echapHtml(campagne)}</span><span>Visa du responsable : ____________________</span></div>
+    </section>` }).join('')
+  return `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><title>Registre de traçabilité ${echapHtml(campagne)}</title>
+    <style>
+      @page { size: A4 landscape; margin: 8mm; }
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body { font-family: Tahoma, 'Segoe UI', Arial, sans-serif; color: #111827; font-size: 8pt; }
+      .entete { text-align: center; margin-bottom: 6px; }
+      .entete h1 { font-size: 15pt; letter-spacing: 1px; } .entete .s { font-size: 10pt; font-weight: 700; color: #1d4ed8; }
+      .entete .ch { font-size: 7.5pt; color: #475569; margin-top: 2px; } .entete .soc { font-size: 8.5pt; margin-top: 2px; }
+      h2 { font-size: 10pt; margin: 4px 0 2px; color: #0f172a; } .camp { font-weight: 400; font-size: 9pt; }
+      .aide { font-size: 7.5pt; font-style: italic; color: #475569; margin-bottom: 3px; }
+      table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+      th { border: 1px solid #111827; background: #e5e7eb; padding: 3px 2px; font-size: 6.8pt; line-height: 1.15; text-align: center; vertical-align: middle; overflow-wrap: anywhere; hyphens: auto; }
+      td { border: 1px solid #4b5563; padding: 1px 3px; height: 6.4mm; font-size: 7.4pt; overflow: hidden; word-break: break-word; }
+      td.d { text-align: right; font-variant-numeric: tabular-nums; } td.c { text-align: center; }
+      .pied { display: flex; justify-content: space-between; font-size: 7.5pt; color: #475569; margin-top: 3px; }
+      .saut { break-before: page; page-break-before: always; }
+      .print-btn { position: fixed; top: 8px; right: 8px; background: #2563eb; color: #fff; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; }
+      @media print { .print-btn { display: none; } }
+    </style></head><body>
+    <button class="print-btn" onclick="window.print()">🖨️ Imprimer / PDF</button>
+    <div class="entete"><h1>SYSTÈME DE TRAÇABILITÉ</h1><div class="s">RIZ PARBOILISÉ — DU PRODUCTEUR AU CLIENT</div>
+      <div class="ch">Producteur → Parcelle/Bas-fond → Semences → Préparation → Semis → Entretien → Récolte → Séchage → Stockage → Vente/Transformation → Conditionnement → Sac fini → Client</div>
+      <div class="soc">${echapHtml(c.raison_sociale || '')}${c.code ? ` (${echapHtml(c.code)})` : ''} — campagne ${echapHtml(campagne)}</div></div>
+    ${blocs}</body></html>`
+}
+
+function RegistreTracabilitePage({ companies, companyId, toast, readOnly=false }) {
+  const [campagne, setCampagne] = useState(campagneCourante())
+  const [ficheId, setFicheId] = useState('f1')
+  const [d, setD] = useState({ lignes:[], campagnes:[], fournisseurs:[], lots:[], clients:[], loading:true, erreur:false })
+  const [form, setForm] = useState(null)   // { id?, donnees }
+  const [q, setQ] = useState('')
+  const [saving, setSaving] = useState(false)
+  const company = companies.find(c => c.id === companyId)
+  const fiche = FICHES_TRACA.find(f => f.id === ficheId)
+
+  const charger = useCallback(async () => {
+    if (!companyId) { setD(x => ({ ...x, loading:false })); return }
+    const [{ data:l, error }, { data:camps }, { data:f }, { data:lo }, { data:cl }] = await Promise.all([
+      fetchAllRows(() => supabase.from('compta_tracabilite_registres').select('*').eq('company_id', companyId).eq('campagne', campagne).order('ordre').order('created_at')),
+      supabase.from('compta_tracabilite_registres').select('campagne').eq('company_id', companyId).limit(5000),
+      fetchAllRows(() => supabase.from('compta_fournisseurs').select('*').eq('company_id', companyId)),
+      supabase.from('compta_lots_production').select('*').eq('company_id', companyId).order('created_at', { ascending:false }),
+      supabase.from('compta_clients').select('id,type,nom,nom_societe').eq('company_id', companyId),
+    ])
+    setD({ lignes:l || [], campagnes:[...new Set((camps || []).map(x => x.campagne))], loading:false, erreur:!!error && /compta_tracabilite_registres|schema cache|does not exist/i.test(error.message),
+      fournisseurs:(f || []).filter(x => x.actif !== false && x.type !== 'morale' && estProducteur(x)), lots:lo || [], clients:cl || [] })
+  }, [companyId, campagne])
+  useEffect(() => { charger() }, [charger])
+
+  const lignesDe = fid => d.lignes.filter(l => l.fiche === fid).map(l => ({ ...l.donnees, _id:l.id }))
+  // Listes de codes proposées à la saisie (relient les fiches).
+  const sources = {
+    producteur: d.fournisseurs.filter(f => f.code_trace).map(f => ({ v:f.code_trace, l:nomTiersTraca(f) })),
+    parcelle: lignesDe('f2').filter(r => r.code_parcelle).map(r => ({ v:r.code_parcelle, l:[r.nom_bas_fond, r.code_producteur].filter(Boolean).join(' — ') })),
+    lot: [...d.lots.map(l => ({ v:l.code_trace || l.numero_lot, l:l.numero_lot })), ...lignesDe('f6').filter(r => r.lot_recolte).map(r => ({ v:r.lot_recolte, l:`récolte ${r.code_parcelle || ''}` })),
+      ...lignesDe('f10_6').filter(r => r.lot_fini).map(r => ({ v:r.lot_fini, l:'riz fini' }))].filter(x => x.v),
+    client: d.clients.map(c => ({ v:nomTiersTraca(c), l:'' })).filter(x => x.v),
+  }
+  const lignes = lignesDe(ficheId).filter(r => !q || normAG(fiche.cols.map(c => valeurCol(c, r)).join(' ')).includes(normAG(q)))
+
+  // Codes proposés automatiquement : parcelle KOU-P00042-B01, lot de récolte
+  // <parcelle>-R26, lot de riz fini <lot>-RF.
+  const codeAuto = (col, r) => {
+    if (col.auto === 'parcelle' && r.code_producteur) {
+      const n = lignesDe('f2').filter(x => x.code_producteur === r.code_producteur && x._id !== form?.id).length + 1
+      return `${r.code_producteur}-B${String(n).padStart(2, '0')}`
+    }
+    if (col.auto === 'recolte' && r.code_parcelle) return `${r.code_parcelle}-R${String(r.date_recolte || today()).slice(2, 4)}`
+    if (col.auto === 'fini' && r.lot_paddy) return `${r.lot_paddy}-RF`
+    return ''
+  }
+  // Fiche 12 : la parcelle choisie complète producteur, variété, récolte, rendement.
+  const completerSac = r => {
+    if (ficheId !== 'f12' || !r.code_parcelle) return r
+    const p = lignesDe('f2').find(x => x.code_parcelle === r.code_parcelle) || {}
+    const s = lignesDe('f3').find(x => x.code_parcelle === r.code_parcelle) || {}
+    const rc = lignesDe('f6').find(x => x.code_parcelle === r.code_parcelle) || {}
+    const rdt = FICHES_TRACA.find(f => f.id === 'f6').cols.find(c => c.k === 'rendement').f(rc)
+    return { ...r, code_producteur:r.code_producteur || p.code_producteur || '', variete:r.variete || s.variete || '', date_recolte:r.date_recolte || rc.date_recolte || '',
+      rendement:r.rendement || rdt || '', lot_paddy:r.lot_paddy || rc.lot_recolte || '' }
+  }
+  const setChamp = (k, v) => setForm(f => {
+    let dn = { ...f.donnees, [k]:v }
+    if (k === 'code_producteur' && ficheId === 'f1' && !dn.nom) { const p = d.fournisseurs.find(x => x.code_trace === v); if (p) dn = { ...dn, ...importProducteur(p) } }
+    if (k === 'code_parcelle') dn = completerSac(dn)
+    return { ...f, donnees:dn }
+  })
+  const importProducteur = p => ({ nom:nomTiersTraca(p), code_producteur:p.code_trace || '', village:p.village || p.commune || '', cooperative:p.cooperative_affiliee || '',
+    contact:p.telephone || '', sexe:/^f/i.test(p.genre || '') ? 'Femme' : /^h|^m/i.test(p.genre || '') ? 'Homme' : '', age:p.age || '', handicap:p.handicap ? 'Oui' : 'Non',
+    superficie:p.superficie_bas_fonds || '', campagne_agricole:campagne })
+
+  const nouveau = () => {
+    if (!companyId) return toast.error("Sélectionnez une société en haut de l'écran.")
+    if (d.erreur) return toast.error(MSG_SCRIPT_REGISTRE)
+    setForm({ donnees:ficheId === 'f1' ? { campagne_agricole:campagne } : {} })
+  }
+  const enregistrer = async e => {
+    e.preventDefault()
+    const dn = { ...form.donnees }
+    fiche.cols.forEach(c => { if (c.auto && !dn[c.k]) dn[c.k] = codeAuto(c, dn) })
+    const manque = fiche.cols.find(c => c.req && !String(dn[c.k] ?? '').trim())
+    if (manque) return toast.error(`Renseignez « ${manque.l} ».`)
+    setSaving(true)
+    const uid = (await supabase.auth.getUser()).data?.user?.id
+    const { error } = form.id
+      ? await supabase.from('compta_tracabilite_registres').update({ donnees:dn, updated_at:new Date().toISOString() }).eq('id', form.id)
+      : await supabase.from('compta_tracabilite_registres').insert({ company_id:companyId, user_id:uid, fiche:ficheId, campagne, ordre:lignesDe(ficheId).length + 1, donnees:dn })
+    setSaving(false)
+    if (error) return toast.error(/compta_tracabilite_registres|schema cache|does not exist/i.test(error.message) ? MSG_SCRIPT_REGISTRE : error.message)
+    toast.success('Ligne enregistrée.'); setForm(null); charger()
+  }
+  const supprimer = async r => {
+    if (!confirm('Supprimer cette ligne du registre ?')) return
+    const { error } = await supabase.from('compta_tracabilite_registres').delete().eq('id', r._id)
+    if (error) return toast.error(error.message)
+    charger()
+  }
+  // Fiche 1 / fiche 2 : reprise des producteurs déjà enregistrés.
+  const importerProducteurs = async () => {
+    if (d.erreur) return toast.error(MSG_SCRIPT_REGISTRE)
+    const deja = new Set(lignesDe(ficheId).map(r => r.code_producteur).filter(Boolean))
+    const aImporter = d.fournisseurs.filter(p => p.code_trace && !deja.has(p.code_trace) && (ficheId === 'f1' || p.nom_bas_fonds || p.superficie_bas_fonds))
+    if (!aImporter.length) return toast.error(ficheId === 'f1' ? 'Tous les producteurs codés sont déjà dans la fiche.' : 'Aucun producteur avec un bas-fond à reprendre.')
+    if (!confirm(`Reprendre ${aImporter.length} producteur(s) dans la fiche ${fiche.num} (campagne ${campagne}) ?`)) return
+    const uid = (await supabase.auth.getUser()).data?.user?.id
+    let ordre = lignesDe(ficheId).length
+    const rows = aImporter.map(p => ({ company_id:companyId, user_id:uid, fiche:ficheId, campagne, ordre:++ordre,
+      donnees: ficheId === 'f1' ? importProducteur(p) : { code_producteur:p.code_trace, code_parcelle:`${p.code_trace}-B01`, nom_bas_fond:p.nom_bas_fonds || '',
+        localisation:[p.village, p.arrondissement, p.commune].filter(Boolean).join(', '), superficie:p.superficie_bas_fonds || '' } }))
+    for (let i = 0; i < rows.length; i += 200) {
+      const { error } = await supabase.from('compta_tracabilite_registres').insert(rows.slice(i, i + 200))
+      if (error) return toast.error(/compta_tracabilite_registres|schema cache/i.test(error.message) ? MSG_SCRIPT_REGISTRE : error.message)
+    }
+    toast.success(`${rows.length} ligne(s) ajoutée(s).`); charger()
+  }
+
+  const imprimer = (toutes) => openPrintWindow(registreTracaHtml(company, campagne, toutes ? FICHES_TRACA : [fiche], lignesDe),
+    toutes ? `registre_tracabilite_${campagne}` : `fiche_${fiche.num}_${campagne}`)
+  const exporterExcel = async (toutes) => {
+    const XLSX = await import('https://cdn.sheetjs.com/xlsx-0.20.0/package/xlsx.mjs')
+    const wb = XLSX.utils.book_new()
+    for (const f of toutes ? FICHES_TRACA : [fiche]) {
+      const ls = lignesDe(f.id)
+      const ws = XLSX.utils.aoa_to_sheet([[ficheTitre(f)], [`${company?.raison_sociale || ''} — campagne ${campagne}${f.aide ? ` — ${f.aide}` : ''}`], [],
+        ['N°', ...f.cols.map(c => c.l)], ...ls.map((r, i) => [i + 1, ...f.cols.map(c => { const v = valeurCol(c, r); return ['n', 'c'].includes(c.t) && v !== '' && isFinite(nbT(v)) && !/j$/.test(String(v)) ? nbT(v) : v })])])
+      ws['!cols'] = [{ wch:5 }, ...f.cols.map(c => ({ wch:Math.max(12, Math.min(28, c.l.length)) }))]
+      XLSX.utils.book_append_sheet(wb, ws, `Fiche ${f.num}`.slice(0, 31))
+    }
+    XLSX.writeFile(wb, toutes ? `registre_tracabilite_${campagne}.xlsx` : `fiche_${fiche.num}_${campagne}.xlsx`)
+    toast.success('Fichier Excel téléchargé.')
+  }
+
+  const selStyle = { padding:'7px 10px', borderRadius:8, border:'1px solid #d1d5db', fontSize:13 }
+  const champStyle = { width:'100%', padding:'8px 10px', borderRadius:8, border:'1px solid #d1d5db', fontSize:13, boxSizing:'border-box' }
+  const campagnes = [...new Set([campagneCourante(), campagne, ...d.campagnes])].sort().reverse()
+  return (
+    <div>
+      <PageHeader title="Registre de traçabilité" subtitle={company ? `${company.raison_sociale} — riz parboilisé, du producteur au client (13 fiches)` : "Sélectionnez une société en haut de l'écran"}
+        actions={<ActionsMenu items={[
+          { couleur:'#2563eb', label:`🖨️ Imprimer la fiche ${fiche.num}`, onClick:()=>imprimer(false) },
+          { couleur:'#2563eb', label:'🖨️ Imprimer le registre complet (13 fiches)', onClick:()=>imprimer(true) },
+          null,
+          { couleur:'#16a34a', label:`📊 Excel — fiche ${fiche.num}`, onClick:()=>exporterExcel(false) },
+          { couleur:'#16a34a', label:'📊 Excel — registre complet', onClick:()=>exporterExcel(true) },
+        ]} />} />
+      {d.erreur && <Card style={{ marginBottom:16, background:'#fffbeb', borderColor:'#fcd34d' }}><div style={{ fontSize:13, color:'#92400e' }}>⚠️ {MSG_SCRIPT_REGISTRE}</div></Card>}
+      <Card style={{ marginBottom:12, padding:'12px 16px' }}>
+        <div style={{ display:'flex', gap:10, flexWrap:'wrap', alignItems:'center', marginBottom:10 }}>
+          <span style={{ fontSize:13, fontWeight:600 }}>Campagne</span>
+          <select style={selStyle} value={campagne} onChange={e=>setCampagne(e.target.value)}>{campagnes.map(c => <option key={c} value={c}>{c}</option>)}</select>
+          <button type="button" style={{ ...selStyle, cursor:'pointer', background:'#fff' }} onClick={()=>{ const c = prompt('Nouvelle campagne (ex. 2027-2028) :', campagneCourante()); if (c && /^\d{4}-\d{4}$/.test(c.trim())) setCampagne(c.trim()); else if (c) toast.error('Format attendu : AAAA-AAAA (ex. 2026-2027).') }}>+ Campagne</button>
+          <input style={{ ...selStyle, flex:'1 1 200px' }} placeholder="Rechercher dans la fiche…" value={q} onChange={e=>setQ(e.target.value)} />
+        </div>
+        <div style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
+          {FICHES_TRACA.map(f => { const n = lignesDe(f.id).length, actif = f.id === ficheId
+            return <button key={f.id} type="button" onClick={()=>{ setFicheId(f.id); setQ('') }} title={f.titre}
+              style={{ padding:'6px 10px', borderRadius:8, border:`1px solid ${actif ? '#5b4fd6' : '#d1d5db'}`, background:actif ? '#5b4fd6' : '#fff', color:actif ? '#fff' : '#334155', fontSize:12, cursor:'pointer', fontWeight:actif ? 700 : 500 }}>
+              {f.num}. {f.titre.length > 22 ? f.titre.slice(0, 20) + '…' : f.titre.charAt(0) + f.titre.slice(1).toLowerCase()}{n ? ` (${n})` : ''}</button> })}
+        </div>
+      </Card>
+
+      <Card style={{ padding:'12px 16px' }}>
+        <div style={{ display:'flex', justifyContent:'space-between', gap:10, flexWrap:'wrap', alignItems:'flex-start', marginBottom:10 }}>
+          <div><div style={{ fontWeight:800, fontSize:14.5, color:'#0f172a' }}>{ficheTitre(fiche)}</div>
+            {fiche.aide && <div style={{ fontSize:12, color:'#64748b', fontStyle:'italic' }}>{fiche.aide}</div>}</div>
+          <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+            {!readOnly && ['f1', 'f2'].includes(ficheId) && <Btn sm variant="secondary" onClick={importerProducteurs}>⬇️ {ficheId === 'f1' ? 'Reprendre les producteurs' : 'Reprendre les bas-fonds des producteurs'}</Btn>}
+            {!readOnly && <Btn sm onClick={nouveau}>+ Ajouter une ligne</Btn>}
+          </div>
+        </div>
+        {d.loading ? <div style={{ padding:16 }}>Chargement…</div> : (
+          <div style={{ overflowX:'auto', border:'1px solid #e2e8f0', borderRadius:10 }}>
+            <table style={{ borderCollapse:'collapse', fontSize:12, minWidth:'100%' }}>
+              <thead><tr style={{ background:'#f1f5f9' }}>
+                <th style={{ padding:'7px 6px', fontSize:11, color:'#475569' }}>N°</th>
+                {fiche.cols.map(c => <th key={c.k} style={{ padding:'7px 6px', fontSize:11, color:'#475569', textAlign:['n','c'].includes(c.t) ? 'right' : 'left', minWidth:90, verticalAlign:'bottom' }}>{c.l}</th>)}
+                <th></th></tr></thead>
+              <tbody>
+                {lignes.map((r, i) => (
+                  <tr key={r._id} style={{ borderTop:'1px solid #f1f5f9' }}>
+                    <td style={{ padding:'5px 6px', color:'#64748b' }}>{i + 1}</td>
+                    {fiche.cols.map(c => <td key={c.k} style={{ padding:'5px 6px', textAlign:['n','c'].includes(c.t) ? 'right' : 'left', fontFamily:c.t === 'code' || c.auto ? 'Consolas, monospace' : undefined, color:c.t === 'c' ? '#0f766e' : undefined, whiteSpace:'nowrap' }}>{String(valeurCol(c, r))}</td>)}
+                    <td style={{ padding:'5px 6px', whiteSpace:'nowrap' }}>
+                      {!readOnly && <><button type="button" title="Modifier" onClick={()=>{ const { _id, ...dn } = r; setForm({ id:_id, donnees:dn }) }} style={{ border:'none', background:'none', cursor:'pointer' }}>✏️</button>
+                      <button type="button" title="Dupliquer" onClick={()=>{ const { _id, ...dn } = r; fiche.cols.forEach(c => { if (c.auto) delete dn[c.k] }); setForm({ donnees:dn }) }} style={{ border:'none', background:'none', cursor:'pointer' }}>⧉</button>
+                      <button type="button" title="Supprimer" onClick={()=>supprimer(r)} style={{ border:'none', background:'none', cursor:'pointer' }}>🗑️</button></>}
+                    </td>
+                  </tr>))}
+                {!lignes.length && <tr><td colSpan={fiche.cols.length + 2} style={{ padding:18, textAlign:'center', color:'#94a3b8' }}>{q ? 'Aucune ligne pour cette recherche.' : 'Aucune ligne dans cette fiche pour cette campagne.'}</td></tr>}
+              </tbody>
+            </table>
+          </div>)}
+        <div style={{ fontSize:11.5, color:'#64748b', marginTop:8 }}>{lignesDe(ficheId).length} ligne(s) — l'impression complète la fiche jusqu'à 20 lignes, comme le modèle papier.</div>
+      </Card>
+
+      {Object.entries(sources).map(([src, opts]) => <datalist key={src} id={`traca-${src}`}>{opts.map((o, i) => <option key={src + i} value={o.v}>{o.l}</option>)}</datalist>)}
+      <Modal open={!!form} onClose={()=>setForm(null)} size="xl" title={form ? `${form.id ? 'Modifier' : 'Nouvelle'} ligne — fiche ${fiche.num} : ${fiche.titre.toLowerCase()}` : ''}>
+        {form && <form onSubmit={enregistrer}>
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(220px, 1fr))', gap:12, marginBottom:14 }}>
+            {fiche.cols.map(c => { const v = form.donnees[c.k] ?? ''
+              const lib = <label style={{ display:'block', fontSize:12, fontWeight:600, color:'#374151', marginBottom:4 }}>{c.l}{c.req ? ' *' : ''}</label>
+              if (c.t === 'c') return <div key={c.k}>{lib}<div style={{ ...champStyle, background:'#f0fdfa', color:'#0f766e', fontWeight:700 }}>{String(c.f(form.donnees)) || '—'}</div></div>
+              if (c.t === 's' || c.t === 'on') return <div key={c.k}>{lib}<select style={champStyle} value={v} onChange={e=>setChamp(c.k, e.target.value)}><option value="">—</option>{(c.t === 'on' ? ON : c.o).map(o => <option key={o} value={o}>{o}</option>)}</select></div>
+              return <div key={c.k}>{lib}<input style={champStyle} value={v} list={c.t === 'code' ? `traca-${c.src}` : undefined}
+                type={c.t === 'd' ? 'date' : c.t === 'dt' ? 'datetime-local' : c.t === 'n' ? 'number' : 'text'} step={c.t === 'n' ? 'any' : undefined}
+                placeholder={c.auto ? (codeAuto(c, form.donnees) || 'code proposé automatiquement') : c.t === 'code' ? 'choisir ou saisir un code' : ''}
+                onChange={e=>setChamp(c.k, e.target.value)} /></div> })}
+          </div>
+          {fiche.cols.some(c => c.auto) && <div style={{ fontSize:11.5, color:'#64748b', marginBottom:10 }}>Laissé vide, le code est proposé automatiquement (indiqué en gris dans le champ).</div>}
+          <Row><Btn variant="secondary" onClick={()=>setForm(null)}>Annuler</Btn><Btn type="submit" disabled={saving}>{saving ? '…' : 'Enregistrer'}</Btn></Row>
+        </form>}
+      </Modal>
+    </div>
+  )
+}
 
 const MSG_SCRIPT_ENVOIS = "Exécutez d'abord le script supabase/migrations/20261008_envois_etuveuses.sql dans Supabase (projet ComptaPro, SQL Editor)."
 const estErreurEnvois = e => /compta_envois_etuveuses|compta_retours_etuveuses|schema cache|does not exist/i.test(e?.message||'')
@@ -23615,7 +23974,7 @@ export default function ComptaPro() {
     achats_groupes:'Achats groupés de paddy', achats:'Achats Semi-finis', lots_semi_finis:'Lots Semi-finis', epierrage:'Épierrage', reglements_clients:'Règlements Clients', reglements_fourn:'Règlements Fournisseurs', etuvage_paiements:'Paiements Étuvage',
     docs_admin:'Documents administratifs', parametres:'Paramètres',
     prestations:'Prestations', journal_caisse:'Journal Caisse', journal_banque:'Journal Banque',
-    suivi_lot:'Suivi de Lot', tracabilite:'Traçabilité des lots', journal_mobile:'Journal Mobile Money', plan_comptable:'Plan Comptable', grand_livre:'Grand-Livre', ecritures:'Saisie Comptable', balance:'Balance', etats_financiers:'États Financiers',
+    suivi_lot:'Suivi de Lot', tracabilite:'Traçabilité des lots', registre_tracabilite:'Registre de traçabilité', journal_mobile:'Journal Mobile Money', plan_comptable:'Plan Comptable', grand_livre:'Grand-Livre', ecritures:'Saisie Comptable', balance:'Balance', etats_financiers:'États Financiers',
     rh_employes:'RH — Employés', rh_fiches_paie:'RH — Fiches de Paie', rh_historique:'RH — Historique Paie',
     rh_declarations:'RH — Déclarations CNSS/ITS', rh_rapport:'RH — Rapport Cabinet', rh_dossiers:'RH — Dossier du personnel', rh_carriere:'RH — Carrière', rh_conges:'RH — Congés', rh_absences:'RH — Permissions & absences', rh_prets:'RH — Prêts & avances', rh_missions:'RH — Missions', rh_centralisation:'RH — Centralisation comptable', rh_tableau_bord:'RH — Tableau de bord', rh_simulateur:'RH — Simulateur Brut ↔ Net',
   }
@@ -23659,6 +24018,7 @@ export default function ComptaPro() {
       case 'lots':          return <LotsProductionPage {...sp} />
       case 'suivi_lot':     return <SuiviLotPage {...sp} />
       case 'tracabilite':   return <TracabilitePage {...sp} readOnly={getReadOnly('tracabilite')} />
+      case 'registre_tracabilite': return <RegistreTracabilitePage {...sp} readOnly={getReadOnly('registre_tracabilite')} />
       case 'achats_groupes': return <AchatsGroupesPage {...sp} readOnly={getReadOnly('achats_groupes')} />
       case 'etv_repertoire':  return <EtvRepertoirePage {...sp} readOnly={getReadOnly('etv_repertoire')} />
       case 'etv_envois':      return <EtvEnvoisPage {...sp} readOnly={getReadOnly('etv_envois')} />
