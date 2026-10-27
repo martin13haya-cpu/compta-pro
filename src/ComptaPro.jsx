@@ -5492,7 +5492,7 @@ function StockPage({ companies, companyId, setPage, toast, readOnly=false }) {
 // ── STOCK ENTRÉE ─────────────────────────────────────────────────────────────
 function StockEntreePage({ companies, companyId, setPage, toast }) {
   const [articles, setArticles] = useState([])
-  const [form, setForm] = useState({ company_id:companyId||'', article_id:'', quantite:'', prix_unitaire:'', motif:'achat', reference:'' })
+  const [form, setForm] = useState({ company_id:companyId||'', article_id:'', quantite:'', prix_unitaire:'', motif:'achat', reference:'', date_mvt:new Date().toISOString().slice(0,10) })
   const [saving, setSaving] = useState(false)
 
   const loadArts = useCallback(async cid=>{
@@ -5523,7 +5523,7 @@ function StockEntreePage({ companies, companyId, setPage, toast }) {
     const { error } = await supabase.from('compta_mouvements_stock').insert({
       article_id:form.article_id, company_id:form.company_id, user_id:uid,
       type:'entree', motif:form.motif, quantite:qte, prix_unitaire:pu, montant:Math.round(qte*pu),
-      reference:form.reference, date_mvt:today(),
+      reference:form.reference, date_mvt:form.date_mvt||today(),
     })
     if (error) { setSaving(false); toast.error(error.message); return }
     const art = articles.find(a=>a.id===form.article_id)
@@ -5550,6 +5550,7 @@ function StockEntreePage({ companies, companyId, setPage, toast }) {
               <Sel label="Motif" name="motif" value={form.motif} onChange={set}
                 options={['achat','production','retour','ajustement'].map(m=>({value:m,label:m.charAt(0).toUpperCase()+m.slice(1)}))} />
               <Input label="Référence document" name="reference" value={form.reference} onChange={set} placeholder="N° BC, facture..." />
+              <Input label="Date d'entrée *" name="date_mvt" type="date" value={form.date_mvt} onChange={set} required max={new Date().toISOString().slice(0,10)} />
             </Grid>
             <div style={{display:'flex',gap:8}}>
               <Btn type="submit" variant="success" disabled={saving}>{saving?'...':'↓ Enregistrer l\'entrée'}</Btn>
@@ -5565,7 +5566,7 @@ function StockEntreePage({ companies, companyId, setPage, toast }) {
 // ── STOCK SORTIE ─────────────────────────────────────────────────────────────
 function StockSortiePage({ companies, companyId, setPage, toast }) {
   const [articles, setArticles] = useState([])
-  const [form, setForm] = useState({ company_id:companyId||'', article_id:'', quantite:'', prix_unitaire:'', motif:'vente', reference:'' })
+  const [form, setForm] = useState({ company_id:companyId||'', article_id:'', quantite:'', prix_unitaire:'', motif:'vente', reference:'', date_mvt:new Date().toISOString().slice(0,10) })
   const [saving, setSaving] = useState(false)
 
   const loadArts = useCallback(async cid=>{
@@ -5599,7 +5600,7 @@ function StockSortiePage({ companies, companyId, setPage, toast }) {
     await supabase.from('compta_mouvements_stock').insert({
       article_id:form.article_id, company_id:form.company_id, user_id:uid,
       type:'sortie', motif:form.motif, quantite:qte, prix_unitaire:pu, montant:Math.round(qte*pu),
-      reference:form.reference, date_mvt:today(),
+      reference:form.reference, date_mvt:form.date_mvt||today(),
     })
     if (art) await supabase.from('compta_articles').update({stock_actuel:(art.stock_actuel||0)-qte}).eq('id',form.article_id)
     setSaving(false)
@@ -5624,6 +5625,7 @@ function StockSortiePage({ companies, companyId, setPage, toast }) {
               <Sel label="Motif" name="motif" value={form.motif} onChange={set}
                 options={['vente','production','ajustement','perte'].map(m=>({value:m,label:m.charAt(0).toUpperCase()+m.slice(1)}))} />
               <Input label="Référence document" name="reference" value={form.reference} onChange={set} placeholder="N° facture..." />
+              <Input label="Date de sortie *" name="date_mvt" type="date" value={form.date_mvt} onChange={set} required max={new Date().toISOString().slice(0,10)} />
             </Grid>
             <div style={{display:'flex',gap:8}}>
               <Btn type="submit" variant="warning" disabled={saving}>{saving?'...':'↑ Enregistrer la sortie'}</Btn>
@@ -6072,6 +6074,95 @@ function InventairePage({ companies, companyId, setCompanyId }) {
   const valeur = articles.reduce((s,a)=>s+(a.stock_actuel||0)*(a.prix_achat||0),0)
   const alertes = articles.filter(a=>(a.stock_actuel||0)<=(a.stock_min||0)).length
   const cats = [...new Set(articles.map(a=>a.categorie))]
+  const companyName = companies.find(c=>c.id===companyId)?.raison_sociale||''
+
+  const printInventaire = () => {
+    const dateStr = new Date().toLocaleDateString('fr-FR')
+    const lignesHtml = cats.map(cat => {
+      const artsCat = articles.filter(a=>a.categorie===cat)
+      const rows = artsCat.map((a,i) => {
+        const al = (a.stock_actuel||0)<=(a.stock_min||0)
+        return `<tr style="background:${i%2===0?'#fff':'#f8fafc'}">
+          <td>${a.code||'—'}</td>
+          <td><strong>${a.designation}</strong></td>
+          <td style="text-align:center">${a.unite}</td>
+          <td style="text-align:right;color:${al?'#dc2626':'inherit'};font-weight:${al?700:400}">${(a.stock_actuel||0).toLocaleString('fr-FR',{minimumFractionDigits:3,maximumFractionDigits:3})}</td>
+          <td style="text-align:right">${(a.stock_min||0).toLocaleString('fr-FR',{minimumFractionDigits:2,maximumFractionDigits:2})}</td>
+          <td style="text-align:right">${Math.round(a.prix_achat||0).toLocaleString('fr-FR')} FCFA</td>
+          <td style="text-align:right">${Math.round(a.prix_vente||0).toLocaleString('fr-FR')} FCFA</td>
+          <td style="text-align:right;font-weight:700">${Math.round((a.stock_actuel||0)*(a.prix_achat||0)).toLocaleString('fr-FR')} FCFA</td>
+          <td style="text-align:center"><span style="padding:2px 8px;border-radius:4px;font-size:11px;background:${al?'#fef3c7':'#dcfce7'};color:${al?'#92400e':'#166534'}">${al?'⚠ Alerte':'✓ OK'}</span></td>
+        </tr>`
+      }).join('')
+      return `<div style="margin-bottom:20px">
+        <div style="background:#f1f5f9;padding:8px 12px;font-weight:700;font-size:13px;border-left:4px solid #6366f1">
+          ${cat} — ${artsCat.length} article(s)
+        </div>
+        <table style="width:100%;border-collapse:collapse;font-size:11px">
+          <thead><tr style="background:#1e293b;color:white">
+            <th style="padding:6px 8px;text-align:left">Code</th>
+            <th style="padding:6px 8px;text-align:left">Désignation</th>
+            <th style="padding:6px 8px;text-align:center">Unité</th>
+            <th style="padding:6px 8px;text-align:right">Stock actuel</th>
+            <th style="padding:6px 8px;text-align:right">Stock min</th>
+            <th style="padding:6px 8px;text-align:right">Prix achat</th>
+            <th style="padding:6px 8px;text-align:right">Prix vente</th>
+            <th style="padding:6px 8px;text-align:right">Valeur stock</th>
+            <th style="padding:6px 8px;text-align:center">État</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`
+    }).join('')
+
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8">
+      <title>Inventaire des stocks — ${companyName}</title>
+      <style>
+        ${CSS_PRINT_LANDSCAPE}
+        body{font-family:Arial,sans-serif;font-size:11px;color:#0f172a}
+        h1{font-size:16px;margin:0 0 4px}
+        .meta{color:#64748b;font-size:11px;margin-bottom:16px}
+        .kpis{display:flex;gap:16px;margin-bottom:16px}
+        .kpi{border:1px solid #e2e8f0;border-radius:6px;padding:8px 16px;min-width:140px}
+        .kpi-label{font-size:10px;color:#64748b}
+        .kpi-val{font-size:15px;font-weight:800}
+        table td,table th{padding:5px 8px;border-bottom:1px solid #e2e8f0}
+        @media print{.kpis{display:flex!important}}
+      </style>
+    </head><body>
+      <h1>Inventaire des stocks</h1>
+      <div class="meta">${companyName} — Édité le ${dateStr}</div>
+      <div class="kpis">
+        <div class="kpi"><div class="kpi-label">Valeur totale du stock</div><div class="kpi-val" style="color:#6366f1">${Math.round(valeur).toLocaleString('fr-FR')} FCFA</div></div>
+        <div class="kpi"><div class="kpi-label">Nombre d'articles</div><div class="kpi-val">${articles.length}</div></div>
+        <div class="kpi"><div class="kpi-label">Articles en alerte</div><div class="kpi-val" style="color:#dc2626">${alertes}</div></div>
+      </div>
+      ${lignesHtml}
+    </body></html>`
+    const w = window.open('','_blank')
+    w.document.write(html)
+    w.document.close()
+    setTimeout(()=>w.print(),400)
+  }
+
+  const exportExcelInventaire = async () => {
+    const XLSX = await import('https://cdn.sheetjs.com/xlsx-0.20.0/package/xlsx.mjs')
+    const rows = [['Code','Désignation','Unité','Stock actuel','Stock min','Prix achat (FCFA)','Prix vente (FCFA)','Valeur stock (FCFA)','État']]
+    cats.forEach(cat => {
+      rows.push([cat.toUpperCase(),'','','','','','','',''])
+      articles.filter(a=>a.categorie===cat).forEach(a => {
+        const al = (a.stock_actuel||0)<=(a.stock_min||0)
+        rows.push([a.code||'',a.designation,a.unite,(a.stock_actuel||0),(a.stock_min||0),Math.round(a.prix_achat||0),Math.round(a.prix_vente||0),Math.round((a.stock_actuel||0)*(a.prix_achat||0)),al?'⚠ Alerte':'✓ OK'])
+      })
+    })
+    rows.push(['','','','','','','','TOTAL',Math.round(valeur)])
+    const ws = XLSX.utils.aoa_to_sheet(rows)
+    ws['!cols'] = [{wch:10},{wch:30},{wch:8},{wch:14},{wch:12},{wch:16},{wch:16},{wch:18},{wch:10}]
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, 'Inventaire')
+    const dateFile = new Date().toISOString().slice(0,10)
+    XLSX.writeFile(wb, `inventaire_stock_${(companyName||'societe').replace(/[^A-Za-z0-9]+/g,'_').slice(0,30)}_${dateFile}.xlsx`)
+  }
 
   return (
     <div>
@@ -6080,7 +6171,8 @@ function InventairePage({ companies, companyId, setCompanyId }) {
         actions={
           <div style={{display:'flex',gap:8}}>
             <CompanySelector companies={companies} companyId={companyId} setCompanyId={setCompanyId} />
-            <Btn sm variant="secondary" onClick={()=>window.print()}>Imprimer</Btn>
+            <Btn sm variant="secondary" onClick={printInventaire}>🖨️ Imprimer</Btn>
+            <Btn sm variant="success" onClick={exportExcelInventaire} disabled={!companyId||articles.length===0}>📊 Excel</Btn>
           </div>
         }
       />
