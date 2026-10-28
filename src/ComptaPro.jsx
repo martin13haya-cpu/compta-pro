@@ -5547,8 +5547,15 @@ function StockEntreePage({ companies, companyId, setPage, toast }) {
               </Span2>
               <Input label="Quantité *" name="quantite" type="number" value={form.quantite} onChange={set} required min="0.001" step="0.001" />
               <Input label="Prix unitaire (FCFA)" name="prix_unitaire" type="number" value={form.prix_unitaire} onChange={set} min="0" />
-              <Sel label="Motif" name="motif" value={form.motif} onChange={set}
-                options={['achat','production','retour','ajustement'].map(m=>({value:m,label:m.charAt(0).toUpperCase()+m.slice(1)}))} />
+              <div>
+                <label style={{fontSize:12,fontWeight:600,color:'#374151',display:'block',marginBottom:4}}>Motif</label>
+                <input list="motifs-entree" name="motif" value={form.motif} onChange={set}
+                  placeholder="Achat, Production, Retour..." autoComplete="off"
+                  style={{width:'100%',padding:'8px 12px',borderRadius:8,border:'1px solid #d1d5db',fontSize:14,boxSizing:'border-box'}} />
+                <datalist id="motifs-entree">
+                  <option value="Achat" /><option value="Production" /><option value="Retour fournisseur" /><option value="Ajustement inventaire" /><option value="Don / Subvention" />
+                </datalist>
+              </div>
               <Input label="Référence document" name="reference" value={form.reference} onChange={set} placeholder="N° BC, facture..." />
               <Input label="Date d'entrée *" name="date_mvt" type="date" value={form.date_mvt} onChange={set} required max={new Date().toISOString().slice(0,10)} />
             </Grid>
@@ -5622,8 +5629,15 @@ function StockSortiePage({ companies, companyId, setPage, toast }) {
               </Span2>
               <Input label="Quantité *" name="quantite" type="number" value={form.quantite} onChange={set} required min="0.001" step="0.001" />
               <Input label="Prix unitaire (FCFA)" name="prix_unitaire" type="number" value={form.prix_unitaire} onChange={set} min="0" />
-              <Sel label="Motif" name="motif" value={form.motif} onChange={set}
-                options={['vente','production','ajustement','perte'].map(m=>({value:m,label:m.charAt(0).toUpperCase()+m.slice(1)}))} />
+              <div>
+                <label style={{fontSize:12,fontWeight:600,color:'#374151',display:'block',marginBottom:4}}>Motif</label>
+                <input list="motifs-sortie" name="motif" value={form.motif} onChange={set}
+                  placeholder="Vente, Production, Perte..." autoComplete="off"
+                  style={{width:'100%',padding:'8px 12px',borderRadius:8,border:'1px solid #d1d5db',fontSize:14,boxSizing:'border-box'}} />
+                <datalist id="motifs-sortie">
+                  <option value="Vente" /><option value="Production / Transformation" /><option value="Ajustement inventaire" /><option value="Perte / Avarie" /><option value="Don" /><option value="Transfert" />
+                </datalist>
+              </div>
               <Input label="Référence document" name="reference" value={form.reference} onChange={set} placeholder="N° facture..." />
               <Input label="Date de sortie *" name="date_mvt" type="date" value={form.date_mvt} onChange={set} required max={new Date().toISOString().slice(0,10)} />
             </Grid>
@@ -5955,7 +5969,7 @@ function BonsStockPage({ companies, companyId, toast, readOnly=false }) {
 }
 
 // ── MOUVEMENTS ────────────────────────────────────────────────────────────────
-function MouvementsPage({ companies, companyId, setPage, readOnly=false }) {
+function MouvementsPage({ companies, companyId, setPage, toast, readOnly=false }) {
   const [items, setItems] = useState([])
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo,   setDateTo]   = useState('')
@@ -5995,6 +6009,13 @@ function MouvementsPage({ companies, companyId, setPage, readOnly=false }) {
     URL.revokeObjectURL(url)
   }
 
+  const delMvt = async (id) => {
+    if (!confirm('Supprimer ce mouvement de stock ?')) return
+    await supabase.from('compta_mouvements_stock').delete().eq('id', id)
+    toast.success('Mouvement supprimé.')
+    load()
+  }
+
   return (
     <div>
       <PageHeader title="Mouvements de stock" subtitle={`${items.length} mouvement(s)`}
@@ -6031,7 +6052,7 @@ function MouvementsPage({ companies, companyId, setPage, readOnly=false }) {
             <table style={{width:'100%',borderCollapse:'collapse',minWidth:600}}>
             <thead><tr>
               <TH>Date</TH><TH>Article</TH><TH>Type</TH><TH>Motif</TH>
-              <TH right>Quantité</TH><TH right>P.U</TH><TH right>Montant</TH><TH>Référence</TH>
+              <TH right>Quantité</TH><TH right>P.U</TH><TH right>Montant</TH><TH>Référence</TH><TH></TH>
             </tr></thead>
             <tbody>
               {items.map(m=>(
@@ -6044,6 +6065,7 @@ function MouvementsPage({ companies, companyId, setPage, readOnly=false }) {
                   <TD right sm>{fcfa(m.prix_unitaire)}</TD>
                   <TD right bold>{fcfa(m.montant)}</TD>
                   <TD sm>{m.reference||'—'}</TD>
+                  <TD>{!readOnly && <button onClick={()=>delMvt(m.id)} title="Supprimer" style={{background:'none',border:'none',cursor:'pointer',color:'#dc2626',fontSize:16,padding:'2px 6px',borderRadius:4}} onMouseOver={e=>e.target.style.background='#fee2e2'} onMouseOut={e=>e.target.style.background='none'}>🗑️</button>}</TD>
                 </TR>
               ))}
             </tbody>
