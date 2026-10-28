@@ -6098,6 +6098,7 @@ function MouvementsPage({ companies, companyId, setPage, toast, readOnly=false }
 // ── INVENTAIRE ────────────────────────────────────────────────────────────────
 function InventairePage({ companies, companyId, setCompanyId }) {
   const [articles, setArticles] = useState([])
+  const [catFilter, setCatFilter] = useState('') // '' = toutes les catégories
 
   const load = useCallback(async()=>{
     if (!companyId) { setArticles([]); return }
@@ -6111,15 +6112,19 @@ function InventairePage({ companies, companyId, setCompanyId }) {
 
   useEffect(()=>{ load() },[load])
 
-  const valeur = articles.reduce((s,a)=>s+(a.stock_actuel||0)*(a.prix_achat||0),0)
-  const alertes = articles.filter(a=>(a.stock_actuel||0)<=(a.stock_min||0)).length
   const cats = [...new Set(articles.map(a=>a.categorie))]
+  // Articles filtrés selon la catégorie sélectionnée
+  const filteredArticles = catFilter ? articles.filter(a=>a.categorie===catFilter) : articles
+  const filteredCats = catFilter ? [catFilter] : cats
+
+  const valeur = filteredArticles.reduce((s,a)=>s+(a.stock_actuel||0)*(a.prix_achat||0),0)
+  const alertes = filteredArticles.filter(a=>(a.stock_actuel||0)<=(a.stock_min||0)).length
   const companyName = companies.find(c=>c.id===companyId)?.raison_sociale||''
 
   const printInventaire = () => {
     const dateStr = new Date().toLocaleDateString('fr-FR')
-    const lignesHtml = cats.map(cat => {
-      const artsCat = articles.filter(a=>a.categorie===cat)
+    const lignesHtml = filteredCats.map(cat => {
+      const artsCat = filteredArticles.filter(a=>a.categorie===cat)
       const rows = artsCat.map((a,i) => {
         const al = (a.stock_actuel||0)<=(a.stock_min||0)
         return `<tr style="background:${i%2===0?'#fff':'#f8fafc'}">
@@ -6170,11 +6175,11 @@ function InventairePage({ companies, companyId, setCompanyId }) {
         @media print{.kpis{display:flex!important}}
       </style>
     </head><body>
-      <h1>Inventaire des stocks</h1>
-      <div class="meta">${companyName} — Édité le ${dateStr}</div>
+      <h1>Inventaire des stocks${catFilter ? ' — ' + catFilter : ''}</h1>
+      <div class="meta">${companyName} — Édité le ${dateStr}${catFilter ? ' | Catégorie : ' + catFilter : ''}</div>
       <div class="kpis">
         <div class="kpi"><div class="kpi-label">Valeur totale du stock</div><div class="kpi-val" style="color:#6366f1">${Math.round(valeur).toLocaleString('fr-FR')} FCFA</div></div>
-        <div class="kpi"><div class="kpi-label">Nombre d'articles</div><div class="kpi-val">${articles.length}</div></div>
+        <div class="kpi"><div class="kpi-label">Nombre d'articles</div><div class="kpi-val">${filteredArticles.length}</div></div>
         <div class="kpi"><div class="kpi-label">Articles en alerte</div><div class="kpi-val" style="color:#dc2626">${alertes}</div></div>
       </div>
       ${lignesHtml}
@@ -6188,9 +6193,9 @@ function InventairePage({ companies, companyId, setCompanyId }) {
   const exportExcelInventaire = async () => {
     const XLSX = await import('https://cdn.sheetjs.com/xlsx-0.20.0/package/xlsx.mjs')
     const rows = [['Code','Désignation','Unité','Stock actuel','Stock min','Prix achat (FCFA)','Prix vente (FCFA)','Valeur stock (FCFA)','État']]
-    cats.forEach(cat => {
+    filteredCats.forEach(cat => {
       rows.push([cat.toUpperCase(),'','','','','','','',''])
-      articles.filter(a=>a.categorie===cat).forEach(a => {
+      filteredArticles.filter(a=>a.categorie===cat).forEach(a => {
         const al = (a.stock_actuel||0)<=(a.stock_min||0)
         rows.push([a.code||'',a.designation,a.unite,(a.stock_actuel||0),(a.stock_min||0),Math.round(a.prix_achat||0),Math.round(a.prix_vente||0),Math.round((a.stock_actuel||0)*(a.prix_achat||0)),al?'⚠ Alerte':'✓ OK'])
       })
@@ -6201,7 +6206,8 @@ function InventairePage({ companies, companyId, setCompanyId }) {
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Inventaire')
     const dateFile = new Date().toISOString().slice(0,10)
-    XLSX.writeFile(wb, `inventaire_stock_${(companyName||'societe').replace(/[^A-Za-z0-9]+/g,'_').slice(0,30)}_${dateFile}.xlsx`)
+    const catSuffix = catFilter ? `_${catFilter.replace(/[^A-Za-z0-9]+/g,'_').slice(0,20)}` : ''
+    XLSX.writeFile(wb, `inventaire_stock_${(companyName||'societe').replace(/[^A-Za-z0-9]+/g,'_').slice(0,30)}${catSuffix}_${dateFile}.xlsx`)
   }
 
   return (
@@ -6209,10 +6215,16 @@ function InventairePage({ companies, companyId, setCompanyId }) {
       <PageHeader title="Inventaire des stocks"
         subtitle={companyId?`Édité le ${new Date().toLocaleDateString('fr-FR')}`:'Sélectionnez une société'}
         actions={
-          <div style={{display:'flex',gap:8}}>
+          <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
             <CompanySelector companies={companies} companyId={companyId} setCompanyId={setCompanyId} />
+            <select value={catFilter} onChange={e=>setCatFilter(e.target.value)}
+              style={{padding:'6px 12px',borderRadius:8,border:'1px solid #d1d5db',fontSize:13,background:'white',cursor:'pointer'}}>
+              <option value="">📦 Toutes les catégories</option>
+              {cats.map(c=><option key={c} value={c}>{c}</option>)}
+            </select>
+            {catFilter && <Btn sm variant="secondary" onClick={()=>setCatFilter('')}>✕</Btn>}
             <Btn sm variant="secondary" onClick={printInventaire}>🖨️ Imprimer</Btn>
-            <Btn sm variant="success" onClick={exportExcelInventaire} disabled={!companyId||articles.length===0}>📊 Excel</Btn>
+            <Btn sm variant="success" onClick={exportExcelInventaire} disabled={!companyId||filteredArticles.length===0}>📊 Excel</Btn>
           </div>
         }
       />
@@ -6226,7 +6238,7 @@ function InventairePage({ companies, companyId, setCompanyId }) {
           <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:12,marginBottom:24}}>
             {[
               {l:'Valeur totale du stock',v:fcfa(valeur),c:ACCENT},
-              {l:'Nombre d\'articles',v:articles.length,c:'#0f172a'},
+              {l:'Nombre d\'articles',v:filteredArticles.length,c:'#0f172a'},
               {l:'Articles en alerte',v:alertes,c:'#dc2626'},
             ].map(s=>(
               <Card key={s.l}>
@@ -6235,8 +6247,8 @@ function InventairePage({ companies, companyId, setCompanyId }) {
               </Card>
             ))}
           </div>
-          {cats.map(cat=>{
-            const artsCat = articles.filter(a=>a.categorie===cat)
+          {filteredCats.map(cat=>{
+            const artsCat = filteredArticles.filter(a=>a.categorie===cat)
             return (
               <div key={cat} style={{background:'white',borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden',marginBottom:16}}>
                 <div style={{padding:'12px 20px',background:'#f8fafc',borderBottom:'1px solid #e2e8f0',fontWeight:700}}>
