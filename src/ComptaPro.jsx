@@ -93,6 +93,8 @@ function useResponsive() {
 
 // ── UTILITIES ───────────────────────────────────────────────────────────────
 const fcfa    = v => Math.round(v || 0).toLocaleString('fr-FR') + ' FCFA'
+// Format quantity: no trailing zeros (20.000 → 20, 0.500 → 0,5, 1089.000 → 1 089)
+const fmtQty  = v => { const n = parseFloat(v) || 0; return n % 1 === 0 ? n.toLocaleString('fr-FR') : parseFloat(n.toFixed(3)).toLocaleString('fr-FR') }
 const today   = () => new Date().toISOString().slice(0, 10)
 
 // Validation des identifiants numériques (CIP, IFU, Téléphone) — un champ vide est
@@ -5449,8 +5451,8 @@ function StockPage({ companies, companyId, setPage, toast, readOnly=false }) {
                     <TD bold>{a.designation}</TD>
                     <TD sm>{CAT_LABELS[a.categorie]||a.categorie}</TD>
                     <TD>{a.unite}</TD>
-                    <TD right color={alerte?'#dc2626':'inherit'}><strong style={{fontWeight:alerte?700:400}}>{(a.stock_actuel||0).toFixed(2)}</strong></TD>
-                    <TD right sm>{(a.stock_min||0).toFixed(2)}</TD>
+                    <TD right color={alerte?'#dc2626':'inherit'}><strong style={{fontWeight:alerte?700:400}}>{fmtQty(a.stock_actuel||0)}</strong></TD>
+                    <TD right sm>{fmtQty(a.stock_min||0)}</TD>
                     <TD right>{fcfa(a.prix_achat)}</TD>
                     <TD right bold>{fcfa((a.stock_actuel||0)*(a.prix_achat||0))}</TD>
                     <TD><Badge type={alerte?'warning':'success'}>{alerte?'⚠ Alerte':'✓ OK'}</Badge></TD>
@@ -5543,7 +5545,7 @@ function StockEntreePage({ companies, companyId, setPage, toast }) {
             <Grid cols={2} gap={14} style={{marginBottom:16}}>
               <Span2>
                 <Sel label="Article *" name="article_id" value={form.article_id} onChange={set}
-                  options={[{value:'',label:'— Choisir un article —'},...articles.map(a=>({value:a.id,label:`${a.designation} (stock: ${(a.stock_actuel||0).toFixed(2)} ${a.unite})`}))]} required />
+                  options={[{value:'',label:'— Choisir un article —'},...articles.map(a=>({value:a.id,label:`${a.designation} (stock: ${fmtQty(a.stock_actuel||0)} ${a.unite})`}))]} required />
               </Span2>
               <Input label="Quantité *" name="quantite" type="number" value={form.quantite} onChange={set} required min="0.001" step="0.001" />
               <Input label="Prix unitaire (FCFA)" name="prix_unitaire" type="number" value={form.prix_unitaire} onChange={set} min="0" />
@@ -5600,7 +5602,7 @@ function StockSortiePage({ companies, companyId, setPage, toast }) {
     const qte = parseFloat(form.quantite)
     const art = articles.find(a=>a.id===form.article_id)
     if (art && qte>(art.stock_actuel||0)) {
-      toast.error(`Stock insuffisant. Disponible : ${(art.stock_actuel||0).toFixed(2)} ${art.unite}`)
+      toast.error(`Stock insuffisant. Disponible : ${fmtQty(art.stock_actuel||0)} ${art.unite}`)
       setSaving(false); return
     }
     const pu = parseFloat(form.prix_unitaire)||0
@@ -5625,7 +5627,7 @@ function StockSortiePage({ companies, companyId, setPage, toast }) {
             <Grid cols={2} gap={14} style={{marginBottom:16}}>
               <Span2>
                 <Sel label="Article *" name="article_id" value={form.article_id} onChange={set}
-                  options={[{value:'',label:'— Choisir un article —'},...articles.map(a=>({value:a.id,label:`${a.designation} (stock: ${(a.stock_actuel||0).toFixed(2)} ${a.unite})`}))]} required />
+                  options={[{value:'',label:'— Choisir un article —'},...articles.map(a=>({value:a.id,label:`${a.designation} (stock: ${fmtQty(a.stock_actuel||0)} ${a.unite})`}))]} required />
               </Span2>
               <Input label="Quantité *" name="quantite" type="number" value={form.quantite} onChange={set} required min="0.001" step="0.001" />
               <Input label="Prix unitaire (FCFA)" name="prix_unitaire" type="number" value={form.prix_unitaire} onChange={set} min="0" />
@@ -6011,8 +6013,24 @@ function MouvementsPage({ companies, companyId, setPage, toast, readOnly=false }
 
   const delMvt = async (id) => {
     if (!confirm('Supprimer ce mouvement de stock ?')) return
+    // Retrieve movement before deletion to reverse stock
+    const { data: mvt } = await supabase.from('compta_mouvements_stock')
+      .select('*').eq('id', id).single()
+    if (mvt) {
+      const { data: art } = await supabase.from('compta_articles')
+        .select('stock_actuel').eq('id', mvt.article_id).single()
+      if (art) {
+        const qte = parseFloat(mvt.quantite) || 0
+        const newStock = mvt.type === 'entree'
+          ? (art.stock_actuel || 0) - qte   // reverse entry
+          : (art.stock_actuel || 0) + qte   // reverse exit
+        await supabase.from('compta_articles')
+          .update({ stock_actuel: Math.max(0, newStock) })
+          .eq('id', mvt.article_id)
+      }
+    }
     await supabase.from('compta_mouvements_stock').delete().eq('id', id)
-    toast.success('Mouvement supprimé.')
+    toast.success('Mouvement supprimé et stock ajusté.')
     load()
   }
 
@@ -6061,7 +6079,7 @@ function MouvementsPage({ companies, companyId, setPage, toast, readOnly=false }
                   <TD bold>{m.compta_articles?.designation||'—'}</TD>
                   <TD><Badge type={m.type==='entree'?'success':'warning'}>{m.type==='entree'?'↓ Entrée':'↑ Sortie'}</Badge></TD>
                   <TD sm>{m.motif||'—'}</TD>
-                  <TD right color={m.type==='entree'?'#16a34a':'#dc2626'}>{m.type==='entree'?'+':'−'}{(m.quantite||0).toFixed(2)} {m.compta_articles?.unite||''}</TD>
+                  <TD right color={m.type==='entree'?'#16a34a':'#dc2626'}>{m.type==='entree'?'+':'−'}{fmtQty(m.quantite||0)} {m.compta_articles?.unite||''}</TD>
                   <TD right sm>{fcfa(m.prix_unitaire)}</TD>
                   <TD right bold>{fcfa(m.montant)}</TD>
                   <TD sm>{m.reference||'—'}</TD>
@@ -6108,7 +6126,7 @@ function InventairePage({ companies, companyId, setCompanyId }) {
           <td>${a.code||'—'}</td>
           <td><strong>${a.designation}</strong></td>
           <td style="text-align:center">${a.unite}</td>
-          <td style="text-align:right;color:${al?'#dc2626':'inherit'};font-weight:${al?700:400}">${(a.stock_actuel||0).toLocaleString('fr-FR',{minimumFractionDigits:3,maximumFractionDigits:3})}</td>
+          <td style="text-align:right;color:${al?'#dc2626':'inherit'};font-weight:${al?700:400}">${(()=>{const n=parseFloat(a.stock_actuel||0);return n%1===0?n.toLocaleString('fr-FR'):parseFloat(n.toFixed(3)).toLocaleString('fr-FR')})()}</td>
           <td style="text-align:right">${(a.stock_min||0).toLocaleString('fr-FR',{minimumFractionDigits:2,maximumFractionDigits:2})}</td>
           <td style="text-align:right">${Math.round(a.prix_achat||0).toLocaleString('fr-FR')} FCFA</td>
           <td style="text-align:right">${Math.round(a.prix_vente||0).toLocaleString('fr-FR')} FCFA</td>
@@ -6238,8 +6256,8 @@ function InventairePage({ companies, companyId, setCompanyId }) {
                       return (
                         <TR key={a.id}>
                           <TD sm>{a.code||'—'}</TD><TD bold>{a.designation}</TD><TD>{a.unite}</TD>
-                          <TD right color={al?'#dc2626':'inherit'}><strong style={{fontWeight:al?700:400}}>{(a.stock_actuel||0).toFixed(3)}</strong></TD>
-                          <TD right sm>{(a.stock_min||0).toFixed(2)}</TD>
+                          <TD right color={al?'#dc2626':'inherit'}><strong style={{fontWeight:al?700:400}}>{fmtQty(a.stock_actuel||0)}</strong></TD>
+                          <TD right sm>{fmtQty(a.stock_min||0)}</TD>
                           <TD right>{fcfa(a.prix_achat)}</TD><TD right>{fcfa(a.prix_vente)}</TD>
                           <TD right bold>{fcfa((a.stock_actuel||0)*(a.prix_achat||0))}</TD>
                           <TD><Badge type={al?'warning':'success'}>{al?'⚠ Alerte':'✓ OK'}</Badge></TD>
