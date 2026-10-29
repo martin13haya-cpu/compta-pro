@@ -6186,7 +6186,7 @@ function CategoriesPage({ companies, companyId, toast }) {
   }
 
   const del = async (id, libelle) => {
-    if (!confirm(\`Supprimer la catégorie "${libelle}" ?\nLes articles liés ne seront pas supprimés.\`)) return
+    if (!confirm(`Supprimer la catégorie "${libelle}" ?\nLes articles liés ne seront pas supprimés.`)) return
     const { error } = await supabase.from('compta_categories_articles').delete().eq('id', id)
     if (error) { toast.error(error.message); return }
     toast.success('Catégorie supprimée.'); load()
@@ -6195,7 +6195,7 @@ function CategoriesPage({ companies, companyId, toast }) {
   return (
     <div>
       <PageHeader title="Catégories d'articles"
-        subtitle={companyId ? \`${cats.length} catégorie(s)\` : 'Sélectionnez une société'}
+        subtitle={companyId ? `${cats.length} catégorie(s)` : 'Sélectionnez une société'}
         actions={
           <div style={{display:'flex',gap:8}}>
             <Btn sm variant="success" onClick={openAdd} disabled={!companyId}>+ Nouvelle catégorie</Btn>
