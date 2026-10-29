@@ -6096,7 +6096,7 @@ function MouvementsPage({ companies, companyId, setPage, toast, readOnly=false }
 }
 
 // ── INVENTAIRE ────────────────────────────────────────────────────────────────
-function InventairePage({ companies, companyId, setCompanyId }) {
+function InventairePage({ companies, companyId, setCompanyId, toast }) {
   const [articles, setArticles] = useState([])
   const [catFilter, setCatFilter] = useState('') // '' = toutes les catégories
 
@@ -6120,6 +6120,32 @@ function InventairePage({ companies, companyId, setCompanyId }) {
   const valeur = filteredArticles.reduce((s,a)=>s+(a.stock_actuel||0)*(a.prix_achat||0),0)
   const alertes = filteredArticles.filter(a=>(a.stock_actuel||0)<=(a.stock_min||0)).length
   const companyName = companies.find(c=>c.id===companyId)?.raison_sociale||''
+
+  const recalcStock = async () => {
+    if (!companyId) return
+    if (!confirm('Recalculer le stock de tous les articles à partir de l\'historique des mouvements ?\nCette opération peut prendre quelques secondes.')) return
+    // Load all movements for this company
+    const { data: mvts } = await supabase.from('compta_mouvements_stock')
+      .select('article_id, type, quantite').eq('company_id', companyId)
+    if (!mvts) return
+    // Compute net stock per article
+    const stockMap = {}
+    mvts.forEach(m => {
+      const qte = parseFloat(m.quantite) || 0
+      if (!stockMap[m.article_id]) stockMap[m.article_id] = 0
+      stockMap[m.article_id] += m.type === 'entree' ? qte : -qte
+    })
+    // Update each article
+    const updates = Object.entries(stockMap).map(([article_id, net]) =>
+      supabase.from('compta_articles')
+        .update({ stock_actuel: Math.max(0, net) })
+        .eq('id', article_id)
+    )
+    await Promise.all(updates)
+    // Also zero out articles with no movements
+    await load()
+    toast && toast.success('Stocks recalculés avec succès !')
+  }
 
   const printInventaire = () => {
     const dateStr = new Date().toLocaleDateString('fr-FR')
@@ -6197,7 +6223,9 @@ function InventairePage({ companies, companyId, setCompanyId }) {
       rows.push([cat.toUpperCase(),'','','','','','','',''])
       filteredArticles.filter(a=>a.categorie===cat).forEach(a => {
         const al = (a.stock_actuel||0)<=(a.stock_min||0)
-        rows.push([a.code||'',a.designation,a.unite,(a.stock_actuel||0),(a.stock_min||0),Math.round(a.prix_achat||0),Math.round(a.prix_vente||0),Math.round((a.stock_actuel||0)*(a.prix_achat||0)),al?'⚠ Alerte':'✓ OK'])
+        const qAct = parseFloat(a.stock_actuel||0); const qMin = parseFloat(a.stock_min||0)
+        const fq = n => n%1===0 ? n : parseFloat(n.toFixed(3))
+        rows.push([a.code||'',a.designation,a.unite,fq(qAct),fq(qMin),Math.round(a.prix_achat||0),Math.round(a.prix_vente||0),Math.round(qAct*(a.prix_achat||0)),al?'⚠ Alerte':'✓ OK'])
       })
     })
     rows.push(['','','','','','','','TOTAL',Math.round(valeur)])
@@ -6223,6 +6251,7 @@ function InventairePage({ companies, companyId, setCompanyId }) {
               {cats.map(c=><option key={c} value={c}>{c}</option>)}
             </select>
             {catFilter && <Btn sm variant="secondary" onClick={()=>setCatFilter('')}>✕</Btn>}
+            <Btn sm variant="warning" onClick={recalcStock} disabled={!companyId}>🔄 Recalculer</Btn>
             <Btn sm variant="secondary" onClick={printInventaire}>🖨️ Imprimer</Btn>
             <Btn sm variant="success" onClick={exportExcelInventaire} disabled={!companyId||filteredArticles.length===0}>📊 Excel</Btn>
           </div>
@@ -24156,7 +24185,7 @@ export default function ComptaPro() {
       case 'stock-sortie':  return <StockSortiePage {...sp} setPage={setPage} />
       case 'mouvements':    return <MouvementsPage {...sp} setPage={setPage} />
       case 'bons_stock':    return <BonsStockPage {...sp} readOnly={getReadOnly('bons_stock')} />
-      case 'inventaire':    return <InventairePage companies={companies} companyId={effectiveCompanyId} setCompanyId={setCompanyId} />
+      case 'inventaire':    return <InventairePage companies={companies} companyId={effectiveCompanyId} setCompanyId={setCompanyId} toast={toast} />
       case 'commercial':    return <CommercialPage {...sp} setPage={setPage} setDocId={setDocId} />
       case 'commercial-view': return <CommercialViewPage docId={docId} setPage={setPage} toast={toast} />
       case 'lots':          return <LotsProductionPage {...sp} />
