@@ -279,10 +279,17 @@ function applyTheme(mode){
 function getStoredTheme(){ try{return localStorage.getItem('comptapro_theme')||'light'}catch{return 'light'} }
 function setStoredTheme(m){ try{localStorage.setItem('comptapro_theme',m)}catch{}; applyTheme(m) }
 
-const CAT_LABELS = {
+// ── CATÉGORIES ARTICLES (dynamiques, stockées dans Supabase) ────────────────
+const CAT_LABELS_DEFAULT = {
   riz_paddy:'Riz Paddy', riz_etuve:'Riz Étuvé', riz_blanc:'Riz Blanc',
   semi_fini:'Semi-fini', emballage:'Emballage', autre:'Autre',
 }
+// Store dynamique — mis à jour via CategoriesPage
+let _catLabels = { ...CAT_LABELS_DEFAULT }
+const getCatLabels = () => _catLabels
+const setCatLabelsCache = (obj) => { _catLabels = obj }
+// Alias rétrocompatible
+const CAT_LABELS = new Proxy({}, { get: (_,k) => _catLabels[k] })
 const TYPE_DOC_LABELS = {
   proforma:'Proforma', bon_commande:'Bon de Commande',
   bon_livraison:'Bon de Livraison', facture:'Facture',
@@ -2604,6 +2611,7 @@ const NAV = [
   { id:'mouvements',         icon:'↕️',  label:'Mouvements' },
   { id:'bons_stock',         icon:'🧾', label:"Bons d'entrée / sortie" },
   { id:'inventaire',         icon:'📋', label:'Inventaire' },
+  { id:'categories_articles',icon:'🗂️', label:'Catégories' },
   { section:'Commercial' },
   { id:'commercial',         icon:'📄', label:'Documents' },
   { id:'reglements_clients',   icon:'💳', label:'Règlements Clients' },
@@ -5475,7 +5483,7 @@ function StockPage({ companies, companyId, setPage, toast, readOnly=false }) {
           <Grid cols={2} gap={14} style={{marginBottom:16}}>
             <Input label="Code article" name="code" value={form.code||''} onChange={set} placeholder="RIZ-PAD-001" />
             <Sel label="Catégorie" name="categorie" value={form.categorie||''} onChange={set}
-              options={Object.entries(CAT_LABELS).map(([v,l])=>({value:v,label:l}))} />
+              options={Object.entries(getCatLabels()).map(([v,l])=>({value:v,label:l}))} />
             <Span2><Input label="Désignation *" name="designation" value={form.designation||''} onChange={set} required /></Span2>
             <Sel label="Unité" name="unite" value={form.unite||''} onChange={set}
               options={['kg','tonne','sac','carton','litre','unité','m²'].map(u=>({value:u,label:u}))} />
@@ -5975,6 +5983,8 @@ function MouvementsPage({ companies, companyId, setPage, toast, readOnly=false }
   const [items, setItems] = useState([])
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo,   setDateTo]   = useState('')
+  const [artFilter,  setArtFilter]  = useState('')
+  const [typeFilter, setTypeFilter] = useState('')
 
   const load = useCallback(async()=>{
     const uid = (await supabase.auth.getUser()).data?.user?.id
@@ -5988,27 +5998,30 @@ function MouvementsPage({ companies, companyId, setPage, toast, readOnly=false }
 
   useEffect(()=>{ load() },[load])
 
-  const exportCSV = () => {
-    const header = ['Date','Article','Unité','Type','Motif','Quantité','Prix Unitaire','Montant','Référence']
-    const rows = items.map(m=>[
+  const exportCSV = async () => {
+    const XLSX = await import('https://cdn.sheetjs.com/xlsx-0.20.0/package/xlsx.mjs')
+    const fq = v => { const n = parseFloat(v)||0; return n%1===0 ? n : parseFloat(n.toFixed(3)) }
+    const visibles = items
+      .filter(m => !artFilter  || m.article_id === artFilter)
+      .filter(m => !typeFilter || m.type === typeFilter)
+    const header = ['Date','Article','Unité','Type','Motif','Quantité','Prix Unitaire (FCFA)','Montant (FCFA)','Référence']
+    const rows = visibles.map(m=>[
       m.date_mvt||'',
       m.compta_articles?.designation||'',
       m.compta_articles?.unite||'',
       m.type==='entree'?'Entrée':'Sortie',
       m.motif||'',
-      (m.quantite||0).toFixed(3),
-      (m.prix_unitaire||0).toFixed(0),
-      (m.montant||0).toFixed(0),
+      fq(m.quantite),
+      Math.round(m.prix_unitaire||0),
+      Math.round(m.montant||0),
       m.reference||'',
     ])
-    const csvContent = [header,...rows].map(r=>r.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(';')).join('\n')
-    const BOM = '\uFEFF'
-    const blob = new Blob([BOM+csvContent],{type:'text/csv;charset=utf-8;'})
-    const url  = URL.createObjectURL(blob)
-    const a    = document.createElement('a')
+    const ws = XLSX.utils.aoa_to_sheet([header,...rows])
+    ws['!cols'] = [{wch:12},{wch:28},{wch:8},{wch:8},{wch:18},{wch:12},{wch:20},{wch:18},{wch:20}]
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, 'Mouvements')
     const period = dateFrom||dateTo ? `_${dateFrom||'debut'}_${dateTo||'fin'}` : ''
-    a.href=url; a.download=`mouvements_stock${period}.csv`; a.click()
-    URL.revokeObjectURL(url)
+    XLSX.writeFile(wb, `mouvements_stock${period}.xlsx`)
   }
 
   const delMvt = async (id) => {
@@ -6036,14 +6049,14 @@ function MouvementsPage({ companies, companyId, setPage, toast, readOnly=false }
 
   return (
     <div>
-      <PageHeader title="Mouvements de stock" subtitle={`${items.length} mouvement(s)`}
+      <PageHeader title="Mouvements de stock" subtitle={`${items.filter(m=>(!artFilter||m.article_id===artFilter)&&(!typeFilter||m.type===typeFilter)).length} / ${items.length} mouvement(s)`}
         actions={<>
           {!readOnly && <Btn sm variant="success" onClick={()=>setPage('stock-entree')}>↓ Entrée</Btn>}
           {!readOnly && <Btn sm variant="warning" onClick={()=>setPage('stock-sortie')}>↑ Sortie</Btn>}
           <Btn sm variant="info" onClick={exportCSV}>📊 Exporter Excel</Btn>
         </>}
       />
-      {/* Filtre période */}
+      {/* Filtres */}
       <Card style={{marginBottom:16,padding:'12px 20px'}}>
         <div style={{display:'flex',alignItems:'center',gap:12,flexWrap:'wrap'}}>
           <span style={{fontSize:13,fontWeight:600,color:'#374151'}}>📅 Période :</span>
@@ -6057,8 +6070,21 @@ function MouvementsPage({ companies, companyId, setPage, toast, readOnly=false }
             <input type="date" value={dateTo} onChange={e=>setDateTo(e.target.value)}
               style={{padding:'6px 10px',borderRadius:7,border:'1px solid #d1d5db',fontSize:13}} />
           </div>
-          {(dateFrom||dateTo) && (
-            <Btn sm variant="secondary" onClick={()=>{setDateFrom('');setDateTo('')}}>✕ Réinitialiser</Btn>
+          <select value={typeFilter} onChange={e=>setTypeFilter(e.target.value)}
+            style={{padding:'6px 12px',borderRadius:7,border:'1px solid #d1d5db',fontSize:13,background:'white'}}>
+            <option value="">Tous types</option>
+            <option value="entree">↓ Entrées</option>
+            <option value="sortie">↑ Sorties</option>
+          </select>
+          <select value={artFilter} onChange={e=>setArtFilter(e.target.value)}
+            style={{padding:'6px 12px',borderRadius:7,border:'1px solid #d1d5db',fontSize:13,background:'white',maxWidth:200}}>
+            <option value="">Tous les articles</option>
+            {[...new Map(items.map(m=>[m.article_id,m.compta_articles?.designation||'—'])).entries()]
+              .sort((a,b)=>a[1].localeCompare(b[1]))
+              .map(([id,des])=><option key={id} value={id}>{des}</option>)}
+          </select>
+          {(dateFrom||dateTo||artFilter||typeFilter) && (
+            <Btn sm variant="secondary" onClick={()=>{setDateFrom('');setDateTo('');setArtFilter('');setTypeFilter('')}}>✕ Tout réinitialiser</Btn>
           )}
         </div>
       </Card>
@@ -6073,7 +6099,10 @@ function MouvementsPage({ companies, companyId, setPage, toast, readOnly=false }
               <TH right>Quantité</TH><TH right>P.U</TH><TH right>Montant</TH><TH>Référence</TH><TH></TH>
             </tr></thead>
             <tbody>
-              {items.map(m=>(
+              {items
+                .filter(m => !artFilter  || m.article_id === artFilter)
+                .filter(m => !typeFilter || m.type === typeFilter)
+                .map(m=>(
                 <TR key={m.id}>
                   <TD sm>{m.date_mvt}</TD>
                   <TD bold>{m.compta_articles?.designation||'—'}</TD>
@@ -6096,12 +6125,179 @@ function MouvementsPage({ companies, companyId, setPage, toast, readOnly=false }
 }
 
 // ── INVENTAIRE ────────────────────────────────────────────────────────────────
+
+// ─── GESTION DES CATÉGORIES D'ARTICLES ────────────────────────────────────────
+async function loadCategoriesFromSupabase(companyId) {
+  const { data } = await supabase.from('compta_categories_articles')
+    .select('*').eq('company_id', companyId).order('libelle')
+  return data || []
+}
+
+function CategoriesPage({ companies, companyId, toast }) {
+  const [cats, setCats] = useState([])
+  const [loading, setLoading] = useState(false)
+  const [modal, setModal] = useState(null) // 'add' | 'edit'
+  const [form, setForm] = useState({ libelle: '', code: '' })
+  const [editId, setEditId] = useState(null)
+  const [saving, setSaving] = useState(false)
+
+  const load = useCallback(async () => {
+    if (!companyId) { setCats([]); return }
+    setLoading(true)
+    const data = await loadCategoriesFromSupabase(companyId)
+    setCats(data)
+    // Mettre à jour le cache global
+    const map = {}
+    data.forEach(c => { map[c.code] = c.libelle })
+    // Garder les défauts si pas de catégorie perso
+    setCatLabelsCache({ ...CAT_LABELS_DEFAULT, ...map })
+    setLoading(false)
+  }, [companyId])
+
+  useEffect(() => { load() }, [load])
+
+  const set = e => setForm(f => ({ ...f, [e.target.name]: e.target.value }))
+
+  const openAdd = () => { setForm({ libelle: '', code: '' }); setModal('add'); setEditId(null) }
+  const openEdit = (c) => { setForm({ libelle: c.libelle, code: c.code }); setModal('edit'); setEditId(c.id) }
+  const close = () => { setModal(null); setForm({ libelle: '', code: '' }); setEditId(null) }
+
+  const genCode = (libelle) => libelle.toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 30)
+
+  const save = async (e) => {
+    e.preventDefault()
+    if (!form.libelle.trim()) { toast.error('Le libellé est obligatoire.'); return }
+    setSaving(true)
+    const code = form.code.trim() || genCode(form.libelle)
+    const payload = { company_id: companyId, libelle: form.libelle.trim(), code }
+
+    if (modal === 'add') {
+      const { error } = await supabase.from('compta_categories_articles').insert(payload)
+      if (error) { toast.error(error.message); setSaving(false); return }
+      toast.success('Catégorie ajoutée !')
+    } else {
+      const { error } = await supabase.from('compta_categories_articles').update({ libelle: form.libelle.trim(), code }).eq('id', editId)
+      if (error) { toast.error(error.message); setSaving(false); return }
+      toast.success('Catégorie modifiée !')
+    }
+    setSaving(false); close(); load()
+  }
+
+  const del = async (id, libelle) => {
+    if (!confirm(\`Supprimer la catégorie "${libelle}" ?\nLes articles liés ne seront pas supprimés.\`)) return
+    const { error } = await supabase.from('compta_categories_articles').delete().eq('id', id)
+    if (error) { toast.error(error.message); return }
+    toast.success('Catégorie supprimée.'); load()
+  }
+
+  return (
+    <div>
+      <PageHeader title="Catégories d'articles"
+        subtitle={companyId ? \`${cats.length} catégorie(s)\` : 'Sélectionnez une société'}
+        actions={
+          <div style={{display:'flex',gap:8}}>
+            <Btn sm variant="success" onClick={openAdd} disabled={!companyId}>+ Nouvelle catégorie</Btn>
+          </div>
+        }
+      />
+
+      {!companyId ? (
+        <Card style={{textAlign:'center',padding:'48px 24px',color:'#64748b'}}>
+          <div style={{fontSize:40,marginBottom:8}}>🗂️</div>
+          <p>Sélectionnez une société pour gérer ses catégories d'articles</p>
+        </Card>
+      ) : loading ? (
+        <Card><p style={{color:'#64748b',padding:16}}>Chargement...</p></Card>
+      ) : (
+        <Card style={{padding:0,overflow:'hidden'}}>
+          {cats.length === 0 ? (
+            <div style={{textAlign:'center',padding:'48px 24px',color:'#64748b'}}>
+              <div style={{fontSize:40,marginBottom:8}}>🗂️</div>
+              <p style={{marginBottom:16}}>Aucune catégorie personnalisée</p>
+              <p style={{fontSize:13,color:'#94a3b8',marginBottom:16}}>Les catégories par défaut (Riz Paddy, Emballage…) sont disponibles.<br/>Créez vos propres catégories pour les adapter à votre activité.</p>
+              <Btn variant="success" onClick={openAdd}>+ Créer ma première catégorie</Btn>
+            </div>
+          ) : (
+            <table style={{width:'100%',borderCollapse:'collapse'}}>
+              <thead>
+                <tr style={{background:'#f8fafc',borderBottom:'2px solid #e2e8f0'}}>
+                  <th style={{padding:'10px 16px',textAlign:'left',fontSize:12,fontWeight:700,color:'#64748b',textTransform:'uppercase',letterSpacing:'0.05em'}}>Libellé</th>
+                  <th style={{padding:'10px 16px',textAlign:'left',fontSize:12,fontWeight:700,color:'#64748b',textTransform:'uppercase',letterSpacing:'0.05em'}}>Code</th>
+                  <th style={{padding:'10px 16px',textAlign:'right',fontSize:12,fontWeight:700,color:'#64748b',textTransform:'uppercase',letterSpacing:'0.05em'}}>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {cats.map((c,i) => (
+                  <tr key={c.id} style={{borderBottom:'1px solid #f1f5f9',background:i%2===0?'white':'#fafafa'}}>
+                    <td style={{padding:'12px 16px',fontWeight:600}}>{c.libelle}</td>
+                    <td style={{padding:'12px 16px'}}>
+                      <span style={{background:'#f1f5f9',color:'#475569',padding:'2px 10px',borderRadius:20,fontSize:12,fontFamily:'monospace'}}>{c.code}</span>
+                    </td>
+                    <td style={{padding:'12px 16px',textAlign:'right'}}>
+                      <div style={{display:'flex',gap:6,justifyContent:'flex-end'}}>
+                        <Btn sm variant="secondary" onClick={()=>openEdit(c)}>✏️ Modifier</Btn>
+                        <Btn sm variant="danger" onClick={()=>del(c.id, c.libelle)}>🗑️</Btn>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </Card>
+      )}
+
+      {/* Catégories par défaut (non modifiables) */}
+      {companyId && (
+        <div style={{marginTop:20}}>
+          <h3 style={{fontSize:14,fontWeight:700,color:'#64748b',marginBottom:10}}>Catégories système (non modifiables)</h3>
+          <div style={{display:'flex',flexWrap:'wrap',gap:8}}>
+            {Object.entries(CAT_LABELS_DEFAULT).map(([code,lib]) => (
+              <span key={code} style={{background:'#f1f5f9',color:'#475569',padding:'4px 14px',borderRadius:20,fontSize:13,border:'1px solid #e2e8f0'}}>
+                {lib} <span style={{fontSize:11,color:'#94a3b8',fontFamily:'monospace'}}>({code})</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <Modal open={!!modal} onClose={close} title={modal==='add'?'Nouvelle catégorie':'Modifier la catégorie'}>
+        <form onSubmit={save}>
+          <div style={{marginBottom:14}}>
+            <Input label="Libellé *" name="libelle" value={form.libelle} onChange={e=>{
+              set(e)
+              if (modal==='add' && !form.code) setForm(f=>({...f,libelle:e.target.value,code:genCode(e.target.value)}))
+              else set(e)
+            }} required placeholder="Ex: Matières premières" />
+          </div>
+          <div style={{marginBottom:20}}>
+            <Input label="Code (auto-généré)" name="code" value={form.code} onChange={set}
+              placeholder="Ex: matieres_premieres" />
+            <p style={{fontSize:11,color:'#94a3b8',marginTop:4}}>Le code est utilisé en interne. Il est auto-généré à partir du libellé.</p>
+          </div>
+          <Row>
+            <Btn variant="secondary" onClick={close}>Annuler</Btn>
+            <Btn type="submit" disabled={saving}>{saving?'...':'Enregistrer'}</Btn>
+          </Row>
+        </form>
+      </Modal>
+    </div>
+  )
+}
+
 function InventairePage({ companies, companyId, setCompanyId, toast }) {
   const [articles, setArticles] = useState([])
   const [catFilter, setCatFilter] = useState('') // '' = toutes les catégories
 
   const load = useCallback(async()=>{
     if (!companyId) { setArticles([]); return }
+    // Refresh categories cache
+    const catData = await loadCategoriesFromSupabase(companyId)
+    const map = {}
+    catData.forEach(c => { map[c.code] = c.libelle })
+    setCatLabelsCache({ ...CAT_LABELS_DEFAULT, ...map })
     const { data:ad } = await supabase.auth.getUser()
     const uid = ad?.user?.id; const isAdmin = ad?.user?.email === SUPER_ADMIN_EMAIL
     let q = supabase.from('compta_articles').select('*').eq('company_id',companyId).eq('actif',true).order('categorie,designation')
@@ -6248,7 +6444,7 @@ function InventairePage({ companies, companyId, setCompanyId, toast }) {
             <select value={catFilter} onChange={e=>setCatFilter(e.target.value)}
               style={{padding:'6px 12px',borderRadius:8,border:'1px solid #d1d5db',fontSize:13,background:'white',cursor:'pointer'}}>
               <option value="">📦 Toutes les catégories</option>
-              {cats.map(c=><option key={c} value={c}>{c}</option>)}
+              {cats.map(c=><option key={c} value={c}>{getCatLabels()[c]||c}</option>)}
             </select>
             {catFilter && <Btn sm variant="secondary" onClick={()=>setCatFilter('')}>✕</Btn>}
             <Btn sm variant="warning" onClick={recalcStock} disabled={!companyId}>🔄 Recalculer</Btn>
@@ -8422,7 +8618,7 @@ const ALL_SECTIONS = [
 
 const SECTION_GROUPS = [
   {group:'Référentiel', ids:['companies','clients','fournisseurs']},
-  {group:'Stock', ids:['stock','mouvements','bons_stock','inventaire']},
+  {group:'Stock', ids:['stock','mouvements','bons_stock','inventaire','categories_articles']},
   {group:'Commercial', ids:['commercial','reglements_clients','reglements_fourn','prestations']},
   {group:'Traçabilité', ids:['registre_tracabilite','tracabilite']},
   {group:'Production', ids:['suivi_lot','lots','etuvage','decorticage','calibrage','tri_optique','conditionnement']},
@@ -24148,6 +24344,7 @@ export default function ComptaPro() {
     docs_admin:'Documents administratifs', parametres:'Paramètres',
     prestations:'Prestations', journal_caisse:'Journal Caisse', journal_banque:'Journal Banque',
     suivi_lot:'Suivi de Lot', tracabilite:'Traçabilité des lots', registre_tracabilite:'Registre de traçabilité', journal_mobile:'Journal Mobile Money', plan_comptable:'Plan Comptable', grand_livre:'Grand-Livre', ecritures:'Saisie Comptable', balance:'Balance', etats_financiers:'États Financiers',
+    categories_articles:'Catégories d\'articles',
     rh_employes:'RH — Employés', rh_fiches_paie:'RH — Fiches de Paie', rh_historique:'RH — Historique Paie',
     rh_declarations:'RH — Déclarations CNSS/ITS', rh_rapport:'RH — Rapport Cabinet', rh_dossiers:'RH — Dossier du personnel', rh_carriere:'RH — Carrière', rh_conges:'RH — Congés', rh_absences:'RH — Permissions & absences', rh_prets:'RH — Prêts & avances', rh_missions:'RH — Missions', rh_centralisation:'RH — Centralisation comptable', rh_tableau_bord:'RH — Tableau de bord', rh_simulateur:'RH — Simulateur Brut ↔ Net',
   }
@@ -24186,6 +24383,7 @@ export default function ComptaPro() {
       case 'mouvements':    return <MouvementsPage {...sp} setPage={setPage} />
       case 'bons_stock':    return <BonsStockPage {...sp} readOnly={getReadOnly('bons_stock')} />
       case 'inventaire':    return <InventairePage companies={companies} companyId={effectiveCompanyId} setCompanyId={setCompanyId} toast={toast} />
+      case 'categories_articles': return <CategoriesPage companies={companies} companyId={effectiveCompanyId} toast={toast} />
       case 'commercial':    return <CommercialPage {...sp} setPage={setPage} setDocId={setDocId} />
       case 'commercial-view': return <CommercialViewPage docId={docId} setPage={setPage} toast={toast} />
       case 'lots':          return <LotsProductionPage {...sp} />
