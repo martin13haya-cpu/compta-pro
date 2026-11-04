@@ -3563,6 +3563,72 @@ const MSG_SCRIPT_CATEGORIE = "Exécutez d'abord le script supabase/migrations/20
 // Un fournisseur sans catégorie compte comme producteur (achats groupés…).
 const estProducteur = f => !f?.categorie || f.categorie === 'producteur'
 
+// ── CODE PRODUCTEUR PAR RÈGLE ────────────────────────────────────────────────
+// COMMUNE (3 lettres) - P + initiale du nom _ chiffres n°4, 5, 8 et 9 du CIP
+// (en comptant depuis la gauche). Ex : CIP 5758798912, commune Natitingou,
+// nom KOUAGOU  ->  NAT-PK_8791.
+const lettresSeules = s => String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^A-Za-z]/g,'').toUpperCase()
+function codeProducteurParRegle(f) {
+  const cip = onlyDigits(f?.cip)
+  if (cip.length !== 10) return { erreur:'CIP absent ou incomplet' }
+  const com = lettresSeules(f?.commune).slice(0,3)
+  if (!com) return { erreur:'Commune non renseignée' }
+  const ini = lettresSeules(f?.nom).slice(0,1)
+  if (!ini) return { erreur:'Nom non renseigné' }
+  return { code:`${com}-P${ini}_${cip[3]}${cip[4]}${cip[7]}${cip[8]}` }
+}
+// Pose (ou retire) le code producteur d'une fiche fournisseur selon la règle.
+//  - personne morale / fournisseur non producteur : { statut:'ignore' } (rien n'est fait)
+//  - pas de CIP à 10 chiffres : pas de code producteur (l'ancien code est retiré)
+//  - CIP valide mais commune ou nom manquant : { statut:'incomplet' }, code inchangé
+//  - existants : Set des codes déjà pris dans la société (import en lot) ; sinon vérifié en base.
+async function poserCodeProducteur(id, companyId, f, { ancien=null, existants=null } = {}) {
+  if (f?.type==='morale' || !estProducteur(f)) return { statut:'ignore' }
+  const r = codeProducteurParRegle(f)
+  if (r.erreur) {
+    if (onlyDigits(f?.cip).length !== 10) {
+      if (!ancien) return { statut:'inchange' }
+      const { error } = await supabase.from('compta_fournisseurs').update({ code_trace:null }).eq('id', id)
+      return error ? { statut:'erreur', message:error.message } : { statut:'efface' }
+    }
+    return { statut:'incomplet', raison:r.erreur }
+  }
+  if (r.code === ancien) return { statut:'inchange', code:r.code }
+  let pris
+  if (existants) pris = existants.has(r.code)
+  else {
+    const { data } = await supabase.from('compta_fournisseurs').select('id').eq('company_id', companyId).eq('code_trace', r.code).neq('id', id).limit(1)
+    pris = !!data?.length
+  }
+  if (pris) return { statut:'conflit', code:r.code }
+  const { error } = await supabase.from('compta_fournisseurs').update({ code_trace:r.code }).eq('id', id)
+  if (error) return { statut:'erreur', message:error.message }
+  if (existants) existants.add(r.code)
+  if (ancien) { try { await majRegistresTracaCodes(companyId, new Map([[ancien, r.code]])) } catch {} }
+  return { statut:'pose', code:r.code }
+}
+// Les lignes déjà saisies dans les registres de traçabilité (code producteur, code
+// parcelle « CODE-B01 »…) gardent l'ancien code : on les met à jour pour ne pas
+// casser le lien avec la fiche du producteur.
+async function majRegistresTracaCodes(companyId, changes) {
+  const { data, error } = await fetchAllRows(() => supabase.from('compta_tracabilite_registres').select('id,donnees').eq('company_id', companyId).order('created_at'))
+  if (error || !data?.length) return 0
+  const remplacer = v => {
+    if (typeof v !== 'string') return v
+    if (changes.has(v)) return changes.get(v)
+    const prefixe = v.split('-').slice(0,2).join('-')
+    return changes.has(prefixe) ? changes.get(prefixe) + v.slice(prefixe.length) : v
+  }
+  const aMaj = []
+  for (const r of data) {
+    let change = false; const neuf = {}
+    for (const [k,v] of Object.entries(r.donnees || {})) { const nv = remplacer(v); if (nv !== v) change = true; neuf[k] = nv }
+    if (change) aMaj.push({ id:r.id, donnees:neuf })
+  }
+  for (let i = 0; i < aMaj.length; i += 15) await Promise.all(aMaj.slice(i, i+15).map(x => supabase.from('compta_tracabilite_registres').update({ donnees:x.donnees }).eq('id', x.id)))
+  return aMaj.length
+}
+
 function TiersPage({ table, title, titleSingle, icon, companies, companyId, toast, extraFields, readOnly=false }) {
   const [items,      setItems]     = useState([])
   const [modal,      setModal]     = useState(null)
@@ -3873,7 +3939,14 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     if (modal==='add') {
       const { data:ins, error } = await supabase.from(table).insert({...pay,user_id:uid}).select('id').single()
       if (error) { setSaving(false); toast.error(/categorie/i.test(error.message) ? MSG_SCRIPT_CATEGORIE : error.message); return }
-      if (table==='compta_fournisseurs') await attribuerCodeTrace('compta_fournisseurs', ins.id, pay.company_id, 'P')
+      if (table==='compta_fournisseurs') {
+        // Producteur (personne physique) : code par règle, seulement si le CIP est renseigné.
+        // Personne morale / autre catégorie : ancien code automatique.
+        const rc = await poserCodeProducteur(ins.id, pay.company_id, pay)
+        if (rc.statut==='ignore') await attribuerCodeTrace('compta_fournisseurs', ins.id, pay.company_id, 'P')
+        else if (rc.statut==='conflit') toast.error(`Le code ${rc.code} est déjà attribué à un autre producteur : aucun code posé.`)
+        else if (rc.statut==='erreur') toast.error(rc.message)
+      }
       // Numero de compte (fournisseur 4011… / client 4111…) : n'existe que si le CIP
       // (personne physique) ou l'IFU (personne morale) est renseigne.
       if (table==='compta_fournisseurs' || table==='compta_clients') {
@@ -3892,6 +3965,11 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     }
     const { error } = await supabase.from(table).update(pay).eq('id',form.id)
     if (error) { setSaving(false); toast.error(/categorie/i.test(error.message) ? MSG_SCRIPT_CATEGORIE : error.message); return }
+    if (table==='compta_fournisseurs') {
+      const rc = await poserCodeProducteur(form.id, pay.company_id || form.company_id, { ...form, ...pay }, { ancien: form.code_trace||null })
+      if (rc.statut==='conflit') toast.error(`Le code ${rc.code} est déjà attribué à un autre producteur : code inchangé.`)
+      else if (rc.statut==='erreur') toast.error(rc.message)
+    }
     if (table==='compta_fournisseurs' || table==='compta_clients') {
       const isFourn = table==='compta_fournisseurs'
       const isMorale = form.type==='morale'
@@ -4169,9 +4247,16 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
         avancesPerRow.push(table==='compta_fournisseurs' ? avsImp : [])
       }
       if(rows.length===0){ toast.error('Aucune ligne valide trouvée'); setImporting(false); return }
-      const { data:insRows, error } = await supabase.from(table).insert(rows).select('id,type,nom,nom_societe')
+      const { data:insRows, error } = await supabase.from(table).insert(rows).select('id,type,nom,nom_societe,cip,commune')
       if(error){ toast.error('Erreur import : '+error.message); setImporting(false); return }
-      if (table==='compta_fournisseurs') for (const r of insRows||[]) await attribuerCodeTrace('compta_fournisseurs', r.id, cid, 'P')
+      if (table==='compta_fournisseurs') {
+        const { data:codesPris } = await fetchAllRows(() => supabase.from('compta_fournisseurs').select('id,code_trace').eq('company_id', cid).not('code_trace','is',null).order('id'))
+        const existants = new Set((codesPris||[]).map(c => c.code_trace))
+        for (const r of insRows||[]) {
+          const rc = await poserCodeProducteur(r.id, cid, r, { existants })
+          if (rc.statut==='ignore') await attribuerCodeTrace('compta_fournisseurs', r.id, cid, 'P')
+        }
+      }
       // Attribution automatique des numéros de compte (séquentiel)
       if (table==='compta_fournisseurs' || table==='compta_clients') {
         const isFourn = table==='compta_fournisseurs'
@@ -4457,6 +4542,64 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
       headers:colonnesCodes.map(label => ({ label })),
       rows:liste.map((it,i) => ligneCode(it,i).map(v => echapHtml(v))),
       filename:'codes_producteurs' })
+  }
+
+  // ── GÉNÉRATION DES CODES PRODUCTEURS PAR RÈGLE (bouton du menu Actions) ──
+  // Écrase tous les anciens codes des producteurs (personnes physiques). Sans CIP
+  // à 10 chiffres : pas de code producteur (l'ancien code est retiré).
+  const [codesModal, setCodesModal] = useState(false)
+  const [codesPlan, setCodesPlan] = useState(null)
+  const [codesBusy, setCodesBusy] = useState(false)
+
+  const calculerPlanCodes = () => {
+    const producteurs = items.filter(i => i.type!=='morale' && estProducteur(i))
+    const conformes = [], ignores = [], candidats = [], aEffacer = []
+    producteurs.forEach(p => {
+      const r = codeProducteurParRegle(p)
+      if (r.erreur) {
+        if (onlyDigits(p.cip).length !== 10) { if (p.code_trace) aEffacer.push({ p, ancien:p.code_trace }) }
+        else ignores.push({ p, raison:r.erreur })
+        return
+      }
+      if (p.code_trace === r.code) { conformes.push(p); return }
+      candidats.push({ p, ancien:p.code_trace||'', nouveau:r.code })
+    })
+    // Codes déjà portés par des fiches qui ne seront pas modifiées.
+    const touches = new Set([...candidats.map(c => c.p.id), ...aEffacer.map(c => c.p.id)])
+    const pris = new Set(items.filter(i => !touches.has(i.id) && i.code_trace).map(i => i.code_trace))
+    const aGenerer = [], doublons = []
+    candidats.sort((a,b) => (a.p.nom||'').localeCompare(b.p.nom||'', 'fr') || (a.p.prenom||'').localeCompare(b.p.prenom||'', 'fr'))
+    candidats.forEach(c => { if (pris.has(c.nouveau)) doublons.push(c); else { pris.add(c.nouveau); aGenerer.push(c) } })
+    return { aGenerer, aEffacer, conformes, ignores, doublons }
+  }
+  const ouvrirCodesProducteurs = () => {
+    if (!companyId && companies.length>1) { toast.error('Sélectionnez une société précise (en haut de l\'écran) avant de générer les codes producteurs.'); return }
+    setCodesPlan(calculerPlanCodes()); setCodesModal(true)
+  }
+  const appliquerCodesProducteurs = async () => {
+    const aGenerer = codesPlan?.aGenerer || [], aEffacer = codesPlan?.aEffacer || []
+    if (!aGenerer.length && !aEffacer.length) return
+    setCodesBusy(true)
+    let ok = 0, retires = 0; const echecs = []; const changes = new Map()
+    // 1) retirer d'abord les codes sans CIP (libère les codes), 2) poser les nouveaux.
+    for (let i = 0; i < aEffacer.length; i += 15) {
+      await Promise.all(aEffacer.slice(i, i+15).map(async ({ p }) => {
+        const { error } = await supabase.from('compta_fournisseurs').update({ code_trace:null }).eq('id', p.id)
+        if (error) echecs.push(`${displayName(p)} : ${error.message}`); else retires++
+      }))
+    }
+    for (let i = 0; i < aGenerer.length; i += 15) {
+      await Promise.all(aGenerer.slice(i, i+15).map(async ({ p, ancien, nouveau }) => {
+        const { error } = await supabase.from('compta_fournisseurs').update({ code_trace:nouveau }).eq('id', p.id)
+        if (error) echecs.push(`${displayName(p)} : ${error.message}`)
+        else { ok++; if (ancien) changes.set(ancien, nouveau) }
+      }))
+    }
+    if (changes.size) { try { await majRegistresTracaCodes(companyId || companies[0]?.id, changes) } catch {} }
+    setCodesBusy(false); setCodesModal(false); setCodesPlan(null)
+    if (echecs.length) toast.error(`${echecs.length} échec(s) — ${echecs[0]}`)
+    if (ok || retires) toast.success(`${ok} code(s) généré(s)${retires ? `, ${retires} code(s) retiré(s) (pas de CIP)` : ''}.`)
+    load()
   }
 
   const exportExcelMentors = () => {
@@ -4871,6 +5014,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
               isFourn && items.length>0 && { couleur:'#16a34a', label:'📊 Liste Mentors', onClick:exportExcelMentors },
               isFourn && items.length>0 && { couleur:'#0f766e', label:'🏷️ Codes producteurs (PDF)', onClick:exportCodesPdf },
               isFourn && items.length>0 && { couleur:'#0f766e', label:'🏷️ Codes producteurs (Excel)', onClick:exportCodesExcel },
+              !readOnly && isFourn && items.length>0 && { couleur:'#0f766e', label:'🔢 Générer les codes producteurs', onClick:ouvrirCodesProducteurs },
               isFourn && items.length>0 && { couleur:'#0369a1', label:`📄 Toutes les PV de réception (${filtered.filter(i=>i.type!=='morale').length})`, onClick:printPvReceptionTout },
               isFourn && items.length>0 && null,
               isFourn && items.length>0 && { couleur:'#ea580c', label:'👷 Liste des ouvriers (PDF)', onClick:printListeOuvriers },
@@ -5270,6 +5414,72 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
           ))}
         </div>
         <Row><Btn onClick={()=>setColModalOpen(false)}>Fermer</Btn></Row>
+      </Modal>
+
+      <Modal open={codesModal} onClose={()=>!codesBusy && setCodesModal(false)} title="Générer les codes producteurs" size="lg">
+        {codesPlan && (
+          <div>
+            <div style={{background:'#f0fdfa',border:'1px solid #99f6e4',borderRadius:10,padding:'12px 16px',fontSize:13,color:'#134e4a',marginBottom:14,lineHeight:1.6}}>
+              <strong>Règle :</strong> COMMUNE (3 lettres) – <strong>P</strong> + initiale du nom _ chiffres n° <strong>4, 5, 8 et 9</strong> du CIP (en comptant depuis la gauche).<br/>
+              Exemple : CIP 5758798912, commune Natitingou, nom KOUAGOU → <strong style={{fontFamily:'Consolas, monospace'}}>NAT-PK_8791</strong><br/>
+              Tous les anciens codes des producteurs sont remplacés. <strong>Sans CIP à 10 chiffres, le producteur n'a pas de code.</strong>
+            </div>
+            <div style={{display:'flex',gap:16,flexWrap:'wrap',fontSize:13,marginBottom:12}}>
+              <span><strong style={{color:'#0f766e'}}>{codesPlan.aGenerer.length}</strong> à générer</span>
+              <span><strong style={{color:'#dc2626'}}>{codesPlan.aEffacer.length}</strong> code(s) retiré(s) (sans CIP)</span>
+              <span><strong>{codesPlan.conformes.length}</strong> déjà conformes</span>
+              <span><strong style={{color:'#b45309'}}>{codesPlan.ignores.length}</strong> ignorés</span>
+              <span><strong style={{color:'#dc2626'}}>{codesPlan.doublons.length}</strong> en conflit</span>
+            </div>
+            {codesPlan.aGenerer.length>0 && (
+              <div style={{maxHeight:240,overflow:'auto',border:'1px solid #e2e8f0',borderRadius:8,marginBottom:12}}>
+                <table style={{width:'100%',borderCollapse:'collapse',fontSize:12.5}}>
+                  <thead><tr style={{background:'#f8fafc',position:'sticky',top:0}}>
+                    {['Producteur','CIP','Commune','Ancien code','Nouveau code'].map(h=><th key={h} style={{padding:'7px 10px',textAlign:'left',fontSize:11.5,color:'#64748b',textTransform:'uppercase'}}>{h}</th>)}
+                  </tr></thead>
+                  <tbody>
+                    {codesPlan.aGenerer.map(({p,ancien,nouveau})=>(
+                      <tr key={p.id} style={{borderTop:'1px solid #f1f5f9'}}>
+                        <td style={{padding:'6px 10px'}}>{displayName(p)} {p.prenom||''}</td>
+                        <td style={{padding:'6px 10px',fontFamily:'Consolas, monospace'}}>{p.cip}</td>
+                        <td style={{padding:'6px 10px'}}>{p.commune}</td>
+                        <td style={{padding:'6px 10px',color:'#94a3b8',fontFamily:'Consolas, monospace'}}>{ancien||'—'}</td>
+                        <td style={{padding:'6px 10px',fontWeight:700,color:'#0f766e',fontFamily:'Consolas, monospace'}}>{nouveau}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            {codesPlan.aEffacer.length>0 && (
+              <div style={{background:'#fef2f2',border:'1px solid #fecaca',borderRadius:8,padding:'8px 12px',fontSize:12.5,color:'#991b1b',marginBottom:10}}>
+                <strong>Code retiré (CIP absent ou incomplet) :</strong>{' '}
+                {codesPlan.aEffacer.slice(0,12).map(c=>`${displayName(c.p)} (${c.ancien})`).join(' ; ')}{codesPlan.aEffacer.length>12?` … et ${codesPlan.aEffacer.length-12} autre(s)`:''}
+              </div>
+            )}
+            {codesPlan.doublons.length>0 && (
+              <div style={{background:'#fef2f2',border:'1px solid #fecaca',borderRadius:8,padding:'8px 12px',fontSize:12.5,color:'#991b1b',marginBottom:10}}>
+                <strong>Conflit (code déjà pris par un autre producteur, non modifié) :</strong>{' '}
+                {codesPlan.doublons.slice(0,12).map(c=>`${displayName(c.p)} → ${c.nouveau}`).join(' ; ')}{codesPlan.doublons.length>12?' …':''}
+              </div>
+            )}
+            {codesPlan.ignores.length>0 && (
+              <div style={{background:'#fffbeb',border:'1px solid #fde68a',borderRadius:8,padding:'8px 12px',fontSize:12.5,color:'#92400e',marginBottom:10}}>
+                <strong>Ignorés (CIP valide mais fiche incomplète, code inchangé) :</strong>{' '}
+                {codesPlan.ignores.slice(0,12).map(x=>`${displayName(x.p)} (${x.raison})`).join(' ; ')}{codesPlan.ignores.length>12?` … et ${codesPlan.ignores.length-12} autre(s)`:''}
+              </div>
+            )}
+            <p style={{fontSize:12,color:'#64748b',margin:'4px 0 14px'}}>
+              Les lignes déjà saisies dans les registres de traçabilité sont mises à jour avec le nouveau code. Les documents déjà imprimés gardent l'ancien code.
+            </p>
+            <Row>
+              <Btn variant="secondary" onClick={()=>setCodesModal(false)} disabled={codesBusy}>Annuler</Btn>
+              <Btn onClick={appliquerCodesProducteurs} disabled={codesBusy || (codesPlan.aGenerer.length+codesPlan.aEffacer.length)===0}>
+                {codesBusy ? '⏳ Application…' : `Appliquer (${codesPlan.aGenerer.length+codesPlan.aEffacer.length})`}
+              </Btn>
+            </Row>
+          </div>
+        )}
       </Modal>
 
       <Modal open={mentorModalOpen} onClose={()=>setMentorModalOpen(false)}
