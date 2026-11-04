@@ -3807,7 +3807,12 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
   const filtered = items.filter(it => {
     if (search) {
       const s = (it.nom||'')+' '+(it.prenom||'')+' '+(it.nom_societe||'')
-      if (!s.toLowerCase().includes(search.toLowerCase())) return false
+      const q = search.toLowerCase()
+      // Recherche aussi par code (ex. « NAT-PK_8791 », ou sans tirets : « pk8791 »).
+      const compact = v => String(v||'').toLowerCase().replace(/[^a-z0-9]/g,'')
+      const qc = compact(search)
+      const parCode = !!qc && compact(it.code_trace).includes(qc)
+      if (!s.toLowerCase().includes(q) && !parCode) return false
     }
     if (filterType && it.type !== filterType) return false
     if (table==='compta_fournisseurs' && filterCategorie && (filterCategorie==='aucune' ? !!it.categorie : it.categorie !== filterCategorie)) return false
@@ -5031,7 +5036,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
         )} />
       <Card style={{marginBottom:16,padding:'12px 20px'}}>
         <div style={{display:'flex',gap:10,flexWrap:'wrap',alignItems:'center'}}>
-          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="🔍 Rechercher par nom..."
+          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder={isFourn ? "🔍 Rechercher par nom ou code..." : "🔍 Rechercher par nom..."}
             style={{padding:'8px 14px',borderRadius:8,border:'1px solid #d1d5db',fontSize:13,flex:1,minWidth:180}} />
           {(table==='compta_clients'||table==='compta_fournisseurs') && (
             <select value={sortBy} onChange={e=>setSortBy(e.target.value)}
