@@ -1969,16 +1969,14 @@ const CONSOL_TIERS_COLUMNS = (isFourn) => [
     {key:'Bas-fonds'},{key:'Superficie (ha)'},
     {key:'Date de naissance'},{key:'Âge'},{key:'Tranche d\'âge'},
     {key:'Nationalité'},{key:'Niveau d\'instruction'},
-    {key:'Réside localement'},{key:'Disponible formation'},
-    {key:'Accepte bonnes pratiques'},{key:'Accepte partenariat'},{key:'Membre coop. partenaire'},{key:'A déjà cultivé le riz'},
-    {key:'Accès garanti terre'},{key:'Propriété terre'},{key:'Mode accès terre'},{key:'Décision'},
-    {key:'Total avance (FCFA)'},{key:'Prix/contrat (FCFA)'},{key:'Riz paddy équiv. (kg)'},
+    {key:'Accès garanti terre'},{key:'Mode accès terre'},{key:'Décision'},
+    {key:'Total Kit FRIA (FCFA)'},{key:'Prix/contrat (FCFA)'},{key:'Riz paddy équiv. (kg)'},
     {key:'Labour - Qté'},{key:'Labour - Montant (FCFA)'},
     {key:'Semences - Qté'},{key:'Semences - Montant (FCFA)'},
     {key:'Engrais - Qté'},{key:'Engrais - Montant (FCFA)'},
     {key:'Herbicide - Qté'},{key:'Herbicide - Montant (FCFA)'},
     {key:'Crédits - Qté'},{key:'Crédits - Montant (FCFA)'},
-    {key:'Détail avances'},
+    {key:'Détail Kit FRIA'},
   ]:[]),
 ]
 const consolTiersVal = (it,c) => ({
@@ -2010,17 +2008,10 @@ const consolTiersVal = (it,c) => ({
   'Tranche d\'âge': it.tranche_age||'',
   'Nationalité': it.nationalite||'',
   'Niveau d\'instruction': it.niveau_instruction||'',
-  'Réside localement': it.reside_localite ? 'Oui' : 'Non',
-  'Disponible formation': it.disponible_formation ? 'Oui' : 'Non',
-  'Accepte bonnes pratiques': it.accepte_bonnes_pratiques ? 'Oui' : 'Non',
-  'Accepte partenariat': it.accepte_partenariat ? 'Oui' : 'Non',
-  'Membre coop. partenaire': it.cooperative_partenaire ? 'Oui' : 'Non',
-  'A déjà cultivé le riz': it.a_deja_cultive_riz ? 'Oui' : 'Non',
   'Accès garanti terre': it.acces_garanti_terre||'',
-  'Propriété terre': it.propriete_terre ? 'Oui' : 'Non',
   'Mode accès terre': it.mode_acces_terre||'',
   'Décision': it.decision||'',
-  'Total avance (FCFA)': (Array.isArray(it._avances)?it._avances:[]).reduce((sm,a)=>sm+(Number(a.valeur_remboursement)||0),0) || '',
+  'Total Kit FRIA (FCFA)': (Array.isArray(it._avances)?it._avances:[]).reduce((sm,a)=>sm+(Number(a.valeur_remboursement)||0),0) || '',
   'Prix/contrat (FCFA)': it.prix_contrat||'',
   'Riz paddy équiv. (kg)': (()=>{ const tt=(Array.isArray(it._avances)?it._avances:[]).reduce((sm,a)=>sm+(Number(a.valeur_remboursement)||0),0); const pp=Number(it.prix_contrat)||0; return pp>0?(tt/pp).toFixed(2):'' })(),
   'Labour - Qté': consolAvVal(it,'Labour','quantite_recue'),
@@ -2033,7 +2024,7 @@ const consolTiersVal = (it,c) => ({
   'Herbicide - Montant (FCFA)': consolAvVal(it,'Herbicide','valeur_remboursement'),
   'Crédits - Qté': consolAvVal(it,'Crédits','quantite_recue'),
   'Crédits - Montant (FCFA)': consolAvVal(it,'Crédits','valeur_remboursement'),
-  'Détail avances': (Array.isArray(it._avances)?it._avances:[]).map(a=>`${a.type_avance}: ${Number(a.quantite_recue)||0} = ${Number(a.valeur_remboursement)||0}`).join(' | '),
+  'Détail Kit FRIA': (Array.isArray(it._avances)?it._avances:[]).map(a=>`${a.type_avance}: ${Number(a.quantite_recue)||0} = ${Number(a.valeur_remboursement)||0}`).join(' | '),
 }[c] ?? '')
 
 const CONSOL_ARTICLES_COLUMNS = [
@@ -3203,6 +3194,7 @@ function printFicheTiers(it, kind='fournisseur') {
     'mentor_nom','mentor_telephone','mentor_cip',
     'departement','commune','arrondissement','village','nom_bas_fonds','superficie_bas_fonds',
     '_avances','prix_contrat',
+    'reside_localite','disponible_formation','accepte_bonnes_pratiques','accepte_partenariat','a_deja_cultive_riz','cooperative_partenaire','propriete_terre',
   ])
   const prettify = k => (LABELS[k] || k.replace(/_/g,' ').replace(/^./,c=>c.toUpperCase()))
 
@@ -3221,10 +3213,10 @@ function printFicheTiers(it, kind='fournisseur') {
   const prixC = Number(it.prix_contrat)||0
   const rizP = prixC>0 ? totalAv/prixC : 0
   const avancesBloc = (isFourn && (avList.length || prixC>0)) ? `
-    <h3 style="margin:18px 0 6px;font-size:11pt;color:#075E54">💰 Avances reçues</h3>
-    <table><thead><tr><th style="text-align:left">Type d'avance</th><th class="r">Quantité reçue</th><th class="r">Montant (FCFA)</th></tr></thead><tbody>
+    <h3 style="margin:18px 0 6px;font-size:11pt;color:#075E54">💰 Kit FRIA reçu</h3>
+    <table><thead><tr><th style="text-align:left">Type de Kit FRIA</th><th class="r">Quantité reçue</th><th class="r">Montant (FCFA)</th></tr></thead><tbody>
       ${avList.map(a=>`<tr><td>${a.type_avance||'—'}</td><td class="r">${(Number(a.quantite_recue)||0).toLocaleString('fr-FR')} ${UNITES_PDF[a.type_avance]||''}</td><td class="r">${(Number(a.valeur_remboursement)||0).toLocaleString('fr-FR')}</td></tr>`).join('')}
-      <tr style="font-weight:700;background:#f1f5f9"><td colspan="2" class="r">Total avance reçue</td><td class="r">${Math.round(totalAv).toLocaleString('fr-FR')} FCFA</td></tr>
+      <tr style="font-weight:700;background:#f1f5f9"><td colspan="2" class="r">Total Kit FRIA reçu</td><td class="r">${Math.round(totalAv).toLocaleString('fr-FR')} FCFA</td></tr>
     </tbody></table>
     <table style="margin-top:8px"><tbody>
       <tr><td style="font-weight:600;width:42%">Prix /contrat</td><td class="r" style="text-align:left">${prixC>0?prixC.toLocaleString('fr-FR')+' FCFA':'—'}</td></tr>
@@ -3798,17 +3790,10 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     'Tranche d\'âge': it.tranche_age||'',
     'Nationalité': it.nationalite||'',
     'Niveau d\'instruction': it.niveau_instruction||'',
-    'Réside localement': it.reside_localite ? 'Oui' : 'Non',
-    'Disponible formation': it.disponible_formation ? 'Oui' : 'Non',
-    'Accepte bonnes pratiques': it.accepte_bonnes_pratiques ? 'Oui' : 'Non',
-    'Accepte partenariat': it.accepte_partenariat ? 'Oui' : 'Non',
-    'Membre coop. partenaire': it.cooperative_partenaire ? 'Oui' : 'Non',
-    'A déjà cultivé le riz': it.a_deja_cultive_riz ? 'Oui' : 'Non',
     'Accès garanti terre': it.acces_garanti_terre||'',
-    'Propriété terre': it.propriete_terre ? 'Oui' : 'Non',
     'Mode accès terre': it.mode_acces_terre||'',
     'Décision': it.decision||'',
-    'Total avance (FCFA)': (Array.isArray(it._avances)?it._avances:[]).reduce((sm,a)=>sm+(Number(a.valeur_remboursement)||0),0) || '',
+    'Total Kit FRIA (FCFA)': (Array.isArray(it._avances)?it._avances:[]).reduce((sm,a)=>sm+(Number(a.valeur_remboursement)||0),0) || '',
     'Prix/contrat (FCFA)': it.prix_contrat||'',
     'Riz paddy équiv. (kg)': (()=>{ const tt=(Array.isArray(it._avances)?it._avances:[]).reduce((sm,a)=>sm+(Number(a.valeur_remboursement)||0),0); const pp=Number(it.prix_contrat)||0; return pp>0?(tt/pp).toFixed(2):'' })(),
     'Labour - Qté': avVal(it,'Labour','quantite_recue'),
@@ -3821,7 +3806,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     'Herbicide - Montant (FCFA)': avVal(it,'Herbicide','valeur_remboursement'),
     'Crédits - Qté': avVal(it,'Crédits','quantite_recue'),
     'Crédits - Montant (FCFA)': avVal(it,'Crédits','valeur_remboursement'),
-    'Détail avances': (Array.isArray(it._avances)?it._avances:[]).map(a=>`${a.type_avance}: ${Number(a.quantite_recue)||0} = ${Number(a.valeur_remboursement)||0}`).join(' | '),
+    'Détail Kit FRIA': (Array.isArray(it._avances)?it._avances:[]).map(a=>`${a.type_avance}: ${Number(a.quantite_recue)||0} = ${Number(a.valeur_remboursement)||0}`).join(' | '),
   }[c] ?? '')
 
   const filtered = items.filter(it => {
@@ -3870,8 +3855,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
 
   const baseDefaults = { company_id:companyId||'', nom:'', prenom:'', nom_societe:'', telephone:'', provenance:'', cip:'', ifu:'', email:'', adresse:'', genre:'', handicap:false, mentor_nom:'', mentor_telephone:'', mentor_cip:'', mentor_age:'', departement:'', commune:'', arrondissement:'', village:'', nom_bas_fonds:'', superficie_bas_fonds:'', cooperative_affiliee:'', numero_contrat:'', prix_contrat:'',
     date_naissance:'', age:'', tranche_age:'', nationalite:'', niveau_instruction:'',
-    reside_localite:false, disponible_formation:false, accepte_bonnes_pratiques:false, accepte_partenariat:false, a_deja_cultive_riz:false, cooperative_partenaire:false,
-    nombre_jeunes_femmes:'', nombre_jeunes_hommes:'', acces_garanti_terre:'', propriete_terre:false, mode_acces_terre:'', decision:'' }
+    nombre_jeunes_femmes:'', nombre_jeunes_hommes:'', acces_garanti_terre:'', mode_acces_terre:'', decision:'' }
   const open = (it=null) => {
     // Si "Toutes les sociétés" est sélectionné et qu'il existe plusieurs sociétés, on refuse
     // d'ajouter une fiche : impossible de deviner à quelle société elle doit être rattachée
@@ -3898,7 +3882,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
   const addAvance = () => setAvances(a=>[...a,{ type_avance:'Labour', quantite_recue:'', montant:'' }])
   const delAvance = (i) => {
     const a = avances[i]
-    if ((numFR(a.quantite_recue)||numFR(a.montant)) && !confirm(`Supprimer l'avance « ${a.type_avance} » ?`)) return
+    if ((numFR(a.quantite_recue)||numFR(a.montant)) && !confirm(`Supprimer la ligne Kit FRIA « ${a.type_avance} » ?`)) return
     setAvances(l=>l.filter((_,j)=>j!==i))
   }
   const setAvanceField = (i,field,val) => setAvances(a=>{ const n=[...a]; n[i]={...n[i],[field]:val}; return n })
@@ -3908,7 +3892,8 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     const lignes = (avances||[]).filter(a => a.type_avance && (numFR(a.quantite_recue) || numFR(a.montant)))
     if (lignes.length) {
       const rows = lignes.map(a => ({ fournisseur_id:fournId, company_id:cid, user_id:uidp, type_avance:a.type_avance, quantite_recue:numFR(a.quantite_recue), valeur_remboursement:numFR(a.montant) }))
-      await supabase.from('compta_avances_fournisseur').insert(rows)
+      const { error:errA } = await supabase.from('compta_avances_fournisseur').insert(rows)
+      if (errA) toast.error(`Kit FRIA non enregistré : ${errA.message}`)
     }
   }
   const close = ()=>setModal(null)
@@ -3922,8 +3907,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     const fournExtra = table==='compta_fournisseurs' ? ['prix_contrat', 'categorie'] : []
     const jeuneFields = table==='compta_fournisseurs' ? [
       'date_naissance','age','tranche_age','nationalite','niveau_instruction',
-      'reside_localite','disponible_formation','accepte_bonnes_pratiques','accepte_partenariat','a_deja_cultive_riz','cooperative_partenaire',
-      'nombre_jeunes_femmes','nombre_jeunes_hommes','acces_garanti_terre','propriete_terre','mode_acces_terre','decision',
+      'nombre_jeunes_femmes','nombre_jeunes_hommes','acces_garanti_terre','mode_acces_terre','decision',
     ] : []
     const fields = ['company_id','nom','prenom','telephone','provenance','cip','ifu','email','adresse','genre','handicap', ...mentorFields, ...locFields, ...fournExtra, ...jeuneFields, ...(extraFields?.names||[])]
     const pay = {}; fields.forEach(k=>{ if(form[k]!==undefined) pay[k]=form[k] })
@@ -4115,9 +4099,52 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
   const canImport = table==='compta_fournisseurs' || table==='compta_clients'
 
   const downloadTemplate = () => {
-    const headers = ['type','nom','prenom','nom_societe','telephone','provenance','cooperative_affiliee','numero_contrat','cip','ifu','email','adresse','genre','handicap','mentor_nom','mentor_telephone','mentor_cip','mentor_age','departement','commune','arrondissement','village','nom_bas_fonds','superficie_bas_fonds','date_naissance','age','tranche_age','nationalite','niveau_instruction','reside_localite','disponible_formation','accepte_bonnes_pratiques','accepte_partenariat','a_deja_cultive_riz','acces_garanti_terre','propriete_terre','mode_acces_terre','decision','prix_contrat','labour_qte','labour_montant','semences_qte','semences_montant','engrais_qte','engrais_montant','herbicide_qte','herbicide_montant','credits_qte','credits_montant']
-    const ex1 = ['physique','HAYA','Martin','','22997000000','Tanguiéta','Coop PINGOU','CTR-2026-001','','3202012190967','martin@exemple.com','BP 707','Homme','Non','KOUDORO Jean','22995000000','CIP9988','45','Atacora','Tanguiéta','Cotiakou','Pingou','Bas-fonds Pingou','2.5','2002-05-14','24','18-25','Béninoise','Secondaire','Oui','Oui','Oui','Oui','Non','1','2','3-5 ans','Non','Héritage familial','Accepté','150000','2.5','50000','10','30000','','','1.5','15000','','']
-    const ex2 = ['morale','','','SARL EXEMPLE','22996000000','Natitingou','','','','3201998877665','contact@exemple.com','Cotonou','','','','','','','','','','','','','','','','','','','','','','','','','','','','','','','','','','','','','','','']
+    // Une seule liste [colonne, exemple 1, exemple 2] : les en-têtes et les lignes d'exemple
+    // restent toujours alignés. Les colonnes labour_… à credits_… créent les lignes du
+    // tableau « Kit FRIA reçu » de la fiche fournisseur (quantité + montant par type).
+    const spec = [
+      ['type','physique','morale'],
+      ['nom','HAYA',''],
+      ['prenom','Martin',''],
+      ['nom_societe','','SARL EXEMPLE'],
+      ['telephone','22997000000','22996000000'],
+      ['provenance','Tanguiéta','Natitingou'],
+      ['cooperative_affiliee','Coop PINGOU',''],
+      ['numero_contrat','CTR-2026-001',''],
+      ['cip','5758798912',''],
+      ['ifu','3202012190967','3201998877665'],
+      ['email','martin@exemple.com','contact@exemple.com'],
+      ['adresse','BP 707','Cotonou'],
+      ['genre','Homme',''],
+      ['handicap','Non',''],
+      ['mentor_nom','KOUDORO Jean',''],
+      ['mentor_telephone','22995000000',''],
+      ['mentor_cip','CIP9988',''],
+      ['mentor_age','45',''],
+      ['departement','Atacora',''],
+      ['commune','Tanguiéta',''],
+      ['arrondissement','Cotiakou',''],
+      ['village','Pingou',''],
+      ['nom_bas_fonds','Bas-fonds Pingou',''],
+      ['superficie_bas_fonds','2.5',''],
+      ['date_naissance','2002-05-14',''],
+      ['age','24',''],
+      ['tranche_age','<35',''],
+      ['nationalite','Béninoise',''],
+      ['niveau_instruction','Secondaire',''],
+      ['nombre_jeunes_femmes','1',''],
+      ['nombre_jeunes_hommes','2',''],
+      ['acces_garanti_terre','3-5 ans',''],
+      ['mode_acces_terre','Héritage familial',''],
+      ['decision','Accepté',''],
+      ['prix_contrat','150000',''],
+      ['labour_qte','2.5',''], ['labour_montant','50000',''],
+      ['semences_qte','10',''], ['semences_montant','30000',''],
+      ['engrais_qte','',''], ['engrais_montant','',''],
+      ['herbicide_qte','1.5',''], ['herbicide_montant','15000',''],
+      ['credits_qte','',''], ['credits_montant','',''],
+    ]
+    const headers = spec.map(x=>x[0]), ex1 = spec.map(x=>x[1]), ex2 = spec.map(x=>x[2])
     const csv = [headers.join(';'), ex1.join(';'), ex2.join(';')].join('\n')
     const blob = new Blob(['\ufeff'+csv], {type:'text/csv;charset=utf-8;'})
     const url = URL.createObjectURL(blob)
@@ -4159,15 +4186,9 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     tranche_age: ['tranche_age','tranche age','tranche d age'],
     nationalite: ['nationalite'],
     niveau_instruction: ['niveau_instruction','niveau instruction','niveau d instruction'],
-    reside_localite: ['reside_localite','reside localite','reside localement'],
-    disponible_formation: ['disponible_formation','disponible formation'],
-    accepte_bonnes_pratiques: ['accepte_bonnes_pratiques','accepte bonnes pratiques'],
-    accepte_partenariat: ['accepte_partenariat','accepte partenariat'],
-    a_deja_cultive_riz: ['a_deja_cultive_riz','a deja cultive riz','a deja cultive le riz'],
     nombre_jeunes_femmes: ['nombre_jeunes_femmes','nb jeunes femmes','nombre jeunes femmes'],
     nombre_jeunes_hommes: ['nombre_jeunes_hommes','nb jeunes hommes','nombre jeunes hommes'],
     acces_garanti_terre: ['acces_garanti_terre','acces garanti terre'],
-    propriete_terre: ['propriete_terre','propriete terre'],
     mode_acces_terre: ['mode_acces_terre','mode acces terre'],
     decision: ['decision'],
     prix_contrat: ['prix_contrat','prix contrat','prix contrat fcfa'],
@@ -4227,7 +4248,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
         if(t==='morale' && !obj.nom_societe){ continue }
         if(t!=='morale' && !obj.nom){ continue }
         const avTypesImp = [['Labour','labour_qte','labour_montant'],['Semences','semences_qte','semences_montant'],['Engrais','engrais_qte','engrais_montant'],['Herbicide','herbicide_qte','herbicide_montant'],['Crédits','credits_qte','credits_montant']]
-        const avsImp = avTypesImp.map(([ty,qk,mk])=>({ type_avance:ty, quantite_recue: parseFloat(String(obj[qk]||'').replace(',','.'))||0, valeur_remboursement: parseFloat(String(obj[mk]||'').replace(',','.'))||0 })).filter(a=>a.quantite_recue||a.valeur_remboursement)
+        const avsImp = avTypesImp.map(([ty,qk,mk])=>({ type_avance:ty, quantite_recue: numFR(obj[qk]), valeur_remboursement: numFR(obj[mk]) })).filter(a=>a.quantite_recue||a.valeur_remboursement)
         rows.push({
           company_id: cid, user_id: uid,
           type: t==='morale'?'morale':'physique',
@@ -4250,23 +4271,17 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
             arrondissement: obj.arrondissement||null,
             village: obj.village||null,
             nom_bas_fonds: obj.nom_bas_fonds||null,
-            superficie_bas_fonds: obj.superficie_bas_fonds ? parseFloat(obj.superficie_bas_fonds.replace(',','.'))||null : null,
-            prix_contrat: obj.prix_contrat ? parseFloat(String(obj.prix_contrat).replace(',','.'))||null : null,
+            superficie_bas_fonds: numFR(obj.superficie_bas_fonds)||null,
+            prix_contrat: numFR(obj.prix_contrat)||null,
             mentor_age: obj.mentor_age ? parseInt(obj.mentor_age,10)||null : null,
             date_naissance: obj.date_naissance||null,
             age: obj.age ? parseInt(obj.age,10)||null : null,
             tranche_age: obj.tranche_age||null,
             nationalite: obj.nationalite||null,
             niveau_instruction: obj.niveau_instruction||null,
-            reside_localite: /^(oui|o|yes|y|1|true|vrai)$/i.test((obj.reside_localite||'').trim()),
-            disponible_formation: /^(oui|o|yes|y|1|true|vrai)$/i.test((obj.disponible_formation||'').trim()),
-            accepte_bonnes_pratiques: /^(oui|o|yes|y|1|true|vrai)$/i.test((obj.accepte_bonnes_pratiques||'').trim()),
-            accepte_partenariat: /^(oui|o|yes|y|1|true|vrai)$/i.test((obj.accepte_partenariat||'').trim()),
-            a_deja_cultive_riz: /^(oui|o|yes|y|1|true|vrai)$/i.test((obj.a_deja_cultive_riz||'').trim()),
             nombre_jeunes_femmes: obj.nombre_jeunes_femmes ? parseInt(obj.nombre_jeunes_femmes,10)||null : null,
             nombre_jeunes_hommes: obj.nombre_jeunes_hommes ? parseInt(obj.nombre_jeunes_hommes,10)||null : null,
             acces_garanti_terre: obj.acces_garanti_terre||null,
-            propriete_terre: /^(oui|o|yes|y|1|true|vrai)$/i.test((obj.propriete_terre||'').trim()),
             mode_acces_terre: obj.mode_acces_terre||null,
             decision: obj.decision||null,
           } : {})
@@ -4276,6 +4291,16 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
       if(rows.length===0){ toast.error('Aucune ligne valide trouvée'); setImporting(false); return }
       const { data:insRows, error } = await supabase.from(table).insert(rows).select('id,type,nom,nom_societe,cip,commune')
       if(error){ toast.error('Erreur import : '+error.message); setImporting(false); return }
+      // Kit FRIA importé (fournisseurs) : enregistré tout de suite après les fiches, avant les
+      // étapes plus longues (codes producteurs, comptes comptables), pour ne jamais être perdu.
+      if (table==='compta_fournisseurs') {
+        const avRows = []
+        ;(insRows||[]).forEach((r,idx)=>{ (avancesPerRow[idx]||[]).forEach(a=>avRows.push({ ...a, fournisseur_id:r.id, company_id:cid, user_id:uid })) })
+        if (avRows.length) {
+          const { error:errAv } = await supabase.from('compta_avances_fournisseur').insert(avRows)
+          if (errAv) toast.error(`Fournisseurs importés, mais le Kit FRIA n'a pas été enregistré : ${errAv.message}`)
+        }
+      }
       if (table==='compta_fournisseurs') {
         const { data:codesPris } = await fetchAllRows(() => supabase.from('compta_fournisseurs').select('id,code_trace,cip,nom,prenom,nom_societe').eq('company_id', cid).not('code_trace','is',null).order('id'))
         const existants = new Map((codesPris||[]).map(c => [c.code_trace, { cip:onlyDigits(c.cip), label:labelTiers(c) }]))
@@ -4297,12 +4322,6 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
           await supabase.from(table).update({ numero_compte:numero }).eq('id', r.id)
           nums.push(numero)
         }
-      }
-      // Avances reçues importées (fournisseurs)
-      if (table==='compta_fournisseurs') {
-        const avRows = []
-        ;(insRows||[]).forEach((r,idx)=>{ (avancesPerRow[idx]||[]).forEach(a=>avRows.push({ ...a, fournisseur_id:r.id, company_id:cid, user_id:uid })) })
-        if (avRows.length) await supabase.from('compta_avances_fournisseur').insert(avRows)
       }
       toast.success(`${rows.length} ${titleSingle.toLowerCase()}(s) importé(s) !`)
       load()
@@ -4970,16 +4989,14 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
       {key:'Bas-fonds', w:8},{key:'Superficie (ha)', w:6},
       {key:'Date de naissance', w:7},{key:'Âge', w:5},{key:'Tranche d\'âge', w:6},
       {key:'Nationalité', w:7},{key:'Niveau d\'instruction', w:8},
-      {key:'Réside localement', w:6},{key:'Disponible formation', w:6},
-      {key:'Accepte bonnes pratiques', w:6},{key:'Accepte partenariat', w:6},{key:'Membre coop. partenaire', w:6},{key:'A déjà cultivé le riz', w:6},
-      {key:'Accès garanti terre', w:8},{key:'Propriété terre', w:6},{key:'Mode accès terre', w:9},{key:'Décision', w:6},
-      {key:'Total avance (FCFA)', w:8},{key:'Prix/contrat (FCFA)', w:8},{key:'Riz paddy équiv. (kg)', w:7},
+      {key:'Accès garanti terre', w:8},{key:'Mode accès terre', w:9},{key:'Décision', w:6},
+      {key:'Total Kit FRIA (FCFA)', w:8},{key:'Prix/contrat (FCFA)', w:8},{key:'Riz paddy équiv. (kg)', w:7},
       {key:'Labour - Qté', w:5},{key:'Labour - Montant (FCFA)', w:7},
       {key:'Semences - Qté', w:5},{key:'Semences - Montant (FCFA)', w:7},
       {key:'Engrais - Qté', w:5},{key:'Engrais - Montant (FCFA)', w:7},
       {key:'Herbicide - Qté', w:5},{key:'Herbicide - Montant (FCFA)', w:7},
       {key:'Crédits - Qté', w:5},{key:'Crédits - Montant (FCFA)', w:7},
-      {key:'Détail avances', w:14},
+      {key:'Détail Kit FRIA', w:14},
     ]:[]),
   ]
   // L'ordre d'export (Excel & PDF) suit l'ordre de selectedCols, pas l'ordre fixe
@@ -5303,28 +5320,8 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
                   </Btn>
                 </div>
                 <Input label="Accès garanti à la terre (durée)" name="acces_garanti_terre" value={form.acces_garanti_terre||''} onChange={set} placeholder="ex : 3-5 ans" />
-                {!form.propriete_terre && (
-                  <Input label="Si non propriétaire, mode d'accès" name="mode_acces_terre" value={form.mode_acces_terre||''} onChange={set} />
-                )}
+                <Input label="Mode d'accès à la terre" name="mode_acces_terre" value={form.mode_acces_terre||''} onChange={set} />
                 <Input label="Décision" name="decision" value={form.decision||''} onChange={set} placeholder="ex : Accepté, Rejeté, En attente" />
-                <Span2>
-                  <div style={{display:'flex',flexWrap:'wrap',gap:18}}>
-                    {[
-                      ['reside_localite','Réside dans la localité'],
-                      ['disponible_formation','Disponible pour formation'],
-                      ['accepte_bonnes_pratiques','Accepte les Bonnes Pratiques'],
-                      ['accepte_partenariat','Accepte le partenariat (rizerie)'],
-                      ['cooperative_partenaire','Membre coopérative partenaire'],
-                      ['a_deja_cultive_riz','A déjà cultivé du riz'],
-                      ['propriete_terre','Propriétaire de la terre'],
-                    ].map(([k,label])=>(
-                      <label key={k} style={{display:'flex',alignItems:'center',gap:8,fontSize:13.5,color:'#374151',cursor:'pointer'}}>
-                        <input type="checkbox" checked={!!form[k]} onChange={e=>setForm(f=>({...f,[k]:e.target.checked}))} style={{width:16,height:16,cursor:'pointer'}} />
-                        {label}
-                      </label>
-                    ))}
-                  </div>
-                </Span2>
               </>
             )}
           </Grid>
@@ -5336,20 +5333,20 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
             return (
               <div style={{marginBottom:16}}>
                 <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
-                  <label style={{fontSize:13,fontWeight:700,color:'#334155'}}>💰 Avances reçues</label>
+                  <label style={{fontSize:13,fontWeight:700,color:'#334155'}}>💰 Kit FRIA reçu</label>
                   <Btn sm type="button" variant="secondary" onClick={addAvance}>+ Ajouter une ligne</Btn>
                 </div>
                 <div style={{border:'1px solid #e2e8f0',borderRadius:8,overflowX:'auto'}}>
                   <table style={{width:'100%',minWidth:480,tableLayout:'fixed',borderCollapse:'collapse',fontSize:13}}>
                     <thead><tr style={{background:'#f8fafc'}}>
-                      <th style={{width:'42%',padding:'8px 10px',textAlign:'left',fontSize:12,color:'#475569'}}>Type d'avance</th>
+                      <th style={{width:'42%',padding:'8px 10px',textAlign:'left',fontSize:12,color:'#475569'}}>Type de Kit FRIA</th>
                       <th style={{width:'27%',padding:'8px 10px',textAlign:'right',fontSize:12,color:'#475569'}}>Quantité reçue</th>
                       <th style={{width:'27%',padding:'8px 10px',textAlign:'right',fontSize:12,color:'#475569'}}>Montant (FCFA)</th>
                       <th style={{width:44}}></th>
                     </tr></thead>
                     <tbody>
                       {avances.length===0 ? (
-                        <tr><td colSpan={4} style={{padding:'12px',textAlign:'center',color:'#94a3b8'}}>Aucune avance — cliquez sur « + Ajouter une ligne »</td></tr>
+                        <tr><td colSpan={4} style={{padding:'12px',textAlign:'center',color:'#94a3b8'}}>Aucun Kit FRIA — cliquez sur « + Ajouter une ligne »</td></tr>
                       ) : avances.map((a,i)=>(
                         <tr key={i} style={{borderTop:'1px solid #f1f5f9'}}>
                           <td style={{padding:'6px 8px'}}>
@@ -5378,7 +5375,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
                     </tbody>
                     <tfoot>
                       <tr style={{background:'#f8fafc',borderTop:'2px solid #e2e8f0'}}>
-                        <td colSpan={2} style={{padding:'9px 10px',textAlign:'right',fontWeight:700,color:'#334155'}}>Total avance reçue</td>
+                        <td colSpan={2} style={{padding:'9px 10px',textAlign:'right',fontWeight:700,color:'#334155'}}>Total Kit FRIA reçu</td>
                         <td style={{padding:'9px 10px',textAlign:'right',fontWeight:800,color:'#0f2044'}}>{Math.round(totalAvance).toLocaleString('fr-FR')} FCFA</td>
                         <td></td>
                       </tr>
@@ -5403,7 +5400,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
                   return <div style={{ marginTop:12, padding:'9px 12px', borderRadius:8, fontSize:12.5, lineHeight:1.6, background: reste > 0 ? '#fffbeb' : '#f0fdf4', border:`1px solid ${reste > 0 ? '#fde68a' : '#bbf7d0'}` }}>
                     Remboursé par les achats groupés : <strong>{Math.round(rembAG.rembourse).toLocaleString('fr-FR')} FCFA</strong>
                     {rembAG.enCours > 0 && <> — en cours (groupe ouvert) : <strong>{Math.round(rembAG.enCours).toLocaleString('fr-FR')} FCFA</strong></>}
-                    {' '}— reste à rembourser : <strong style={{ color: reste > 0 ? '#b45309' : '#15803d' }}>{reste > 0 ? `${reste.toLocaleString('fr-FR')} FCFA` : 'avances soldées ✔'}</strong>
+                    {' '}— reste à rembourser : <strong style={{ color: reste > 0 ? '#b45309' : '#15803d' }}>{reste > 0 ? `${reste.toLocaleString('fr-FR')} FCFA` : 'Kit FRIA soldé ✔'}</strong>
                     {rembAG.groupes.length > 0 && <div style={{ color:'#64748b', fontSize:11.5 }}>Groupes : {rembAG.groupes.join(', ')}</div>}
                   </div> })()}
               </div>
