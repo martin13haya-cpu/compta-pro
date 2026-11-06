@@ -1968,8 +1968,7 @@ const CONSOL_TIERS_COLUMNS = (isFourn) => [
     {key:'Département'},{key:'Commune'},{key:'Arrondissement'},{key:'Village'},
     {key:'Bas-fonds'},{key:'Superficie (ha)'},
     {key:'Date de naissance'},{key:'Âge'},{key:'Tranche d\'âge'},
-    {key:'Nationalité'},{key:'Niveau d\'instruction'},
-    {key:'Accès garanti terre'},{key:'Mode accès terre'},{key:'Décision'},
+    {key:'Nationalité'},
     {key:'Total Kit FRIA (FCFA)'},{key:'Prix/contrat (FCFA)'},{key:'Riz paddy équiv. (kg)'},
     {key:'Labour - Qté'},{key:'Labour - Montant (FCFA)'},
     {key:'Semences - Qté'},{key:'Semences - Montant (FCFA)'},
@@ -2007,10 +2006,6 @@ const consolTiersVal = (it,c) => ({
   'Âge': it.age||'',
   'Tranche d\'âge': it.tranche_age||'',
   'Nationalité': it.nationalite||'',
-  'Niveau d\'instruction': it.niveau_instruction||'',
-  'Accès garanti terre': it.acces_garanti_terre||'',
-  'Mode accès terre': it.mode_acces_terre||'',
-  'Décision': it.decision||'',
   'Total Kit FRIA (FCFA)': (Array.isArray(it._avances)?it._avances:[]).reduce((sm,a)=>sm+(Number(a.valeur_remboursement)||0),0) || '',
   'Prix/contrat (FCFA)': it.prix_contrat||'',
   'Riz paddy équiv. (kg)': (()=>{ const tt=(Array.isArray(it._avances)?it._avances:[]).reduce((sm,a)=>sm+(Number(a.valeur_remboursement)||0),0); const pp=Number(it.prix_contrat)||0; return pp>0?(tt/pp).toFixed(2):'' })(),
@@ -3195,6 +3190,7 @@ function printFicheTiers(it, kind='fournisseur') {
     'departement','commune','arrondissement','village','nom_bas_fonds','superficie_bas_fonds',
     '_avances','prix_contrat',
     'reside_localite','disponible_formation','accepte_bonnes_pratiques','accepte_partenariat','a_deja_cultive_riz','cooperative_partenaire','propriete_terre',
+    'niveau_instruction','acces_garanti_terre','mode_acces_terre','decision',
   ])
   const prettify = k => (LABELS[k] || k.replace(/_/g,' ').replace(/^./,c=>c.toUpperCase()))
 
@@ -3559,6 +3555,24 @@ const estProducteur = f => !f?.categorie || f.categorie === 'producteur'
 // COMMUNE (3 lettres) - P + initiale du nom _ chiffres n°4, 5, 8 et 9 du CIP
 // (en comptant depuis la gauche). Ex : CIP 5758798912, commune Natitingou,
 // nom KOUAGOU  ->  NAT-PK_8791.
+// Date lue dans un fichier CSV/Excel -> { iso:'AAAA-MM-JJ' } ou { iso:null, invalide:true }.
+// Accepte 23/10/2026, 23-10-2026, 23.10.2026, 23/10/26, 2026-10-23, 2026/10/23
+// et le numéro de série Excel (ex. 45213). Une date vide donne { iso:null }.
+function parseDateFR(v) {
+  const s = String(v ?? '').trim()
+  if (!s) return { iso:null }
+  let j, m, a, r
+  if ((r = s.match(/^(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})(?:[ T].*)?$/))) { a = +r[1]; m = +r[2]; j = +r[3] }
+  else if ((r = s.match(/^(\d{1,2})[-\/. ](\d{1,2})[-\/. ](\d{2}|\d{4})(?:[ T].*)?$/))) {
+    j = +r[1]; m = +r[2]; a = +r[3]
+    if (r[3].length === 2) a += a > (new Date().getFullYear() % 100) ? 1900 : 2000
+  }
+  else if (/^\d{5}$/.test(s)) { const d = new Date(Date.UTC(1899, 11, 30) + (+s) * 86400000); a = d.getUTCFullYear(); m = d.getUTCMonth() + 1; j = d.getUTCDate() }
+  else return { iso:null, invalide:true }
+  const d = new Date(Date.UTC(a, m - 1, j))
+  if (d.getUTCFullYear() !== a || d.getUTCMonth() !== m - 1 || d.getUTCDate() !== j) return { iso:null, invalide:true }
+  return { iso:`${a}-${String(m).padStart(2,'0')}-${String(j).padStart(2,'0')}` }
+}
 const lettresSeules = s => String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^A-Za-z]/g,'').toUpperCase()
 function codeProducteurParRegle(f) {
   const cip = onlyDigits(f?.cip)
@@ -3789,10 +3803,6 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     'Âge': it.age||'',
     'Tranche d\'âge': it.tranche_age||'',
     'Nationalité': it.nationalite||'',
-    'Niveau d\'instruction': it.niveau_instruction||'',
-    'Accès garanti terre': it.acces_garanti_terre||'',
-    'Mode accès terre': it.mode_acces_terre||'',
-    'Décision': it.decision||'',
     'Total Kit FRIA (FCFA)': (Array.isArray(it._avances)?it._avances:[]).reduce((sm,a)=>sm+(Number(a.valeur_remboursement)||0),0) || '',
     'Prix/contrat (FCFA)': it.prix_contrat||'',
     'Riz paddy équiv. (kg)': (()=>{ const tt=(Array.isArray(it._avances)?it._avances:[]).reduce((sm,a)=>sm+(Number(a.valeur_remboursement)||0),0); const pp=Number(it.prix_contrat)||0; return pp>0?(tt/pp).toFixed(2):'' })(),
@@ -3854,8 +3864,8 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
   const trancheDepuisAge = (age) => (age==='' || age==null || isNaN(age)) ? '' : (Number(age)<35 ? '<35' : '>35')
 
   const baseDefaults = { company_id:companyId||'', nom:'', prenom:'', nom_societe:'', telephone:'', provenance:'', cip:'', ifu:'', email:'', adresse:'', genre:'', handicap:false, mentor_nom:'', mentor_telephone:'', mentor_cip:'', mentor_age:'', departement:'', commune:'', arrondissement:'', village:'', nom_bas_fonds:'', superficie_bas_fonds:'', cooperative_affiliee:'', numero_contrat:'', prix_contrat:'',
-    date_naissance:'', age:'', tranche_age:'', nationalite:'', niveau_instruction:'',
-    nombre_jeunes_femmes:'', nombre_jeunes_hommes:'', acces_garanti_terre:'', mode_acces_terre:'', decision:'' }
+    date_naissance:'', age:'', tranche_age:'', nationalite:'',
+    nombre_jeunes_femmes:'', nombre_jeunes_hommes:'' }
   const open = (it=null) => {
     // Si "Toutes les sociétés" est sélectionné et qu'il existe plusieurs sociétés, on refuse
     // d'ajouter une fiche : impossible de deviner à quelle société elle doit être rattachée
@@ -3906,8 +3916,8 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     const locFields = table==='compta_fournisseurs' ? ['departement','commune','arrondissement','village','nom_bas_fonds','superficie_bas_fonds','cooperative_affiliee','numero_contrat'] : []
     const fournExtra = table==='compta_fournisseurs' ? ['prix_contrat', 'categorie'] : []
     const jeuneFields = table==='compta_fournisseurs' ? [
-      'date_naissance','age','tranche_age','nationalite','niveau_instruction',
-      'nombre_jeunes_femmes','nombre_jeunes_hommes','acces_garanti_terre','mode_acces_terre','decision',
+      'date_naissance','age','tranche_age','nationalite',
+      'nombre_jeunes_femmes','nombre_jeunes_hommes',
     ] : []
     const fields = ['company_id','nom','prenom','telephone','provenance','cip','ifu','email','adresse','genre','handicap', ...mentorFields, ...locFields, ...fournExtra, ...jeuneFields, ...(extraFields?.names||[])]
     const pay = {}; fields.forEach(k=>{ if(form[k]!==undefined) pay[k]=form[k] })
@@ -4131,12 +4141,8 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
       ['age','24',''],
       ['tranche_age','<35',''],
       ['nationalite','Béninoise',''],
-      ['niveau_instruction','Secondaire',''],
       ['nombre_jeunes_femmes','1',''],
       ['nombre_jeunes_hommes','2',''],
-      ['acces_garanti_terre','3-5 ans',''],
-      ['mode_acces_terre','Héritage familial',''],
-      ['decision','Accepté',''],
       ['prix_contrat','150000',''],
       ['labour_qte','2.5',''], ['labour_montant','50000',''],
       ['semences_qte','10',''], ['semences_montant','30000',''],
@@ -4185,12 +4191,8 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     age: ['age'],
     tranche_age: ['tranche_age','tranche age','tranche d age'],
     nationalite: ['nationalite'],
-    niveau_instruction: ['niveau_instruction','niveau instruction','niveau d instruction'],
     nombre_jeunes_femmes: ['nombre_jeunes_femmes','nb jeunes femmes','nombre jeunes femmes'],
     nombre_jeunes_hommes: ['nombre_jeunes_hommes','nb jeunes hommes','nombre jeunes hommes'],
-    acces_garanti_terre: ['acces_garanti_terre','acces garanti terre'],
-    mode_acces_terre: ['mode_acces_terre','mode acces terre'],
-    decision: ['decision'],
     prix_contrat: ['prix_contrat','prix contrat','prix contrat fcfa'],
     labour_qte: ['labour_qte','labour qte'],
     labour_montant: ['labour_montant','labour montant','labour montant fcfa'],
@@ -4239,6 +4241,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
 
       const rows = []
       const avancesPerRow = []
+      const datesIllisibles = []
       for(let i=headerLineIndex+1;i<lines.length;i++){
         const vals = lines[i].split(delim).map(v=>v.trim())
         const obj = {}
@@ -4247,6 +4250,8 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
         const t = (obj.type||'physique').toLowerCase()
         if(t==='morale' && !obj.nom_societe){ continue }
         if(t!=='morale' && !obj.nom){ continue }
+        const dn = table==='compta_fournisseurs' ? parseDateFR(obj.date_naissance) : { iso:null }
+        if (dn.invalide) datesIllisibles.push(`${obj.nom||obj.nom_societe||'?'} (${obj.date_naissance})`)
         const avTypesImp = [['Labour','labour_qte','labour_montant'],['Semences','semences_qte','semences_montant'],['Engrais','engrais_qte','engrais_montant'],['Herbicide','herbicide_qte','herbicide_montant'],['Crédits','credits_qte','credits_montant']]
         const avsImp = avTypesImp.map(([ty,qk,mk])=>({ type_avance:ty, quantite_recue: numFR(obj[qk]), valeur_remboursement: numFR(obj[mk]) })).filter(a=>a.quantite_recue||a.valeur_remboursement)
         rows.push({
@@ -4274,16 +4279,12 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
             superficie_bas_fonds: numFR(obj.superficie_bas_fonds)||null,
             prix_contrat: numFR(obj.prix_contrat)||null,
             mentor_age: obj.mentor_age ? parseInt(obj.mentor_age,10)||null : null,
-            date_naissance: obj.date_naissance||null,
+            date_naissance: dn.iso,
             age: obj.age ? parseInt(obj.age,10)||null : null,
             tranche_age: obj.tranche_age||null,
             nationalite: obj.nationalite||null,
-            niveau_instruction: obj.niveau_instruction||null,
             nombre_jeunes_femmes: obj.nombre_jeunes_femmes ? parseInt(obj.nombre_jeunes_femmes,10)||null : null,
             nombre_jeunes_hommes: obj.nombre_jeunes_hommes ? parseInt(obj.nombre_jeunes_hommes,10)||null : null,
-            acces_garanti_terre: obj.acces_garanti_terre||null,
-            mode_acces_terre: obj.mode_acces_terre||null,
-            decision: obj.decision||null,
           } : {})
         })
         avancesPerRow.push(table==='compta_fournisseurs' ? avsImp : [])
@@ -4291,6 +4292,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
       if(rows.length===0){ toast.error('Aucune ligne valide trouvée'); setImporting(false); return }
       const { data:insRows, error } = await supabase.from(table).insert(rows).select('id,type,nom,nom_societe,cip,commune')
       if(error){ toast.error('Erreur import : '+error.message); setImporting(false); return }
+      if (datesIllisibles.length) toast.error(`${datesIllisibles.length} date(s) de naissance illisible(s), laissée(s) vide(s) : ${datesIllisibles.slice(0,3).join(' ; ')}${datesIllisibles.length>3?' …':''}. Format attendu : JJ/MM/AAAA.`)
       // Kit FRIA importé (fournisseurs) : enregistré tout de suite après les fiches, avant les
       // étapes plus longues (codes producteurs, comptes comptables), pour ne jamais être perdu.
       if (table==='compta_fournisseurs') {
@@ -4988,8 +4990,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
       {key:'Département', w:7},{key:'Commune', w:7},{key:'Arrondissement', w:8},{key:'Village', w:7},
       {key:'Bas-fonds', w:8},{key:'Superficie (ha)', w:6},
       {key:'Date de naissance', w:7},{key:'Âge', w:5},{key:'Tranche d\'âge', w:6},
-      {key:'Nationalité', w:7},{key:'Niveau d\'instruction', w:8},
-      {key:'Accès garanti terre', w:8},{key:'Mode accès terre', w:9},{key:'Décision', w:6},
+      {key:'Nationalité', w:7},
       {key:'Total Kit FRIA (FCFA)', w:8},{key:'Prix/contrat (FCFA)', w:8},{key:'Riz paddy équiv. (kg)', w:7},
       {key:'Labour - Qté', w:5},{key:'Labour - Montant (FCFA)', w:7},
       {key:'Semences - Qté', w:5},{key:'Semences - Montant (FCFA)', w:7},
@@ -5312,16 +5313,12 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
                 <Sel label="Tranche d'âge" name="tranche_age" value={form.tranche_age||''} onChange={set}
                   options={[{value:'',label:'— Non renseigné —'},{value:'<35',label:'< 35 ans'},{value:'>35',label:'> 35 ans'}]} />
                 <Input label="Nationalité" name="nationalite" value={form.nationalite||''} onChange={set} />
-                <Input label="Niveau d'instruction" name="niveau_instruction" value={form.niveau_instruction||''} onChange={set} />
                 <div style={{display:'flex',flexDirection:'column',justifyContent:'flex-end'}}>
                   <label style={{display:'block',fontSize:12.5,fontWeight:600,color:'#374151',marginBottom:5}}>Ouvriers engagés</label>
                   <Btn type="button" variant="secondary" onClick={()=>form.id ? ouvrirOuvriers(form) : toast.error("Enregistrez d'abord le fournisseur, puis ajoutez ses ouvriers.")}>
                     👷 Ouvrier{form.id && ouvriersCompte[form.id] ? ` (${ouvriersCompte[form.id]})` : ''}
                   </Btn>
                 </div>
-                <Input label="Accès garanti à la terre (durée)" name="acces_garanti_terre" value={form.acces_garanti_terre||''} onChange={set} placeholder="ex : 3-5 ans" />
-                <Input label="Mode d'accès à la terre" name="mode_acces_terre" value={form.mode_acces_terre||''} onChange={set} />
-                <Input label="Décision" name="decision" value={form.decision||''} onChange={set} placeholder="ex : Accepté, Rejeté, En attente" />
               </>
             )}
           </Grid>
