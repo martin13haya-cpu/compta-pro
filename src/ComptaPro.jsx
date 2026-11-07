@@ -16431,6 +16431,255 @@ function ChatPage({ profile, toast }) {
   )
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// ── PROFIL À COMPLÉTER À LA PREMIÈRE CONNEXION + JOURNAL D'ACTIVITÉ ─────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+const profilComplet = p => !!String(p?.nom||'').trim() && !!String(p?.prenom||'').trim()
+const nomPersonne = p => [p?.prenom, p?.nom].filter(Boolean).join(' ').trim() || p?.email || ''
+
+function ProfilCompletPage({ user, profile, onDone, onSkip, onLogout }) {
+  const [nom, setNom] = useState(String(profile?.nom||'').trim())
+  const [prenom, setPrenom] = useState(String(profile?.prenom||'').trim())
+  const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState('')
+  const [colonneManquante, setColonneManquante] = useState(false)
+  const email = profile?.email || user?.email || ''
+
+  const submit = async e => {
+    e.preventDefault()
+    if (!nom.trim() || !prenom.trim()) { setErr('Le nom et le prénom sont obligatoires.'); return }
+    setSaving(true); setErr('')
+    const maj = { nom:nom.trim(), prenom:prenom.trim() }
+    const { data, error } = await supabase.from('compta_profiles').update(maj).eq('id', user.id).select('*').maybeSingle()
+    setSaving(false)
+    if (error) {
+      if (/prenom|column/i.test(error.message)) setColonneManquante(true)
+      setErr(error.message); return
+    }
+    onDone(data || { ...profile, ...maj })
+  }
+
+  return (
+    <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',background:'#f1f5f9',padding:16}}>
+      <form onSubmit={submit} style={{background:'white',borderRadius:16,padding:'36px 32px',width:'100%',maxWidth:440,boxShadow:'0 10px 30px rgba(15,32,68,.12)'}}>
+        <div style={{fontSize:44,textAlign:'center',marginBottom:6}}>👤</div>
+        <h2 style={{margin:'0 0 6px',textAlign:'center',color:'#0f2044'}}>Complétez votre profil</h2>
+        <p style={{margin:'0 0 22px',textAlign:'center',fontSize:13,color:'#64748b',lineHeight:1.5}}>
+          Première connexion : renseignez votre identité. Elle permet de savoir qui a saisi quoi, et à quelle heure.
+        </p>
+        <div style={{display:'grid',gap:14,marginBottom:18}}>
+          <Input label="Nom *" name="nom" value={nom} onChange={e=>setNom(e.target.value)} required placeholder="Votre nom de famille" />
+          <Input label="Prénom(s) *" name="prenom" value={prenom} onChange={e=>setPrenom(e.target.value)} required placeholder="Votre prénom" />
+          <div>
+            <Input label="Email (identifiant de connexion)" name="email" type="email" value={email} onChange={()=>{}} readOnly />
+          </div>
+        </div>
+        {err && (
+          <div style={{background:'#fef2f2',border:'1px solid #fecaca',color:'#991b1b',borderRadius:8,padding:'8px 12px',fontSize:12.5,marginBottom:14}}>
+            {colonneManquante ? "La base de données n'est pas encore prête (colonne « prenom » manquante). Contactez l'administrateur de l'application." : err}
+          </div>
+        )}
+        <button type="submit" disabled={saving}
+          style={{width:'100%',background:'#25D366',color:'white',border:'none',borderRadius:10,padding:'12px',fontWeight:700,fontSize:15,cursor:saving?'wait':'pointer'}}>
+          {saving ? 'Enregistrement…' : 'Enregistrer et continuer'}
+        </button>
+        {colonneManquante && (
+          <button type="button" onClick={onSkip}
+            style={{width:'100%',marginTop:10,background:'#f1f5f9',border:'1px solid #e2e8f0',borderRadius:10,padding:'10px',fontWeight:600,cursor:'pointer'}}>
+            Continuer sans enregistrer (cette session)
+          </button>
+        )}
+        <button type="button" onClick={onLogout}
+          style={{width:'100%',marginTop:10,background:'none',border:'none',color:'#64748b',fontSize:13,cursor:'pointer',textDecoration:'underline'}}>
+          Se déconnecter
+        </button>
+      </form>
+    </div>
+  )
+}
+
+// Journal d'activité : « qui a saisi quoi, et à quelle heure ». Il s'appuie sur l'heure
+// d'enregistrement (created_at) et l'auteur (user_id) déjà présents sur chaque ligne
+// saisie : il couvre donc aussi les saisies passées. Seules les créations sont visibles
+// (pas les modifications ni les suppressions).
+const JOURNAL_SECTIONS = [
+  { key:'clients', label:'Clients', table:'compta_clients' },
+  { key:'fournisseurs', label:'Fournisseurs', table:'compta_fournisseurs' },
+  { key:'articles', label:'Articles', table:'compta_articles' },
+  { key:'mouvements', label:'Mouvements de stock', table:'compta_mouvements_stock', select:'*, compta_articles(designation,unite)',
+    libelle: r => `${r.type==='entree'?'Entrée':'Sortie'} de ${fmtQty(r.quantite)} ${r.compta_articles?.unite||''} — ${r.compta_articles?.designation||'article'}` },
+  { key:'bons_stock', label:"Bons d'entrée / sortie", table:'compta_bons_stock' },
+  { key:'documents', label:'Documents commerciaux', table:'compta_documents',
+    libelle: r => [TYPE_DOC_LABELS?.[r.type_doc] || r.type_doc, r.numero].filter(Boolean).join(' ') },
+  { key:'reglements', label:'Règlements', table:'compta_reglements' },
+  { key:'prestations', label:'Prestations', table:'compta_prestations' },
+  { key:'lots', label:'Lots de production', table:'compta_lots_production' },
+  { key:'achats_groupes', label:'Achats groupés', table:'compta_achats_groupes' },
+  { key:'achats_semi', label:'Achats semi-finis', table:'compta_achats_semi_finis' },
+  { key:'etuveuses', label:'Étuveuses (répertoire)', table:'compta_etuveuses' },
+  { key:'avances_etuveuses', label:'Avances étuveuses', table:'compta_avances_etuveuses' },
+  { key:'bc_etuveuses', label:'Bons de commande étuveuses', table:'compta_bc_etuveuses' },
+  { key:'br_etuveuses', label:'Bons de réception étuveuses', table:'compta_br_etuveuses' },
+  { key:'envois_etuveuses', label:'Envois étuveuses', table:'compta_envois_etuveuses' },
+  { key:'retours_etuveuses', label:'Retours étuveuses', table:'compta_retours_etuveuses' },
+  { key:'entrees_magasin', label:'Entrées magasin', table:'compta_entrees_magasin' },
+  { key:'sorties_magasin', label:'Sorties magasin', table:'compta_sorties_magasin' },
+  { key:'registres', label:'Registres de traçabilité', table:'compta_tracabilite_registres' },
+  { key:'journal_caisse', label:'Journal caisse', table:'compta_journal_caisse' },
+  { key:'journal_banque', label:'Journal banque', table:'compta_journal_banque' },
+  { key:'journal_mobile', label:'Journal mobile money', table:'compta_journal_mobile' },
+  { key:'ecritures', label:'Écritures comptables', table:'compta_ecritures' },
+  { key:'expression_besoin', label:'Expressions de besoin', table:'compta_expression_besoin' },
+]
+function libelleJournal(r) {
+  const tiers = [r.nom, r.prenom].filter(Boolean).join(' ') || r.nom_societe
+  const vals = [r.numero, r.numero_document, r.numero_bon, r.code_trace, r.code, r.reference, r.designation, r.libelle, r.intitule, tiers, r.description, r.objet]
+    .map(v => v==null ? '' : String(v).trim().slice(0,80)).filter(Boolean)
+  return [...new Set(vals)].slice(0,2).join(' — ') || `Ligne ${String(r.id||'').slice(0,8)}`
+}
+const jourLocal = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}` }
+const JOURNAL_LIMITE = 300
+
+function JournalActivitePanel({ companyId }) {
+  const [ouvert, setOuvert] = useState(false)
+  const [section, setSection] = useState('')
+  const [du, setDu] = useState(jourLocal())
+  const [au, setAu] = useState(jourLocal())
+  const [personne, setPersonne] = useState('')
+  const [lignes, setLignes] = useState([])
+  const [noms, setNoms] = useState({})
+  const [chargement, setChargement] = useState(false)
+  const [indisponibles, setIndisponibles] = useState([])
+  const [tronque, setTronque] = useState(false)
+
+  const charger = useCallback(async () => {
+    if (!ouvert || !companyId) return
+    setChargement(true)
+    const debut = new Date(du + 'T00:00:00').toISOString()
+    const fin = new Date(au + 'T23:59:59.999').toISOString()
+    const cibles = section ? JOURNAL_SECTIONS.filter(s => s.key===section) : JOURNAL_SECTIONS
+    const ko = []; let coupe = false
+    const parSection = await Promise.all(cibles.map(async s => {
+      const { data, error } = await supabase.from(s.table).select(s.select || '*').eq('company_id', companyId)
+        .gte('created_at', debut).lte('created_at', fin).order('created_at', { ascending:false }).limit(JOURNAL_LIMITE)
+      if (error) { ko.push(s.label); return [] }
+      if ((data||[]).length >= JOURNAL_LIMITE) coupe = true
+      return (data||[]).map(r => {
+        let libelle = ''
+        try { libelle = (s.libelle || libelleJournal)(r) } catch { libelle = libelleJournal(r) }
+        return { id:`${s.key}-${r.id}`, quand:r.created_at, userId:r.user_id||null, section:s.label, libelle }
+      })
+    }))
+    const toutes = parSection.flat().sort((a,b) => String(b.quand).localeCompare(String(a.quand)))
+    const ids = [...new Set(toutes.map(l => l.userId).filter(Boolean))]
+    const map = {}
+    if (ids.length) {
+      const { data:profs } = await supabase.from('compta_profiles').select('id,nom,prenom,email').in('id', ids)
+      ;(profs||[]).forEach(p => { map[p.id] = nomPersonne(p) })
+    }
+    setNoms(map); setLignes(toutes); setIndisponibles(ko); setTronque(coupe); setChargement(false)
+  }, [ouvert, companyId, section, du, au])
+
+  useEffect(() => { charger() }, [charger])
+
+  const nomDe = id => id ? (noms[id] || `Utilisateur inconnu (${String(id).slice(0,6)})`) : 'Auteur non enregistré'
+  const heure = q => new Date(q).toLocaleTimeString('fr-FR', { hour:'2-digit', minute:'2-digit' })
+  const parPersonne = {}
+  lignes.forEach(l => {
+    const k = l.userId || '—'
+    const p = parPersonne[k] || (parPersonne[k] = { id:l.userId, n:0, min:l.quand, max:l.quand })
+    p.n++; if (l.quand < p.min) p.min = l.quand; if (l.quand > p.max) p.max = l.quand
+  })
+  const affichees = lignes.filter(l => !personne || (l.userId||'—') === personne)
+  const enteteCol = { padding:'7px 10px', textAlign:'left', fontSize:11.5, color:'#64748b', textTransform:'uppercase' }
+
+  return (
+    <div style={{background:'white',borderRadius:12,border:'1px solid #e2e8f0',padding:20,marginBottom:20}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:12,flexWrap:'wrap'}}>
+        <div>
+          <div style={{fontSize:14,fontWeight:700,color:'#0f2044',marginBottom:4}}>🕒 Journal d'activité</div>
+          <div style={{fontSize:13,color:'#64748b'}}>Voir qui a saisi quoi dans chaque section, et à quelle heure.</div>
+        </div>
+        <Btn sm variant="secondary" onClick={()=>setOuvert(o=>!o)}>{ouvert ? 'Masquer' : 'Ouvrir le journal'}</Btn>
+      </div>
+
+      {ouvert && (
+        <div style={{marginTop:16}}>
+          {!companyId ? (
+            <div style={{fontSize:13,color:'#92400e',background:'#fffbeb',border:'1px solid #fde68a',borderRadius:8,padding:'8px 12px'}}>Sélectionnez une société (en haut de l'écran) pour voir son journal.</div>
+          ) : (<>
+            <div style={{display:'flex',gap:10,flexWrap:'wrap',alignItems:'flex-end',marginBottom:14}}>
+              <label style={{fontSize:12,color:'#475569'}}>Section<br/>
+                <select value={section} onChange={e=>{setSection(e.target.value); setPersonne('')}} style={{padding:'7px 10px',borderRadius:8,border:'1px solid #d1d5db',fontSize:13,background:'white',minWidth:200}}>
+                  <option value="">Toutes les sections</option>
+                  {JOURNAL_SECTIONS.map(s=><option key={s.key} value={s.key}>{s.label}</option>)}
+                </select>
+              </label>
+              <label style={{fontSize:12,color:'#475569'}}>Du<br/>
+                <input type="date" value={du} max={au} onChange={e=>e.target.value && setDu(e.target.value)} style={{padding:'6px 10px',borderRadius:8,border:'1px solid #d1d5db',fontSize:13}} />
+              </label>
+              <label style={{fontSize:12,color:'#475569'}}>Au<br/>
+                <input type="date" value={au} min={du} onChange={e=>e.target.value && setAu(e.target.value)} style={{padding:'6px 10px',borderRadius:8,border:'1px solid #d1d5db',fontSize:13}} />
+              </label>
+              <label style={{fontSize:12,color:'#475569'}}>Personne<br/>
+                <select value={personne} onChange={e=>setPersonne(e.target.value)} style={{padding:'7px 10px',borderRadius:8,border:'1px solid #d1d5db',fontSize:13,background:'white',minWidth:180}}>
+                  <option value="">Toutes</option>
+                  {Object.entries(parPersonne).map(([k,p])=><option key={k} value={k}>{nomDe(p.id)} ({p.n})</option>)}
+                </select>
+              </label>
+              <Btn sm variant="secondary" onClick={charger} disabled={chargement}>{chargement ? '⏳' : '🔄 Actualiser'}</Btn>
+            </div>
+
+            {Object.keys(parPersonne).length>0 && (
+              <div style={{display:'flex',gap:8,flexWrap:'wrap',marginBottom:12}}>
+                {Object.entries(parPersonne).sort((a,b)=>b[1].n-a[1].n).map(([k,p])=>(
+                  <button key={k} onClick={()=>setPersonne(personne===k?'':k)}
+                    style={{border:'1px solid '+(personne===k?'#0f766e':'#e2e8f0'),background:personne===k?'#f0fdfa':'#f8fafc',borderRadius:20,padding:'5px 12px',fontSize:12,cursor:'pointer',color:'#0f2044'}}>
+                    <strong>{nomDe(p.id)}</strong> — {p.n} saisie(s), de {heure(p.min)} à {heure(p.max)}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {indisponibles.length>0 && (
+              <div style={{fontSize:12,color:'#92400e',background:'#fffbeb',border:'1px solid #fde68a',borderRadius:8,padding:'6px 10px',marginBottom:10}}>
+                Section(s) non lisible(s) : {indisponibles.join(', ')}.
+              </div>
+            )}
+            {tronque && (
+              <div style={{fontSize:12,color:'#92400e',background:'#fffbeb',border:'1px solid #fde68a',borderRadius:8,padding:'6px 10px',marginBottom:10}}>
+                Une section dépasse {JOURNAL_LIMITE} lignes sur la période : seules les plus récentes sont affichées. Réduisez la période pour tout voir.
+              </div>
+            )}
+
+            <div style={{maxHeight:420,overflow:'auto',border:'1px solid #e2e8f0',borderRadius:8}}>
+              <table style={{width:'100%',borderCollapse:'collapse',fontSize:12.5}}>
+                <thead><tr style={{background:'#f8fafc',position:'sticky',top:0}}>
+                  <th style={enteteCol}>Date et heure</th><th style={enteteCol}>Personne</th><th style={enteteCol}>Section</th><th style={enteteCol}>Élément saisi</th>
+                </tr></thead>
+                <tbody>
+                  {affichees.map(l=>(
+                    <tr key={l.id} style={{borderTop:'1px solid #f1f5f9'}}>
+                      <td style={{padding:'6px 10px',whiteSpace:'nowrap'}}>{new Date(l.quand).toLocaleString('fr-FR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit'})}</td>
+                      <td style={{padding:'6px 10px',fontWeight:600}}>{nomDe(l.userId)}</td>
+                      <td style={{padding:'6px 10px'}}>{l.section}</td>
+                      <td style={{padding:'6px 10px',color:'#475569'}}>{l.libelle}</td>
+                    </tr>
+                  ))}
+                  {affichees.length===0 && (
+                    <tr><td colSpan={4} style={{padding:20,textAlign:'center',color:'#94a3b8'}}>{chargement ? 'Chargement…' : 'Aucune saisie sur cette période.'}</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+            <div style={{fontSize:11.5,color:'#94a3b8',marginTop:8}}>{affichees.length} saisie(s). Le journal montre les créations (première saisie), pas les modifications ni les suppressions.</div>
+          </>)}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function ParametresPage({ toast, companies, companyId }) {
   const [signataires, setSignataires] = useState([])
   const [theme, setThemeLocal] = useState(getStoredTheme())
@@ -16478,7 +16727,7 @@ function ParametresPage({ toast, companies, companyId }) {
 
   return (
     <div>
-      <PageHeader title="Paramètres" subtitle="Apparence & signataires de documents" />
+      <PageHeader title="Paramètres" subtitle="Apparence, journal d'activité & signataires de documents" />
 
       {/* Carte Apparence */}
       <div style={{background:'white',borderRadius:12,border:'1px solid #e2e8f0',padding:20,marginBottom:20}}>
@@ -16497,6 +16746,8 @@ function ParametresPage({ toast, companies, companyId }) {
           </button>
         </div>
       </div>
+
+      <JournalActivitePanel companyId={companyId} />
 
       <div style={{display:'flex',gap:8,marginBottom:20}}>
         <div style={{flex:1}}>
@@ -24318,6 +24569,7 @@ export default function ComptaPro() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [adminViewCompany, setAdminViewCompany] = useState(null)
   const [needsPasswordChange, setNeedsPasswordChange] = useState(false)
+  const [profilIgnore, setProfilIgnore] = useState(false)
   const [theme, setTheme] = useState(getStoredTheme())
   useEffect(()=>{ applyTheme(theme) },[theme])
   const toggleTheme = () => { const next = theme==='dark'?'light':'dark'; setTheme(next); setStoredTheme(next) }
@@ -24485,6 +24737,13 @@ export default function ComptaPro() {
         </button>
       </div>
     </div>
+  )
+
+  // Première connexion : nom et prénom obligatoires (l'email est celui du compte).
+  if (!profilComplet(profile) && !profilIgnore) return (
+    <ProfilCompletPage user={user} profile={profile}
+      onDone={p=>setProfile(p)} onSkip={()=>setProfilIgnore(true)}
+      onLogout={()=>{ supabase.auth.signOut(); setUser(null); setProfile(null) }} />
   )
 
   // companyId effectif : si super admin consulte une société, utiliser son id
