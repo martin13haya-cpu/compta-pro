@@ -5622,6 +5622,12 @@ function StockPage({ companies, companyId, setPage, toast, readOnly=false }) {
   const [catFilter,setCat]     = useState('')
 
   const load = useCallback(async()=>{
+    // Catégories propres à la société (créées dans Stock > Catégories)
+    if (companyId) {
+      const catData = await loadCategoriesFromSupabase(companyId)
+      const m = {}; catData.forEach(x => { m[x.code] = x.libelle })
+      setCatLabelsCache({ ...CAT_LABELS_DEFAULT, ...m })
+    }
     const { data:ad } = await supabase.auth.getUser()
     const uid = ad?.user?.id; const isAdmin = ad?.user?.email === SUPER_ADMIN_EMAIL
     let q = supabase.from('compta_articles').select('*,compta_companies(raison_sociale)').eq('actif',true).order('designation')
@@ -5671,7 +5677,7 @@ function StockPage({ companies, companyId, setPage, toast, readOnly=false }) {
       <Card style={{marginBottom:16,padding:'12px 20px'}}>
         <select value={catFilter} onChange={e=>setCat(e.target.value)} style={{padding:'7px 12px',borderRadius:8,border:'1px solid #d1d5db',fontSize:13}}>
           <option value="">Toutes catégories</option>
-          {Object.entries(CAT_LABELS).map(([v,l])=><option key={v} value={v}>{l}</option>)}
+          {Object.entries(getCatLabels()).map(([v,l])=><option key={v} value={v}>{l}</option>)}
         </select>
       </Card>
       <div style={{background:'white',borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
@@ -6379,6 +6385,7 @@ function CategoriesPage({ companies, companyId, toast }) {
   const [form, setForm] = useState({ libelle: '', code: '' })
   const [editId, setEditId] = useState(null)
   const [saving, setSaving] = useState(false)
+  const [codeManuel, setCodeManuel] = useState(false) // true dès que l'utilisateur modifie le code lui-même
 
   const load = useCallback(async () => {
     if (!companyId) { setCats([]); return }
@@ -6397,7 +6404,7 @@ function CategoriesPage({ companies, companyId, toast }) {
 
   const set = e => setForm(f => ({ ...f, [e.target.name]: e.target.value }))
 
-  const openAdd = () => { setForm({ libelle: '', code: '' }); setModal('add'); setEditId(null) }
+  const openAdd = () => { setForm({ libelle: '', code: '' }); setCodeManuel(false); setModal('add'); setEditId(null) }
   const openEdit = (c) => { setForm({ libelle: c.libelle, code: c.code }); setModal('edit'); setEditId(c.id) }
   const close = () => { setModal(null); setForm({ libelle: '', code: '' }); setEditId(null) }
 
@@ -6408,17 +6415,21 @@ function CategoriesPage({ companies, companyId, toast }) {
   const save = async (e) => {
     e.preventDefault()
     if (!form.libelle.trim()) { toast.error('Le libellé est obligatoire.'); return }
+    // Le code relie les articles à la catégorie : minuscules, chiffres, « _ » et « - » seulement.
+    const code = (form.code.trim() || genCode(form.libelle)).toLowerCase().replace(/[^a-z0-9_-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 30)
+    if (!code) { toast.error('Code invalide : utilisez des lettres ou des chiffres.'); return }
+    if (modal === 'add' && CAT_LABELS_DEFAULT[code]) { toast.error(`Le code « ${code} » est réservé à une catégorie système. Changez le libellé ou le code.`); return }
     setSaving(true)
-    const code = form.code.trim() || genCode(form.libelle)
-    const payload = { company_id: companyId, libelle: form.libelle.trim(), code }
+    const messageErreur = err => err.code === '23505' ? 'Ce code existe déjà pour cette société. Changez le libellé ou le code.' : err.message
 
     if (modal === 'add') {
-      const { error } = await supabase.from('compta_categories_articles').insert(payload)
-      if (error) { toast.error(error.message); setSaving(false); return }
+      const { error } = await supabase.from('compta_categories_articles').insert({ company_id: companyId, libelle: form.libelle.trim(), code })
+      if (error) { toast.error(messageErreur(error)); setSaving(false); return }
       toast.success('Catégorie ajoutée !')
     } else {
-      const { error } = await supabase.from('compta_categories_articles').update({ libelle: form.libelle.trim(), code }).eq('id', editId)
-      if (error) { toast.error(error.message); setSaving(false); return }
+      // Le code ne change jamais : les articles déjà rattachés à la catégorie le référencent.
+      const { error } = await supabase.from('compta_categories_articles').update({ libelle: form.libelle.trim() }).eq('id', editId)
+      if (error) { toast.error(messageErreur(error)); setSaving(false); return }
       toast.success('Catégorie modifiée !')
     }
     setSaving(false); close(); load()
@@ -6506,15 +6517,15 @@ function CategoriesPage({ companies, companyId, toast }) {
         <form onSubmit={save}>
           <div style={{marginBottom:14}}>
             <Input label="Libellé *" name="libelle" value={form.libelle} onChange={e=>{
-              set(e)
-              if (modal==='add' && !form.code) setForm(f=>({...f,libelle:e.target.value,code:genCode(e.target.value)}))
-              else set(e)
+              const v = e.target.value
+              setForm(f => ({ ...f, libelle:v, ...(modal==='add' && !codeManuel ? { code:genCode(v) } : {}) }))
             }} required placeholder="Ex: Matières premières" />
           </div>
           <div style={{marginBottom:20}}>
-            <Input label="Code (auto-généré)" name="code" value={form.code} onChange={set}
+            <Input label={modal==='edit' ? 'Code (non modifiable)' : 'Code (auto-généré, modifiable)'} name="code" value={form.code}
+              onChange={e=>{ setCodeManuel(true); set(e) }} readOnly={modal==='edit'}
               placeholder="Ex: matieres_premieres" />
-            <p style={{fontSize:11,color:'#94a3b8',marginTop:4}}>Le code est utilisé en interne. Il est auto-généré à partir du libellé.</p>
+            <p style={{fontSize:11,color:'#94a3b8',marginTop:4}}>Le code relie les articles à la catégorie. {modal==='edit' ? 'Il ne peut plus être changé.' : 'Il est généré à partir du libellé ; vous pouvez le modifier avant d\'enregistrer.'}</p>
           </div>
           <Row>
             <Btn variant="secondary" onClick={close}>Annuler</Btn>
