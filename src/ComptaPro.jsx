@@ -3573,6 +3573,28 @@ function parseDateFR(v) {
   if (d.getUTCFullYear() !== a || d.getUTCMonth() !== m - 1 || d.getUTCDate() !== j) return { iso:null, invalide:true }
   return { iso:`${a}-${String(m).padStart(2,'0')}-${String(j).padStart(2,'0')}` }
 }
+// Catégorie de fournisseur lue dans un fichier : accepte la clé (« producteur »), le libellé
+// (« Prestataire de services », « 🌾 Producteur ») ou le début du libellé (« commerçant »).
+// -> { cle } ou { cle:null, inconnue:true } ; vide -> { cle:null }.
+function categorieFournisseurDepuisTexte(v) {
+  const n = s => String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9 ]+/g,' ').replace(/\s+/g,' ').trim()
+  const q = n(v)
+  if (!q) return { cle:null }
+  const formes = [q, q.replace(/s$/, '')]
+  const trouve = CATEGORIES_FOURNISSEUR.find(([k, l]) => formes.some(f => n(k) === f || n(l) === f || n(l).startsWith(f + ' ')))
+  return trouve ? { cle:trouve[0] } : { cle:null, inconnue:true }
+}
+// Nom complet saisi dans « prenom » alors que « nom » est vide (ex. « OROU BRISSO Bana Gniré ») :
+// les mots EN MAJUSCULES du début forment le nom, le reste les prénoms.
+function separerNomComplet(texte) {
+  const mots = String(texte||'').trim().split(/\s+/).filter(Boolean)
+  if (!mots.length) return null
+  const estMaj = m => m === m.toUpperCase() && m !== m.toLowerCase()
+  let k = 0
+  while (k < mots.length && estMaj(mots[k])) k++
+  if (k === 0 || (k === mots.length && mots.length > 1)) k = 1
+  return { nom:mots.slice(0, k).join(' '), prenom:mots.slice(k).join(' ') || null }
+}
 const lettresSeules = s => String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^A-Za-z]/g,'').toUpperCase()
 function codeProducteurParRegle(f) {
   const cip = onlyDigits(f?.cip)
@@ -4114,6 +4136,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     // tableau « Kit FRIA reçu » de la fiche fournisseur (quantité + montant par type).
     const spec = [
       ['type','physique','morale'],
+      ['categorie','producteur','prestataire'],
       ['nom','HAYA',''],
       ['prenom','Martin',''],
       ['nom_societe','','SARL EXEMPLE'],
@@ -4172,7 +4195,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     .replace(/\s+/g,' ')
     .trim()
   const HEADER_ALIASES = {
-    type: ['type'], nom: ['nom'],
+    type: ['type'], categorie: ['categorie','catégorie','category'], nom: ['nom'],
     prenom: ['prenom','prénom','prenom(s)','prénom(s)'],
     nom_societe: ['nom_societe','nom societe','raison sociale'],
     telephone: ['telephone','tel'], provenance: ['provenance'],
@@ -4242,14 +4265,23 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
       const rows = []
       const avancesPerRow = []
       const datesIllisibles = []
+      const ignorees = []
+      const categoriesInconnues = []
+      let nomsSepares = 0
       for(let i=headerLineIndex+1;i<lines.length;i++){
         const vals = lines[i].split(delim).map(v=>v.trim())
+        if (!vals.some(v => v)) continue // ligne entièrement vide
         const obj = {}
         headers.forEach((h,idx)=>{ obj[h]=vals[idx]||'' })
         // Validation minimale
         const t = (obj.type||'physique').toLowerCase()
-        if(t==='morale' && !obj.nom_societe){ continue }
-        if(t!=='morale' && !obj.nom){ continue }
+        // Nom complet dans « prenom » et « nom » vide : on sépare (mots en MAJUSCULES du début = nom).
+        let nomImp = obj.nom, prenomImp = obj.prenom
+        if (t!=='morale' && !nomImp && prenomImp) { const sp = separerNomComplet(prenomImp); if (sp) { nomImp = sp.nom; prenomImp = sp.prenom || ''; nomsSepares++ } }
+        if(t==='morale' && !obj.nom_societe){ ignorees.push(`ligne ${i+1} (nom_societe manquant)`); continue }
+        if(t!=='morale' && !nomImp){ ignorees.push(`ligne ${i+1} (nom manquant)`); continue }
+        const cat = table==='compta_fournisseurs' ? categorieFournisseurDepuisTexte(obj.categorie) : { cle:null }
+        if (cat.inconnue) categoriesInconnues.push(`${nomImp||obj.nom_societe} (${obj.categorie})`)
         const dn = table==='compta_fournisseurs' ? parseDateFR(obj.date_naissance) : { iso:null }
         if (dn.invalide) datesIllisibles.push(`${obj.nom||obj.nom_societe||'?'} (${obj.date_naissance})`)
         const avTypesImp = [['Labour','labour_qte','labour_montant'],['Semences','semences_qte','semences_montant'],['Engrais','engrais_qte','engrais_montant'],['Herbicide','herbicide_qte','herbicide_montant'],['Crédits','credits_qte','credits_montant']]
@@ -4257,8 +4289,8 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
         rows.push({
           company_id: cid, user_id: uid,
           type: t==='morale'?'morale':'physique',
-          nom: obj.nom||null,
-          prenom: obj.prenom||null,
+          nom: nomImp||null,
+          prenom: prenomImp||null,
           nom_societe: obj.nom_societe||null,
           telephone: obj.telephone||null, provenance: obj.provenance||null,
           cip: obj.cip||null, ifu: obj.ifu||null,
@@ -4271,6 +4303,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
           ...(table==='compta_fournisseurs' ? {
             cooperative_affiliee: obj.cooperative_affiliee||null,
             numero_contrat: obj.numero_contrat||null,
+            ...(cat.cle ? { categorie: cat.cle } : {}),
             departement: obj.departement||null,
             commune: obj.commune||null,
             arrondissement: obj.arrondissement||null,
@@ -4289,10 +4322,12 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
         })
         avancesPerRow.push(table==='compta_fournisseurs' ? avsImp : [])
       }
-      if(rows.length===0){ toast.error('Aucune ligne valide trouvée'); setImporting(false); return }
-      const { data:insRows, error } = await supabase.from(table).insert(rows).select('id,type,nom,nom_societe,cip,commune')
+      if(rows.length===0){ toast.error(ignorees.length ? `Aucune ligne importée : ${ignorees.length} ligne(s) ignorée(s) — ${ignorees.slice(0,3).join(' ; ')}${ignorees.length>3?' …':''}` : 'Aucune ligne valide trouvée'); setImporting(false); return }
+      const { data:insRows, error } = await supabase.from(table).insert(rows).select(table==='compta_fournisseurs' ? 'id,type,nom,prenom,nom_societe,cip,commune,categorie' : 'id,type,nom,nom_societe')
       if(error){ toast.error('Erreur import : '+error.message); setImporting(false); return }
       if (datesIllisibles.length) toast.error(`${datesIllisibles.length} date(s) de naissance illisible(s), laissée(s) vide(s) : ${datesIllisibles.slice(0,3).join(' ; ')}${datesIllisibles.length>3?' …':''}. Format attendu : JJ/MM/AAAA.`)
+      if (ignorees.length) toast.error(`${ignorees.length} ligne(s) ignorée(s) : ${ignorees.slice(0,3).join(' ; ')}${ignorees.length>3?' …':''}. Le nom (ou nom_societe) est obligatoire.`)
+      if (categoriesInconnues.length) toast.error(`${categoriesInconnues.length} catégorie(s) non reconnue(s), laissée(s) « Non classé » : ${categoriesInconnues.slice(0,3).join(' ; ')}${categoriesInconnues.length>3?' …':''}. Valeurs acceptées : producteur, prestataire, commercant, transporteur, autre.`)
       // Kit FRIA importé (fournisseurs) : enregistré tout de suite après les fiches, avant les
       // étapes plus longues (codes producteurs, comptes comptables), pour ne jamais être perdu.
       if (table==='compta_fournisseurs') {
@@ -4325,7 +4360,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
           nums.push(numero)
         }
       }
-      toast.success(`${rows.length} ${titleSingle.toLowerCase()}(s) importé(s) !`)
+      toast.success(`${rows.length} ${titleSingle.toLowerCase()}(s) importé(s) !${nomsSepares ? ` (${nomsSepares} nom(s) complet(s) séparé(s) en nom / prénoms)` : ''}`)
       load()
     } catch(err) {
       toast.error('Erreur lecture fichier : '+err.message)
