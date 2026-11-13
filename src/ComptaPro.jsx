@@ -2628,6 +2628,7 @@ const NAV = [
   { id:'etv_tresorerie',  icon:'💼', label:'Trésorerie' },
   { section:'Achats' },
   { id:'achats_groupes',     icon:'🌾', label:'Achats groupés de paddy' },
+  { id:'epargne_fria',       icon:'🏦', label:'Épargne FRIA' },
   { id:'achats',             icon:'🛒', label:'Achats semi-finis' },
   { id:'lots_semi_finis',    icon:'📦', label:'Lots Semi-finis' },
   { id:'epierrage',          icon:'🪨', label:'Épierrage' },
@@ -3867,7 +3868,8 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
   const [filterColValue, setFilterColValue] = useState('')
   const [sortBy, setSortBy] = useState('') // ''=plus récents | 'alpha' | 'contrat'
   const [avances, setAvances] = useState([])
-  const [rembAG, setRembAG] = useState(null) // fonds intrant retenus sur les achats groupés
+  const [rembAG, setRembAG] = useState(null) // situation FRIA du producteur (remboursements, épargne)
+  const [campagneKit, setCampagneKit] = useState('') // campagne du Kit FRIA affiché dans la fiche
   // Étuveuse : données du répertoire (compta_etuveuses) et mentorés (compta_etuveuses_mentores)
   const [etvDetails, setEtvDetails] = useState({ date_contrat:'', capacite_kg:'', zone:'', observations:'' })
   const [mentores, setMentores] = useState([])
@@ -4077,6 +4079,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     // formulaire propre à cette catégorie s'affiche.
     setForm(it?{...it, ...ageEtTranche(it)}:{...baseDefaults,...defaults,...(table==='compta_fournisseurs'?{categorie:'', _choixCategorie:true}:{})}); setModal(it?'edit':'add')
     setAvances([]); setRembAG(null)
+    setCampagneKit(campagneSociete(companies.find(c => c.id === (it?.company_id || companyId))))
     setEtvDetails({ date_contrat:'', capacite_kg:'', zone:'', observations:'' }); setMentores([])
     if (it && table==='compta_fournisseurs' && it.categorie==='etuveuse') {
       supabase.from('compta_etuveuses').select('id,date_contrat,capacite_kg,zone,observations').eq('fournisseur_id', it.id).maybeSingle()
@@ -4085,18 +4088,24 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
         .then(({ data }) => { if (data) setMentores(data.map(m => ({ nom_prenoms:m.nom_prenoms||'', village:m.village||'', genre:m.genre||'', handicap:!!m.handicap, npi:m.npi||'', date_naissance:m.date_naissance||'', contact:m.contact||'' }))) })
     }
     if (it && table==='compta_fournisseurs') {
-      supabase.from('compta_achats_groupes_lignes').select('fonds_intrant,compta_achats_groupes(numero,statut)').eq('fournisseur_id', it.id)
-        .then(({ data, error }) => { if (error || !data) return
-          const ls = data.filter(l => +l.fonds_intrant > 0 && l.compta_achats_groupes)
-          const somme = st => ls.filter(l => l.compta_achats_groupes.statut === st).reduce((t,l)=>t+(+l.fonds_intrant||0),0)
-          setRembAG({ rembourse:somme('cloture'), enCours:somme('ouvert'), groupes:[...new Set(ls.filter(l => l.compta_achats_groupes.statut !== 'annule').map(l => l.compta_achats_groupes.numero))] }) })
-      supabase.from('compta_avances_fournisseur')
-        .select('type_avance,quantite_recue,valeur_remboursement')
-        .eq('fournisseur_id', it.id)
-        .then(({data})=>{ if(data&&data.length) setAvances(data.map(d=>({ type_avance:d.type_avance||'Labour', quantite_recue:d.quantite_recue??'', montant:d.valeur_remboursement??'' }))) })
+      // Kit FRIA (toutes campagnes) puis situation FRIA : remboursements (groupes, isolés), épargne.
+      ;(async () => {
+        let { data:av, error:ea } = await supabase.from('compta_avances_fournisseur').select('type_avance,quantite_recue,valeur_remboursement,campagne').eq('fournisseur_id', it.id)
+        if (ea) ({ data:av } = await supabase.from('compta_avances_fournisseur').select('type_avance,quantite_recue,valeur_remboursement').eq('fournisseur_id', it.id))
+        av = (av||[]).map(x => ({ ...x, fournisseur_id:it.id }))
+        if (av.length) setAvances(av.map(x => ({ type_avance:x.type_avance||'Labour', quantite_recue:x.quantite_recue??'', montant:x.valeur_remboursement??'', campagne:x.campagne||'' })))
+        const camps = [...new Set(av.map(x => x.campagne).filter(Boolean))].sort()
+        if (camps.length) setCampagneKit(c => camps.includes(c) ? c : camps[camps.length-1])
+        const [{ data:ls }, { data:mv }] = await Promise.all([
+          supabase.from('compta_achats_groupes_lignes').select('groupe_id,fournisseur_id,fonds_intrant,compta_achats_groupes(id,numero,statut)').eq('fournisseur_id', it.id),
+          supabase.from('compta_fria_mouvements').select('fournisseur_id,type,montant').eq('fournisseur_id', it.id),
+        ])
+        const lignes = (ls||[]).filter(l => l.compta_achats_groupes)
+        setRembAG(situationFria(it.id, { avances:av, lignes, groupes:lignes.map(l => l.compta_achats_groupes), mvts:mv||[] }))
+      })()
     }
   }
-  const addAvance = () => setAvances(a=>[...a,{ type_avance:'Labour', quantite_recue:'', montant:'' }])
+  const addAvance = () => setAvances(a=>[...a,{ type_avance:'Labour', quantite_recue:'', montant:'', campagne:campagneKit }])
   const delAvance = (i) => {
     const a = avances[i]
     if ((numFR(a.quantite_recue)||numFR(a.montant)) && !confirm(`Supprimer la ligne Kit FRIA « ${a.type_avance} » ?`)) return
@@ -4108,8 +4117,11 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     await supabase.from('compta_avances_fournisseur').delete().eq('fournisseur_id', fournId)
     const lignes = (avances||[]).filter(a => a.type_avance && (numFR(a.quantite_recue) || numFR(a.montant)))
     if (lignes.length) {
-      const rows = lignes.map(a => ({ fournisseur_id:fournId, company_id:cid, user_id:uidp, type_avance:a.type_avance, quantite_recue:numFR(a.quantite_recue), valeur_remboursement:numFR(a.montant) }))
-      const { error:errA } = await supabase.from('compta_avances_fournisseur').insert(rows)
+      const rows = lignes.map(a => ({ fournisseur_id:fournId, company_id:cid, user_id:uidp, type_avance:a.type_avance, quantite_recue:numFR(a.quantite_recue), valeur_remboursement:numFR(a.montant),
+        campagne:a.campagne || campagneKit || null }))
+      let { error:errA } = await supabase.from('compta_avances_fournisseur').insert(rows)
+      // Script FRIA pas encore passé : on enregistre sans la campagne.
+      if (errA && /campagne/i.test(errA.message)) ({ error:errA } = await supabase.from('compta_avances_fournisseur').insert(rows.map(r => { const x = { ...r }; delete x.campagne; return x })))
       if (errA) toast.error(`Kit FRIA non enregistré : ${errA.message}`)
     }
   }
@@ -4616,9 +4628,11 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
       // étapes plus longues (codes producteurs, comptes comptables), pour ne jamais être perdu.
       if (table==='compta_fournisseurs') {
         const avRows = []
-        ;(insRows||[]).forEach((r,idx)=>{ (avancesPerRow[idx]||[]).forEach(a=>avRows.push({ ...a, fournisseur_id:r.id, company_id:cid, user_id:uid })) })
+        const campImp = campagneSociete(companies.find(c => c.id === cid))
+        ;(insRows||[]).forEach((r,idx)=>{ (avancesPerRow[idx]||[]).forEach(a=>avRows.push({ ...a, fournisseur_id:r.id, company_id:cid, user_id:uid, campagne:campImp })) })
         if (avRows.length) {
-          const { error:errAv } = await supabase.from('compta_avances_fournisseur').insert(avRows)
+          let { error:errAv } = await supabase.from('compta_avances_fournisseur').insert(avRows)
+          if (errAv && /campagne/i.test(errAv.message)) ({ error:errAv } = await supabase.from('compta_avances_fournisseur').insert(avRows.map(r => { const x = { ...r }; delete x.campagne; return x })))
           if (errAv) toast.error(`Fournisseurs importés, mais le Kit FRIA n'a pas été enregistré : ${errAv.message}`)
         }
       }
@@ -5793,13 +5807,23 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
           </Grid>
 
           {table==='compta_fournisseurs' && (() => {
-            const totalAvance = (avances||[]).reduce((sm,a)=>sm+numFR(a.montant),0)
+            // Kit FRIA de la campagne choisie (les lignes sans campagne suivent la campagne affichée).
+            const lignesKit = (avances||[]).map((a,i)=>({ a, i })).filter(x => (x.a.campagne || campagneKit) === campagneKit)
+            const campagnesKit = [...new Set([campagneKit, campagneSociete(companies.find(c => c.id === (form.company_id || companyId))), ...(avances||[]).map(a => a.campagne).filter(Boolean)])].filter(Boolean).sort()
+            const totalAvance = lignesKit.reduce((sm,x)=>sm+numFR(x.a.montant),0)
             const prixContrat = numFR(form.prix_contrat)
             const rizPaddy = prixContrat>0 ? totalAvance/prixContrat : 0
             return (
               <div style={{marginBottom:16}}>
                 <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
-                  <label style={{fontSize:13,fontWeight:700,color:'#334155'}}>💰 Kit FRIA reçu</label>
+                  <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
+                    <label style={{fontSize:13,fontWeight:700,color:'#334155'}}>💰 Kit FRIA reçu — campagne</label>
+                    <select value={campagneKit} onChange={e=>{ const v = e.target.value === '__autre__' ? (prompt('Campagne agricole (ex : 2027-2028)', campagneSuivante(campagneKit))||'').trim() : e.target.value; if (v) setCampagneKit(v) }}
+                      style={{padding:'5px 8px',border:'1px solid #cbd5e1',borderRadius:6,fontSize:12.5,fontWeight:600}}>
+                      {campagnesKit.map(c => <option key={c} value={c}>{c}</option>)}
+                      <option value="__autre__">+ Autre campagne…</option>
+                    </select>
+                  </div>
                   <Btn sm type="button" variant="secondary" onClick={addAvance}>+ Ajouter une ligne</Btn>
                 </div>
                 <div style={{border:'1px solid #e2e8f0',borderRadius:8,overflowX:'auto'}}>
@@ -5811,9 +5835,9 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
                       <th style={{width:44}}></th>
                     </tr></thead>
                     <tbody>
-                      {avances.length===0 ? (
-                        <tr><td colSpan={4} style={{padding:'12px',textAlign:'center',color:'#94a3b8'}}>Aucun Kit FRIA — cliquez sur « + Ajouter une ligne »</td></tr>
-                      ) : avances.map((a,i)=>(
+                      {lignesKit.length===0 ? (
+                        <tr><td colSpan={4} style={{padding:'12px',textAlign:'center',color:'#94a3b8'}}>Aucun Kit FRIA pour la campagne {campagneKit} — cliquez sur « + Ajouter une ligne »</td></tr>
+                      ) : lignesKit.map(({ a, i })=>(
                         <tr key={i} style={{borderTop:'1px solid #f1f5f9'}}>
                           <td style={{padding:'6px 8px'}}>
                             <select value={a.type_avance} onChange={e=>setAvanceField(i,'type_avance',e.target.value)}
@@ -5841,7 +5865,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
                     </tbody>
                     <tfoot>
                       <tr style={{background:'#f8fafc',borderTop:'2px solid #e2e8f0'}}>
-                        <td colSpan={2} style={{padding:'9px 10px',textAlign:'right',fontWeight:700,color:'#334155'}}>Total Kit FRIA reçu</td>
+                        <td colSpan={2} style={{padding:'9px 10px',textAlign:'right',fontWeight:700,color:'#334155'}}>Total Kit FRIA reçu ({campagneKit})</td>
                         <td style={{padding:'9px 10px',textAlign:'right',fontWeight:800,color:'#0f2044'}}>{Math.round(totalAvance).toLocaleString('fr-FR')} FCFA</td>
                         <td></td>
                       </tr>
@@ -5862,12 +5886,16 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
                     </div>
                   </div>
                 </div>
-                {rembAG && (rembAG.rembourse > 0 || rembAG.enCours > 0) && (()=>{ const reste = Math.max(0, Math.round(totalAvance - rembAG.rembourse - rembAG.enCours))
-                  return <div style={{ marginTop:12, padding:'9px 12px', borderRadius:8, fontSize:12.5, lineHeight:1.6, background: reste > 0 ? '#fffbeb' : '#f0fdf4', border:`1px solid ${reste > 0 ? '#fde68a' : '#bbf7d0'}` }}>
-                    Remboursé par les achats groupés : <strong>{Math.round(rembAG.rembourse).toLocaleString('fr-FR')} FCFA</strong>
-                    {rembAG.enCours > 0 && <> — en cours (groupe ouvert) : <strong>{Math.round(rembAG.enCours).toLocaleString('fr-FR')} FCFA</strong></>}
-                    {' '}— reste à rembourser : <strong style={{ color: reste > 0 ? '#b45309' : '#15803d' }}>{reste > 0 ? `${reste.toLocaleString('fr-FR')} FCFA` : 'Kit FRIA soldé ✔'}</strong>
-                    {rembAG.groupes.length > 0 && <div style={{ color:'#64748b', fontSize:11.5 }}>Groupes : {rembAG.groupes.join(', ')}</div>}
+                {rembAG && (rembAG.kit > 0 || rembAG.rembourse > 0 || rembAG.epargne > 0) && (()=>{ const r = rembAG, f = v => `${Math.round(v).toLocaleString('fr-FR')} FCFA`
+                  return <div style={{ marginTop:12, padding:'10px 12px', borderRadius:8, fontSize:12.5, lineHeight:1.7, background:'#f8fafc', border:'1px solid #e2e8f0' }}>
+                    <div style={{ fontWeight:700, color:'#334155', marginBottom:2 }}>🏦 Situation FRIA (toutes campagnes)</div>
+                    Kit reçu : <strong>{f(r.kit)}</strong>{r.finance > 0 && <> — dont financé par l'épargne : <strong>{f(r.finance)}</strong></>}
+                    <br/>Remboursé en nature : <strong>{f(r.rembourse)}</strong>{r.rembIsole > 0 && <span style={{ color:'#64748b' }}> (groupes {f(r.rembGroupes)}, hors groupe {f(r.rembIsole)})</span>}
+                    {r.enCours > 0 && <> — en cours (groupe ouvert) : <strong>{f(r.enCours)}</strong></>}
+                    <br/>Reste à rembourser : <strong style={{ color: r.reste > 0 ? '#b45309' : '#15803d' }}>{r.reste > 0 ? f(r.reste) : 'Kit FRIA soldé ✔'}</strong>
+                    <br/>Épargne FRIA disponible : <strong style={{ color:'#0f766e' }}>{f(r.epargne)}</strong>{r.restitue > 0 && <span style={{ color:'#64748b' }}> (restitué : {f(r.restitue)})</span>}
+                    {r.groupes.length > 0 && <div style={{ color:'#64748b', fontSize:11.5 }}>Groupes : {r.groupes.join(', ')}</div>}
+                    <div style={{ color:'#64748b', fontSize:11.5 }}>Remboursements hors groupe, renouvellement et restitution : menu Achats › Épargne FRIA.</div>
                   </div> })()}
               </div>
             )
@@ -9450,7 +9478,7 @@ const ALL_SECTIONS = [
   ['etv_repertoire','Répertoire Étuveuses'],['etv_envois','Envois aux étuveuses'],['etv_performance','Performance des étuveuses'],['etv_avances','Avances'],
   ['etv_bc','Bons de Commande'],['etv_br','Bons de Réception'],
   ['etv_entrees','Entrées Magasin'],['etv_sorties','Sorties Magasin'],['etv_inventaire','Inventaire'],['etv_tresorerie','Trésorerie'],
-  ['achats_groupes','Achats groupés de paddy'],['achats','Achats semi-finis'],['lots_semi_finis','Lots Semi-finis'],
+  ['achats_groupes','Achats groupés de paddy'],['epargne_fria','Épargne FRIA'],['achats','Achats semi-finis'],['lots_semi_finis','Lots Semi-finis'],
   ['epierrage','Épierrage'],['etuvage_paiements','Paiements étuvage'],
   ['docs_admin','Documents administratifs'],
   ['rh_employes','Employés'],['rh_fiches_paie','Fiches de Paie'],['rh_historique','Historique Paie'],
@@ -9466,7 +9494,7 @@ const SECTION_GROUPS = [
   {group:'Traçabilité', ids:['registre_tracabilite','tracabilite']},
   {group:'Production', ids:['suivi_lot','lots','etuvage','decorticage','calibrage','tri_optique','conditionnement']},
   {group:'Étuveuses', ids:['etv_repertoire','etv_envois','etv_performance','etv_avances','etv_bc','etv_br','etv_entrees','etv_sorties','etv_inventaire','etv_tresorerie']},
-  {group:'Achats', ids:['achats_groupes','achats','lots_semi_finis','epierrage','etuvage_paiements']},
+  {group:'Achats', ids:['achats_groupes','epargne_fria','achats','lots_semi_finis','epierrage','etuvage_paiements']},
   {group:'Documents', ids:['docs_admin']},
   {group:'RH & Paie', ids:['rh_employes','rh_fiches_paie','rh_historique','rh_declarations','rh_rapport','rh_dossiers','rh_carriere','rh_conges','rh_absences','rh_prets','rh_missions','rh_centralisation','rh_tableau_bord','rh_simulateur']},
   {group:'Comptabilité', ids:['journal_caisse','journal_banque','journal_mobile','plan_comptable','grand_livre','ecritures','balance','etats_financiers']},
@@ -11089,13 +11117,10 @@ function totauxAchatGroupe(lignes) {
     { quantite_kg:0, montant:0, fonds_intrant:0, remboursement_kg:0, net_a_percevoir:0 })
   return { ...t, quantite_kg:Math.round(t.quantite_kg*1000)/1000, remboursement_kg:Math.round(t.remboursement_kg*100)/100 }
 }
-// Avances du producteur pas encore retenues sur un autre groupe (le groupe « sauf » est exclu).
-function fondsIntrantDisponible(fournisseurId, { avances, lignes, groupes }, sauf) {
-  const total = avances.filter(a => String(a.fournisseur_id) === String(fournisseurId)).reduce((t,a)=>t+(+a.valeur_remboursement||0),0)
-  const annules = new Set(groupes.filter(g => g.statut === 'annule').map(g => g.id))
-  const retenu = lignes.filter(l => String(l.fournisseur_id) === String(fournisseurId) && l.groupe_id !== sauf && !annules.has(l.groupe_id))
-    .reduce((t,l)=>t+(+l.fonds_intrant||0),0)
-  return Math.max(0, Math.round(total - retenu))
+// Kit FRIA du producteur encore à rembourser, hors groupe « sauf » (en cours d'édition) :
+// kit reçu − part financée par son épargne − remboursements (groupes, isolés) − groupes ouverts.
+function fondsIntrantDisponible(fournisseurId, d, sauf) {
+  return situationFria(fournisseurId, d, sauf).reste
 }
 
 const CSS_ACHAT_GROUPE = `
@@ -11229,13 +11254,13 @@ function fichesAchatPaddyHtml(comp, g, lignes) {
 // pour que la somme des parts égale le versement.
 // Comptabilité : à la clôture, pièce JA « AG-<n° groupe> » — débit 602 (achats
 // de matières premières) du montant des ventes, crédit du compte de chaque
-// producteur ; le fonds intrant retenu est porté au débit de son compte et au
-// crédit du 409 (avances versées). Chaque part payée sort de la caisse, de la
+// producteur pour son net à percevoir ; le fonds intrant retenu (remboursement
+// du Kit FRIA en nature) est porté au crédit de son épargne FRIA (4018…). Chaque part payée sort de la caisse, de la
 // banque ou du mobile money sur le compte du producteur (comme un règlement
 // fournisseur) : la balance des producteurs se solde avec les paiements.
 const MSG_SCRIPT_AG_PAIE = "Exécutez d'abord le script supabase/migrations/20261009_achats_groupes_paiements.sql dans Supabase (projet ComptaPro, SQL Editor)."
 const estErreurAGPaie = e => /compta_achats_groupes_(paiements|repartitions)|schema cache|does not exist/i.test(e?.message||'')
-const COMPTE_ACHAT_PADDY = '602', COMPTE_FONDS_INTRANT = '409'
+const COMPTE_ACHAT_PADDY = '602'
 const pieceAchatGroupe = g => `AG-${g.numero}`
 
 function repartirPaiementGroupe(montant, dus) {
@@ -11260,17 +11285,122 @@ function situationPaiementGroupe(lignes, repartitions) {
 }
 const STATUTS_PAIE_AG = { rien:['Rien à payer','secondary'], non_paye:['Non payé','warning'], partiel:['Payé en partie','info'], solde:['Soldé','success'] }
 // Lignes de la pièce comptable d'achat du groupe (débit = crédit).
+// Kit FRIA : la part « fonds intrant » du paddy livré rembourse le kit en nature et
+// devient l'épargne FRIA du producteur (dette de l'entreprise, sous-compte 4018…) :
+//   Débit 602 (montant total) / Crédit 401… (net à percevoir) / Crédit 4018… (fonds intrant).
 function ecrituresAchatGroupe(g, lignes, compteDe) {
   const lib = `Achat paddy groupé ${g.numero}${g.village ? ` — ${g.village}` : ''}`
   const calc = lignes.map(l => ({ l, c:calculLigneAchatGroupe(l), cpt:compteDe(l.fournisseur_id) || COLLECTIF_FOURNISSEUR }))
-  const montant = calc.reduce((t,x)=>t+x.c.montant,0), fonds = calc.reduce((t,x)=>t+x.c.fonds_intrant,0)
+  const montant = calc.reduce((t,x)=>t+x.c.montant,0)
   const rows = [{ numero_compte:COMPTE_ACHAT_PADDY, compte_libelle:'Achats de matières premières (riz paddy)', libelle:lib, debit:montant, credit:0 }]
   calc.forEach(({ l, c, cpt }) => {
-    rows.push({ numero_compte:cpt, compte_libelle:l.nom, libelle:`${lib} — ${l.nom} (${nbFr(c.quantite_kg)} kg)`, debit:0, credit:c.montant })
-    if (c.fonds_intrant > 0) rows.push({ numero_compte:cpt, compte_libelle:l.nom, libelle:`Fonds intrant retenu — ${l.nom}`, debit:c.fonds_intrant, credit:0 })
+    rows.push({ numero_compte:cpt, compte_libelle:l.nom, libelle:`${lib} — ${l.nom} (${nbFr(c.quantite_kg)} kg)`, debit:0, credit:c.net_a_percevoir })
+    if (c.fonds_intrant > 0) rows.push({ numero_compte:compteFriaDe(cpt), compte_libelle:`Épargne FRIA — ${l.nom}`,
+      libelle:`Remboursement Kit FRIA en nature — ${l.nom} (${nbFr(c.remboursement_kg)} kg)`, debit:0, credit:c.fonds_intrant })
   })
-  if (fonds > 0) rows.push({ numero_compte:COMPTE_FONDS_INTRANT, compte_libelle:'Fournisseurs, avances versées (fonds intrant)', libelle:`Fonds intrant retenus — ${g.numero}`, debit:0, credit:fonds })
   return rows.filter(r => r.debit > 0 || r.credit > 0)
+}
+
+// ── ÉPARGNE FRIA ─────────────────────────────────────────────────────────────
+// Le Kit FRIA (labour, semences, engrais, herbicide, crédits) est remis hors
+// comptabilité. Le producteur le rembourse en paddy (achats groupés, ou
+// remboursement isolé) : c'est un achat de matière première dont la valeur
+// devient son épargne FRIA (dette 4018…). Cette épargne finance le kit de la
+// campagne suivante (renouvellement du contrat) ou lui est restituée.
+// La part d'un kit financée par l'épargne n'est plus à rembourser.
+const COLLECTIF_FRIA = '4018'
+const MSG_SCRIPT_FRIA = "Exécutez d'abord le script supabase/migrations/20261115_epargne_fria.sql dans Supabase (projet ComptaPro, SQL Editor)."
+const estErreurFria = e => /compta_fria_mouvements|campagne|schema cache|does not exist/i.test(e?.message||'')
+const TYPES_MVT_FRIA = { remboursement:['Remboursement en nature','success'], utilisation:['Renouvellement (kit financé)','info'], restitution:["Restitution de l'épargne",'warning'] }
+// Sous-compte FRIA d'un producteur : même séquence que son compte fournisseur (4011xx → 4018xx).
+const compteFriaDe = numeroCompte => { const n = String(numeroCompte||'')
+  return n.startsWith(COLLECTIF_FOURNISSEUR) && n.length > COLLECTIF_FOURNISSEUR.length ? COLLECTIF_FRIA + n.slice(COLLECTIF_FOURNISSEUR.length) : COLLECTIF_FRIA }
+const campagneSuivante = c => { const m = String(c||'').match(/^(\d{4})\s*-\s*(\d{4})$/); return m ? `${+m[1]+1}-${+m[2]+1}` : '' }
+const campagneSociete = comp => String(comp?.campagne_agricole||'').trim() || campagneCourante()
+const pieceFria = m => `FRIA-${m.numero}`
+
+// Situation FRIA cumulée d'un producteur (toutes campagnes).
+//  d = { avances, lignes, groupes, mvts } ; « sauf » = groupe exclu (en cours d'édition).
+function situationFria(fid, d, sauf) {
+  const de = x => String(x.fournisseur_id) === String(fid)
+  const som = (arr, k='montant') => Math.round(arr.reduce((t,x)=>t+(+x[k]||0),0))
+  const grp = Object.fromEntries((d.groupes||[]).map(g => [g.id, g]))
+  const ls = (d.lignes||[]).filter(l => de(l) && +l.fonds_intrant > 0 && grp[l.groupe_id] && l.groupe_id !== sauf)
+  const mv = (d.mvts||[]).filter(de)
+  const kit = som((d.avances||[]).filter(de), 'valeur_remboursement')
+  const finance = som(mv.filter(m => m.type === 'utilisation'))
+  const rembGroupes = som(ls.filter(l => grp[l.groupe_id].statut === 'cloture'), 'fonds_intrant')
+  const enCours = som(ls.filter(l => grp[l.groupe_id].statut === 'ouvert'), 'fonds_intrant')
+  const rembIsole = som(mv.filter(m => m.type === 'remboursement'))
+  const restitue = som(mv.filter(m => m.type === 'restitution'))
+  const rembourse = rembGroupes + rembIsole
+  return { kit, finance, rembGroupes, rembIsole, rembourse, enCours, restitue,
+    reste:Math.max(0, kit - finance - rembourse - enCours),
+    epargne:Math.max(0, rembourse - finance - restitue),
+    groupes:[...new Set(ls.filter(l => grp[l.groupe_id].statut !== 'annule').map(l => grp[l.groupe_id].numero))] }
+}
+
+// Inscrit le collectif 4018 et les sous-comptes FRIA au plan comptable s'ils manquent.
+async function assurerComptesFria(cid, uid, comptes) {
+  await assurerCollectif(COLLECTIF_FRIA, 'Fournisseurs – Épargne FRIA producteurs', cid, uid)
+  const uniques = comptes.filter((c,i,a) => c.numero && c.numero !== COLLECTIF_FRIA && a.findIndex(x => x.numero === c.numero) === i)
+  if (!uniques.length) return
+  const { data } = await supabase.from('compta_plan_comptable').select('numero').eq('company_id', cid).in('numero', uniques.map(c => c.numero))
+  const deja = new Set((data||[]).map(r => String(r.numero)))
+  const rows = uniques.filter(c => !deja.has(c.numero)).map(c => ({ company_id:cid, user_id:uid, numero:c.numero, libelle:`Épargne FRIA — ${c.libelle||''}`, est_collectif:false }))
+  if (rows.length) await supabase.from('compta_plan_comptable').insert(rows)
+}
+
+// Passe (ou repasse) l'écriture d'achat d'un groupe clôturé au journal des achats.
+async function passerEcrituresAchatGroupe(companyId, g, lignes, compteDe) {
+  const uid = (await supabase.auth.getUser()).data?.user?.id
+  const piece_id = pieceAchatGroupe(g)
+  const fria = lignes.filter(l => +l.fonds_intrant > 0).map(l => ({ numero:compteFriaDe(compteDe(l.fournisseur_id)), libelle:l.nom }))
+  if (fria.length) await assurerComptesFria(companyId, uid, fria)
+  await supabase.from('compta_ecritures').delete().eq('piece_id', piece_id).eq('company_id', companyId)
+  const rows = ecrituresAchatGroupe(g, lignes, compteDe).map(r => ({ ...r, company_id:companyId, user_id:uid, piece_id,
+    journal:'JA', date_ecriture:g.date_achat, numero_piece:g.numero, numero_facture:'', reference:'' }))
+  return rows.length ? await supabase.from('compta_ecritures').insert(rows) : { error:null }
+}
+
+// Entre du paddy en stock : bon d'entrée BE-…, mouvement, stock de l'article et prix
+// d'achat au coût moyen pondéré. Renvoie { bon } ou { erreur }.
+async function entrerPaddyEnStock(companyId, { article_id, date_bon, quantite, prix_unitaire, tiers, observations, observationLigne }) {
+  const q = numFR(quantite), pu = numFR(prix_unitaire)
+  if (!article_id) return { erreur:"Choisissez l'article du stock (ex. RIZ PADDY)." }
+  if (!(q > 0)) return { erreur:'Saisissez la quantité entrée en stock.' }
+  if (!date_bon || date_bon > today()) return { erreur:"La date d'entrée ne peut pas être postérieure à aujourd'hui." }
+  const uid = (await supabase.auth.getUser()).data?.user?.id
+  const { data:existant } = await supabase.from('compta_bons_stock').select('numero').eq('company_id', companyId).eq('tiers', tiers).limit(1)
+  if (existant?.length) return { erreur:`Déjà entré en stock (bon ${existant[0].numero}).` }
+  let art
+  if (article_id === '__nouveau_paddy__') {
+    const { data, error } = await supabase.from('compta_articles').insert({ company_id:companyId, user_id:uid, code:'PADDY', designation:'RIZ PADDY',
+      categorie:'riz_paddy', unite:'kg', prix_achat:pu, prix_vente:0, stock_min:0, stock_actuel:0, actif:true }).select('id,designation,unite,stock_actuel,prix_achat').single()
+    if (error) return { erreur:'Article RIZ PADDY non créé : ' + error.message }
+    art = data
+  } else {
+    const { data } = await supabase.from('compta_articles').select('id,designation,unite,stock_actuel,prix_achat').eq('id', article_id).single()
+    art = data
+  }
+  const prefixe = `BE-${date_bon.replace(/-/g, '')}-`
+  const { data:der } = await supabase.from('compta_bons_stock').select('numero').eq('company_id', companyId).like('numero', `${prefixe}%`).order('numero', { ascending:false }).limit(1)
+  const numero = `${prefixe}${String((der?.[0]?.numero ? parseInt(der[0].numero.slice(prefixe.length), 10) || 0 : 0) + 1).padStart(4, '0')}`
+  const ligne = { article_id:art.id, designation:art.designation || '', unite:art.unite || '', quantite:q, prix_unitaire:pu, montant:Math.round(q * pu),
+    observation:observationLigne || '' }
+  const bon = { company_id:companyId, user_id:uid, numero, type:'entree', date_bon, tiers, motif:'achat', observations, lignes:[ligne], total:ligne.montant }
+  const { error } = await supabase.from('compta_bons_stock').insert(bon)
+  if (error) return { erreur:/compta_bons_stock|does not exist|schema cache/i.test(error.message) ? MSG_TABLE_BONS : error.message }
+  const { error:em } = await supabase.from('compta_mouvements_stock').insert({ article_id:art.id, company_id:companyId, user_id:uid, type:'entree', motif:'achat',
+    quantite:q, prix_unitaire:pu, montant:ligne.montant, reference:numero, date_mvt:date_bon })
+  if (em) {
+    await supabase.from('compta_bons_stock').delete().eq('company_id', companyId).eq('numero', numero)
+    return { erreur:'Entrée en stock non enregistrée : ' + em.message }
+  }
+  const ancien = Math.max(0, +art.stock_actuel || 0), pa = +art.prix_achat || 0
+  const prixMoyen = ancien > 0 && pa > 0 ? Math.round((ancien * pa + q * pu) / (ancien + q) * 100) / 100 : pu
+  await supabase.from('compta_articles').update({ stock_actuel:(+art.stock_actuel || 0) + q, prix_achat:prixMoyen }).eq('id', art.id)
+  return { bon:{ ...bon, created_at:new Date().toISOString(), _article:art } }
 }
 
 // État de paiement et feuille d'émargement d'un versement (A4 paysage).
@@ -11339,26 +11469,22 @@ const MSG_SCRIPT_AG_LOTS = "Exécutez d'abord le script supabase/migrations/2026
 const estErreurAGLots = e => /lot_id|lot_qte_ajoutee|achat_groupe_id|schema cache|does not exist|column/i.test(e?.message||'')
 const STATUTS_AVANCE_AG = { solde:['Soldée','success'], partiel:['En cours de remboursement','info'], non_rembourse:['Non remboursée','warning'] }
 
-function situationAvancesProducteurs(fournisseurs, avances, lignes, groupes) {
-  const statutDe = Object.fromEntries(groupes.map(g => [g.id, g.statut]))
-  const numeroDe = Object.fromEntries(groupes.map(g => [g.id, g.numero]))
+// Situation des Kits FRIA : « recu » = kit à rembourser (hors part financée par l'épargne),
+// « rembourse » = groupes clôturés + remboursements isolés.
+function situationAvancesProducteurs(fournisseurs, d) {
   return fournisseurs.map(f => {
-    const recu = Math.round(avances.filter(a => String(a.fournisseur_id) === String(f.id)).reduce((t,a)=>t+(+a.valeur_remboursement||0),0))
-    const ls = lignes.filter(l => String(l.fournisseur_id) === String(f.id) && +l.fonds_intrant > 0)
-    const somme = st => Math.round(ls.filter(l => statutDe[l.groupe_id] === st).reduce((t,l)=>t+(+l.fonds_intrant||0),0))
-    const rembourse = somme('cloture'), enCours = somme('ouvert')
-    const reste = Math.max(0, recu - rembourse - enCours)
+    const s = situationFria(f.id, d)
+    const recu = Math.max(0, s.kit - s.finance), rembourse = s.rembourse, enCours = s.enCours, reste = s.reste
     const statut = reste <= 0 && enCours <= 0 ? 'solde' : rembourse + enCours > 0 ? 'partiel' : 'non_rembourse'
     const prix = +f.prix_contrat || 0
-    return { f, recu, rembourse, enCours, reste, statut, resteKg: prix > 0 ? Math.round(reste / prix * 100) / 100 : null,
-      groupes:[...new Set(ls.filter(l => statutDe[l.groupe_id] !== 'annule').map(l => numeroDe[l.groupe_id]).filter(Boolean))] }
+    return { f, recu, rembourse, enCours, reste, statut, epargne:s.epargne, resteKg: prix > 0 ? Math.round(reste / prix * 100) / 100 : null, groupes:s.groupes }
   }).filter(x => x.recu > 0)
 }
 
 const normAG = s => String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase()
 
 function AchatsGroupesPage({ companies, companyId, toast, readOnly=false }) {
-  const [d, setD] = useState({ groupes:[], lignes:[], fournisseurs:[], avances:[], paiements:[], reps:[], lots:[], articles:[], bons:[], comptes:{}, loading:true, erreur:false, erreurPaie:false })
+  const [d, setD] = useState({ groupes:[], lignes:[], fournisseurs:[], avances:[], mvts:[], paiements:[], reps:[], lots:[], articles:[], bons:[], comptes:{}, loading:true, erreur:false, erreurPaie:false })
   const [filtre, setFiltre] = useState({ statut:'ouvert', q:'' })
   const [paie, setPaie] = useState(null)       // versement en saisie
   const [suivi, setSuivi] = useState(null)     // groupe dont on suit les paiements
@@ -11374,7 +11500,7 @@ function AchatsGroupesPage({ companies, companyId, toast, readOnly=false }) {
 
   const charger = useCallback(async () => {
     if (!companyId) { setD(x=>({...x, loading:false})); return }
-    const [{ data:g, error:eg }, { data:l, error:el }, { data:f }, { data:a }, { data:pa, error:ep }, { data:rp, error:er }, { data:lo }, { data:ar }, { data:bo }] = await Promise.all([
+    const [{ data:g, error:eg }, { data:l, error:el }, { data:f }, { data:a }, { data:pa, error:ep }, { data:rp, error:er }, { data:lo }, { data:ar }, { data:bo }, { data:mv }] = await Promise.all([
       supabase.from('compta_achats_groupes').select('*').eq('company_id', companyId).order('date_achat', { ascending:false }),
       fetchAllRows(() => supabase.from('compta_achats_groupes_lignes').select('*').eq('company_id', companyId).order('ordre')),
       fetchAllRows(() => supabase.from('compta_fournisseurs').select('*').eq('company_id', companyId).order('nom')),
@@ -11385,8 +11511,10 @@ function AchatsGroupesPage({ companies, companyId, toast, readOnly=false }) {
       supabase.from('compta_articles').select('id,designation,unite,stock_actuel').eq('company_id', companyId).eq('actif', true).order('designation'),
       // Bons d'entrée créés depuis un groupe : tiers « Achat groupé GRP-… ».
       supabase.from('compta_bons_stock').select('*').eq('company_id', companyId).eq('type', 'entree').like('tiers', 'Achat groupé GRP-%'),
+      // Mouvements de l'épargne FRIA (absents tant que le script n'est pas passé : liste vide).
+      supabase.from('compta_fria_mouvements').select('fournisseur_id,type,montant').eq('company_id', companyId),
     ])
-    setD({ groupes:g||[], lignes:l||[], avances:a||[], paiements:pa||[], reps:rp||[], lots:lo||[], articles:ar||[], bons:bo||[], loading:false,
+    setD({ groupes:g||[], lignes:l||[], avances:a||[], mvts:mv||[], paiements:pa||[], reps:rp||[], lots:lo||[], articles:ar||[], bons:bo||[], loading:false,
       erreur:estErreurAG(eg)||estErreurAG(el), erreurPaie:estErreurAGPaie(ep)||estErreurAGPaie(er),
       comptes:Object.fromEntries((f||[]).filter(x => x.numero_compte).map(x => [String(x.id), x.numero_compte])),
       fournisseurs:(f||[]).filter(x => x.actif !== false && x.type !== 'morale' && estProducteur(x)).sort((x,y)=>nomTiersTraca(x).localeCompare(nomTiersTraca(y),'fr')) })
@@ -11507,14 +11635,7 @@ function AchatsGroupesPage({ companies, companyId, toast, readOnly=false }) {
     charger()
   }
   const compteDe = fid => d.comptes[String(fid)] || null
-  const passerEcrituresAchat = async g => {
-    const uid = (await supabase.auth.getUser()).data?.user?.id
-    const piece_id = pieceAchatGroupe(g)
-    await supabase.from('compta_ecritures').delete().eq('piece_id', piece_id).eq('company_id', companyId)
-    const rows = ecrituresAchatGroupe(g, lignesDe(g.id), compteDe).map(r => ({ ...r, company_id:companyId, user_id:uid, piece_id,
-      journal:'JA', date_ecriture:g.date_achat, numero_piece:g.numero, numero_facture:'', reference:'' }))
-    return rows.length ? await supabase.from('compta_ecritures').insert(rows) : { error:null }
-  }
+  const passerEcrituresAchat = g => passerEcrituresAchatGroupe(companyId, g, lignesDe(g.id), compteDe)
   const rouvrir = async g => {
     const conflit = lignesDe(g.id).map(l => ({ l, o:groupeOuvertDe(l.fournisseur_id, g.id) })).find(x => x.o)
     if (conflit) return toast.error(`Impossible de rouvrir : ${conflit.l.nom} est dans le groupe ouvert ${conflit.o.numero}.`)
@@ -11631,45 +11752,12 @@ function AchatsGroupesPage({ companies, companyId, toast, readOnly=false }) {
   // Entre le paddy d'un groupe en stock : bon d'entrée BE-…, mouvement, stock
   // de l'article et prix d'achat au coût moyen pondéré (c'est ce prix qui
   // valorise l'inventaire). Renvoie le bon créé, ou null (message affiché).
-  const entrerEnStock = async (g, { article_id, date_bon, quantite, prix_unitaire }) => {
-    const q = numFR(quantite), pu = numFR(prix_unitaire)
-    if (!article_id) { toast.error("Choisissez l'article du stock (ex. RIZ PADDY)."); return null }
-    if (!(q > 0)) { toast.error('Saisissez la quantité entrée en stock.'); return null }
-    if (!date_bon || date_bon > today()) { toast.error("La date d'entrée ne peut pas être postérieure à aujourd'hui."); return null }
-    const uid = (await supabase.auth.getUser()).data?.user?.id
-    const { data:existant } = await supabase.from('compta_bons_stock').select('numero').eq('company_id', companyId).eq('tiers', tiersBonGroupe(g)).limit(1)
-    if (existant?.length) { toast.error(`Déjà entré en stock (bon ${existant[0].numero}).`); return null }
-    let art
-    if (article_id === '__nouveau_paddy__') {
-      const { data, error } = await supabase.from('compta_articles').insert({ company_id:companyId, user_id:uid, code:'PADDY', designation:'RIZ PADDY',
-        categorie:'riz_paddy', unite:'kg', prix_achat:pu, prix_vente:0, stock_min:0, stock_actuel:0, actif:true }).select('id,designation,unite,stock_actuel,prix_achat').single()
-      if (error) { toast.error("Article RIZ PADDY non créé : " + error.message); return null }
-      art = data
-    } else {
-      const { data } = await supabase.from('compta_articles').select('id,designation,unite,stock_actuel,prix_achat').eq('id', article_id).single()
-      art = data
-    }
-    const prefixe = `BE-${date_bon.replace(/-/g, '')}-`
-    const { data:der } = await supabase.from('compta_bons_stock').select('numero').eq('company_id', companyId).like('numero', `${prefixe}%`).order('numero', { ascending:false }).limit(1)
-    const numero = `${prefixe}${String((der?.[0]?.numero ? parseInt(der[0].numero.slice(prefixe.length), 10) || 0 : 0) + 1).padStart(4, '0')}`
+  const entrerEnStock = async (g, valeurs) => {
     const ls = lignesDe(g.id)
-    const ligne = { article_id:art.id, designation:art.designation || '', unite:art.unite || '', quantite:q, prix_unitaire:pu, montant:Math.round(q * pu),
-      observation:`Achat groupé ${g.numero}` }
-    const bon = { company_id:companyId, user_id:uid, numero, type:'entree', date_bon, tiers:tiersBonGroupe(g), motif:'achat',
-      observations:`Achat groupé ${g.numero}${g.village ? ` — ${g.village}` : ''}${g.commune ? ` (${g.commune})` : ''} : ${ls.length} producteur(s)${g.chef_groupe ? `, chef de groupe ${g.chef_groupe}` : ''}.`,
-      lignes:[ligne], total:ligne.montant }
-    const { error } = await supabase.from('compta_bons_stock').insert(bon)
-    if (error) { toast.error(/compta_bons_stock|does not exist|schema cache/i.test(error.message) ? MSG_TABLE_BONS : error.message); return null }
-    const { error:em } = await supabase.from('compta_mouvements_stock').insert({ article_id:art.id, company_id:companyId, user_id:uid, type:'entree', motif:'achat',
-      quantite:q, prix_unitaire:pu, montant:ligne.montant, reference:numero, date_mvt:date_bon })
-    if (em) {
-      await supabase.from('compta_bons_stock').delete().eq('company_id', companyId).eq('numero', numero)
-      toast.error('Entrée en stock non enregistrée : ' + em.message); return null
-    }
-    const ancien = Math.max(0, +art.stock_actuel || 0), pa = +art.prix_achat || 0
-    const prixMoyen = ancien > 0 && pa > 0 ? Math.round((ancien * pa + q * pu) / (ancien + q) * 100) / 100 : pu
-    await supabase.from('compta_articles').update({ stock_actuel:(+art.stock_actuel || 0) + q, prix_achat:prixMoyen }).eq('id', art.id)
-    return { ...bon, created_at:new Date().toISOString(), _article:art }
+    const { bon, erreur } = await entrerPaddyEnStock(companyId, { ...valeurs, tiers:tiersBonGroupe(g), observationLigne:`Achat groupé ${g.numero}`,
+      observations:`Achat groupé ${g.numero}${g.village ? ` — ${g.village}` : ''}${g.commune ? ` (${g.commune})` : ''} : ${ls.length} producteur(s)${g.chef_groupe ? `, chef de groupe ${g.chef_groupe}` : ''}.` })
+    if (erreur) { toast.error(erreur); return null }
+    return bon
   }
   const enregistrerEntreeStock = async e => {
     e.preventDefault()
@@ -11741,7 +11829,7 @@ function AchatsGroupesPage({ companies, companyId, toast, readOnly=false }) {
     await supabase.from('compta_achats_groupes').update({ lot_id:null, lot_qte_ajoutee:0 }).eq('id', g.id)
     toast.success(`Groupe ${g.numero} détaché du lot.`); charger()
   }
-  const sitAvances = situationAvancesProducteurs(d.fournisseurs, d.avances, d.lignes, d.groupes)
+  const sitAvances = situationAvancesProducteurs(d.fournisseurs, d)
   const avVisibles = !avSit ? [] : sitAvances.filter(x => (!avSit.village || (x.f.village||'') === avSit.village) && (!avSit.statut || x.statut === avSit.statut)
     && (!avSit.q || normAG(`${nomTiersTraca(x.f)} ${x.f.cooperative_affiliee||''}`).includes(normAG(avSit.q))))
   const totAv = k => avVisibles.reduce((t,x)=>t+x[k],0)
@@ -12120,6 +12208,407 @@ function AchatsGroupesPage({ companies, companyId, toast, readOnly=false }) {
               </table>
             </>}
           </> })()}
+      </Modal>
+    </div>
+  )
+}
+
+// ── ÉPARGNE FRIA (remboursement du Kit FRIA, renouvellement, restitution) ────
+// Situation par producteur (toutes campagnes) et registre des mouvements hors
+// achats groupés. Écritures :
+//  • remboursement hors groupe : JA « FRIA-… » Débit 602 / Crédit 4018… ;
+//  • renouvellement (kit de la campagne suivante financé par l'épargne) :
+//    OD Débit 4018… / Crédit 401… du fournisseur d'intrants, ou sortie de
+//    caisse / banque / mobile money sur le compte 4018… ;
+//  • restitution : sortie de trésorerie sur le compte 4018….
+const MODES_FRIA = [
+  { value:'fournisseur', label:"🧾 Fournisseur d'intrants (dette à payer)" },
+  { value:'caisse', label:'🏦 Caisse' }, { value:'banque', label:'🏛️ Banque' }, { value:'mobile', label:'📱 Mobile Money' },
+]
+const tiersBonFria = m => `Remboursement FRIA ${m.numero}`
+
+function EpargneFriaPage({ companies, companyId, toast, readOnly=false }) {
+  const [d, setD] = useState({ fournisseurs:[], tous:[], avances:[], lignes:[], groupes:[], mvts:[], articles:[], bons:[], loading:true, erreur:false })
+  const [filtre, setFiltre] = useState({ campagne:'', village:'', q:'', vue:'producteurs', tous:false })
+  const [form, setForm] = useState(null)
+  const [saving, setSaving] = useState(false)
+  const company = companies.find(c => c.id === companyId)
+  const campSoc = campagneSociete(company)
+
+  const charger = useCallback(async () => {
+    if (!companyId) { setD(x => ({ ...x, loading:false })); return }
+    const lireAvances = async () => {
+      const r = await fetchAllRows(() => supabase.from('compta_avances_fournisseur').select('fournisseur_id,type_avance,quantite_recue,valeur_remboursement,campagne').eq('company_id', companyId))
+      return r.error ? fetchAllRows(() => supabase.from('compta_avances_fournisseur').select('fournisseur_id,type_avance,quantite_recue,valeur_remboursement').eq('company_id', companyId)) : r
+    }
+    const [{ data:f }, { data:av }, { data:l }, { data:g }, { data:mv, error:em }, { data:ar }, { data:bo }] = await Promise.all([
+      fetchAllRows(() => supabase.from('compta_fournisseurs').select('*').eq('company_id', companyId).order('nom')),
+      lireAvances(),
+      fetchAllRows(() => supabase.from('compta_achats_groupes_lignes').select('groupe_id,fournisseur_id,fonds_intrant').eq('company_id', companyId)),
+      supabase.from('compta_achats_groupes').select('id,numero,statut,date_achat,village').eq('company_id', companyId),
+      fetchAllRows(() => supabase.from('compta_fria_mouvements').select('*').eq('company_id', companyId).order('date_mouvement', { ascending:false }).order('created_at', { ascending:false })),
+      supabase.from('compta_articles').select('id,designation,unite,stock_actuel').eq('company_id', companyId).eq('actif', true).order('designation'),
+      supabase.from('compta_bons_stock').select('numero,tiers').eq('company_id', companyId).eq('type', 'entree').like('tiers', 'Remboursement FRIA %'),
+    ])
+    const tous = (f||[]).filter(x => x.actif !== false)
+    setD({ tous, avances:av||[], lignes:l||[], groupes:g||[], mvts:em ? [] : (mv||[]), articles:ar||[], bons:bo||[], loading:false, erreur:!!em && estErreurFria(em),
+      fournisseurs:tous.filter(x => x.type !== 'morale' && estProducteur(x)).sort((x,y)=>nomTiersTraca(x).localeCompare(nomTiersTraca(y),'fr')) })
+  }, [companyId])
+  useEffect(() => { charger() }, [charger])
+
+  const frsDe = id => d.tous.find(f => String(f.id) === String(id))
+  const sit = f => situationFria(f.id, d)
+  const kitCampagne = (f, camp) => Math.round(d.avances.filter(a => String(a.fournisseur_id) === String(f.id) && (!camp || a.campagne === camp)).reduce((t,a)=>t+(+a.valeur_remboursement||0),0))
+  const campagnes = [...new Set([campSoc, ...d.avances.map(a => a.campagne), ...d.mvts.map(m => m.campagne)].filter(Boolean))].sort().reverse()
+  const villages = [...new Set(d.fournisseurs.map(f => f.village).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'fr'))
+  const lignesSit = d.fournisseurs.map(f => ({ f, s:sit(f), kitC:kitCampagne(f, filtre.campagne) }))
+    .filter(x => filtre.tous || x.s.kit > 0 || x.s.rembourse > 0 || x.s.epargne > 0 || x.s.enCours > 0)
+    .filter(x => (!filtre.village || (x.f.village||'') === filtre.village)
+      && (!filtre.q || normAG(`${nomTiersTraca(x.f)} ${x.f.code_trace||''} ${x.f.cip||''} ${x.f.cooperative_affiliee||''}`).includes(normAG(filtre.q))))
+  const tot = k => lignesSit.reduce((t,x)=>t+(k === 'kitC' ? x.kitC : x.s[k]),0)
+  const mvtsVisibles = d.mvts.filter(m => (!filtre.campagne || m.campagne === filtre.campagne)
+    && (!filtre.q || normAG(`${m.numero} ${nomTiersTraca(frsDe(m.fournisseur_id))} ${m.tiers_nom||''}`).includes(normAG(filtre.q))))
+
+  const verifier = () => {
+    if (!companyId) { toast.error("Sélectionnez une société précise (en haut de l'écran)."); return false }
+    if (d.erreur) { toast.error(MSG_SCRIPT_FRIA); return false }
+    return true
+  }
+  const ouvrir = (type, f) => {
+    if (!verifier()) return
+    const s = sit(f)
+    if (type === 'remboursement') {
+      const prix = +f.prix_contrat || 0
+      setForm({ type, f, s, date:today(), campagne:campSoc, quantite_kg: prix > 0 && s.reste > 0 ? String(Math.round(s.reste / prix * 100) / 100) : '',
+        prix_unitaire:String(prix || ''), observations:'', stock:false, article_id:d.articles.find(a => /paddy/i.test(a.designation))?.id || '', reference:'' })
+    } else if (type === 'utilisation') {
+      if (!(s.epargne > 0)) return toast.error(`${nomTiersTraca(f)} n'a pas d'épargne FRIA disponible.`)
+      const campsF = d.avances.filter(a => String(a.fournisseur_id) === String(f.id)).map(a => a.campagne).filter(Boolean).sort()
+      const derniere = campsF[campsF.length-1] || campSoc
+      setForm({ type, f, s, date:today(), campagne:campagneSuivante(derniere) || campSoc, kit:TYPES_AVANCE.slice(0,4).map(t => ({ type_avance:t, quantite_recue:'', montant:'' })),
+        finance:'', mode_reglement:'fournisseur', tiers_id:'', reference:'', observations:'' })
+    } else {
+      if (!(s.epargne > 0)) return toast.error(`${nomTiersTraca(f)} n'a pas d'épargne FRIA à restituer.`)
+      setForm({ type, f, s, date:today(), campagne:campSoc, montant:String(s.epargne), mode_reglement:'caisse', reference:'', observations:'' })
+    }
+  }
+  const setF = (k, v) => setForm(x => ({ ...x, [k]:v }))
+  const setKit = (i, k, v) => setForm(x => ({ ...x, kit:x.kit.map((l,j) => j === i ? { ...l, [k]:v } : l) }))
+  const totalKitForm = form?.kit ? Math.round(form.kit.reduce((t,l)=>t+numFR(l.montant),0)) : 0
+  const financeForm = form?.type === 'utilisation' ? Math.round(form.finance === '' ? Math.min(totalKitForm, form.s.epargne) : numFR(form.finance)) : 0
+
+  const prochainNumero = async date => {
+    const an = String(date).slice(0,4)
+    const n = await prochainNumeroBase(companyId, `FRIA:${an}`)
+    const nums = d.mvts.map(m => String(m.numero||'').match(new RegExp(`^${an}-(\\d+)$`))).filter(Boolean).map(x => parseInt(x[1],10))
+    return `${an}-${String(n || (nums.length ? Math.max(...nums) : 0) + 1).padStart(3,'0')}`
+  }
+
+  const enregistrer = async e => {
+    e.preventDefault()
+    const { type, f, s } = form
+    const compteFrs = f.numero_compte || COLLECTIF_FOURNISSEUR
+    const cptFria = compteFriaDe(compteFrs), nom = nomTiersTraca(f)
+    let montant, q = 0, pu = 0
+    if (!form.date) return toast.error('Saisissez la date.')
+    if (type === 'remboursement') {
+      q = numFR(form.quantite_kg); pu = numFR(form.prix_unitaire); montant = Math.round(q * pu)
+      if (!(montant > 0)) return toast.error('Saisissez la quantité livrée et le prix au kg.')
+      if (montant > s.reste + 0.5 && !confirm(`La valeur livrée (${fcfaDoc(montant)}) dépasse le Kit FRIA restant à rembourser (${fcfaDoc(s.reste)}). Continuer ?`)) return
+      if (form.stock && !form.article_id) return toast.error("Choisissez l'article du stock pour le bon d'entrée.")
+    } else if (type === 'utilisation') {
+      if (!form.campagne) return toast.error('Indiquez la campagne du nouveau kit.')
+      if (!(totalKitForm > 0)) return toast.error('Saisissez le nouveau Kit FRIA (au moins une ligne avec un montant).')
+      montant = financeForm
+      if (!(montant > 0)) return toast.error("Le montant financé par l'épargne doit être positif.")
+      if (montant > s.epargne + 0.5) return toast.error(`Le montant financé dépasse l'épargne disponible (${fcfaDoc(s.epargne)}).`)
+      if (montant > totalKitForm) return toast.error(`Le montant financé dépasse le coût du kit (${fcfaDoc(totalKitForm)}).`)
+      if (form.mode_reglement === 'fournisseur' && !form.tiers_id) return toast.error("Choisissez le fournisseur d'intrants.")
+    } else {
+      montant = Math.round(numFR(form.montant))
+      if (!(montant > 0)) return toast.error('Saisissez le montant restitué.')
+      if (montant > s.epargne + 0.5) return toast.error(`Le montant dépasse l'épargne disponible (${fcfaDoc(s.epargne)}).`)
+    }
+    const tresor = type !== 'remboursement' && form.mode_reglement !== 'fournisseur'
+    setSaving(true)
+    if (tresor) {
+      const solde = await getSoldeCompte(form.mode_reglement, companyId)
+      if (montant > solde) { setSaving(false); return toast.error(`Opération impossible : solde insuffisant (${JOURNAL_LABEL[form.mode_reglement]} : ${fcfaDoc(solde)}).`) }
+    }
+    const uid = (await supabase.auth.getUser()).data?.user?.id
+    const numero = await prochainNumero(form.date)
+    const intrants = type === 'utilisation' && form.mode_reglement === 'fournisseur' ? frsDe(form.tiers_id) : null
+    const { data:m, error } = await supabase.from('compta_fria_mouvements').insert({ company_id:companyId, user_id:uid, fournisseur_id:f.id, numero, type,
+      date_mouvement:form.date, campagne:form.campagne||null, quantite_kg:q, prix_unitaire:pu, montant,
+      mode_reglement: type === 'remboursement' ? null : form.mode_reglement,
+      tiers_compte: intrants ? (intrants.numero_compte || COLLECTIF_FOURNISSEUR) : null, tiers_nom: intrants ? nomTiersTraca(intrants) : null,
+      reference:form.reference||null, observations:form.observations||null }).select('*').single()
+    if (error) { setSaving(false); return toast.error(estErreurFria(error) ? MSG_SCRIPT_FRIA : /duplicate|unique/i.test(error.message) ? `Le numéro ${numero} existe déjà : réessayez.` : error.message) }
+    const annuler = async msg => { await supabase.from('compta_fria_mouvements').delete().eq('id', m.id); setSaving(false); toast.error(msg) }
+    await assurerComptesFria(companyId, uid, [{ numero:cptFria, libelle:nom }])
+    const piece_id = pieceFria(m)
+    const ecr = (journal, rows) => supabase.from('compta_ecritures').insert(rows.map(r => ({ ...r, company_id:companyId, user_id:uid, piece_id, journal,
+      date_ecriture:form.date, numero_piece:piece_id, numero_facture:'', reference:form.reference||'' })))
+    if (type === 'remboursement') {
+      const lib = `Remboursement Kit FRIA en nature — ${nom} (${nbFr(q)} kg)`
+      const { error:ee } = await ecr('JA', [
+        { numero_compte:COMPTE_ACHAT_PADDY, compte_libelle:'Achats de matières premières (riz paddy)', libelle:lib, debit:montant, credit:0 },
+        { numero_compte:cptFria, compte_libelle:`Épargne FRIA — ${nom}`, libelle:lib, debit:0, credit:montant }])
+      if (ee) return annuler("Remboursement non enregistré : écriture d'achat impossible — " + ee.message)
+      if (form.stock) {
+        const { bon, erreur } = await entrerPaddyEnStock(companyId, { article_id:form.article_id, date_bon:form.date, quantite:q, prix_unitaire:pu,
+          tiers:tiersBonFria(m), observationLigne:`Remboursement FRIA ${numero}`, observations:`Remboursement du Kit FRIA en nature — ${nom}${f.village ? ` (${f.village})` : ''}, pièce ${piece_id}.` })
+        if (erreur) toast.error(`Remboursement enregistré, mais entrée en stock impossible : ${erreur}`)
+        else toast.success(`Paddy entré en stock (bon ${bon.numero}).`)
+      }
+    } else if (type === 'utilisation') {
+      const kitRows = form.kit.filter(l => l.type_avance && (numFR(l.quantite_recue) || numFR(l.montant))).map(l => ({ fournisseur_id:f.id, company_id:companyId, user_id:uid,
+        type_avance:l.type_avance, quantite_recue:numFR(l.quantite_recue), valeur_remboursement:numFR(l.montant), campagne:form.campagne }))
+      const { error:ek } = await supabase.from('compta_avances_fournisseur').insert(kitRows)
+      if (ek) return annuler('Renouvellement non enregistré : nouveau kit impossible — ' + ek.message)
+      const lib = `Renouvellement contrat ${form.campagne} — kit financé par l'épargne FRIA de ${nom}`
+      if (intrants) {
+        const { error:ee } = await ecr('OD', [
+          { numero_compte:cptFria, compte_libelle:`Épargne FRIA — ${nom}`, libelle:lib, debit:montant, credit:0 },
+          { numero_compte:intrants.numero_compte || COLLECTIF_FOURNISSEUR, compte_libelle:nomTiersTraca(intrants), libelle:`${lib} (${nomTiersTraca(intrants)})`, debit:0, credit:montant }])
+        if (ee) toast.error("Renouvellement enregistré, mais écriture non passée : " + ee.message)
+      }
+    }
+    if (tresor) {
+      const lib = type === 'restitution' ? `Restitution épargne FRIA — ${nom}` : `Renouvellement contrat ${form.campagne} — kit FRIA de ${nom} (épargne)`
+      const { error:ej } = await supabase.from(JOURNAL_TABLE[form.mode_reglement]).insert({ company_id:companyId, user_id:uid, date_operation:form.date, numero_piece:piece_id,
+        libelle:lib, tiers:nom, type_operation:'sortie', montant, reference:form.reference||'', source_type:'fria', source_id:m.id, numero_compte:cptFria })
+      if (ej) {
+        if (type === 'utilisation') toast.error('Nouveau kit enregistré, mais sortie de trésorerie impossible : ' + ej.message)
+        else return annuler('Restitution non enregistrée : sortie de trésorerie impossible — ' + ej.message)
+      }
+    }
+    setSaving(false); setForm(null)
+    toast.success(type === 'remboursement' ? `Remboursement ${piece_id} enregistré — ${fcfaDoc(montant)} ajoutés à l'épargne FRIA (achat passé au journal des achats).`
+      : type === 'utilisation' ? `Contrat renouvelé pour ${form.campagne} — ${fcfaDoc(montant)} financés par l'épargne FRIA.`
+      : `Épargne restituée — ${fcfaDoc(montant)} (${JOURNAL_LABEL[form.mode_reglement]}).`)
+    imprimerRecu(m, f)
+    charger()
+  }
+
+  const supprimer = async m => {
+    const bon = d.bons.find(b => b.tiers === tiersBonFria(m))
+    if (bon) return toast.error(`Impossible : le paddy de ce remboursement est entré en stock (bon ${bon.numero}). Annulez d'abord ce bon dans Stock > Bons d'entrée / sortie.`)
+    const f = frsDe(m.fournisseur_id)
+    if (!confirm(`Supprimer le mouvement ${pieceFria(m)} (${TYPES_MVT_FRIA[m.type][0]}, ${fcfaDoc(m.montant)}) ? Son écriture comptable ou sa sortie de trésorerie sera annulée.${m.type === 'utilisation' ? `\n\nLe Kit FRIA ${m.campagne||''} saisi au renouvellement reste dans la fiche de ${nomTiersTraca(f)} : corrigez-le si besoin.` : ''}`)) return
+    await supabase.from('compta_ecritures').delete().eq('piece_id', pieceFria(m)).eq('company_id', companyId)
+    for (const t of Object.values(JOURNAL_TABLE)) await supabase.from(t).delete().eq('source_type', 'fria').eq('source_id', m.id)
+    const { error } = await supabase.from('compta_fria_mouvements').delete().eq('id', m.id)
+    if (error) return toast.error(error.message)
+    toast.success(`Mouvement ${pieceFria(m)} supprimé.`); charger()
+  }
+
+  // Repasse l'écriture d'achat de tous les groupes clôturés (fonds intrant → 4018…).
+  const repasserGroupes = async () => {
+    if (!verifier()) return
+    const clos = d.groupes.filter(g => g.statut === 'cloture')
+    if (!clos.length) return toast.error('Aucun groupe clôturé.')
+    if (!confirm(`Repasser l'écriture d'achat des ${clos.length} groupe(s) clôturé(s) ? Le fonds intrant retenu sera porté à l'épargne FRIA des producteurs (4018…) au lieu du 409.`)) return
+    setSaving(true)
+    const [{ data:gs }, { data:ls }] = await Promise.all([
+      supabase.from('compta_achats_groupes').select('*').eq('company_id', companyId).eq('statut', 'cloture'),
+      fetchAllRows(() => supabase.from('compta_achats_groupes_lignes').select('*').eq('company_id', companyId).order('ordre')),
+    ])
+    const comptes = Object.fromEntries(d.tous.filter(x => x.numero_compte).map(x => [String(x.id), x.numero_compte]))
+    let ok = 0, ko = 0
+    for (const g of gs||[]) {
+      const { error } = await passerEcrituresAchatGroupe(companyId, g, (ls||[]).filter(l => l.groupe_id === g.id), fid => comptes[String(fid)] || null)
+      error ? ko++ : ok++
+    }
+    setSaving(false)
+    ko ? toast.error(`${ok} écriture(s) repassée(s), ${ko} en échec.`) : toast.success(`${ok} écriture(s) d'achat repassée(s) au journal des achats (épargne FRIA en 4018…).`)
+  }
+
+  const imprimerRecu = (m, f) => {
+    if (!f) return
+    const titres = { remboursement:'REÇU DE REMBOURSEMENT KIT FRIA', utilisation:'RENOUVELLEMENT DE CONTRAT — KIT FRIA', restitution:"REÇU DE RESTITUTION D'ÉPARGNE FRIA" }
+    const sAp = situationFria(f.id, { ...d, mvts:d.mvts.some(x => x.id === m.id) ? d.mvts : [...d.mvts, m] })
+    const lignes = m.type === 'remboursement'
+      ? [['Riz paddy livré en remboursement du Kit FRIA', `${nbFr(m.quantite_kg)} kg`, nbFr(m.prix_unitaire), nbFr(m.montant)]]
+      : m.type === 'utilisation'
+        ? [[`Kit FRIA campagne ${echapHtml(m.campagne||'')} financé par l'épargne${m.tiers_nom ? ` — fournisseur : ${echapHtml(m.tiers_nom)}` : ''}`, '', '', nbFr(m.montant)]]
+        : [[`Restitution de l'épargne FRIA (${echapHtml(JOURNAL_LABEL[m.mode_reglement]||m.mode_reglement||'')})`, '', '', nbFr(m.montant)]]
+    openPrintWindow(gabaritDocumentHtml({ comp:company, titre:titres[m.type], numero:pieceFria(m), date:dateDoc(m.date_mouvement),
+      infos:[['Campagne', m.campagne||''], ['Code', f.code_trace||''], ['Village', f.village||'']],
+      tiersLabel:'Producteur', tiers:{ nom:nomTiersTraca(f), telephone:f.telephone||'' },
+      colonnes:[{label:'Désignation'},{label:'Quantité',align:'d'},{label:'Prix (FCFA/kg)',align:'d'},{label:'Montant (FCFA)',align:'d'}],
+      lignes,
+      totaux:[['Montant', fcfaDoc(m.montant), true], ['Épargne FRIA disponible après opération', fcfaDoc(sAp.epargne)], ['Kit FRIA restant à rembourser', fcfaDoc(sAp.reste)]],
+      signatures:['Le Producteur', 'Le Gérant / Comptable'] }), `fria_${m.numero}`)
+  }
+
+  const imprimerEtat = () => {
+    if (!lignesSit.length) return toast.error('Aucun producteur à imprimer.')
+    openPrintWindow(gabaritDocumentHtml({ comp:company, titre:'SITUATION DE L\'ÉPARGNE FRIA', numero:'', date:new Date().toLocaleDateString('fr-FR'),
+      infos:[['Campagne (kit)', filtre.campagne||'Toutes'], ['Village', filtre.village||'Tous'], ['Producteurs', String(lignesSit.length)]],
+      tiersLabel:'Kit FRIA', tiers:{ nom:'Remboursement en nature et épargne des producteurs' },
+      colonnes:[{label:'Producteur'},{label:'Village'},{label:`Kit ${filtre.campagne||'(toutes)'}`,align:'d'},{label:'Kit total',align:'d'},{label:'Financé épargne',align:'d'},{label:'Remboursé',align:'d'},{label:'Reste à rembourser',align:'d'},{label:'Épargne FRIA',align:'d'}],
+      lignes:lignesSit.map(x => [`${echapHtml(nomTiersTraca(x.f))}${x.f.code_trace ? `<br><small>${echapHtml(x.f.code_trace)}</small>` : ''}`, echapHtml(x.f.village||''),
+        nbFr(x.kitC), nbFr(x.s.kit), nbFr(x.s.finance), nbFr(x.s.rembourse), nbFr(x.s.reste), `<strong>${nbFr(x.s.epargne)}</strong>`]),
+      totaux:[['Kit FRIA reçu', fcfaDoc(tot('kit'))], ['Remboursé en nature', fcfaDoc(tot('rembourse'))], ['Reste à rembourser', fcfaDoc(tot('reste'))], ['Épargne FRIA disponible', fcfaDoc(tot('epargne')), true]],
+      signatures:['Le Gérant / Comptable', 'Le Président Coopérative / Groupement'] }), 'situation_epargne_fria')
+  }
+  const exporterExcel = async () => {
+    if (!lignesSit.length) return toast.error('Aucun producteur à exporter.')
+    const XLSX = await import('https://cdn.sheetjs.com/xlsx-0.20.0/package/xlsx.mjs')
+    const rows = [['Producteur','Code','Téléphone','Village','Coopérative',`Kit ${filtre.campagne||'(toutes campagnes)'}`,'Kit total','Financé par épargne','Remboursé (groupes)','Remboursé (hors groupe)','En cours (groupe ouvert)','Reste à rembourser','Restitué','Épargne FRIA disponible'],
+      ...lignesSit.map(x => [nomTiersTraca(x.f), x.f.code_trace||'', x.f.telephone||'', x.f.village||'', x.f.cooperative_affiliee||'', x.kitC, x.s.kit, x.s.finance, x.s.rembGroupes, x.s.rembIsole, x.s.enCours, x.s.reste, x.s.restitue, x.s.epargne])]
+    const ws = XLSX.utils.aoa_to_sheet(rows)
+    ws['!cols'] = rows[0].map((_,i) => ({ wch: i === 0 ? 30 : 16 }))
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, 'Épargne FRIA')
+    XLSX.writeFile(wb, `epargne_fria_${filtre.campagne||'toutes'}.xlsx`)
+  }
+
+  const selStyle = { padding:'8px 12px', borderRadius:8, border:'1px solid #d1d5db', fontSize:13 }
+  const numStyle = { width:'100%', minWidth:70, padding:'6px 8px', borderRadius:6, border:'1px solid #d1d5db', fontSize:13, textAlign:'right', boxSizing:'border-box' }
+  const fournisseursIntrants = d.tous.filter(x => form?.f && String(x.id) !== String(form.f.id)).sort((a,b)=>nomTiersTraca(a).localeCompare(nomTiersTraca(b),'fr'))
+
+  return (
+    <div>
+      <PageHeader title="Épargne FRIA" subtitle={company ? `${company.raison_sociale} — campagne ${campSoc} — épargne disponible : ${fcfaDoc(d.fournisseurs.reduce((t,f)=>t+sit(f).epargne,0))}` : "Sélectionnez une société en haut de l'écran"}
+        actions={<>
+          <Btn sm variant="secondary" onClick={imprimerEtat}>🖨️ État FRIA</Btn>
+          <Btn sm variant="secondary" onClick={exporterExcel}>📊 Excel</Btn>
+          {!readOnly && <Btn sm variant="info" disabled={saving} onClick={repasserGroupes}>📒 Repasser les écritures des groupes</Btn>}
+        </>} />
+      {d.erreur && <Card style={{ marginBottom:16, background:'#fffbeb', borderColor:'#fcd34d' }}><div style={{ fontSize:13, color:'#92400e' }}>⚠️ {MSG_SCRIPT_FRIA}</div></Card>}
+      <Card style={{ marginBottom:16, padding:'12px 20px' }}>
+        <div style={{ display:'flex', gap:10, flexWrap:'wrap', alignItems:'center' }}>
+          <select style={selStyle} value={filtre.vue} onChange={e=>setFiltre(x=>({...x, vue:e.target.value}))}>
+            <option value="producteurs">Situation par producteur</option><option value="mouvements">Mouvements ({d.mvts.length})</option>
+          </select>
+          <select style={selStyle} value={filtre.campagne} onChange={e=>setFiltre(x=>({...x, campagne:e.target.value}))}>
+            <option value="">Toutes les campagnes</option>{campagnes.map(c => <option key={c} value={c}>Campagne {c}</option>)}
+          </select>
+          {filtre.vue === 'producteurs' && <select style={selStyle} value={filtre.village} onChange={e=>setFiltre(x=>({...x, village:e.target.value}))}>
+            <option value="">Tous les villages</option>{villages.map(v => <option key={v} value={v}>{v}</option>)}
+          </select>}
+          <input style={{ ...selStyle, flex:'1 1 200px' }} placeholder="Rechercher : producteur, code, n°…" value={filtre.q} onChange={e=>setFiltre(x=>({...x, q:e.target.value}))} />
+          {filtre.vue === 'producteurs' && <label style={{ fontSize:12.5, display:'flex', gap:6, alignItems:'center' }}>
+            <input type="checkbox" checked={filtre.tous} onChange={e=>setFiltre(x=>({...x, tous:e.target.checked}))} /> Tous les producteurs</label>}
+        </div>
+      </Card>
+      {d.loading ? <Card>Chargement…</Card> : filtre.vue === 'producteurs' ? (
+        <TableWrap><div style={{ overflowX:'auto' }}>
+          <table style={{ width:'100%', borderCollapse:'collapse' }}>
+            <thead><tr><TH>Producteur</TH><TH>Village</TH><TH right>Kit {filtre.campagne||'(toutes)'}</TH><TH right>Kit total</TH><TH right>Financé épargne</TH><TH right>Remboursé</TH><TH right>En cours</TH><TH right>Reste à rembourser</TH><TH right>Épargne FRIA</TH><TH>Actions</TH></tr></thead>
+            <tbody>
+              {lignesSit.map(({ f, s, kitC }) => (
+                <TR key={f.id}>
+                  <TD bold>{nomTiersTraca(f)}<CodeTrace code={f.code_trace} /></TD><TD sm>{f.village||'—'}</TD>
+                  <TD right>{nbFr(kitC)}</TD><TD right>{nbFr(s.kit)}</TD><TD right>{nbFr(s.finance)}</TD>
+                  <TD right>{nbFr(s.rembourse)}</TD><TD right>{s.enCours > 0 ? nbFr(s.enCours) : '—'}</TD>
+                  <TD right>{s.reste > 0 ? <strong style={{ color:'#b45309' }}>{nbFr(s.reste)}</strong> : <span style={{ color:'#15803d' }}>Soldé ✔</span>}</TD>
+                  <TD right><strong style={{ color:'#0f766e' }}>{nbFr(s.epargne)}</strong></TD>
+                  <TD>{!readOnly && <ActionsMenu sm items={[
+                    { couleur:'#16a34a', label:'🌾 Remboursement en nature (hors groupe)', onClick:()=>ouvrir('remboursement', f) },
+                    { couleur:'#2563eb', label:'🔁 Renouveler le contrat (kit financé par l\'épargne)', onClick:()=>ouvrir('utilisation', f) },
+                    { couleur:'#b45309', label:"💸 Restituer l'épargne", onClick:()=>ouvrir('restitution', f) },
+                  ]} />}</TD>
+                </TR>))}
+              {!lignesSit.length && <tr><td colSpan={10} style={{ padding:20, textAlign:'center', color:'#94a3b8' }}>{companyId ? 'Aucun producteur avec un Kit FRIA ou une épargne. Cochez « Tous les producteurs » pour tous les voir.' : 'Sélectionnez une société.'}</td></tr>}
+              {lignesSit.length > 0 && <tr style={{ background:'#f8fafc', fontWeight:700 }}>
+                <td colSpan={2} style={{ padding:'10px 16px', textAlign:'right' }}>Total ({lignesSit.length})</td>
+                {['kitC','kit','finance','rembourse','enCours','reste','epargne'].map(k => <td key={k} style={{ padding:'10px 16px', textAlign:'right' }}>{nbFr(tot(k))}</td>)}<td></td></tr>}
+            </tbody>
+          </table>
+        </div></TableWrap>
+      ) : (
+        <TableWrap><div style={{ overflowX:'auto' }}>
+          <table style={{ width:'100%', borderCollapse:'collapse' }}>
+            <thead><tr><TH>N° pièce</TH><TH>Date</TH><TH>Type</TH><TH>Producteur</TH><TH>Campagne</TH><TH right>Quantité</TH><TH right>Montant</TH><TH>Contrepartie</TH><TH>Actions</TH></tr></thead>
+            <tbody>
+              {mvtsVisibles.map(m => { const f = frsDe(m.fournisseur_id), bon = d.bons.find(b => b.tiers === tiersBonFria(m))
+                return (
+                  <TR key={m.id}>
+                    <TD bold>{pieceFria(m)}</TD><TD sm>{dateDoc(m.date_mouvement)}</TD>
+                    <TD><Badge type={TYPES_MVT_FRIA[m.type]?.[1]}>{TYPES_MVT_FRIA[m.type]?.[0]||m.type}</Badge></TD>
+                    <TD>{nomTiersTraca(f)||'—'}</TD><TD sm>{m.campagne||'—'}</TD>
+                    <TD right>{+m.quantite_kg > 0 ? `${nbFr(m.quantite_kg)} kg` : '—'}</TD><TD right><strong>{nbFr(m.montant)}</strong></TD>
+                    <TD sm>{m.type === 'remboursement' ? <>Achat paddy (602){bon && <div style={{ color:'#1d4ed8' }}>📦 {bon.numero}</div>}</> : m.mode_reglement === 'fournisseur' ? (m.tiers_nom||'Fournisseur') : (JOURNAL_LABEL[m.mode_reglement]||m.mode_reglement||'—')}</TD>
+                    <TD><ActionsMenu sm items={[
+                      { couleur:'#2563eb', label:'🖨️ Reçu', onClick:()=>imprimerRecu(m, f) },
+                      !readOnly && { label:'🗑️ Supprimer', danger:true, onClick:()=>supprimer(m) },
+                    ]} /></TD>
+                  </TR>) })}
+              {!mvtsVisibles.length && <tr><td colSpan={9} style={{ padding:20, textAlign:'center', color:'#94a3b8' }}>Aucun mouvement. Les remboursements par les achats groupés apparaissent dans la situation par producteur.</td></tr>}
+            </tbody>
+          </table>
+        </div></TableWrap>
+      )}
+
+      <Modal open={!!form} onClose={()=>setForm(null)} size={form?.type === 'utilisation' ? 'lg' : 'md'}
+        title={!form ? '' : form.type === 'remboursement' ? `Remboursement du Kit FRIA en nature — ${nomTiersTraca(form.f)}` : form.type === 'utilisation' ? `Renouvellement du contrat — ${nomTiersTraca(form.f)}` : `Restitution de l'épargne FRIA — ${nomTiersTraca(form.f)}`}>
+        {form && <form onSubmit={enregistrer}>
+          <div style={{ padding:'9px 12px', borderRadius:8, background:'#f8fafc', border:'1px solid #e2e8f0', fontSize:12.5, marginBottom:14, lineHeight:1.6 }}>
+            Kit reçu : <strong>{fcfaDoc(form.s.kit)}</strong> — remboursé : <strong>{fcfaDoc(form.s.rembourse)}</strong> — reste à rembourser : <strong style={{ color:'#b45309' }}>{fcfaDoc(form.s.reste)}</strong>
+            <br/>Épargne FRIA disponible : <strong style={{ color:'#0f766e' }}>{fcfaDoc(form.s.epargne)}</strong>
+            {form.f.numero_compte ? <span style={{ color:'#64748b' }}> — compte {compteFriaDe(form.f.numero_compte)}</span> : <span style={{ color:'#b45309' }}> — producteur sans compte fournisseur (NPI manquant) : écriture sur le collectif {COLLECTIF_FRIA}</span>}
+          </div>
+          <Grid cols={2} gap={12} style={{ marginBottom:12 }}>
+            <Input label="Date" name="date" type="date" value={form.date} onChange={e=>setF('date', e.target.value)} required />
+            <Input label={form.type === 'utilisation' ? 'Campagne du nouveau kit' : 'Campagne'} name="campagne" type="tel" value={form.campagne} onChange={e=>setF('campagne', e.target.value)} placeholder="ex : 2027-2028" />
+          </Grid>
+          {form.type === 'remboursement' && <>
+            <Grid cols={3} gap={12} style={{ marginBottom:12 }}>
+              <Input label="Paddy livré (kg)" name="quantite_kg" type="number" step="any" value={form.quantite_kg} onChange={e=>setF('quantite_kg', e.target.value)} required />
+              <Input label="Prix au kg (FCFA)" name="prix_unitaire" type="number" step="any" value={form.prix_unitaire} onChange={e=>setF('prix_unitaire', e.target.value)} required />
+              <div><label style={{ display:'block', fontSize:12.5, fontWeight:600, color:'#374151', marginBottom:5 }}>Valeur remboursée</label>
+                <div style={{ padding:'9px 12px', background:'#f0fdf4', borderRadius:8, border:'1px solid #bbf7d0', fontWeight:800, color:'#166534' }}>{fcfaDoc(numFR(form.quantite_kg) * numFR(form.prix_unitaire))}</div></div>
+            </Grid>
+            <label style={{ fontSize:13, display:'flex', gap:8, alignItems:'center', marginBottom:8 }}>
+              <input type="checkbox" checked={form.stock} onChange={e=>setF('stock', e.target.checked)} /> Entrer le paddy en stock (bon d'entrée en magasin)</label>
+            {form.stock && <div style={{ marginBottom:12 }}><Sel label="Article du stock" name="article_id" value={form.article_id} onChange={e=>setF('article_id', e.target.value)}
+              options={[{ value:'', label:'— Choisir —' }, ...d.articles.map(a => ({ value:a.id, label:`${a.designation} (${a.unite||''})` })), ...(d.articles.some(a => /paddy/i.test(a.designation)) ? [] : [{ value:'__nouveau_paddy__', label:'+ Créer l\'article RIZ PADDY' }])]} /></div>}
+            <div style={{ fontSize:12, color:'#64748b', marginBottom:12 }}>Écriture automatique (journal des achats) : Débit 602 Achats de matières premières / Crédit {compteFriaDe(form.f.numero_compte)} Épargne FRIA.</div>
+          </>}
+          {form.type === 'utilisation' && <>
+            <label style={{ fontSize:13, fontWeight:700, color:'#334155' }}>💰 Nouveau Kit FRIA — campagne {form.campagne||'?'}</label>
+            <div style={{ border:'1px solid #e2e8f0', borderRadius:8, overflowX:'auto', margin:'8px 0 12px' }}>
+              <table style={{ width:'100%', minWidth:460, borderCollapse:'collapse', fontSize:13 }}>
+                <thead><tr style={{ background:'#f8fafc' }}><th style={{ padding:8, textAlign:'left' }}>Type</th><th style={{ padding:8, textAlign:'right' }}>Quantité</th><th style={{ padding:8, textAlign:'right' }}>Montant (FCFA)</th><th></th></tr></thead>
+                <tbody>{form.kit.map((l,i) => (
+                  <tr key={i} style={{ borderTop:'1px solid #f1f5f9' }}>
+                    <td style={{ padding:6 }}><select value={l.type_avance} onChange={e=>setKit(i,'type_avance',e.target.value)} style={{ ...numStyle, textAlign:'left' }}>{TYPES_AVANCE.map(t => <option key={t}>{t}</option>)}</select></td>
+                    <td style={{ padding:6 }}><div style={{ display:'flex', gap:6, alignItems:'center' }}><input inputMode="decimal" value={l.quantite_recue} onChange={e=>setKit(i,'quantite_recue',e.target.value)} style={numStyle} /><span style={{ fontSize:12, color:'#64748b', minWidth:26 }}>{UNITES_AVANCE[l.type_avance]||''}</span></div></td>
+                    <td style={{ padding:6 }}><input inputMode="decimal" value={l.montant} onChange={e=>setKit(i,'montant',e.target.value)} style={numStyle} /></td>
+                    <td style={{ padding:6, textAlign:'center' }}><button type="button" onClick={()=>setForm(x=>({ ...x, kit:x.kit.filter((_,j)=>j!==i) }))} style={{ background:'none', border:'none', cursor:'pointer', color:'#dc2626' }}>🗑️</button></td>
+                  </tr>))}</tbody>
+                <tfoot><tr style={{ background:'#f8fafc' }}><td style={{ padding:6 }}><Btn sm type="button" variant="secondary" onClick={()=>setForm(x=>({ ...x, kit:[...x.kit, { type_avance:'Crédits', quantite_recue:'', montant:'' }] }))}>+ Ligne</Btn></td>
+                  <td style={{ padding:8, textAlign:'right', fontWeight:700 }}>Total du kit</td><td style={{ padding:8, textAlign:'right', fontWeight:800 }}>{fcfaDoc(totalKitForm)}</td><td></td></tr></tfoot>
+              </table>
+            </div>
+            <Grid cols={2} gap={12} style={{ marginBottom:8 }}>
+              <Input label={`Financé par l'épargne (max ${nbFr(Math.min(totalKitForm, form.s.epargne))})`} name="finance" type="number" step="any" value={form.finance === '' ? String(financeForm) : form.finance} onChange={e=>setF('finance', e.target.value)} />
+              <div><label style={{ display:'block', fontSize:12.5, fontWeight:600, color:'#374151', marginBottom:5 }}>Reste du kit à rembourser en nature</label>
+                <div style={{ padding:'9px 12px', background:'#fffbeb', borderRadius:8, border:'1px solid #fde68a', fontWeight:800, color:'#92400e' }}>{fcfaDoc(Math.max(0, totalKitForm - financeForm))}</div></div>
+            </Grid>
+            <Grid cols={2} gap={12} style={{ marginBottom:12 }}>
+              <Sel label="Le kit est payé" name="mode_reglement" value={form.mode_reglement} onChange={e=>setF('mode_reglement', e.target.value)} options={MODES_FRIA} />
+              {form.mode_reglement === 'fournisseur'
+                ? <Sel label="Fournisseur d'intrants" name="tiers_id" value={form.tiers_id} onChange={e=>setF('tiers_id', e.target.value)}
+                    options={[{ value:'', label:'— Choisir —' }, ...fournisseursIntrants.map(x => ({ value:x.id, label:`${nomTiersTraca(x)}${x.numero_compte ? ` (${x.numero_compte})` : ''}` }))]} />
+                : <Input label="Référence (n° reçu, chèque…)" name="reference" value={form.reference} onChange={e=>setF('reference', e.target.value)} />}
+            </Grid>
+            <div style={{ fontSize:12, color:'#64748b', marginBottom:12 }}>Écriture automatique : Débit {compteFriaDe(form.f.numero_compte)} Épargne FRIA / Crédit {form.mode_reglement === 'fournisseur' ? "compte du fournisseur d'intrants (opérations diverses)" : JOURNAL_LABEL[form.mode_reglement]}. Le nouveau kit est ajouté à la fiche du producteur (campagne {form.campagne||'?'}).</div>
+          </>}
+          {form.type === 'restitution' && <>
+            <Grid cols={2} gap={12} style={{ marginBottom:12 }}>
+              <Input label="Montant restitué (FCFA)" name="montant" type="number" step="any" value={form.montant} onChange={e=>setF('montant', e.target.value)} required />
+              <Sel label="Payé par" name="mode_reglement" value={form.mode_reglement} onChange={e=>setF('mode_reglement', e.target.value)} options={MODES_FRIA.filter(x => x.value !== 'fournisseur')} />
+            </Grid>
+            <div style={{ marginBottom:12 }}><Input label="Référence (n° reçu, chèque…)" name="reference" value={form.reference} onChange={e=>setF('reference', e.target.value)} /></div>
+            <div style={{ fontSize:12, color:'#64748b', marginBottom:12 }}>Sortie de trésorerie sur le compte {compteFriaDe(form.f.numero_compte)} Épargne FRIA (Débit 4018… / Crédit {JOURNAL_LABEL[form.mode_reglement]}).</div>
+          </>}
+          <div style={{ marginBottom:12 }}><Input label="Observations" name="observations" value={form.observations} onChange={e=>setF('observations', e.target.value)} /></div>
+          <Row><Btn variant="secondary" onClick={()=>setForm(null)}>Annuler</Btn><Btn type="submit" disabled={saving}>{saving ? '…' : 'Enregistrer'}</Btn></Row>
+        </form>}
       </Modal>
     </div>
   )
@@ -17114,6 +17603,7 @@ const JOURNAL_SECTIONS = [
   { key:'prestations', label:'Prestations', table:'compta_prestations' },
   { key:'lots', label:'Lots de production', table:'compta_lots_production' },
   { key:'achats_groupes', label:'Achats groupés', table:'compta_achats_groupes' },
+  { key:'fria_mouvements', label:'Mouvements épargne FRIA', table:'compta_fria_mouvements' },
   { key:'achats_semi', label:'Achats semi-finis', table:'compta_achats_semi_finis' },
   { key:'etuveuses', label:'Étuveuses (répertoire)', table:'compta_etuveuses' },
   { key:'avances_etuveuses', label:'Avances étuveuses', table:'compta_avances_etuveuses' },
@@ -25437,7 +25927,7 @@ export default function ComptaPro() {
     etv_repertoire:'Répertoire Étuveuses', etv_envois:'Envois aux étuveuses', etv_performance:'Performance des étuveuses', etv_avances:'Avances sur Commande',
     etv_bc:'Bons de Commande', etv_br:'Bons de Réception',
     etv_entrees:'Entrées Magasin', etv_sorties:'Sorties Magasin', etv_inventaire:'Inventaire Étuveuses', etv_tresorerie:'Trésorerie Étuveuses',
-    achats_groupes:'Achats groupés de paddy', achats:'Achats Semi-finis', lots_semi_finis:'Lots Semi-finis', epierrage:'Épierrage', reglements_clients:'Règlements Clients', reglements_fourn:'Règlements Fournisseurs', etuvage_paiements:'Paiements Étuvage',
+    achats_groupes:'Achats groupés de paddy', epargne_fria:'Épargne FRIA', achats:'Achats Semi-finis', lots_semi_finis:'Lots Semi-finis', epierrage:'Épierrage', reglements_clients:'Règlements Clients', reglements_fourn:'Règlements Fournisseurs', etuvage_paiements:'Paiements Étuvage',
     docs_admin:'Documents administratifs', parametres:'Paramètres',
     prestations:'Prestations', journal_caisse:'Journal Caisse', journal_banque:'Journal Banque',
     suivi_lot:'Suivi de Lot', tracabilite:'Traçabilité des lots', registre_tracabilite:'Registre de traçabilité', journal_mobile:'Journal Mobile Money', plan_comptable:'Plan Comptable', grand_livre:'Grand-Livre', ecritures:'Saisie Comptable', balance:'Balance', etats_financiers:'États Financiers',
@@ -25489,6 +25979,7 @@ export default function ComptaPro() {
       case 'tracabilite':   return <TracabilitePage {...sp} readOnly={getReadOnly('tracabilite')} />
       case 'registre_tracabilite': return <RegistreTracabilitePage {...sp} readOnly={getReadOnly('registre_tracabilite')} />
       case 'achats_groupes': return <AchatsGroupesPage {...sp} readOnly={getReadOnly('achats_groupes')} />
+      case 'epargne_fria': return <EpargneFriaPage {...sp} readOnly={getReadOnly('epargne_fria')} />
       case 'etv_repertoire':  return <EtvRepertoirePage {...sp} setPage={setPage} readOnly={getReadOnly('etv_repertoire')} />
       case 'etv_envois':      return <EtvEnvoisPage {...sp} readOnly={getReadOnly('etv_envois')} />
       case 'etv_performance': return <EtvPerformancePage {...sp} />
