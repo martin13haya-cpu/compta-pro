@@ -3949,24 +3949,52 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     if(filtered.length===0){ toast.error('Aucun fournisseur ne correspond au filtre actuel.'); return }
     const isFiltered = filtered.length !== items.length
     const label = isFiltered ? `les ${filtered.length} fournisseur(s) correspondant au filtre actuel` : `les ${items.length} fournisseur(s) de la liste`
-    if(!confirm(`⚠️ Supprimer DÉFINITIVEMENT ${label} ? Cette action est irréversible.`)) return
+    if(!confirm(`⚠️ Supprimer DÉFINITIVEMENT ${label} ? Cette action est irréversible.\n\nLeurs Kits FRIA, épargne FRIA et ouvriers sont effacés ; leurs achats (semi-finis, groupés…) sont conservés avec le nom du fournisseur, sans lien vers la fiche.`)) return
     if(!confirm('Confirmez-vous une dernière fois la suppression ?')) return
 
+    // Une fiche liée à d'autres tables (achats semi-finis, etc.) bloque la suppression
+    // (contrainte de clé étrangère). On lit la table et la colonne dans le message, on
+    // retire le lien (les achats gardent le nom du fournisseur) ou on efface les lignes
+    // propres à la fiche (Kit FRIA, épargne, ouvriers), puis on recommence.
+    const LIGNES_A_EFFACER = ['compta_avances_fournisseur','compta_fria_mouvements','compta_ouvriers_fournisseur']
+    const CHUNK = 150
+    const supprimerAvecLiens = async (supprimer, ids) => {
+      const traites = new Set()
+      for (let essai = 0; essai < 20; essai++) {
+        const { error } = await supprimer()
+        if (!error) return null
+        const m = String(error.message||'').match(/constraint "([A-Za-z0-9_]+)" on table "([A-Za-z0-9_]+)"/)
+        if (!m || !/foreign key/i.test(error.message) || traites.has(m[1])) return error
+        traites.add(m[1])
+        const [, contrainte, t] = m
+        const col = contrainte.startsWith(t + '_') && contrainte.endsWith('_fkey') ? contrainte.slice(t.length + 1, -5) : 'fournisseur_id'
+        for (let i = 0; i < ids.length; i += CHUNK) {
+          const lot = ids.slice(i, i + CHUNK)
+          const { error:el } = LIGNES_A_EFFACER.includes(t)
+            ? await supabase.from(t).delete().in(col, lot)
+            : await supabase.from(t).update({ [col]:null }).in(col, lot)
+          if (el) return { message:`Lien avec la table ${t} impossible à retirer : ${el.message}` }
+        }
+      }
+      return { message:'Suppression impossible : trop de tables liées à ces fournisseurs.' }
+    }
+
     if (!isFiltered) {
-      // Pas de filtre actif : suppression en un seul appel simple (pas de liste d'identifiants
-      // dans l'URL, donc pas de limite de taille même avec des centaines de fiches).
-      const { error } = await supabase.from(table).delete().eq('company_id', cid)
-      if(error){ toast.error(error.message); return }
+      // Pas de filtre actif : toutes les fiches de la société (y compris archivées), en un seul
+      // appel (pas de liste d'identifiants dans l'URL, donc pas de limite de taille).
+      const { data:tous } = await fetchAllRows(() => supabase.from(table).select('id').eq('company_id', cid).order('id'))
+      const error = await supprimerAvecLiens(() => supabase.from(table).delete().eq('company_id', cid), (tous||[]).map(x => x.id))
+      if(error){ toast.error(error.message); load(); return }
       toast.success(`${items.length} fournisseur(s) supprimé(s).`); load(); return
     }
 
     // Filtre actif : suppression par lots pour éviter une URL trop longue (erreur "Bad Request")
     // quand la liste d'identifiants à supprimer est très longue.
     const ids = filtered.map(it=>it.id)
-    const CHUNK = 150
     for (let i=0; i<ids.length; i+=CHUNK) {
-      const { error } = await supabase.from(table).delete().in('id', ids.slice(i, i+CHUNK))
-      if(error){ toast.error(error.message); return }
+      const lot = ids.slice(i, i+CHUNK)
+      const error = await supprimerAvecLiens(() => supabase.from(table).delete().in('id', lot), lot)
+      if(error){ toast.error(error.message); load(); return }
     }
     toast.success(`${ids.length} fournisseur(s) supprimé(s).`); load()
   }
