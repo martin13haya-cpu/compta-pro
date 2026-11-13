@@ -2003,8 +2003,8 @@ const consolTiersVal = (it,c) => ({
   'Bas-fonds': it.nom_bas_fonds||'',
   'Superficie (ha)': it.superficie_bas_fonds||'',
   'Date de naissance': it.date_naissance ? new Date(it.date_naissance).toLocaleDateString('fr-FR') : '',
-  'Âge': it.age||'',
-  'Tranche d\'âge': it.tranche_age||'',
+  'Âge': ageEtTranche(it).age,
+  'Tranche d\'âge': ageEtTranche(it).tranche_age,
   'Nationalité': it.nationalite||'',
   'Total Kit FRIA (FCFA)': (Array.isArray(it._avances)?it._avances:[]).reduce((sm,a)=>sm+(Number(a.valeur_remboursement)||0),0) || '',
   'Prix/contrat (FCFA)': it.prix_contrat||'',
@@ -2592,6 +2592,7 @@ const NAV = [
   { id:'companies',          icon:'🏢', label:'Sociétés' },
   { id:'clients',            icon:'👥', label:'Clients' },
   { id:'fournisseurs',       icon:'🚚', label:'Fournisseurs' },
+  { id:'categories_fournisseurs', icon:'🏷️', label:'Catégories fournisseurs' },
   { section:'Stock' },
   { id:'stock',              icon:'📦', label:'Articles & Stock' },
   { id:'mouvements',         icon:'↕️',  label:'Mouvements' },
@@ -3539,13 +3540,105 @@ const UNITES_AVANCE = { Labour:'ha', Semences:'kg', Engrais:'sac', Herbicide:'L'
 const CEPEA_BP = { kouande:'208', natitingou:'106', tanguieta:'838', ouake:'413', kerou:'834' }
 
 // Catégories de fournisseurs (NULL en base = non classé).
-const CATEGORIES_FOURNISSEUR = [
+// Les clés sont fixes (contrainte CHECK en base, logique « producteur ») ; le libellé et la
+// couleur se personnalisent par société (table compta_categories_fournisseurs).
+const CATEGORIES_FOURNISSEUR_DEFAUT = [
   ['producteur', '🌾 Producteur', 'success'],
-  ['prestataire', '🛠️ Prestataire de services', 'info'],
-  ['commercant', '🏪 Commerçant / fournisseur de biens', 'warning'],
+  ['etuveuse', '🔥 Étuveuse', 'warning'],
+  ['intermediaire', '🤝 Intermédiaire', 'info'],
   ['transporteur', '🚚 Transporteur', 'secondary'],
-  ['autre', 'Autre', 'secondary'],
 ]
+// Lettre de catégorie dans le code par règle (NAT-PK_8791, NAT-EB-7698, NAT-IB-7698, NAT-TB-7698).
+const LETTRE_CATEGORIE_FRS = { producteur:'P', etuveuse:'E', intermediaire:'I', transporteur:'T' }
+// Table propre à chaque catégorie (hors producteurs, qui gardent leur fiche habituelle).
+const TABLE_CATEGORIE_FRS = { etuveuse:'compta_etuveuses', intermediaire:'compta_intermediaires', transporteur:'compta_transporteurs' }
+// Modèles CSV d'import des fournisseurs, un par catégorie : [clé interne, intitulé français,
+// exemple 1, exemple 2…]. L'import reconnaît ces intitulés (et les anciens noms techniques).
+// Étuveuses : une ligne par mentoré ; les lignes du même mentor (même NPI, ou même nom)
+// sont regroupées en une seule étuveuse.
+const CSV_COLONNES_IDENTITE = (ex1, ex2) => [
+  ['type','Type de personne', ex1.type, ex2.type],
+  ['nom','Nom', ex1.nom, ex2.nom],
+  ['prenom','Prénom(s)', ex1.prenom, ex2.prenom],
+  ['nom_societe','Raison sociale', ex1.nom_societe, ex2.nom_societe],
+  ['telephone','Téléphone', ex1.telephone, ex2.telephone],
+  ['commune','Commune', ex1.commune, ex2.commune],
+  ['arrondissement','Arrondissement', ex1.arrondissement, ex2.arrondissement],
+  ['village','Village / quartier', ex1.village, ex2.village],
+  ['genre','Sexe', ex1.genre, ex2.genre],
+  ['handicap','Handicap', ex1.handicap, ex2.handicap],
+  ['cip','NPI', ex1.cip, ex2.cip],
+  ['ifu','IFU', ex1.ifu, ex2.ifu],
+  ['date_naissance','Date de naissance', ex1.date_naissance, ex2.date_naissance],
+]
+const MODELES_CSV_FRS = {
+  producteur: [
+    ['type','Type de personne','physique','morale'],
+    ['nom','Nom','HAYA',''], ['prenom','Prénom(s)','Martin',''],
+    ['nom_societe','Raison sociale','','SARL EXEMPLE'],
+    ['telephone','Téléphone','22997000000','22996000000'],
+    ['provenance','Provenance','Tanguiéta','Natitingou'],
+    ['cooperative_affiliee','Coopérative affiliée','Coop PINGOU',''],
+    ['numero_contrat','N° Contrat','CTR-2026-001',''],
+    ['cip','N° CIP','5758798912',''], ['ifu','N° IFU','3202012190967','3201998877665'],
+    ['email','Email','martin@exemple.com','contact@exemple.com'], ['adresse','Adresse','BP 707','Cotonou'],
+    ['genre','Genre','Homme',''], ['handicap','Handicap','Non',''],
+    ['mentor_nom','Nom du mentor','KOUDORO Jean',''], ['mentor_telephone','Téléphone du mentor','22995000000',''],
+    ['mentor_cip','CIP du mentor','',''], ['mentor_age','Âge du mentor','45',''],
+    ['departement','Département','Atacora',''], ['commune','Commune','Tanguiéta',''],
+    ['arrondissement','Arrondissement','Cotiakou',''], ['village','Village','Pingou',''],
+    ['nom_bas_fonds','Nom du bas-fonds','Bas-fonds Pingou',''], ['superficie_bas_fonds','Superficie bas-fonds (ha)','2,5',''],
+    ['date_naissance','Date de naissance','14/05/2002',''], ['nationalite','Nationalité','Béninoise',''],
+    ['nombre_jeunes_femmes','Nombre jeunes femmes','1',''], ['nombre_jeunes_hommes','Nombre jeunes hommes','2',''],
+    ['prix_contrat','Prix contrat (FCFA)','150000',''],
+    ['labour_qte','Labour qté','2,5',''], ['labour_montant','Labour montant (FCFA)','50000',''],
+    ['semences_qte','Semences qté','10',''], ['semences_montant','Semences montant (FCFA)','30000',''],
+    ['engrais_qte','Engrais qté','',''], ['engrais_montant','Engrais montant (FCFA)','',''],
+    ['herbicide_qte','Herbicide qté','1,5',''], ['herbicide_montant','Herbicide montant (FCFA)','15000',''],
+    ['credits_qte','Crédits qté','',''], ['credits_montant','Crédits montant (FCFA)','',''],
+  ],
+  etuveuse: [
+    ...CSV_COLONNES_IDENTITE(
+      { type:'physique', nom:'BIO', prenom:'Awa', nom_societe:'', telephone:'0197000000', commune:'Natitingou', arrondissement:'Perma', village:'Tchoumi', genre:'Femme', handicap:'Non', cip:'1234567890', ifu:'', date_naissance:'12/03/1985' },
+      { type:'physique', nom:'BIO', prenom:'Awa', nom_societe:'', telephone:'0197000000', commune:'Natitingou', arrondissement:'Perma', village:'Tchoumi', genre:'Femme', handicap:'Non', cip:'1234567890', ifu:'', date_naissance:'12/03/1985' }),
+    ['date_contrat','Date du contrat','01/10/2026','01/10/2026'],
+    ['capacite_kg','Capacité (kg)','2000','2000'],
+    ['zone','Zone / Localité','Perma','Perma'],
+    ['observations','Observations','',''],
+    ['mentore_nom','Mentoré - Nom et prénoms','KOUAGOU Mariam','SAKA Rachida'],
+    ['mentore_village','Mentoré - Village / quartier','Tchoumi','Tchoumi'],
+    ['mentore_genre','Mentoré - Sexe','Femme','Femme'],
+    ['mentore_handicap','Mentoré - Handicap','Non','Oui'],
+    ['mentore_npi','Mentoré - NPI','2345678901',''],
+    ['mentore_date_naissance','Mentoré - Date de naissance','05/06/2001','20/11/1999'],
+    ['mentore_contact','Mentoré - Contact','0196000000',''],
+  ],
+  intermediaire: CSV_COLONNES_IDENTITE(
+    { type:'physique', nom:'BADOU', prenom:'Issa', nom_societe:'', telephone:'0195000000', commune:'Natitingou', arrondissement:'Kouaba', village:'Kouaba centre', genre:'Homme', handicap:'Non', cip:'1237698690', ifu:'', date_naissance:'02/02/1990' },
+    { type:'société', nom:'', prenom:'', nom_societe:'ETS BADOU ET FILS', telephone:'0194000000', commune:'Djougou', arrondissement:'', village:'Zongo', genre:'', handicap:'', cip:'', ifu:'3202012190967', date_naissance:'' }),
+  transporteur: CSV_COLONNES_IDENTITE(
+    { type:'physique', nom:'TCHABI', prenom:'Moussa', nom_societe:'', telephone:'0193000000', commune:'Tanguiéta', arrondissement:'Cotiakou', village:'Pingou', genre:'Homme', handicap:'Non', cip:'9876543210', ifu:'', date_naissance:'15/08/1988' },
+    { type:'société', nom:'', prenom:'', nom_societe:'TRANS ATACORA SARL', telephone:'0192000000', commune:'Natitingou', arrondissement:'', village:'Bérécingou', genre:'', handicap:'', cip:'', ifu:'3201998877665', date_naissance:'' }),
+}
+const MSG_SCRIPT_CATEGORIES_4 ="Exécutez d'abord le script supabase/migrations/20261114_categories_fournisseurs_4.sql dans Supabase (projet ComptaPro, SQL Editor)."
+// Catalogue courant (défauts + personnalisations de la société active), modifié en place
+// pour que tous les usages voient les libellés à jour.
+const CATEGORIES_FOURNISSEUR = CATEGORIES_FOURNISSEUR_DEFAUT.map(c => [...c])
+function appliquerCategoriesFrsPerso(lignes) {
+  CATEGORIES_FOURNISSEUR_DEFAUT.forEach((def, i) => {
+    const p = (lignes||[]).find(l => l.cle === def[0])
+    CATEGORIES_FOURNISSEUR[i] = [def[0], p?.libelle?.trim() || def[1], p?.couleur || def[2]]
+  })
+}
+// Charge les libellés personnalisés d'une société -> lignes brutes (null si la table n'existe pas encore).
+async function chargerCategoriesFrs(companyId) {
+  if (!companyId) { appliquerCategoriesFrsPerso([]); return [] }
+  const { data, error } = await supabase.from('compta_categories_fournisseurs').select('*').eq('company_id', companyId)
+  if (error) { appliquerCategoriesFrsPerso([]); return null }
+  appliquerCategoriesFrsPerso(data)
+  return data || []
+}
+const MSG_SCRIPT_CATEGORIES_LIBELLES = "Exécutez d'abord le script supabase/migrations/20261113_categories_fournisseurs_libelles.sql dans Supabase (projet ComptaPro, SQL Editor)."
 const libelleCategorieFrs = c => CATEGORIES_FOURNISSEUR.find(x => x[0] === c)?.[1] || 'Non classé'
 const MSG_SCRIPT_CATEGORIE = "Exécutez d'abord le script supabase/migrations/20261013_categorie_fournisseurs.sql dans Supabase (projet ComptaPro, SQL Editor)."
 // Un fournisseur sans catégorie compte comme producteur (achats groupés…).
@@ -3556,33 +3649,65 @@ const estProducteur = f => !f?.categorie || f.categorie === 'producteur'
 // (en comptant depuis la gauche). Ex : CIP 5758798912, commune Natitingou,
 // nom KOUAGOU  ->  NAT-PK_8791.
 // Date lue dans un fichier CSV/Excel -> { iso:'AAAA-MM-JJ' } ou { iso:null, invalide:true }.
-// Accepte 23/10/2026, 23-10-2026, 23.10.2026, 23/10/26, 2026-10-23, 2026/10/23
-// et le numéro de série Excel (ex. 45213). Une date vide donne { iso:null }.
+// Accepte 23/10/2026, 23-10-2026, 23.10.2026, 23/10/26, 2026-10-23, 2026/10/23,
+// « 23 oct. 2026 », « 23-oct-26 », « 23 octobre 2026 », l'ordre américain quand il est
+// sans ambiguïté (10/23/2026), une heure à la suite (23/10/2026 00:00) et le numéro de
+// série Excel (ex. 45213 ou 45213,5). Une date vide donne { iso:null }.
+const MOIS_TEXTE = { jan:1, janv:1, janvier:1, january:1, fev:2, fevr:2, fevrier:2, feb:2, february:2, mar:3, mars:3, march:3,
+  avr:4, avril:4, apr:4, april:4, mai:5, may:5, juin:6, jun:6, june:6, juil:7, juillet:7, jul:7, july:7, aou:8, aout:8, aug:8, august:8,
+  sep:9, sept:9, septembre:9, september:9, oct:10, octobre:10, october:10, nov:11, novembre:11, november:11, dec:12, decembre:12, december:12 }
 function parseDateFR(v) {
-  const s = String(v ?? '').trim()
+  const s = String(v ?? '').trim().replace(/^["']+|["']+$/g, '').trim()
   if (!s) return { iso:null }
+  const annee2 = y => y + (y > (new Date().getFullYear() % 100) ? 1900 : 2000)
   let j, m, a, r
-  if ((r = s.match(/^(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})(?:[ T].*)?$/))) { a = +r[1]; m = +r[2]; j = +r[3] }
-  else if ((r = s.match(/^(\d{1,2})[-\/. ](\d{1,2})[-\/. ](\d{2}|\d{4})(?:[ T].*)?$/))) {
+  const sm = s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
+  if ((r = s.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})(?:[ T].*)?$/))) { a = +r[1]; m = +r[2]; j = +r[3] }
+  else if ((r = s.match(/^(\d{1,2})[-/. ](\d{1,2})[-/. ](\d{2}|\d{4})(?:[ T,].*)?$/))) {
     j = +r[1]; m = +r[2]; a = +r[3]
-    if (r[3].length === 2) a += a > (new Date().getFullYear() % 100) ? 1900 : 2000
+    if (r[3].length === 2) a = annee2(a)
+    if (m > 12 && j <= 12) [j, m] = [m, j] // ordre américain MM/JJ/AAAA
   }
-  else if (/^\d{5}$/.test(s)) { const d = new Date(Date.UTC(1899, 11, 30) + (+s) * 86400000); a = d.getUTCFullYear(); m = d.getUTCMonth() + 1; j = d.getUTCDate() }
+  else if ((r = sm.match(/^(\d{1,2})(?:er)?[-/. ]+([a-z]+)\.?[-/. ]+(\d{2}|\d{4})(?:[ T,].*)?$/)) && MOIS_TEXTE[r[2]]) {
+    j = +r[1]; m = MOIS_TEXTE[r[2]]; a = r[3].length === 2 ? annee2(+r[3]) : +r[3]
+  }
+  else if ((r = sm.match(/^([a-z]+)\.?[-/. ]+(\d{1,2}),?[-/. ]+(\d{4})$/)) && MOIS_TEXTE[r[1]]) {
+    m = MOIS_TEXTE[r[1]]; j = +r[2]; a = +r[3]
+  }
+  else if (/^\d{4,5}([.,]\d+)?$/.test(s) && +s.replace(',', '.') > 366) {
+    const d = new Date(Date.UTC(1899, 11, 30) + Math.floor(+s.replace(',', '.')) * 86400000); a = d.getUTCFullYear(); m = d.getUTCMonth() + 1; j = d.getUTCDate()
+  }
   else return { iso:null, invalide:true }
   const d = new Date(Date.UTC(a, m - 1, j))
   if (d.getUTCFullYear() !== a || d.getUTCMonth() !== m - 1 || d.getUTCDate() !== j) return { iso:null, invalide:true }
   return { iso:`${a}-${String(m).padStart(2,'0')}-${String(j).padStart(2,'0')}` }
 }
-// Catégorie de fournisseur lue dans un fichier : accepte la clé (« producteur »), le libellé
-// (« Prestataire de services », « 🌾 Producteur ») ou le début du libellé (« commerçant »).
-// -> { cle } ou { cle:null, inconnue:true } ; vide -> { cle:null }.
-function categorieFournisseurDepuisTexte(v) {
-  const n = s => String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9 ]+/g,' ').replace(/\s+/g,' ').trim()
-  const q = n(v)
-  if (!q) return { cle:null }
-  const formes = [q, q.replace(/s$/, '')]
-  const trouve = CATEGORIES_FOURNISSEUR.find(([k, l]) => formes.some(f => n(k) === f || n(l) === f || n(l).startsWith(f + ' ')))
-  return trouve ? { cle:trouve[0] } : { cle:null, inconnue:true }
+// Âge calculé à partir de la date de naissance (années révolues), et tranche d'âge
+// déduite de l'âge (<35 / >35) — fiche, import CSV et exports, sans saisie manuelle.
+function calculerAge(dateNaissance) {
+  if (!dateNaissance) return ''
+  const n = new Date(dateNaissance)
+  if (isNaN(n)) return ''
+  const a = new Date()
+  let age = a.getFullYear()-n.getFullYear()
+  const m = a.getMonth()-n.getMonth()
+  if (m<0 || (m===0 && a.getDate()<n.getDate())) age--
+  return String(age)
+}
+const trancheDepuisAge = (age) => (age==='' || age==null || isNaN(age)) ? '' : (Number(age)<35 ? '<35' : '>35')
+// Tranche saisie à la main (« moins de 35 ans », « < 35 », « +35 »…) -> '<35' | '>35' | ''.
+function normaliserTranche(v) {
+  const s = String(v||'').toLowerCase().replace(/\s+/g, '')
+  if (!s) return ''
+  if (/^(<|moinsde|-)/.test(s)) return '<35'
+  if (/^(>|plusde|\+|35ansetplus)/.test(s)) return '>35'
+  return ''
+}
+// Âge et tranche à jour : priorité à la date de naissance, sinon l'âge enregistré.
+function ageEtTranche(f) {
+  const age = f?.date_naissance ? calculerAge(f.date_naissance) : (f?.age ?? '')
+  const tranche = trancheDepuisAge(age) || normaliserTranche(f?.tranche_age) || f?.tranche_age || ''
+  return { age: age === '' || age == null ? '' : String(age), tranche_age: tranche }
 }
 // Nom complet saisi dans « prenom » alors que « nom » est vide (ex. « OROU BRISSO Bana Gniré ») :
 // les mots EN MAJUSCULES du début forment le nom, le reste les prénoms.
@@ -3604,6 +3729,54 @@ function codeProducteurParRegle(f) {
   const ini = lettresSeules(f?.nom).slice(0,1)
   if (!ini) return { erreur:'Nom non renseigné' }
   return { code:`${com}-P${ini}_${cip[3]}${cip[4]}${cip[7]}${cip[8]}` }
+}
+// Étuveuse / intermédiaire / transporteur : COMMUNE(3) - lettre catégorie + initiale du nom
+// - 4e, 5e, 8e et 9e chiffres du NPI (personne physique) ou de l'IFU (société, initiale de
+// la raison sociale). Ex. : NAT-IB-7698. Sans NPI (ou IFU) complet : pas de code.
+// -> { code, ident } | { erreur, sansIdent? }
+function codeCategorieParRegle(f) {
+  const lettre = LETTRE_CATEGORIE_FRS[f?.categorie]
+  if (!lettre || f?.categorie === 'producteur') return { erreur:'Catégorie sans code par règle' }
+  const morale = f?.type === 'morale'
+  const ident = onlyDigits(morale ? f?.ifu : f?.cip)
+  if (ident.length !== (morale ? 13 : 10)) return { erreur: morale ? 'IFU absent ou incomplet' : 'NPI absent ou incomplet', sansIdent:true }
+  const com = lettresSeules(f?.commune).slice(0,3)
+  if (!com) return { erreur:'Commune non renseignée' }
+  const ini = lettresSeules(morale ? f?.nom_societe : f?.nom).slice(0,1)
+  if (!ini) return { erreur: morale ? 'Raison sociale non renseignée' : 'Nom non renseigné' }
+  return { code:`${com}-${lettre}${ini}-${ident[3]}${ident[4]}${ident[7]}${ident[8]}`, ident }
+}
+// Forme courte d'un code étuveuse pour le code de passage : NAT-EB-7698 -> EB7698
+// (ancien code KOU-E007 -> E007).
+const codeCourtEtuveuse = c => { const m = /^[A-Z]{3}-([A-Z]{2})-(\d{4}[B-Z]?)$/.exec(c || ''); return m ? m[1] + m[2] : (c ? c.split('-').pop() : '') }
+// Pose (ou retire) le code par règle d'un étuveuse / intermédiaire / transporteur. Ce code
+// est aussi son code de traçabilité (un seul code). Même gestion des conflits que les
+// producteurs (lettre ajoutée : NAT-IB-7698B). Recopié sur la fiche étuveuse liée.
+async function poserCodeCategorie(id, companyId, f, { ancien=null, existants=null } = {}) {
+  const r = codeCategorieParRegle(f)
+  if (r.erreur) {
+    if (r.sansIdent) {
+      if (!ancien) return { statut:'sanscode' }
+      const { error } = await supabase.from('compta_fournisseurs').update({ code_trace:null }).eq('id', id)
+      return error ? { statut:'erreur', message:error.message } : { statut:'efface' }
+    }
+    return { statut:'incomplet', raison:r.erreur, code:ancien }
+  }
+  if (codeConforme(ancien, r.code)) return { statut:'inchange', code:ancien }
+  let pris = existants
+  if (!pris) {
+    pris = new Map()
+    const { data } = await supabase.from('compta_fournisseurs').select('id,type,code_trace,cip,ifu,nom,prenom,nom_societe').eq('company_id', companyId).like('code_trace', r.code + '%').neq('id', id)
+    ;(data||[]).filter(x => x.code_trace?.startsWith(r.code)).forEach(x => pris.set(x.code_trace, { cip:onlyDigits(x.type==='morale' ? x.ifu : x.cip), label:labelTiers(x) }))
+  }
+  const ch = choisirCodeLibre(r.code, r.ident, pris)
+  if (ch.doublon) return { statut:'conflit', code:r.code, doublon:true, avec:ch.avec?.label }
+  if (ch.epuise) return { statut:'conflit', code:r.code }
+  const { error } = await supabase.from('compta_fournisseurs').update({ code_trace:ch.code }).eq('id', id)
+  if (error) return { statut:'erreur', message:error.message }
+  if (existants) existants.set(ch.code, { cip:r.ident, label:labelTiers(f) })
+  if (ancien) { try { await majRegistresTracaCodes(companyId, new Map([[ancien, ch.code]])) } catch {} }
+  return { statut:'pose', code:ch.code, suffixe:!!ch.suffixe, avec:ch.avec?.label }
 }
 // ── Conflit de code : deux producteurs de la même commune, même initiale, mêmes 4 chiffres.
 // Le premier garde le code, les suivants prennent une lettre : NAT-PK_8791, NAT-PK_8791B, …
@@ -3628,6 +3801,7 @@ const labelTiers = x => [x?.nom, x?.prenom].filter(Boolean).join(' ') || x?.nom_
 //  - CIP valide mais commune ou nom manquant : { statut:'incomplet' }, code inchangé
 //  - existants : Map des codes déjà pris dans la société (import en lot) ; sinon lue en base.
 async function poserCodeProducteur(id, companyId, f, { ancien=null, existants=null } = {}) {
+  if (f?.categorie && f.categorie !== 'producteur' && LETTRE_CATEGORIE_FRS[f.categorie]) return poserCodeCategorie(id, companyId, f, { ancien, existants })
   if (f?.type==='morale' || !estProducteur(f)) return { statut:'ignore' }
   const r = codeProducteurParRegle(f)
   if (r.erreur) {
@@ -3694,6 +3868,9 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
   const [sortBy, setSortBy] = useState('') // ''=plus récents | 'alpha' | 'contrat'
   const [avances, setAvances] = useState([])
   const [rembAG, setRembAG] = useState(null) // fonds intrant retenus sur les achats groupés
+  // Étuveuse : données du répertoire (compta_etuveuses) et mentorés (compta_etuveuses_mentores)
+  const [etvDetails, setEtvDetails] = useState({ date_contrat:'', capacite_kg:'', zone:'', observations:'' })
+  const [mentores, setMentores] = useState([])
   // Ouvriers engagés par un producteur (table compta_ouvriers_fournisseur)
   const [ouvriersFourn, setOuvriersFourn] = useState(null)   // fournisseur dont on saisit les ouvriers
   const [ouvriers, setOuvriers] = useState([])
@@ -3715,6 +3892,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
       else q = q.eq('user_id', uid)
       return q
     }
+    if (table==='compta_fournisseurs') await chargerCategoriesFrs(companyId)
     let result = await fetchAllRows(buildQuery)
     if (result.error) {
       // Coupure réseau ou erreur temporaire du serveur : on retente une fois automatiquement
@@ -3742,6 +3920,18 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
       const byF = {}
       av.forEach(a=>{ (byF[a.fournisseur_id]=byF[a.fournisseur_id]||[]).push(a) })
       rowsF = rowsF.map(r=>({ ...r, _avances: byF[r.id]||[] }))
+      // Âge / tranche d'âge recalculés depuis la date de naissance (fournisseurs importés
+      // sans tranche, anniversaires passés) : mise à jour en base, en arrière-plan.
+      const aCorriger = rowsF.filter(r => r.date_naissance).map(r => ({ r, at:ageEtTranche(r) }))
+        .filter(({ r, at }) => String(r.age ?? '') !== at.age || (r.tranche_age||'') !== at.tranche_age)
+      if (aCorriger.length) {
+        const corr = new Map(aCorriger.map(({ r, at }) => [r.id, at]))
+        rowsF = rowsF.map(r => corr.has(r.id) ? { ...r, age: corr.get(r.id).age==='' ? null : parseInt(corr.get(r.id).age,10), tranche_age: corr.get(r.id).tranche_age||null } : r)
+        ;(async () => {
+          for (const { r, at } of aCorriger)
+            await supabase.from('compta_fournisseurs').update({ age: at.age==='' ? null : parseInt(at.age,10), tranche_age: at.tranche_age||null }).eq('id', r.id)
+        })()
+      }
     }
     setItems(rowsF)
     setLoading(false)
@@ -3797,7 +3987,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
 
   const tiersVal = (it,c) => ({
     'Type': it.type==='morale'?'Société':'Physique',
-    'Catégorie': libelleCategorieFrs(it.categorie).replace(/^\S+\s/, ''),
+    'Catégorie': libelleCategorieFrs(it.categorie).replace(/^[^\p{L}\p{N}\s]+\s+/u, ''),
     'Code': it.code_trace||'',
     'Nom': displayName(it),
     'Prénom': it.prenom||'',
@@ -3822,8 +4012,8 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     'Bas-fonds': it.nom_bas_fonds||'',
     'Superficie (ha)': it.superficie_bas_fonds||'',
     'Date de naissance': it.date_naissance ? new Date(it.date_naissance).toLocaleDateString('fr-FR') : '',
-    'Âge': it.age||'',
-    'Tranche d\'âge': it.tranche_age||'',
+    'Âge': ageEtTranche(it).age,
+    'Tranche d\'âge': ageEtTranche(it).tranche_age,
     'Nationalité': it.nationalite||'',
     'Total Kit FRIA (FCFA)': (Array.isArray(it._avances)?it._avances:[]).reduce((sm,a)=>sm+(Number(a.valeur_remboursement)||0),0) || '',
     'Prix/contrat (FCFA)': it.prix_contrat||'',
@@ -3870,20 +4060,6 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
 
   const set = e => setForm(f=>({...f,[e.target.name]:e.target.value}))
   const setTel = e => setForm(f=>({...f,[e.target.name]:formatTelPairs(e.target.value)}))
-  // Age calcule a partir de la date de naissance (annees revolues), et tranche
-  // d'age deduite de l'age (<35 / >35) — utilises par les champs "Date de
-  // naissance" et "Age" du profil du jeune, pour eviter la saisie manuelle.
-  const calculerAge = (dateNaissance) => {
-    if (!dateNaissance) return ''
-    const n = new Date(dateNaissance)
-    if (isNaN(n)) return ''
-    const a = new Date()
-    let age = a.getFullYear()-n.getFullYear()
-    const m = a.getMonth()-n.getMonth()
-    if (m<0 || (m===0 && a.getDate()<n.getDate())) age--
-    return String(age)
-  }
-  const trancheDepuisAge = (age) => (age==='' || age==null || isNaN(age)) ? '' : (Number(age)<35 ? '<35' : '>35')
 
   const baseDefaults = { company_id:companyId||'', nom:'', prenom:'', nom_societe:'', telephone:'', provenance:'', cip:'', ifu:'', email:'', adresse:'', genre:'', handicap:false, mentor_nom:'', mentor_telephone:'', mentor_cip:'', mentor_age:'', departement:'', commune:'', arrondissement:'', village:'', nom_bas_fonds:'', superficie_bas_fonds:'', cooperative_affiliee:'', numero_contrat:'', prix_contrat:'',
     date_naissance:'', age:'', tranche_age:'', nationalite:'',
@@ -3897,8 +4073,17 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
       return
     }
     const defaults = extraFields ? extraFields.defaults : {}
-    setForm(it?{...it}:{...baseDefaults,...defaults,...(table==='compta_fournisseurs'?{categorie:'producteur'}:{})}); setModal(it?'edit':'add')
+    // Nouveau fournisseur : on demande d'abord la catégorie (_choixCategorie), puis le
+    // formulaire propre à cette catégorie s'affiche.
+    setForm(it?{...it, ...ageEtTranche(it)}:{...baseDefaults,...defaults,...(table==='compta_fournisseurs'?{categorie:'', _choixCategorie:true}:{})}); setModal(it?'edit':'add')
     setAvances([]); setRembAG(null)
+    setEtvDetails({ date_contrat:'', capacite_kg:'', zone:'', observations:'' }); setMentores([])
+    if (it && table==='compta_fournisseurs' && it.categorie==='etuveuse') {
+      supabase.from('compta_etuveuses').select('id,date_contrat,capacite_kg,zone,observations').eq('fournisseur_id', it.id).maybeSingle()
+        .then(({ data }) => { if (data) setEtvDetails({ id:data.id, date_contrat:data.date_contrat||'', capacite_kg:data.capacite_kg??'', zone:data.zone||'', observations:data.observations||'' }) })
+      supabase.from('compta_etuveuses_mentores').select('*').eq('fournisseur_id', it.id).order('ordre')
+        .then(({ data }) => { if (data) setMentores(data.map(m => ({ nom_prenoms:m.nom_prenoms||'', village:m.village||'', genre:m.genre||'', handicap:!!m.handicap, npi:m.npi||'', date_naissance:m.date_naissance||'', contact:m.contact||'' }))) })
+    }
     if (it && table==='compta_fournisseurs') {
       supabase.from('compta_achats_groupes_lignes').select('fonds_intrant,compta_achats_groupes(numero,statut)').eq('fournisseur_id', it.id)
         .then(({ data, error }) => { if (error || !data) return
@@ -3929,6 +4114,45 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     }
   }
   const close = ()=>setModal(null)
+  const estCategorieSpeciale = table==='compta_fournisseurs' && !!TABLE_CATEGORIE_FRS[form.categorie]
+
+  // Données propres à la catégorie : fiche du répertoire Étuveuses (+ mentorés), ou ligne
+  // dans compta_intermediaires / compta_transporteurs. Le code de la fiche fournisseur est
+  // aussi le code de l'étuveuse et son code de traçabilité (un seul code).
+  const persistCategorie = async (fournId, cid, uidp, f) => {
+    const t = TABLE_CATEGORIE_FRS[f.categorie]
+    if (!t || !fournId) return
+    const signaler = err => toast.error(/relation|does not exist|schema cache|fournisseur_id/i.test(err.message) ? MSG_SCRIPT_CATEGORIES_4 : err.message)
+    if (f.categorie === 'etuveuse') {
+      const { data:fr } = await supabase.from('compta_fournisseurs').select('code_trace').eq('id', fournId).maybeSingle()
+      const code = fr?.code_trace || null
+      const ligne = {
+        company_id:cid, user_id:uidp, fournisseur_id:fournId, ifu:f.ifu||null,
+        nom_etuveuse: f.type==='morale' ? (f.nom_societe||'') : [f.nom, f.prenom].filter(Boolean).join(' '),
+        code_etuveuse:code, code_trace:code,
+        date_contrat:etvDetails.date_contrat||null, capacite_kg:numFR(etvDetails.capacite_kg)||0,
+        zone:etvDetails.zone||null, observations:etvDetails.observations||null,
+      }
+      const { data:exist } = await supabase.from('compta_etuveuses').select('id').eq('fournisseur_id', fournId).maybeSingle()
+      const { error } = exist
+        ? await supabase.from('compta_etuveuses').update(ligne).eq('id', exist.id)
+        : await supabase.from('compta_etuveuses').insert(ligne)
+      if (error) { signaler(error); return }
+      const { error:errD } = await supabase.from('compta_etuveuses_mentores').delete().eq('fournisseur_id', fournId)
+      if (errD) { signaler(errD); return }
+      const lignes = mentores.filter(m => m.nom_prenoms.trim()).map((m, i) => ({
+        company_id:cid, user_id:uidp, fournisseur_id:fournId, ordre:i,
+        nom_prenoms:m.nom_prenoms.trim(), village:m.village||null, genre:m.genre||null, handicap:!!m.handicap,
+        npi:onlyDigits(m.npi)||null, date_naissance:m.date_naissance||null, contact:m.contact||null,
+      }))
+      if (lignes.length) { const { error:errM } = await supabase.from('compta_etuveuses_mentores').insert(lignes); if (errM) signaler(errM) }
+      return
+    }
+    const { error } = await supabase.from(t).upsert({ company_id:cid, user_id:uidp, fournisseur_id:fournId }, { onConflict:'fournisseur_id' })
+    if (error) signaler(error)
+  }
+  const setMentore = (i, k, v) => setMentores(l => { const n = [...l]; n[i] = { ...n[i], [k]:v }; return n })
+  const ajouterMentore = () => setMentores(l => [...l, { nom_prenoms:'', village:'', genre:'', handicap:false, npi:'', date_naissance:'', contact:'' }])
 
   const save = async e => {
     e.preventDefault(); setSaving(true)
@@ -3952,7 +4176,12 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     // vide (« invalid input syntax for type date ») et bloquait la fiche.
     if ('date_naissance' in pay && !pay.date_naissance) pay.date_naissance = null
     // Validation bloquante des identifiants numériques (facultatifs, mais mal formés = refusés)
-    if (!isValidCIP(pay.cip)) { toast.error('N° CIP invalide : il doit contenir exactement 10 chiffres.'); setSaving(false); return }
+    if (table==='compta_fournisseurs' && !form.categorie) { toast.error('Choisissez la catégorie du fournisseur.'); setSaving(false); return }
+    if (!isValidCIP(pay.cip)) { toast.error(`N° ${estCategorieSpeciale ? 'NPI' : 'CIP'} invalide : il doit contenir exactement 10 chiffres.`); setSaving(false); return }
+    if (form.categorie==='etuveuse') {
+      const m = mentores.findIndex(x => x.nom_prenoms.trim() && (!isValidCIP(x.npi) || !isValidTel(x.contact)))
+      if (m >= 0) { toast.error(`Mentoré n°${m+1} : NPI (10 chiffres) ou contact (10 chiffres) invalide.`); setSaving(false); return }
+    }
     if (!isValidIFU(pay.ifu)) { toast.error('N° IFU invalide : il doit contenir exactement 13 chiffres.'); setSaving(false); return }
     if (!isValidTel(pay.telephone)) { toast.error('Numéro de téléphone invalide : il doit contenir exactement 10 chiffres.'); setSaving(false); return }
     if ('mentor_cip' in pay && !isValidCIP(pay.mentor_cip)) { toast.error('N° CIP du mentor invalide : il doit contenir exactement 10 chiffres.'); setSaving(false); return }
@@ -3979,7 +4208,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     }
     if (modal==='add') {
       const { data:ins, error } = await supabase.from(table).insert({...pay,user_id:uid}).select('id').single()
-      if (error) { setSaving(false); toast.error(/categorie/i.test(error.message) ? MSG_SCRIPT_CATEGORIE : error.message); return }
+      if (error) { setSaving(false); toast.error(/categorie_check/i.test(error.message) ? MSG_SCRIPT_CATEGORIES_4 : /categorie/i.test(error.message) ? MSG_SCRIPT_CATEGORIE : error.message); return }
       if (table==='compta_fournisseurs') {
         // Producteur (personne physique) : code par règle, seulement si le CIP est renseigné.
         // Personne morale / autre catégorie : ancien code automatique.
@@ -3988,6 +4217,8 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
         else if (rc.statut==='conflit') toast.error(rc.doublon ? `Un producteur a déjà le même CIP${rc.avec ? ' (' + rc.avec + ')' : ''} : doublon probable, aucun code posé.` : `Aucun code libre pour ${rc.code} : aucun code posé.`)
         else if (rc.statut==='erreur') toast.error(rc.message)
         else if (rc.statut==='pose' && rc.suffixe) toast.success(`Code ${rc.code} attribué (lettre ajoutée : le code de base est déjà pris par ${rc.avec || 'un autre producteur'}).`)
+        else if (rc.statut==='incomplet' && estCategorieSpeciale) toast.error(`Aucun code attribué : ${rc.raison}.`)
+        await persistCategorie(ins.id, pay.company_id, uid, { ...form, ...pay })
       }
       // Numero de compte (fournisseur 4011… / client 4111…) : n'existe que si le CIP
       // (personne physique) ou l'IFU (personne morale) est renseigne.
@@ -4006,12 +4237,14 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
       toast.success(`${titleSingle} enregistré(e) !`); close(); load(); return
     }
     const { error } = await supabase.from(table).update(pay).eq('id',form.id)
-    if (error) { setSaving(false); toast.error(/categorie/i.test(error.message) ? MSG_SCRIPT_CATEGORIE : error.message); return }
+    if (error) { setSaving(false); toast.error(/categorie_check/i.test(error.message) ? MSG_SCRIPT_CATEGORIES_4 : /categorie/i.test(error.message) ? MSG_SCRIPT_CATEGORIE : error.message); return }
     if (table==='compta_fournisseurs') {
       const rc = await poserCodeProducteur(form.id, pay.company_id || form.company_id, { ...form, ...pay }, { ancien: form.code_trace||null })
       if (rc.statut==='conflit') toast.error(rc.doublon ? `Un producteur a déjà le même CIP${rc.avec ? ' (' + rc.avec + ')' : ''} : doublon probable, code inchangé.` : `Aucun code libre pour ${rc.code} : code inchangé.`)
       else if (rc.statut==='erreur') toast.error(rc.message)
       else if (rc.statut==='pose' && rc.suffixe) toast.success(`Code ${rc.code} attribué (lettre ajoutée : le code de base est déjà pris par ${rc.avec || 'un autre producteur'}).`)
+      else if (rc.statut==='incomplet' && estCategorieSpeciale) toast.error(`Code non mis à jour : ${rc.raison}.`)
+      await persistCategorie(form.id, pay.company_id || form.company_id, uid, { ...form, ...pay })
     }
     if (table==='compta_fournisseurs' || table==='compta_clients') {
       const isFourn = table==='compta_fournisseurs'
@@ -4130,7 +4363,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
   const [importing, setImporting] = useState(false)
   const canImport = table==='compta_fournisseurs' || table==='compta_clients'
 
-  const downloadTemplate = () => {
+  const downloadTemplate = (cat) => {
     // Une seule liste [colonne, exemple 1, exemple 2] : les en-têtes et les lignes d'exemple
     // restent toujours alignés. Les colonnes labour_… à credits_… créent les lignes du
     // tableau « Kit FRIA reçu » de la fiche fournisseur (quantité + montant par type).
@@ -4160,9 +4393,9 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
       ['village','Pingou',''],
       ['nom_bas_fonds','Bas-fonds Pingou',''],
       ['superficie_bas_fonds','2.5',''],
-      ['date_naissance','2002-05-14',''],
-      ['age','24',''],
-      ['tranche_age','<35',''],
+      ['date_naissance','14/05/2002',''],
+      ['age','',''],
+      ['tranche_age','',''],
       ['nationalite','Béninoise',''],
       ['nombre_jeunes_femmes','1',''],
       ['nombre_jeunes_hommes','2',''],
@@ -4173,12 +4406,17 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
       ['herbicide_qte','1.5',''], ['herbicide_montant','15000',''],
       ['credits_qte','',''], ['credits_montant','',''],
     ]
-    const headers = spec.map(x=>x[0]), ex1 = spec.map(x=>x[1]), ex2 = spec.map(x=>x[2])
-    const csv = [headers.join(';'), ex1.join(';'), ex2.join(';')].join('\n')
+    // Fournisseurs : un mod\u00e8le par cat\u00e9gorie, intitul\u00e9s en fran\u00e7ais (MODELES_CSV_FRS).
+    const modele = table==='compta_fournisseurs' && MODELES_CSV_FRS[cat]
+    const lignes = modele
+      ? [modele.map(x=>x[1]), ...[2,3].map(k => modele.map(x=>x[k] ?? ''))]
+      : [spec.map(x=>x[0]), spec.map(x=>x[1]), spec.map(x=>x[2])]
+    const csv = lignes.map(l => l.join(';')).join('\n')
     const blob = new Blob(['\ufeff'+csv], {type:'text/csv;charset=utf-8;'})
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
-    a.href = url; a.download = `modele_import_${titleSingle.toLowerCase()}s.csv`
+    const nomFichier = { producteur:'producteurs', etuveuse:'etuveuses', intermediaire:'intermediaires', transporteur:'transporteurs' }[cat]
+    a.href = url; a.download = `modele_import_${modele ? nomFichier : titleSingle.toLowerCase()+'s'}.csv`
     a.click(); URL.revokeObjectURL(url)
     toast.success('Modèle téléchargé !')
   }
@@ -4227,14 +4465,29 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     herbicide_montant: ['herbicide_montant','herbicide montant','herbicide montant fcfa'],
     credits_qte: ['credits_qte','credits qte'],
     credits_montant: ['credits_montant','credits montant','credits montant fcfa'],
+    // Étuveuses / intermédiaires / transporteurs
+    date_contrat: ['date_contrat','date du contrat','date contrat'],
+    capacite_kg: ['capacite_kg','capacite','capacite kg','capacite de traitement kg'],
+    zone: ['zone','zone localite'], observations: ['observations','observation'],
+    mentore_nom: ['mentore nom','mentore nom et prenoms'],
+    mentore_village: ['mentore village','mentore village quartier'],
+    mentore_genre: ['mentore sexe','mentore genre'],
+    mentore_handicap: ['mentore handicap'],
+    mentore_npi: ['mentore npi'],
+    mentore_date_naissance: ['mentore date de naissance'],
+    mentore_contact: ['mentore contact','mentore telephone'],
   }
   const HEADER_LOOKUP = {}
   Object.entries(HEADER_ALIASES).forEach(([key,aliases])=>{
     aliases.forEach(a=>{ HEADER_LOOKUP[normalizeHeader(a)] = key })
   })
+  // Intitulés français des modèles par catégorie (NPI -> cip, Sexe -> genre…).
+  Object.values(MODELES_CSV_FRS).forEach(m => m.forEach(([key,label]) => { HEADER_LOOKUP[normalizeHeader(label)] = key }))
   const resolveHeaderKey = (h) => HEADER_LOOKUP[normalizeHeader(h)] || null
 
   const importInputRef = useRef(null)
+  const importCategorieRef = useRef(null) // catégorie choisie avant l'import (fournisseurs)
+  const [csvChoix, setCsvChoix] = useState(null) // 'modele' | 'import' | null
   const handleImport = async (e) => {
     const file = e.target.files[0]
     if(!file) return
@@ -4262,25 +4515,46 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
       const cid = companyId || prof?.company_id
       if(!cid){ toast.error('Sélectionnez une société précise (en haut de l\'écran) avant d\'importer — "Toutes les sociétés" ne suffit pas.'); setImporting(false); return }
 
+      // Fournisseurs : la catégorie est choisie avant l'import et s'applique à tout le fichier.
+      const catImp = table==='compta_fournisseurs' ? (importCategorieRef.current || 'producteur') : null
       const rows = []
       const avancesPerRow = []
+      const extrasPerRow = []          // étuveuses : { etv:{…contrat}, mentores:[…] }
+      const groupesEtv = new Map()     // clé du mentor -> index dans rows
+      let nbMentores = 0
       const datesIllisibles = []
       const ignorees = []
       const categoriesInconnues = []
       let nomsSepares = 0
+      const ouiNon = v => /^(oui|o|yes|y|1|true|vrai)$/i.test(String(v||'').trim())
       for(let i=headerLineIndex+1;i<lines.length;i++){
         const vals = lines[i].split(delim).map(v=>v.trim())
         if (!vals.some(v => v)) continue // ligne entièrement vide
         const obj = {}
         headers.forEach((h,idx)=>{ obj[h]=vals[idx]||'' })
         // Validation minimale
-        const t = (obj.type||'physique').toLowerCase()
+        const t = /^(morale|soci)/i.test((obj.type||'').trim()) ? 'morale' : 'physique'
+        // Étuveuse : une ligne par mentoré ; les lignes d'un même mentor forment une seule étuveuse.
+        const mentoreLigne = () => {
+          if (!obj.mentore_nom) return null
+          const dm = parseDateFR(obj.mentore_date_naissance)
+          if (dm.invalide) datesIllisibles.push(`${obj.mentore_nom} (${obj.mentore_date_naissance})`)
+          return { nom_prenoms:obj.mentore_nom, village:obj.mentore_village||null, genre:obj.mentore_genre||null, handicap:ouiNon(obj.mentore_handicap),
+            npi:onlyDigits(obj.mentore_npi)||null, date_naissance:dm.iso, contact:obj.mentore_contact||null }
+        }
+        if (catImp==='etuveuse') {
+          const cle = onlyDigits(t==='morale' ? obj.ifu : obj.cip) || [obj.nom, obj.prenom, obj.nom_societe].map(s=>String(s||'').trim().toLowerCase()).join('|')
+          if (groupesEtv.has(cle) && cle.replace(/\|/g,'')) {
+            const m = mentoreLigne(); if (m) { extrasPerRow[groupesEtv.get(cle)].mentores.push(m); nbMentores++ }
+            continue
+          }
+        }
         // Nom complet dans « prenom » et « nom » vide : on sépare (mots en MAJUSCULES du début = nom).
         let nomImp = obj.nom, prenomImp = obj.prenom
         if (t!=='morale' && !nomImp && prenomImp) { const sp = separerNomComplet(prenomImp); if (sp) { nomImp = sp.nom; prenomImp = sp.prenom || ''; nomsSepares++ } }
         if(t==='morale' && !obj.nom_societe){ ignorees.push(`ligne ${i+1} (nom_societe manquant)`); continue }
         if(t!=='morale' && !nomImp){ ignorees.push(`ligne ${i+1} (nom manquant)`); continue }
-        const cat = table==='compta_fournisseurs' ? categorieFournisseurDepuisTexte(obj.categorie) : { cle:null }
+        const cat = catImp ? { cle:catImp } : { cle:null }
         if (cat.inconnue) categoriesInconnues.push(`${nomImp||obj.nom_societe} (${obj.categorie})`)
         const dn = table==='compta_fournisseurs' ? parseDateFR(obj.date_naissance) : { iso:null }
         if (dn.invalide) datesIllisibles.push(`${obj.nom||obj.nom_societe||'?'} (${obj.date_naissance})`)
@@ -4312,22 +4586,32 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
             superficie_bas_fonds: numFR(obj.superficie_bas_fonds)||null,
             prix_contrat: numFR(obj.prix_contrat)||null,
             mentor_age: obj.mentor_age ? parseInt(obj.mentor_age,10)||null : null,
-            date_naissance: dn.iso,
-            age: obj.age ? parseInt(obj.age,10)||null : null,
-            tranche_age: obj.tranche_age||null,
+            // Âge et tranche recalculés depuis la date de naissance quand elle est lisible ;
+            // sinon on garde l'âge du fichier et on en déduit la tranche.
+            ...(() => {
+              const at = ageEtTranche({ date_naissance: dn.iso, age: obj.age ? parseInt(obj.age,10) : '', tranche_age: obj.tranche_age })
+              return { date_naissance: dn.iso, age: at.age !== '' && !isNaN(at.age) ? parseInt(at.age,10) : null, tranche_age: at.tranche_age || null }
+            })(),
             nationalite: obj.nationalite||null,
             nombre_jeunes_femmes: obj.nombre_jeunes_femmes ? parseInt(obj.nombre_jeunes_femmes,10)||null : null,
             nombre_jeunes_hommes: obj.nombre_jeunes_hommes ? parseInt(obj.nombre_jeunes_hommes,10)||null : null,
           } : {})
         })
-        avancesPerRow.push(table==='compta_fournisseurs' ? avsImp : [])
+        avancesPerRow.push(catImp==='producteur' ? avsImp : [])
+        if (catImp==='etuveuse') {
+          const cle = onlyDigits(t==='morale' ? obj.ifu : obj.cip) || [obj.nom, obj.prenom, obj.nom_societe].map(s=>String(s||'').trim().toLowerCase()).join('|')
+          groupesEtv.set(cle, rows.length-1)
+          const dc = parseDateFR(obj.date_contrat)
+          const m = mentoreLigne(); if (m) nbMentores++
+          extrasPerRow.push({ etv:{ date_contrat:dc.iso, capacite_kg:numFR(obj.capacite_kg)||0, zone:obj.zone||null, observations:obj.observations||null }, mentores: m ? [m] : [] })
+        } else extrasPerRow.push(null)
       }
       if(rows.length===0){ toast.error(ignorees.length ? `Aucune ligne importée : ${ignorees.length} ligne(s) ignorée(s) — ${ignorees.slice(0,3).join(' ; ')}${ignorees.length>3?' …':''}` : 'Aucune ligne valide trouvée'); setImporting(false); return }
-      const { data:insRows, error } = await supabase.from(table).insert(rows).select(table==='compta_fournisseurs' ? 'id,type,nom,prenom,nom_societe,cip,commune,categorie' : 'id,type,nom,nom_societe')
+      const { data:insRows, error } = await supabase.from(table).insert(rows).select(table==='compta_fournisseurs' ? 'id,type,nom,prenom,nom_societe,cip,ifu,commune,categorie' : 'id,type,nom,nom_societe')
       if(error){ toast.error('Erreur import : '+error.message); setImporting(false); return }
       if (datesIllisibles.length) toast.error(`${datesIllisibles.length} date(s) de naissance illisible(s), laissée(s) vide(s) : ${datesIllisibles.slice(0,3).join(' ; ')}${datesIllisibles.length>3?' …':''}. Format attendu : JJ/MM/AAAA.`)
       if (ignorees.length) toast.error(`${ignorees.length} ligne(s) ignorée(s) : ${ignorees.slice(0,3).join(' ; ')}${ignorees.length>3?' …':''}. Le nom (ou nom_societe) est obligatoire.`)
-      if (categoriesInconnues.length) toast.error(`${categoriesInconnues.length} catégorie(s) non reconnue(s), laissée(s) « Non classé » : ${categoriesInconnues.slice(0,3).join(' ; ')}${categoriesInconnues.length>3?' …':''}. Valeurs acceptées : producteur, prestataire, commercant, transporteur, autre.`)
+      if (categoriesInconnues.length) toast.error(`${categoriesInconnues.length} catégorie(s) non reconnue(s), laissée(s) « Non classé » : ${categoriesInconnues.slice(0,3).join(' ; ')}${categoriesInconnues.length>3?' …':''}. Valeurs acceptées : producteur, etuveuse, intermediaire, transporteur.`)
       // Kit FRIA importé (fournisseurs) : enregistré tout de suite après les fiches, avant les
       // étapes plus longues (codes producteurs, comptes comptables), pour ne jamais être perdu.
       if (table==='compta_fournisseurs') {
@@ -4339,11 +4623,32 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
         }
       }
       if (table==='compta_fournisseurs') {
-        const { data:codesPris } = await fetchAllRows(() => supabase.from('compta_fournisseurs').select('id,code_trace,cip,nom,prenom,nom_societe').eq('company_id', cid).not('code_trace','is',null).order('id'))
-        const existants = new Map((codesPris||[]).map(c => [c.code_trace, { cip:onlyDigits(c.cip), label:labelTiers(c) }]))
+        const { data:codesPris } = await fetchAllRows(() => supabase.from('compta_fournisseurs').select('id,type,code_trace,cip,ifu,nom,prenom,nom_societe').eq('company_id', cid).not('code_trace','is',null).order('id'))
+        const existants = new Map((codesPris||[]).map(c => [c.code_trace, { cip:onlyDigits(c.type==='morale' && !/-P/.test(c.code_trace) ? c.ifu : c.cip), label:labelTiers(c) }]))
         for (const r of insRows||[]) {
           const rc = await poserCodeProducteur(r.id, cid, r, { existants })
           if (rc.statut==='ignore') await attribuerCodeTrace('compta_fournisseurs', r.id, cid, 'P')
+        }
+        // Table propre à la catégorie (étuveuses + mentorés, intermédiaires, transporteurs).
+        const tCat = TABLE_CATEGORIE_FRS[catImp]
+        if (tCat && insRows?.length) {
+          const signaler = err => toast.error(`Fiches importées, mais ${/relation|does not exist|schema cache|fournisseur_id/i.test(err.message) ? MSG_SCRIPT_CATEGORIES_4 : err.message}`)
+          if (catImp === 'etuveuse') {
+            const { data:codes } = await supabase.from('compta_fournisseurs').select('id,code_trace').in('id', insRows.map(r=>r.id))
+            const codeDe = new Map((codes||[]).map(c => [c.id, c.code_trace||null]))
+            const etvRows = insRows.map((r, idx) => ({
+              company_id:cid, user_id:uid, fournisseur_id:r.id, ifu:r.ifu||null,
+              nom_etuveuse: r.type==='morale' ? (r.nom_societe||'') : [r.nom, r.prenom].filter(Boolean).join(' '),
+              code_etuveuse:codeDe.get(r.id)||null, code_trace:codeDe.get(r.id)||null, ...(extrasPerRow[idx]?.etv||{}),
+            }))
+            const { error:errE } = await supabase.from('compta_etuveuses').insert(etvRows)
+            if (errE) signaler(errE)
+            const menRows = insRows.flatMap((r, idx) => (extrasPerRow[idx]?.mentores||[]).map((m, k) => ({ ...m, company_id:cid, user_id:uid, fournisseur_id:r.id, ordre:k })))
+            if (!errE && menRows.length) { const { error:errM } = await supabase.from('compta_etuveuses_mentores').insert(menRows); if (errM) signaler(errM) }
+          } else {
+            const { error:errC } = await supabase.from(tCat).insert(insRows.map(r => ({ company_id:cid, user_id:uid, fournisseur_id:r.id })))
+            if (errC) signaler(errC)
+          }
         }
       }
       // Attribution automatique des numéros de compte (séquentiel)
@@ -4360,7 +4665,8 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
           nums.push(numero)
         }
       }
-      toast.success(`${rows.length} ${titleSingle.toLowerCase()}(s) importé(s) !${nomsSepares ? ` (${nomsSepares} nom(s) complet(s) séparé(s) en nom / prénoms)` : ''}`)
+      const libCat = catImp ? libelleCategorieFrs(catImp).replace(/^[^\p{L}\p{N}\s]+\s+/u, '').toLowerCase() : titleSingle.toLowerCase()
+      toast.success(`${rows.length} ${libCat}(s) importé(s) !${catImp==='etuveuse' ? ` (${nbMentores} mentoré(s))` : ''}${nomsSepares ? ` (${nomsSepares} nom(s) complet(s) séparé(s) en nom / prénoms)` : ''}`)
       load()
     } catch(err) {
       toast.error('Erreur lecture fichier : '+err.message)
@@ -5091,6 +5397,24 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
           <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
             {/* Entrée fichier hors du menu : elle survit à sa fermeture. */}
             <input ref={importInputRef} type="file" accept=".csv" onChange={handleImport} disabled={importing} style={{display:'none'}} />
+            {/* Fournisseurs : catégorie demandée avant le modèle CSV ou l'import. */}
+            <Modal open={!!csvChoix} onClose={()=>setCsvChoix(null)} title={csvChoix==='modele' ? 'Modèle CSV — choisissez la catégorie' : 'Importer un CSV — choisissez la catégorie'}>
+              <p style={{fontSize:13.5,color:'#475569',marginTop:0}}>
+                {csvChoix==='modele' ? 'Le modèle contiendra uniquement les colonnes de cette catégorie.' : 'Tous les fournisseurs du fichier seront enregistrés dans cette catégorie. Utilisez le modèle de la même catégorie.'}
+              </p>
+              <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))',gap:10}}>
+                {CATEGORIES_FOURNISSEUR.map(([k,l]) => (
+                  <button key={k} type="button"
+                    onClick={()=>{ const mode = csvChoix; setCsvChoix(null)
+                      if (mode==='modele') downloadTemplate(k)
+                      else { importCategorieRef.current = k; importInputRef.current?.click() } }}
+                    style={{padding:'14px 12px',borderRadius:10,border:'1.5px solid #e2e8f0',background:'white',cursor:'pointer',fontSize:14,fontWeight:700,color:'#0f2044',textAlign:'left'}}>
+                    {l}
+                    {k==='etuveuse' && <div style={{fontSize:11.5,fontWeight:400,color:'#64748b',marginTop:4}}>Une ligne par mentoré</div>}
+                  </button>
+                ))}
+              </div>
+            </Modal>
             <ActionsMenu items={[
               items.length>0 && { couleur:'#475569', label:'🧮 Colonnes', onClick:()=>setColModalOpen(true) },
               items.length>0 && { couleur:'#0891b2', label:'🖨️ PDF liste', onClick:printListeTiers },
@@ -5107,8 +5431,8 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
               isFourn && items.length>0 && { couleur:'#ea580c', label:'👷 Liste des ouvriers (PDF)', onClick:printListeOuvriers },
               isFourn && items.length>0 && { couleur:'#16a34a', label:'👷 Liste des ouvriers (Excel)', onClick:exportExcelOuvriers },
               !readOnly && canImport && null,
-              !readOnly && canImport && { couleur:'#64748b', label:'📥 Modèle CSV', onClick:downloadTemplate },
-              !readOnly && canImport && { couleur:'#15803d', label:importing?'⏳ Import…':'📤 Importer CSV', disabled:importing, onClick:()=>importInputRef.current?.click() },
+              !readOnly && canImport && { couleur:'#64748b', label:'📥 Modèle CSV', onClick:()=> isFourn ? setCsvChoix('modele') : downloadTemplate() },
+              !readOnly && canImport && { couleur:'#15803d', label:importing?'⏳ Import…':'📤 Importer CSV', disabled:importing, onClick:()=> isFourn ? setCsvChoix('import') : importInputRef.current?.click() },
               !readOnly && table==='compta_fournisseurs' && items.length>0 && null,
               !readOnly && table==='compta_fournisseurs' && items.length>1 && { couleur:'#1d4ed8', label:'🧹 Doublons', onClick:removeDuplicates },
               !readOnly && table==='compta_fournisseurs' && items.length>0 && { label:`🗑️ ${filtered.length!==items.length ? `Supprimer filtrés (${filtered.length})` : 'Vider la liste'}`, danger:true, onClick:deleteAll },
@@ -5258,8 +5582,118 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
           </TableWrap>
         )}
       </div>
-      <Modal open={!!modal} onClose={close} title={modal==='add'?`Nouveau(elle) ${titleSingle}`:`Modifier ${titleSingle}`} size="lg">
+      <Modal open={!!modal} onClose={close} title={form._choixCategorie ? 'Nouveau fournisseur — choisissez la catégorie' : modal==='add'?`Nouveau(elle) ${table==='compta_fournisseurs' && form.categorie ? libelleCategorieFrs(form.categorie).replace(/^[^\p{L}\p{N}\s]+\s+/u, '').toLowerCase() : titleSingle}`:`Modifier ${titleSingle}`} size="lg">
+        {form._choixCategorie ? (
+          <div>
+            <p style={{fontSize:13.5,color:'#475569',marginTop:0,marginBottom:14}}>Quel type de fournisseur voulez-vous enregistrer ?</p>
+            <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(180px,1fr))',gap:12}}>
+              {CATEGORIES_FOURNISSEUR.map(([k,l]) => (
+                <button key={k} type="button" onClick={()=>setForm(f=>({...f, categorie:k, _choixCategorie:false}))}
+                  style={{padding:'18px 14px',borderRadius:10,border:'1.5px solid #e2e8f0',background:'white',cursor:'pointer',fontSize:15,fontWeight:700,color:'#0f2044',textAlign:'left'}}>
+                  {l}
+                  <div style={{fontSize:11.5,fontWeight:400,color:'#64748b',marginTop:4}}>
+                    {k==='producteur' ? 'Formulaire producteur habituel' : k==='etuveuse' ? 'Mentor, mentorés et contrat' : 'Identité, localisation, NPI / IFU'}
+                  </div>
+                </button>
+              ))}
+            </div>
+            <Row style={{marginTop:16}}><Btn variant="secondary" onClick={close}>Annuler</Btn></Row>
+          </div>
+        ) : (
         <form onSubmit={save}>
+          {estCategorieSpeciale && (()=>{
+            const morale = (form.type||'physique')==='morale'
+            const rc = codeCategorieParRegle(form)
+            const titreSection = t => <Span2><div style={{borderTop:'1px solid #e2e8f0',paddingTop:10,marginTop:4,fontSize:12,fontWeight:700,color:'#64748b'}}>{t}</div></Span2>
+            const cell = { padding:'5px 6px' }
+            const inp = { width:'100%', minWidth:0, padding:'7px 8px', border:'1px solid #cbd5e1', borderRadius:6, fontSize:13, boxSizing:'border-box' }
+            return (
+              <>
+                <Grid cols={2} gap={14} style={{marginBottom:16}}>
+                  <Sel label="Type de personne" name="type" value={form.type||'physique'} onChange={set}
+                    options={[{value:'physique',label:'👤 Personne physique'},{value:'morale',label:'🏢 Société'}]} />
+                  <Sel label="Catégorie *" name="categorie" value={form.categorie||''} onChange={set}
+                    options={CATEGORIES_FOURNISSEUR.map(([v,l])=>({value:v,label:l}))} />
+                  {form.categorie==='etuveuse' && !morale && titreSection('👤 MENTOR (responsable de l’étuveuse)')}
+                  {morale ? (
+                    <Span2><Input label="Raison sociale *" name="nom_societe" value={form.nom_societe||''} onChange={set} required /></Span2>
+                  ) : (
+                    <>
+                      <Input label="Nom *" name="nom" value={form.nom||''} onChange={set} required />
+                      <Input label="Prénom(s)" name="prenom" value={form.prenom||''} onChange={set} />
+                    </>
+                  )}
+                  <Input label="Téléphone" name="telephone" type="tel" value={form.telephone} onChange={setTel} />
+                  <Input label="Commune" name="commune" value={form.commune||''} onChange={set} />
+                  <Input label="Arrondissement" name="arrondissement" value={form.arrondissement||''} onChange={set} />
+                  <Input label="Village / quartier" name="village" value={form.village||''} onChange={set} />
+                  {!morale && (
+                    <>
+                      <Sel label="Sexe" name="genre" value={form.genre||''} onChange={set}
+                        options={[{value:'',label:'— Non renseigné —'},{value:'Homme',label:'Homme'},{value:'Femme',label:'Femme'}]} />
+                      <div style={{display:'flex',alignItems:'center',gap:8,paddingTop:22}}>
+                        <input type="checkbox" id="handicap_cat" checked={!!form.handicap} onChange={e=>setForm(f=>({...f,handicap:e.target.checked}))} style={{width:16,height:16,cursor:'pointer'}} />
+                        <label htmlFor="handicap_cat" style={{fontSize:13.5,color:'#374151',cursor:'pointer'}}>Personne en situation de handicap</label>
+                      </div>
+                      <Input label="NPI" name="cip" value={form.cip||''} onChange={set} placeholder="10 chiffres" />
+                    </>
+                  )}
+                  <Input label="IFU" name="ifu" value={form.ifu||''} onChange={set} placeholder="13 chiffres" />
+                  {!morale && (
+                    <Input label="Date de naissance" name="date_naissance" type="date" value={form.date_naissance||''}
+                      onChange={e=>{ const d = e.target.value; const a = calculerAge(d); setForm(f=>({...f, date_naissance:d, age:a, tranche_age:trancheDepuisAge(a)})) }} />
+                  )}
+                  <div>
+                    <label style={{display:'block',fontSize:12.5,fontWeight:600,color:'#374151',marginBottom:5}}>Code</label>
+                    <div style={{padding:'9px 12px',background:'#f8fafc',borderRadius:8,border:'1px solid #d1d5db',fontSize:13.5,minHeight:38,display:'flex',alignItems:'center',fontFamily:'Consolas, monospace',color:rc.code?'#0f766e':'#94a3b8',fontWeight:rc.code?700:400}}>
+                      {form.code_trace && codeConforme(form.code_trace, rc.code) ? form.code_trace : rc.code || (rc.sansIdent ? `Pas de code (${morale?'IFU':'NPI'} non renseigné)` : rc.erreur)}
+                    </div>
+                  </div>
+                  {form.categorie==='etuveuse' && (
+                    <>
+                      {titreSection('📄 CONTRAT & CAPACITÉ')}
+                      <Input label="Date du contrat" name="date_contrat" type="date" value={etvDetails.date_contrat||''} onChange={e=>setEtvDetails(d=>({...d,date_contrat:e.target.value}))} />
+                      <Input label="Capacité de traitement (kg)" name="capacite_kg" type="text" inputMode="decimal" value={etvDetails.capacite_kg??''} onChange={e=>setEtvDetails(d=>({...d,capacite_kg:e.target.value}))} />
+                      <Input label="Zone / Localité" name="zone" value={etvDetails.zone||''} onChange={e=>setEtvDetails(d=>({...d,zone:e.target.value}))} />
+                      <Input label="Observations / Notes contrat" name="observations" value={etvDetails.observations||''} onChange={e=>setEtvDetails(d=>({...d,observations:e.target.value}))} />
+                    </>
+                  )}
+                </Grid>
+                {form.categorie==='etuveuse' && (
+                  <div style={{marginBottom:16}}>
+                    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+                      <label style={{fontSize:13,fontWeight:700,color:'#334155'}}>👥 Mentorés ({mentores.filter(m=>m.nom_prenoms.trim()).length})</label>
+                      <Btn sm type="button" variant="secondary" onClick={ajouterMentore}>+ Ajouter un mentoré</Btn>
+                    </div>
+                    <div style={{border:'1px solid #e2e8f0',borderRadius:8,overflowX:'auto'}}>
+                      <table style={{width:'100%',minWidth:900,borderCollapse:'collapse',fontSize:13}}>
+                        <thead><tr style={{background:'#f8fafc'}}>
+                          {['Nom et prénoms','Village / quartier','Sexe','Handicap','NPI','Date de naissance','Contact',''].map(h=><th key={h} style={{padding:'8px 6px',textAlign:'left',fontSize:12,color:'#475569'}}>{h}</th>)}
+                        </tr></thead>
+                        <tbody>
+                          {mentores.length===0 ? (
+                            <tr><td colSpan={8} style={{padding:12,textAlign:'center',color:'#94a3b8'}}>Aucun mentoré — cliquez sur « + Ajouter un mentoré »</td></tr>
+                          ) : mentores.map((m,i)=>(
+                            <tr key={i} style={{borderTop:'1px solid #f1f5f9'}}>
+                              <td style={{...cell,minWidth:170}}><input style={inp} value={m.nom_prenoms} onChange={e=>setMentore(i,'nom_prenoms',e.target.value)} /></td>
+                              <td style={cell}><input style={inp} value={m.village} onChange={e=>setMentore(i,'village',e.target.value)} /></td>
+                              <td style={cell}><select style={inp} value={m.genre} onChange={e=>setMentore(i,'genre',e.target.value)}><option value=''>—</option><option value='Homme'>Homme</option><option value='Femme'>Femme</option></select></td>
+                              <td style={{...cell,textAlign:'center'}}><input type="checkbox" checked={!!m.handicap} onChange={e=>setMentore(i,'handicap',e.target.checked)} /></td>
+                              <td style={cell}><input style={inp} value={m.npi} onChange={e=>setMentore(i,'npi',e.target.value)} placeholder="10 chiffres" /></td>
+                              <td style={cell}><input style={inp} type="date" value={m.date_naissance} onChange={e=>setMentore(i,'date_naissance',e.target.value)} /></td>
+                              <td style={cell}><input style={inp} type="tel" value={m.contact} onChange={e=>setMentore(i,'contact',formatTelPairs(e.target.value))} /></td>
+                              <td style={{...cell,textAlign:'center'}}><button type="button" title="Supprimer" onClick={()=>setMentores(l=>l.filter((_,j)=>j!==i))} style={{background:'none',border:'none',cursor:'pointer',color:'#dc2626',fontSize:16}}>🗑️</button></td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </>
+            )
+          })()}
+          {!estCategorieSpeciale && (<>
           <Grid cols={2} gap={14} style={{marginBottom:16}}>
             {(table==='compta_clients'||table==='compta_fournisseurs') && (
               <Sel label="Type de personne" name="type" value={form.type||'physique'} onChange={set}
@@ -5438,9 +5872,11 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
               </div>
             )
           })()}
+          </>)}
 
           <Row><Btn variant="secondary" onClick={close}>Annuler</Btn><Btn type="submit" disabled={saving}>{saving?'...':'Enregistrer'}</Btn></Row>
         </form>
+        )}
       </Modal>
 
       <Modal open={colModalOpen} onClose={()=>setColModalOpen(false)} title="Colonnes à afficher (PDF & Excel)" size="sm">
@@ -6405,6 +6841,128 @@ function MouvementsPage({ companies, companyId, setPage, toast, readOnly=false }
 }
 
 // ── INVENTAIRE ────────────────────────────────────────────────────────────────
+
+// ─── CATÉGORIES DE FOURNISSEURS (libellé + couleur modifiables) ───────────────
+const COULEURS_BADGE = [
+  ['success','Vert'], ['info','Bleu'], ['warning','Jaune'], ['danger','Rouge'], ['secondary','Gris'],
+]
+function CategoriesFournisseursPage({ companyId, toast, readOnly=false }) {
+  const [perso, setPerso] = useState([])          // lignes compta_categories_fournisseurs
+  const [tableAbsente, setTableAbsente] = useState(false)
+  const [comptes, setComptes] = useState({})      // cle -> nb fournisseurs actifs ('' = non classés)
+  const [loading, setLoading] = useState(false)
+  const [edit, setEdit] = useState(null)          // { cle, libelle, couleur }
+  const [saving, setSaving] = useState(false)
+
+  const load = useCallback(async () => {
+    if (!companyId) { setPerso([]); setComptes({}); appliquerCategoriesFrsPerso([]); return }
+    setLoading(true)
+    const lignes = await chargerCategoriesFrs(companyId)
+    setTableAbsente(lignes === null); setPerso(lignes || [])
+    const { data } = await fetchAllRows(() => supabase.from('compta_fournisseurs').select('categorie').eq('company_id', companyId).eq('actif', true))
+    const c = {}
+    ;(data||[]).forEach(f => { const k = f.categorie || ''; c[k] = (c[k]||0) + 1 })
+    setComptes(c); setLoading(false)
+  }, [companyId])
+  useEffect(() => { load() }, [load])
+
+  const ouvrir = ([cle, libelle, couleur]) => setEdit({ cle, libelle, couleur })
+  const enregistrer = async e => {
+    e.preventDefault()
+    const libelle = (edit.libelle||'').trim()
+    if (!libelle) { toast.error('Le libellé est obligatoire.'); return }
+    if (CATEGORIES_FOURNISSEUR.some(([k, l]) => k !== edit.cle && l.trim().toLowerCase() === libelle.toLowerCase())) {
+      toast.error('Une autre catégorie porte déjà ce libellé.'); return
+    }
+    setSaving(true)
+    const uid = (await supabase.auth.getUser()).data?.user?.id
+    const { error } = await supabase.from('compta_categories_fournisseurs').upsert(
+      { company_id: companyId, user_id: uid, cle: edit.cle, libelle, couleur: edit.couleur, updated_at: new Date().toISOString() },
+      { onConflict: 'company_id,cle' })
+    setSaving(false)
+    if (error) { toast.error(/relation|does not exist|schema cache/i.test(error.message) ? MSG_SCRIPT_CATEGORIES_LIBELLES : error.message); return }
+    toast.success('Catégorie modifiée !'); setEdit(null); load()
+  }
+  const retablir = async cle => {
+    const def = CATEGORIES_FOURNISSEUR_DEFAUT.find(d => d[0] === cle)
+    if (!confirm(`Rétablir le libellé d'origine « ${def[1]} » ?`)) return
+    const { error } = await supabase.from('compta_categories_fournisseurs').delete().eq('company_id', companyId).eq('cle', cle)
+    if (error) { toast.error(error.message); return }
+    toast.success('Libellé d\'origine rétabli.'); setEdit(null); load()
+  }
+
+  const th = { padding:'10px 16px', textAlign:'left', fontSize:12, fontWeight:700, color:'#64748b', textTransform:'uppercase', letterSpacing:'0.05em' }
+  return (
+    <div>
+      <PageHeader title="Catégories de fournisseurs"
+        subtitle={companyId ? `${CATEGORIES_FOURNISSEUR.length} catégories · ${comptes['']||0} fournisseur(s) non classé(s)` : 'Sélectionnez une société'} />
+      {!companyId ? (
+        <Card style={{textAlign:'center',padding:'48px 24px',color:'#64748b'}}>
+          <div style={{fontSize:40,marginBottom:8}}>🏷️</div>
+          <p>Sélectionnez une société pour gérer ses catégories de fournisseurs</p>
+        </Card>
+      ) : loading ? (
+        <Card><p style={{color:'#64748b',padding:16}}>Chargement...</p></Card>
+      ) : (
+        <>
+          {tableAbsente && (
+            <Card style={{marginBottom:12,background:'#fffbeb',border:'1px solid #fcd34d',color:'#92400e',fontSize:13}}>
+              ⚠️ La modification des catégories n'est pas encore activée. {MSG_SCRIPT_CATEGORIES_LIBELLES}
+            </Card>
+          )}
+          <Card style={{padding:0,overflow:'hidden'}}>
+            <div style={{overflowX:'auto'}}>
+            <table style={{width:'100%',borderCollapse:'collapse',minWidth:480}}>
+              <thead><tr style={{background:'#f8fafc',borderBottom:'2px solid #e2e8f0'}}>
+                <th style={th}>Libellé</th><th style={th}>Libellé d'origine</th><th style={{...th,textAlign:'right'}}>Fournisseurs</th><th style={{...th,textAlign:'right'}}>Actions</th>
+              </tr></thead>
+              <tbody>
+                {CATEGORIES_FOURNISSEUR.map((c, i) => {
+                  const modifie = perso.some(p => p.cle === c[0])
+                  return (
+                    <tr key={c[0]} style={{borderBottom:'1px solid #f1f5f9',background:i%2===0?'white':'#fafafa'}}>
+                      <td style={{padding:'12px 16px'}}><Badge type={c[2]}>{c[1]}</Badge>{modifie && <span style={{marginLeft:8,fontSize:11,color:'#b45309'}}>personnalisé</span>}</td>
+                      <td style={{padding:'12px 16px',fontSize:13,color:'#94a3b8'}}>{CATEGORIES_FOURNISSEUR_DEFAUT[i][1]}</td>
+                      <td style={{padding:'12px 16px',textAlign:'right',fontWeight:600}}>{comptes[c[0]]||0}</td>
+                      <td style={{padding:'12px 16px',textAlign:'right'}}>
+                        {!readOnly && <Btn sm variant="secondary" onClick={()=>ouvrir(c)} disabled={tableAbsente}>✏️ Modifier</Btn>}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+            </div>
+          </Card>
+          <p style={{fontSize:12,color:'#94a3b8',marginTop:10}}>
+            Renommer une catégorie ne change pas le classement des fournisseurs : ils restent rattachés à la même catégorie.
+            Les contrats, PV de réception et ouvriers restent réservés à la catégorie d'origine « Producteur ».
+          </p>
+        </>
+      )}
+      <Modal open={!!edit} onClose={()=>setEdit(null)} title="Modifier la catégorie">
+        {edit && (
+          <form onSubmit={enregistrer}>
+            <div style={{fontSize:12,color:'#64748b',marginBottom:12}}>
+              Libellé d'origine : <b>{CATEGORIES_FOURNISSEUR_DEFAUT.find(d=>d[0]===edit.cle)?.[1]}</b>
+            </div>
+            <Input label="Libellé *" name="libelle" value={edit.libelle} onChange={e=>setEdit(s=>({...s,libelle:e.target.value}))} required />
+            <div style={{marginTop:12}}>
+              <Sel label="Couleur" name="couleur" value={edit.couleur} onChange={e=>setEdit(s=>({...s,couleur:e.target.value}))}
+                options={COULEURS_BADGE.map(([v,l])=>({value:v,label:l}))} />
+            </div>
+            <div style={{margin:'14px 0',fontSize:13}}>Aperçu : <Badge type={edit.couleur}>{edit.libelle||'—'}</Badge></div>
+            <div style={{display:'flex',gap:8,justifyContent:'flex-end',flexWrap:'wrap'}}>
+              {perso.some(p=>p.cle===edit.cle) && <Btn type="button" variant="secondary" onClick={()=>retablir(edit.cle)}>↺ Rétablir l'origine</Btn>}
+              <Btn type="button" variant="secondary" onClick={()=>setEdit(null)}>Annuler</Btn>
+              <Btn type="submit" disabled={saving}>{saving?'Enregistrement...':'💾 Enregistrer'}</Btn>
+            </div>
+          </form>
+        )}
+      </Modal>
+    </div>
+  )
+}
 
 // ─── GESTION DES CATÉGORIES D'ARTICLES ────────────────────────────────────────
 async function loadCategoriesFromSupabase(companyId) {
@@ -8884,7 +9442,7 @@ function LotsSemiFinisPage({ companies, companyId, toast, readOnly=false }) {
 // ── CONSTANTES SECTIONS ───────────────────────────────────────────────────────
 const ALL_SECTIONS = [
   ['dashboard','Tableau de bord'],['companies','Sociétés'],['clients','Clients'],
-  ['fournisseurs','Fournisseurs'],['stock','Articles & Stock'],['mouvements','Mouvements'],['bons_stock',"Bons d'entrée / sortie"],
+  ['fournisseurs','Fournisseurs'],['categories_fournisseurs','Catégories fournisseurs'],['stock','Articles & Stock'],['mouvements','Mouvements'],['bons_stock',"Bons d'entrée / sortie"],
   ['inventaire','Inventaire'],['commercial','Documents commerciaux'],['reglements_clients','Règlements Clients'],['reglements_fourn','Règlements Fournisseurs'],
   ['prestations','Prestations'],['suivi_lot','Suivi de lot'],['registre_tracabilite','Registre de traçabilité'],['tracabilite','Traçabilité (QR)'],['lots','Lots Production'],
   ['etuvage','Étuvage'],['decorticage','Décorticage'],['calibrage','Calibrage'],
@@ -8902,7 +9460,7 @@ const ALL_SECTIONS = [
 ]
 
 const SECTION_GROUPS = [
-  {group:'Référentiel', ids:['companies','clients','fournisseurs']},
+  {group:'Référentiel', ids:['companies','clients','fournisseurs','categories_fournisseurs']},
   {group:'Stock', ids:['stock','mouvements','bons_stock','inventaire','categories_articles']},
   {group:'Commercial', ids:['commercial','reglements_clients','reglements_fourn','prestations']},
   {group:'Traçabilité', ids:['registre_tracabilite','tracabilite']},
@@ -9204,7 +9762,7 @@ const BTN_ACTION   = (icon,bg,onClick,title) => (
 )
 
 // ── RÉPERTOIRE ÉTUVEUSES ──────────────────────────────────────────────────────
-function EtvRepertoirePage({ companies, companyId, toast, readOnly=false }) {
+function EtvRepertoirePage({ companies, companyId, toast, readOnly=false, setPage }) {
   const [items,    setItems]   = useState([])
   const [fournisseurs, setFourn] = useState([])
   const [modal,    setModal]   = useState(false)
@@ -9254,13 +9812,8 @@ function EtvRepertoirePage({ companies, companyId, toast, readOnly=false }) {
   const set = e=>setForm(f=>({...f,[e.target.name]:e.target.value}))
   const getEtvDisplayName = (r) => r?.nom_etuveuse || r?.code_etuveuse || '—'
 
-  const openAdd = ()=>{
-    setForm({company_id:companyId||companies[0]?.id||'',
-      ifu:'', nom_etuveuse:'',
-      code_etuveuse:'',date_contrat:today(),capacite_kg:0,
-      zone:'',observations:''})
-    setModal(true)
-  }
+  // Création d'étuveuse : depuis Fournisseurs (catégorie Étuveuse), pour qu'elle n'ait qu'un
+  // seul code (code par règle = code de traçabilité). L'ancien formulaire n'est plus ouvert.
 
   // Sélection IFU → auto-remplir nom
   const onSelectIFU = (ifu) => {
@@ -9318,7 +9871,7 @@ function EtvRepertoirePage({ companies, companyId, toast, readOnly=false }) {
   return (
     <div>
       <PageHeader title="Répertoire Étuveuses" subtitle={`${items.length} étuveuse(s) enregistrée(s)`}
-        actions={!readOnly&&<Btn onClick={openAdd}>+ Nouvelle Étuveuse</Btn>} />
+        actions={!readOnly&&<Btn onClick={()=>{ toast.success("Ajoutez l'étuveuse depuis Fournisseurs → + Ajouter → Étuveuse : elle apparaîtra ici avec son code."); setPage && setPage('fournisseurs') }}>+ Nouvelle Étuveuse</Btn>} />
       <div style={{background:'white',borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
         {items.length===0?(
           <div style={{textAlign:'center',padding:'48px 24px',color:'#64748b'}}>
@@ -11816,7 +12369,7 @@ async function codePassageEtuvage(companyId, lotId, etuveuseId) {
     if (!soc) return null
     const orig = await origineCodeLot(lotId)
     const { data:e } = etuveuseId ? await supabase.from('compta_etuveuses').select('code_trace').eq('id', etuveuseId).maybeSingle() : { data:null }
-    const prefixe = `${soc}-${orig}-${e?.code_trace ? e.code_trace.split('-').pop() : 'E000'}`
+    const prefixe = `${soc}-${orig}-${codeCourtEtuveuse(e?.code_trace) || 'E000'}`
     const n = await prochainNumeroBase(companyId, `PASS:${prefixe}`)
     return n ? `${prefixe}-${n}` : null
   } catch { return null }
@@ -24888,7 +25441,7 @@ export default function ComptaPro() {
     docs_admin:'Documents administratifs', parametres:'Paramètres',
     prestations:'Prestations', journal_caisse:'Journal Caisse', journal_banque:'Journal Banque',
     suivi_lot:'Suivi de Lot', tracabilite:'Traçabilité des lots', registre_tracabilite:'Registre de traçabilité', journal_mobile:'Journal Mobile Money', plan_comptable:'Plan Comptable', grand_livre:'Grand-Livre', ecritures:'Saisie Comptable', balance:'Balance', etats_financiers:'États Financiers',
-    categories_articles:'Catégories d\'articles',
+    categories_articles:'Catégories d\'articles', categories_fournisseurs:'Catégories de fournisseurs',
     rh_employes:'RH — Employés', rh_fiches_paie:'RH — Fiches de Paie', rh_historique:'RH — Historique Paie',
     rh_declarations:'RH — Déclarations CNSS/ITS', rh_rapport:'RH — Rapport Cabinet', rh_dossiers:'RH — Dossier du personnel', rh_carriere:'RH — Carrière', rh_conges:'RH — Congés', rh_absences:'RH — Permissions & absences', rh_prets:'RH — Prêts & avances', rh_missions:'RH — Missions', rh_centralisation:'RH — Centralisation comptable', rh_tableau_bord:'RH — Tableau de bord', rh_simulateur:'RH — Simulateur Brut ↔ Net',
   }
@@ -24928,6 +25481,7 @@ export default function ComptaPro() {
       case 'bons_stock':    return <BonsStockPage {...sp} readOnly={getReadOnly('bons_stock')} />
       case 'inventaire':    return <InventairePage companies={companies} companyId={effectiveCompanyId} setCompanyId={setCompanyId} toast={toast} />
       case 'categories_articles': return <CategoriesPage companies={companies} companyId={effectiveCompanyId} toast={toast} />
+      case 'categories_fournisseurs': return <CategoriesFournisseursPage companyId={effectiveCompanyId} toast={toast} readOnly={getReadOnly('fournisseurs')} />
       case 'commercial':    return <CommercialPage {...sp} setPage={setPage} setDocId={setDocId} />
       case 'commercial-view': return <CommercialViewPage docId={docId} setPage={setPage} toast={toast} />
       case 'lots':          return <LotsProductionPage {...sp} />
@@ -24935,7 +25489,7 @@ export default function ComptaPro() {
       case 'tracabilite':   return <TracabilitePage {...sp} readOnly={getReadOnly('tracabilite')} />
       case 'registre_tracabilite': return <RegistreTracabilitePage {...sp} readOnly={getReadOnly('registre_tracabilite')} />
       case 'achats_groupes': return <AchatsGroupesPage {...sp} readOnly={getReadOnly('achats_groupes')} />
-      case 'etv_repertoire':  return <EtvRepertoirePage {...sp} readOnly={getReadOnly('etv_repertoire')} />
+      case 'etv_repertoire':  return <EtvRepertoirePage {...sp} setPage={setPage} readOnly={getReadOnly('etv_repertoire')} />
       case 'etv_envois':      return <EtvEnvoisPage {...sp} readOnly={getReadOnly('etv_envois')} />
       case 'etv_performance': return <EtvPerformancePage {...sp} />
       case 'etv_avances':     return <EtvAvancesPage {...sp} readOnly={getReadOnly('etv_avances')} />
