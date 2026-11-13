@@ -3944,11 +3944,14 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
   // Supprimer la liste (fournisseurs uniquement) — soit tout, soit seulement les lignes qui
   // correspondent au filtre actif (recherche / type / provenance) si un filtre est appliqué.
   const deleteAll = async()=>{
-    const cid = companyId || companies[0]?.id
-    if(!cid){ toast.error('Aucune société sélectionnée.'); return }
+    // Uniquement la société choisie en haut de l'écran : jamais « Toutes les sociétés »
+    // (avant, la 1re société de la liste était prise par défaut — risque de vider la mauvaise).
+    const cid = companyId
+    if(!cid){ toast.error("Sélectionnez d'abord la société à vider (en haut de l'écran) — « Toutes les sociétés » n'est pas permis."); return }
+    const nomSoc = companies.find(c => c.id === cid)?.raison_sociale || 'la société sélectionnée'
     if(filtered.length===0){ toast.error('Aucun fournisseur ne correspond au filtre actuel.'); return }
     const isFiltered = filtered.length !== items.length
-    const label = isFiltered ? `les ${filtered.length} fournisseur(s) correspondant au filtre actuel` : `les ${items.length} fournisseur(s) de la liste`
+    const label = `${isFiltered ? `les ${filtered.length} fournisseur(s) correspondant au filtre actuel` : `les ${items.length} fournisseur(s) de la liste`} de ${nomSoc}`
     if(!confirm(`⚠️ Supprimer DÉFINITIVEMENT ${label} ? Cette action est irréversible.\n\nLeurs Kits FRIA, épargne FRIA et ouvriers sont effacés ; leurs achats (semi-finis, groupés…) sont conservés avec le nom du fournisseur, sans lien vers la fiche.`)) return
     if(!confirm('Confirmez-vous une dernière fois la suppression ?')) return
 
