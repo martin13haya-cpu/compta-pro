@@ -199,9 +199,9 @@ function buildPrintDocument(html, filename) {
   ` + '</scr'+'ipt>'
 
   const toolbar = `
-    <div id="__toolbar" style="position:sticky;top:0;left:0;right:0;z-index:99999;background:#075E54;padding:8px 10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;box-shadow:0 2px 8px rgba(0,0,0,0.2)">
-      <button onclick="history.length>1?history.back():window.close()" style="background:white;color:#075E54;border:none;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap">← Retour</button>
-      <button id="__pdfbtn" onclick="__downloadPDF()" style="background:#25D366;color:white;border:none;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap">📥 PDF</button>
+    <div id="__toolbar" style="position:sticky;top:0;left:0;right:0;z-index:99999;background:#082818;padding:8px 10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;box-shadow:0 2px 8px rgba(0,0,0,0.2)">
+      <button onclick="history.length>1?history.back():window.close()" style="background:white;color:#082818;border:none;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap">← Retour</button>
+      <button id="__pdfbtn" onclick="__downloadPDF()" style="background:#1E824C;color:white;border:none;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap">📥 PDF</button>
       <button onclick="__doPrint()" style="background:#f0f2f5;color:#1e293b;border:none;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap">🖨️ Imprimer</button>
     </div>
     <style>@media print { #__toolbar { display:none !important } }</style>
@@ -241,12 +241,12 @@ function openPrintWindow(html, filename) {
     alert("Impossible d'ouvrir le document : " + e.message)
   }
 }
-const ACCENT  = '#25D366'
-const SIDEBAR = '#075E54'
+const ACCENT  = '#1E824C'
+const SIDEBAR = '#082818'
 
 // Theme system
 const THEMES = {
-  light: { bg:'#f0f2f5', surface:'#ffffff', text:'#1e293b', textMuted:'#64748b', border:'#e2e8f0', sidebar:'#075E54' },
+  light: { bg:'#f4f6f4', surface:'#ffffff', text:'#1e293b', textMuted:'#64748b', border:'#e2e8f0', sidebar:'#082818' },
   dark:  { bg:'#F7F7FC', surface:'#ffffff', text:'#2A2E4A', textMuted:'#6E739B', border:'#E5E7F2', sidebar:'#6C5CE7' }
 }
 function applyTheme(mode){
@@ -265,14 +265,14 @@ function applyTheme(mode){
       [data-theme="dark"] [style*="background:#f1f5f9"],
       [data-theme="dark"] [style*="background: #f1f5f9"]{background:${t.bg}!important}
       [data-theme="dark"] [style*="background: rgb(7, 94, 84)"],
-      [data-theme="dark"] [style*="background:#075E54"],
-      [data-theme="dark"] [style*="background: #075E54"]{background:${t.sidebar}!important}
+      [data-theme="dark"] [style*="background:#082818"],
+      [data-theme="dark"] [style*="background: #082818"]{background:${t.sidebar}!important}
       [data-theme="dark"] [style*="background: rgb(37, 211, 102)"],
-      [data-theme="dark"] [style*="background:#25D366"],
-      [data-theme="dark"] [style*="background: #25D366"]{background:${t.sidebar}!important;border-color:${t.sidebar}!important}
+      [data-theme="dark"] [style*="background:#1E824C"],
+      [data-theme="dark"] [style*="background: #1E824C"]{background:${t.sidebar}!important;border-color:${t.sidebar}!important}
       [data-theme="dark"] [style*="color: rgb(37, 211, 102)"],
-      [data-theme="dark"] [style*="color:#25D366"],
-      [data-theme="dark"] [style*="color: #25D366"]{color:${t.sidebar}!important}
+      [data-theme="dark"] [style*="color:#1E824C"],
+      [data-theme="dark"] [style*="color: #1E824C"]{color:${t.sidebar}!important}
     `
   } else { s.textContent='' }
 }
@@ -410,7 +410,7 @@ const CSS_GABARIT = `
   .coord { border-left: 2px solid #2563eb; padding-left: 10px; font-size: 8.5pt; line-height: 1.45; color: #475569; max-width: 62mm; }
   .titre { margin-top: 22px; }
   .titre h1 { font-size: 27pt; font-weight: 800; letter-spacing: 2px; color: #0ea5e9; line-height: 1.1; }
-  .titre .bandeau { margin-top: 6px; height: 10px; background: linear-gradient(90deg, #2563eb, #0ea5e9, #7dd3fc); }
+  .titre .bandeau { margin-top: 6px; height: 10px; background: linear-gradient(90deg, #0d3823, #27ae60, #d4af37); }
   .parties { margin-top: 18px; display: grid; grid-template-columns: 3fr 2fr; gap: 20px; }
   .lib { font-size: 8.5pt; font-weight: 700; text-transform: uppercase; letter-spacing: .6px; color: #64748b; margin-bottom: 3px; }
   .tiers .nom { font-weight: 700; color: #0f172a; font-size: 11pt; }
@@ -576,7 +576,7 @@ function DocPreviewModal({ open, onClose, doc, lignes }) {
         maxHeight:'92vh', display:'flex', flexDirection:'column', boxShadow:'0 30px 80px rgba(0,0,0,.4)' }}>
         {/* Header */}
         <div style={{ padding:'12px 20px', borderBottom:'1px solid #e2e8f0', display:'flex',
-          alignItems:'center', justifyContent:'space-between', background:'#0f2044', borderRadius:'12px 12px 0 0' }}>
+          alignItems:'center', justifyContent:'space-between', background:'#082818', borderRadius:'12px 12px 0 0' }}>
           <span style={{ color:'white', fontWeight:700, fontSize:15 }}>
             👁️ Aperçu — {doc.numero}
           </span>
@@ -731,7 +731,7 @@ function printExpressionBesoin(fiche, lignes, budgets, companyInfo, sigImg=null,
     .info-grid { display:grid; grid-template-columns:1fr 1fr; gap:6px 24px; margin-bottom:14px; font-size:10pt; }
     .info-item { border-bottom:1px solid #ccc; padding:4px 0; }
     .info-label { font-size:8.5pt; color:#666; }
-    .section-title { font-size:10pt; font-weight:700; text-transform:uppercase; color:#0f2044; border-bottom:2px solid #0f2044; padding-bottom:4px; margin:14px 0 8px; }
+    .section-title { font-size:10pt; font-weight:700; text-transform:uppercase; color:#082818; border-bottom:2px solid #082818; padding-bottom:4px; margin:14px 0 8px; }
     .autorisation-badge { display:inline-block; background:#dcfce7; color:#16a34a; border:1px solid #bbf7d0; padding:4px 12px; border-radius:20px; font-size:9pt; font-weight:700; margin-top:6px; }
     .totals-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:16px; }
     .total-box { padding:10px 14px; border-radius:6px; display:flex; justify-content:space-between; font-size:11pt; font-weight:700; }
@@ -782,7 +782,7 @@ function printExpressionBesoin(fiche, lignes, budgets, companyInfo, sigImg=null,
     `:''}
 
     <div class="totals-grid">
-      <div class="total-box" style="background:#f1f5f9;color:#0f2044">
+      <div class="total-box" style="background:#f1f5f9;color:#082818">
         <span>TOTAL DEMANDÉ</span><span>${totalTTC.toLocaleString('fr-FR')} FCFA</span>
       </div>
       ${isValidee?`<div class="total-box" style="background:#dcfce7;color:#16a34a">
@@ -907,7 +907,7 @@ function printProductionStage(items, title, fields, companyName) {
     <title>${title}</title>
     <style>${CSS_PRINT_LANDSCAPE}
       body { font-size: 9.5pt; }
-      h1 { font-size: 14pt; color: #0f2044; margin-bottom: 4px; }
+      h1 { font-size: 14pt; color: #082818; margin-bottom: 4px; }
       .subtitle { font-size: 10pt; color: #555; margin-bottom: 16px; border-bottom: 1px solid #e2e8f0; padding-bottom: 8px; }
       table { font-size: 8.5pt; }
       th { font-size: 8pt; white-space: nowrap; padding: 6px 8px; }
@@ -1050,7 +1050,7 @@ function ActionsMenu({ label='Actions', items, sm }) {
   return (
     <div ref={ref} style={{ position:'relative', display:'inline-block' }}>
       <button type="button" onClick={ouvrir} style={{
-        background:open?'#3730a3':'#4f46e5', color:'white', border:'none', padding:sm?'6px 12px':'9px 16px',
+        background:open?'#082818':'#0d3823', color:'white', border:'none', padding:sm?'6px 12px':'9px 16px',
         boxShadow:'0 1px 2px rgba(15,23,42,.15)',
         borderRadius:8, fontSize:sm?12:13, fontWeight:600, cursor:'pointer', display:'inline-flex', alignItems:'center', gap:6,
       }}>
@@ -1203,7 +1203,7 @@ function TiersAccountField({ type='client', companyId, numeroCompte, onMatch, on
         border: '1px solid '+(matched ? '#bbf7d0' : typed ? '#fecaca' : '#e2e8f0'),
         display:'flex', alignItems:'center', justifyContent:'space-between', gap:8 }}>
         {matched
-          ? <span style={{ fontWeight:600, color:'#0f2044' }}>{nomTiers(matched)}</span>
+          ? <span style={{ fontWeight:600, color:'#082818' }}>{nomTiers(matched)}</span>
           : typed
             ? <span style={{ color:'#dc2626', fontWeight:600 }}>⚠️ Compte introuvable</span>
             : <span style={{ color:'#94a3b8' }}>—</span>}
@@ -1353,7 +1353,7 @@ function printFilteredList({ title, subtitle='', headers, rows, companyName='', 
     <title>${title}</title>
     <style>${CSS_PRINT_LANDSCAPE}
       body { font-size: 9.5pt; }
-      h1 { font-size: 14pt; color: #0f2044; margin-bottom: 3px; }
+      h1 { font-size: 14pt; color: #082818; margin-bottom: 3px; }
       .meta { font-size: 9.5pt; color: #555; margin-bottom: 14px; border-bottom: 1px solid #e2e8f0; padding-bottom: 8px; }
       table { font-size: 8.5pt; table-layout: fixed; width: 100%; }
       th { font-size: 8pt; padding: 6px 6px; overflow-wrap: break-word; word-break: break-word; }
@@ -1398,7 +1398,7 @@ function PasswordChangePage({ onDone }) {
   }
 
   return (
-    <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',background:'linear-gradient(135deg,#1e3a5f,#2d6a4f)'}}>
+    <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',background:'linear-gradient(135deg,#082818,#0d3823)'}}>
       <div style={{background:'white',borderRadius:16,padding:'40px 36px',width:'100%',maxWidth:400,boxShadow:'0 20px 60px rgba(0,0,0,0.2)'}}>
         <div style={{textAlign:'center',marginBottom:28}}>
           <div style={{fontSize:40,marginBottom:8}}>🔐</div>
@@ -1485,7 +1485,7 @@ function LoginPage({ onLogin }) {
   )
 
   const panel = (
-    <div style={{width:'40%',background:'linear-gradient(160deg,#1d4ed8,#2563eb)',padding:'48px 40px',color:'white',display:'flex',flexDirection:'column',justifyContent:'space-between'}}>
+    <div style={{width:'40%',background:'linear-gradient(160deg,#082818,#0d3823)',padding:'48px 40px',color:'white',display:'flex',flexDirection:'column',justifyContent:'space-between'}}>
       <div>
         <div style={{display:'flex',alignItems:'center',gap:14,marginBottom:32}}>
           <div style={{width:52,height:52,background:'rgba(255,255,255,.15)',borderRadius:14,display:'flex',alignItems:'center',justifyContent:'center',fontSize:24}}>📊</div>
@@ -1493,7 +1493,7 @@ function LoginPage({ onLogin }) {
         </div>
         {['Gestion multi-sociétés','Documents commerciaux','Stocks & Production riz','Clients & Fournisseurs','Paiements & Règlements'].map(f=>(
           <div key={f} style={{display:'flex',alignItems:'center',gap:10,marginBottom:12,fontSize:13.5,opacity:.85}}>
-            <span style={{color:'#93c5fd'}}>✓</span>{f}
+            <span style={{color:'#d4af37'}}>✓</span>{f}
           </div>
         ))}
       </div>
@@ -1510,7 +1510,7 @@ function LoginPage({ onLogin }) {
   )
 
   return (
-    <div style={{minHeight:'100vh',background:'linear-gradient(135deg,#0f2044,#1a3a6e)',display:'flex',alignItems:'center',justifyContent:'center',padding:16}}>
+    <div style={{minHeight:'100vh',background:'linear-gradient(135deg,#082818,#0d3823)',display:'flex',alignItems:'center',justifyContent:'center',padding:16}}>
       <div style={{display:'flex',width:'100%',maxWidth:860,borderRadius:20,overflow:'hidden',boxShadow:'0 30px 80px rgba(0,0,0,.4)'}}>
         {window.innerWidth >= 640 && panel}
         <div style={{flex:1,background:'white',padding:'40px 32px',display:'flex',flexDirection:'column',justifyContent:'center'}}>
@@ -2133,7 +2133,7 @@ function ConsolidationPage({ toast }) {
         <head><meta charset="UTF-8"><style>
           table{border-collapse:collapse;width:100%}
           th,td{border:1px solid #d1d5db;padding:5px 8px;font-size:10pt}
-          h2{font-family:Arial;color:#0f2044}p{font-family:Arial;font-size:9pt;color:#555}
+          h2{font-family:Arial;color:#082818}p{font-family:Arial;font-size:9pt;color:#555}
         </style></head><body>
         <h2>Consolidation ${cfg.label}</h2>
         <p>${selectedIds.length} société(s) — ${rows.length} enregistrement(s) — Exporté le ${new Date().toLocaleDateString('fr-FR')}</p>
@@ -2156,11 +2156,11 @@ function ConsolidationPage({ toast }) {
       <PageHeader title="Consolidation multi-sociétés" subtitle="Exporter les données de plusieurs sociétés dans un seul fichier Excel" />
 
       <Card style={{marginBottom:16,padding:'16px 20px'}}>
-        <div style={{fontSize:12,fontWeight:700,color:'#0f2044',marginBottom:8,textTransform:'uppercase'}}>1. Type de données</div>
+        <div style={{fontSize:12,fontWeight:700,color:'#082818',marginBottom:8,textTransform:'uppercase'}}>1. Type de données</div>
         <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
           {Object.entries(CONSOL_TYPES).map(([key,c])=>(
             <button key={key} onClick={()=>changeDataType(key)}
-              style={{padding:'8px 16px',borderRadius:8,border:'1.5px solid '+(dataType===key?'#0f2044':'#e2e8f0'),background:dataType===key?'#0f2044':'white',color:dataType===key?'white':'#374151',fontSize:13,fontWeight:600,cursor:'pointer'}}>
+              style={{padding:'8px 16px',borderRadius:8,border:'1.5px solid '+(dataType===key?'#082818':'#e2e8f0'),background:dataType===key?'#082818':'white',color:dataType===key?'white':'#374151',fontSize:13,fontWeight:600,cursor:'pointer'}}>
               {c.icon} {c.label}
             </button>
           ))}
@@ -2169,7 +2169,7 @@ function ConsolidationPage({ toast }) {
 
       <Card style={{marginBottom:16,padding:'16px 20px'}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8,flexWrap:'wrap',gap:8}}>
-          <div style={{fontSize:12,fontWeight:700,color:'#0f2044',textTransform:'uppercase'}}>2. Sociétés à consolider ({selectedIds.length} sélectionnée(s))</div>
+          <div style={{fontSize:12,fontWeight:700,color:'#082818',textTransform:'uppercase'}}>2. Sociétés à consolider ({selectedIds.length} sélectionnée(s))</div>
           <div style={{display:'flex',gap:12}}>
             <button onClick={selectAllCompanies} style={{fontSize:12,color:'#2563eb',background:'none',border:'none',cursor:'pointer',fontWeight:600}}>Tout cocher</button>
             <button onClick={deselectAllCompanies} style={{fontSize:12,color:'#64748b',background:'none',border:'none',cursor:'pointer',fontWeight:600}}>Tout décocher</button>
@@ -2184,7 +2184,7 @@ function ConsolidationPage({ toast }) {
             <label key={c.id} style={{display:'flex',alignItems:'center',gap:10,padding:'8px 14px',borderBottom:'1px solid #f1f5f9',cursor:'pointer'}}>
               <input type="checkbox" checked={selectedIds.includes(c.id)} onChange={()=>toggleCompany(c.id)} />
               <div>
-                <div style={{fontSize:13,fontWeight:600,color:'#0f2044'}}>{c.raison_sociale||'(sans nom)'}</div>
+                <div style={{fontSize:13,fontWeight:600,color:'#082818'}}>{c.raison_sociale||'(sans nom)'}</div>
                 <div style={{fontSize:11,color:'#94a3b8'}}>{ownerEmails[c.user_id]||'—'}</div>
               </div>
             </label>
@@ -2194,7 +2194,7 @@ function ConsolidationPage({ toast }) {
 
       <Card style={{marginBottom:16,padding:'16px 20px'}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
-          <div style={{fontSize:12,fontWeight:700,color:'#0f2044',textTransform:'uppercase'}}>3. Colonnes à inclure</div>
+          <div style={{fontSize:12,fontWeight:700,color:'#082818',textTransform:'uppercase'}}>3. Colonnes à inclure</div>
           <div style={{display:'flex',gap:12}}>
             <button onClick={selectAllCols} style={{fontSize:12,color:'#2563eb',background:'none',border:'none',cursor:'pointer',fontWeight:600}}>Tout cocher</button>
             <button onClick={deselectAllCols} style={{fontSize:12,color:'#64748b',background:'none',border:'none',cursor:'pointer',fontWeight:600}}>Tout décocher</button>
@@ -2423,7 +2423,7 @@ function BordereauxLivraisonPage({ companies, companyId, toast }) {
           actions={<Btn variant="secondary" onClick={()=>setSubPage('liste')}>← Retour à la liste</Btn>} />
         <form onSubmit={save}>
           <Card style={{marginBottom:16}}>
-            <div style={{fontSize:12,fontWeight:700,color:'#0f2044',marginBottom:10,textTransform:'uppercase'}}>Client</div>
+            <div style={{fontSize:12,fontWeight:700,color:'#082818',marginBottom:10,textTransform:'uppercase'}}>Client</div>
             <Grid cols={2} gap={14} style={{marginBottom:14}}>
               <div>
                 <label style={{display:'block',fontSize:12.5,fontWeight:600,color:'#374151',marginBottom:5}}>Sélectionner un client</label>
@@ -2446,7 +2446,7 @@ function BordereauxLivraisonPage({ companies, companyId, toast }) {
           </Card>
 
           <Card style={{marginBottom:16}}>
-            <div style={{fontSize:12,fontWeight:700,color:'#0f2044',marginBottom:10,textTransform:'uppercase'}}>Livraison</div>
+            <div style={{fontSize:12,fontWeight:700,color:'#082818',marginBottom:10,textTransform:'uppercase'}}>Livraison</div>
             <Grid cols={2} gap={14}>
               <Input label="Adresse de livraison ligne 1" name="adresse_livraison_1" value={form.adresse_livraison_1} onChange={set} />
               <Input label="Adresse de livraison ligne 2" name="adresse_livraison_2" value={form.adresse_livraison_2} onChange={set} />
@@ -2460,7 +2460,7 @@ function BordereauxLivraisonPage({ companies, companyId, toast }) {
           </Card>
 
           <Card style={{marginBottom:16}}>
-            <div style={{fontSize:12,fontWeight:700,color:'#0f2044',marginBottom:10,textTransform:'uppercase'}}>Véhicule</div>
+            <div style={{fontSize:12,fontWeight:700,color:'#082818',marginBottom:10,textTransform:'uppercase'}}>Véhicule</div>
             <Grid cols={3} gap={14}>
               <Input label="N° Véhicule" name="numero_vehicule" value={form.numero_vehicule} onChange={set} />
               <Input label="Remorque" name="remorque" value={form.remorque} onChange={set} />
@@ -2471,7 +2471,7 @@ function BordereauxLivraisonPage({ companies, companyId, toast }) {
 
           <Card style={{marginBottom:16}}>
             <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
-              <div style={{fontSize:12,fontWeight:700,color:'#0f2044',textTransform:'uppercase'}}>Articles livrés</div>
+              <div style={{fontSize:12,fontWeight:700,color:'#082818',textTransform:'uppercase'}}>Articles livrés</div>
               <Btn sm type="button" variant="secondary" onClick={addLigne}>+ Ajouter une ligne</Btn>
             </div>
             <div style={{border:'1px solid #e2e8f0',borderRadius:8,overflowX:'auto'}}>
@@ -2508,7 +2508,7 @@ function BordereauxLivraisonPage({ companies, companyId, toast }) {
           </Card>
 
           <Card style={{marginBottom:16}}>
-            <div style={{fontSize:12,fontWeight:700,color:'#0f2044',marginBottom:10,textTransform:'uppercase'}}>Chargement</div>
+            <div style={{fontSize:12,fontWeight:700,color:'#082818',marginBottom:10,textTransform:'uppercase'}}>Chargement</div>
             <Grid cols={3} gap={14}>
               <Input label="Date" name="date_chargement" type="date" value={form.date_chargement} onChange={set} />
               <Input label="Début de chargement" name="debut_chargement" value={form.debut_chargement} onChange={set} />
@@ -2517,7 +2517,7 @@ function BordereauxLivraisonPage({ companies, companyId, toast }) {
           </Card>
 
           <Card style={{marginBottom:16}}>
-            <div style={{fontSize:12,fontWeight:700,color:'#0f2044',marginBottom:10,textTransform:'uppercase'}}>Signatures</div>
+            <div style={{fontSize:12,fontWeight:700,color:'#082818',marginBottom:10,textTransform:'uppercase'}}>Signatures</div>
             <Grid cols={3} gap={14}>
               <Input label="Nom du réceptionnaire" name="nom_receptionnaire" value={form.nom_receptionnaire} onChange={set} />
               <Input label="Contrôleur" name="controleur" value={form.controleur} onChange={set} />
@@ -2604,6 +2604,7 @@ const NAV = [
   { id:'reglements_clients',   icon:'💳', label:'Règlements Clients' },
   { id:'reglements_fourn',     icon:'💸', label:'Règlements Fournisseurs' },
   { id:'prestations',        icon:'🛠️',  label:'Prestations' },
+  { id:'agents_prospection', icon:'🎯', label:'Agents de prospection' },
   { section:'Traçabilité' },
   { id:'registre_tracabilite', icon:'📒', label:'Registre de traçabilité (13 fiches)' },
   { id:'tracabilite',        icon:'🔗', label:'Traçabilité des lots (QR)' },
@@ -2746,7 +2747,7 @@ function BarreMenus({ page, setPage, user, profile }) {
             style={{
               background: estOuvert ? 'rgba(255,255,255,.18)' : 'transparent', border:'none', cursor:'pointer',
               color: actif || estOuvert ? 'white' : 'rgba(255,255,255,.78)', fontWeight: actif ? 700 : 500, fontSize:13.5,
-              padding:'10px 14px', whiteSpace:'nowrap', borderBottom: actif ? '3px solid #60a5fa' : '3px solid transparent',
+              padding:'10px 14px', whiteSpace:'nowrap', borderBottom: actif ? '3px solid #d4af37' : '3px solid transparent',
             }}>
             {r.label} <span style={{ fontSize:9, opacity:.7 }}>▼</span>
           </button>
@@ -2762,7 +2763,7 @@ function BarreMenus({ page, setPage, user, profile }) {
                 onMouseEnter={e => { if (!actif) e.currentTarget.style.background = '#f1f5f9' }}
                 onMouseLeave={e => { if (!actif) e.currentTarget.style.background = 'transparent' }}
                 style={{ width:'100%', display:'flex', alignItems:'center', gap:10, textAlign:'left', border:'none', cursor:'pointer',
-                  padding:'9px 16px', fontSize:13.5, background: actif ? '#eef2ff' : 'transparent', color: actif ? '#3730a3' : '#334155', fontWeight: actif ? 700 : 500 }}>
+                  padding:'9px 16px', fontSize:13.5, background: actif ? '#eaf6ee' : 'transparent', color: actif ? '#1e824c' : '#334155', fontWeight: actif ? 700 : 500 }}>
                 <span style={{ width:20, textAlign:'center' }}>{it.icon}</span>{it.label}
               </button>
             )
@@ -2810,7 +2811,7 @@ function Sidebar({ page, setPage, user, profile, onLogout, open, onClose }) {
         <div style={{ flex:1, overflowY:'auto', padding:'12px 0' }}>
           {navItems.map((item,i) => {
             if (item.section) return (
-              <div key={i} style={{ padding:'8px 16px 4px', fontSize:10, fontWeight:700, letterSpacing:1.2, color:'rgba(255,255,255,.35)', textTransform:'uppercase' }}>{item.section}</div>
+              <div key={i} style={{ padding:'8px 16px 4px', fontSize:10, fontWeight:700, letterSpacing:1.2, color:'rgba(212,175,55,.8)', textTransform:'uppercase' }}>{item.section}</div>
             )
             const active = page===item.id
             return (
@@ -2818,7 +2819,7 @@ function Sidebar({ page, setPage, user, profile, onLogout, open, onClose }) {
                 display:'flex', alignItems:'center', gap:12, padding:'10px 20px',
                 color:active?'white':'rgba(255,255,255,.7)', cursor:'pointer',
                 background:active?ACCENT:'transparent', fontSize:13.5, fontWeight:active?600:500,
-                borderLeft:active?'3px solid #60a5fa':'3px solid transparent',
+                borderLeft:active?'3px solid #d4af37':'3px solid transparent',
               }}>
                 <span style={{ width:20, textAlign:'center', fontSize:14 }}>{item.icon}</span>
                 <span>{item.label}</span>
@@ -3105,7 +3106,7 @@ function CompaniesPage({ companies, refresh, toast, isSuperAdmin=false, currentU
             </Span2>
           </Grid>
 
-          <div style={{ fontSize:13, fontWeight:700, color:'#0f2044', margin:'18px 0 4px', textTransform:'uppercase' }}>
+          <div style={{ fontSize:13, fontWeight:700, color:'#082818', margin:'18px 0 4px', textTransform:'uppercase' }}>
             Paramétrage RH & Paie (calcul CNSS / VPS / ITS)
           </div>
           <div style={{ fontSize:12, color:'#64748b', marginBottom:12 }}>
@@ -3138,7 +3139,7 @@ function CompaniesPage({ companies, refresh, toast, isSuperAdmin=false, currentU
             )}
           </Grid>
 
-          <div style={{ fontSize:13, fontWeight:700, color:'#0f2044', margin:'18px 0 4px', textTransform:'uppercase' }}>
+          <div style={{ fontSize:13, fontWeight:700, color:'#082818', margin:'18px 0 4px', textTransform:'uppercase' }}>
             Informations projet (fiches mentors)
           </div>
           <div style={{ fontSize:12, color:'#64748b', marginBottom:12 }}>
@@ -3201,7 +3202,7 @@ function printFicheTiers(it, kind='fournisseur') {
     .filter(k => !SKIP.has(k))
     .map(k => [prettify(k), typeof it[k]==='object' ? JSON.stringify(it[k]) : it[k]])
   const autresBloc = autres.length ? `
-    <h3 style="margin:18px 0 6px;font-size:11pt;color:#075E54">🗂️ Autres informations</h3>
+    <h3 style="margin:18px 0 6px;font-size:11pt;color:#082818">🗂️ Autres informations</h3>
     <table><tbody>${rows(autres)}</tbody></table>` : ''
 
   // Bloc Avances reçues (fournisseurs)
@@ -3211,7 +3212,7 @@ function printFicheTiers(it, kind='fournisseur') {
   const prixC = Number(it.prix_contrat)||0
   const rizP = prixC>0 ? totalAv/prixC : 0
   const avancesBloc = (isFourn && (avList.length || prixC>0)) ? `
-    <h3 style="margin:18px 0 6px;font-size:11pt;color:#075E54">💰 Kit FRIA reçu</h3>
+    <h3 style="margin:18px 0 6px;font-size:11pt;color:#082818">💰 Kit FRIA reçu</h3>
     <table><thead><tr><th style="text-align:left">Type de Kit FRIA</th><th class="r">Quantité reçue</th><th class="r">Montant (FCFA)</th></tr></thead><tbody>
       ${avList.map(a=>`<tr><td>${a.type_avance||'—'}</td><td class="r">${(Number(a.quantite_recue)||0).toLocaleString('fr-FR')} ${UNITES_PDF[a.type_avance]||''}</td><td class="r">${(Number(a.valeur_remboursement)||0).toLocaleString('fr-FR')}</td></tr>`).join('')}
       <tr style="font-weight:700;background:#f1f5f9"><td colspan="2" class="r">Total Kit FRIA reçu</td><td class="r">${Math.round(totalAv).toLocaleString('fr-FR')} FCFA</td></tr>
@@ -3222,7 +3223,7 @@ function printFicheTiers(it, kind='fournisseur') {
     </tbody></table>` : ''
 
   const mentorBloc = (isFourn && !isMorale) ? `
-    <h3 style="margin:18px 0 6px;font-size:11pt;color:#075E54">👤 Informations du mentor</h3>
+    <h3 style="margin:18px 0 6px;font-size:11pt;color:#082818">👤 Informations du mentor</h3>
     <table><tbody>${rows([
       ['Nom et prénom(s)', it.mentor_nom],
       ['Téléphone', it.mentor_telephone],
@@ -3243,7 +3244,7 @@ function printFicheTiers(it, kind='fournisseur') {
       </div>
     </div>
 
-    <h3 style="margin:6px 0 6px;font-size:11pt;color:#075E54">${isFourn?'🚚':'👥'} Identité</h3>
+    <h3 style="margin:6px 0 6px;font-size:11pt;color:#082818">${isFourn?'🚚':'👥'} Identité</h3>
     <table><tbody>${rows([
       ['Type de personne', isMorale ? 'Personne morale' : 'Personne physique'],
       [isMorale ? 'Raison sociale' : (isFourn ? 'Nom' : 'Nom et prénom(s)'), nomAffiche],
@@ -3263,7 +3264,7 @@ function printFicheTiers(it, kind='fournisseur') {
     ${mentorBloc}
 
     ${isFourn ? `
-    <h3 style="margin:18px 0 6px;font-size:11pt;color:#075E54">📍 Localisation & bas-fonds</h3>
+    <h3 style="margin:18px 0 6px;font-size:11pt;color:#082818">📍 Localisation & bas-fonds</h3>
     <table><tbody>${rows([
       ['Département', it.departement],
       ['Commune', it.commune],
@@ -4854,7 +4855,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
       <head><meta charset="UTF-8"><style>
         table{border-collapse:collapse;width:100%}
         th,td{border:1px solid #d1d5db;padding:5px 8px;font-size:10pt}
-        h2{font-family:Arial;color:#0f2044}p{font-family:Arial;font-size:9pt;color:#555}
+        h2{font-family:Arial;color:#082818}p{font-family:Arial;font-size:9pt;color:#555}
       </style></head><body>
       <h2>Liste des ouvriers engagés par les producteurs</h2>
       <p>${companyName} — ${lignes.length} ouvrier(s) — Exporté le ${new Date().toLocaleDateString('fr-FR')}</p>
@@ -5057,7 +5058,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
       <head><meta charset="UTF-8"><style>
         table{border-collapse:collapse;width:100%}
         th,td{border:1px solid #d1d5db;padding:5px 8px;font-size:10pt}
-        h2{font-family:Arial;color:#0f2044}p{font-family:Arial;font-size:9pt;color:#555}
+        h2{font-family:Arial;color:#082818}p{font-family:Arial;font-size:9pt;color:#555}
       </style></head><body>
       <h2>Liste des Mentors</h2>
       <p>${companyName} — ${rows.length} mentor(s) — Exporté le ${new Date().toLocaleDateString('fr-FR')}</p>
@@ -5453,7 +5454,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
                     onClick={()=>{ const mode = csvChoix; setCsvChoix(null)
                       if (mode==='modele') downloadTemplate(k)
                       else { importCategorieRef.current = k; importInputRef.current?.click() } }}
-                    style={{padding:'14px 12px',borderRadius:10,border:'1.5px solid #e2e8f0',background:'white',cursor:'pointer',fontSize:14,fontWeight:700,color:'#0f2044',textAlign:'left'}}>
+                    style={{padding:'14px 12px',borderRadius:10,border:'1.5px solid #e2e8f0',background:'white',cursor:'pointer',fontSize:14,fontWeight:700,color:'#082818',textAlign:'left'}}>
                     {l}
                     {k==='etuveuse' && <div style={{fontSize:11.5,fontWeight:400,color:'#64748b',marginTop:4}}>Une ligne par mentoré</div>}
                   </button>
@@ -5634,7 +5635,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
             <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(180px,1fr))',gap:12}}>
               {CATEGORIES_FOURNISSEUR.map(([k,l]) => (
                 <button key={k} type="button" onClick={()=>setForm(f=>({...f, categorie:k, _choixCategorie:false}))}
-                  style={{padding:'18px 14px',borderRadius:10,border:'1.5px solid #e2e8f0',background:'white',cursor:'pointer',fontSize:15,fontWeight:700,color:'#0f2044',textAlign:'left'}}>
+                  style={{padding:'18px 14px',borderRadius:10,border:'1.5px solid #e2e8f0',background:'white',cursor:'pointer',fontSize:15,fontWeight:700,color:'#082818',textAlign:'left'}}>
                   {l}
                   <div style={{fontSize:11.5,fontWeight:400,color:'#64748b',marginTop:4}}>
                     {k==='producteur' ? 'Formulaire producteur habituel' : k==='etuveuse' ? 'Mentor, mentorés et contrat' : 'Identité, localisation, NPI / IFU'}
@@ -5771,7 +5772,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
             {(table==='compta_clients'||table==='compta_fournisseurs') && (
               <div>
                 <label style={{display:'block',fontSize:12.5,fontWeight:600,color:'#374151',marginBottom:5}}>N° Compte</label>
-                <div style={{padding:'9px 12px',background:'#f8fafc',borderRadius:8,border:'1px solid #d1d5db',fontSize:13.5,minHeight:38,display:'flex',alignItems:'center',color:form.numero_compte?'#0f2044':'#94a3b8',fontWeight:form.numero_compte?700:400}}>
+                <div style={{padding:'9px 12px',background:'#f8fafc',borderRadius:8,border:'1px solid #d1d5db',fontSize:13.5,minHeight:38,display:'flex',alignItems:'center',color:form.numero_compte?'#082818':'#94a3b8',fontWeight:form.numero_compte?700:400}}>
                   {form.numero_compte || 'Attribué automatiquement à l\u2019enregistrement'}
                 </div>
               </div>
@@ -5897,7 +5898,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
                     <tfoot>
                       <tr style={{background:'#f8fafc',borderTop:'2px solid #e2e8f0'}}>
                         <td colSpan={2} style={{padding:'9px 10px',textAlign:'right',fontWeight:700,color:'#334155'}}>Total Kit FRIA reçu ({campagneKit})</td>
-                        <td style={{padding:'9px 10px',textAlign:'right',fontWeight:800,color:'#0f2044'}}>{Math.round(totalAvance).toLocaleString('fr-FR')} FCFA</td>
+                        <td style={{padding:'9px 10px',textAlign:'right',fontWeight:800,color:'#082818'}}>{Math.round(totalAvance).toLocaleString('fr-FR')} FCFA</td>
                         <td></td>
                       </tr>
                     </tfoot>
@@ -7415,6 +7416,586 @@ function InventairePage({ companies, companyId, setCompanyId, toast }) {
   )
 }
 
+// ── AGENTS DE PROSPECTION COMMERCIALE ────────────────────────────────────────
+// Portefeuilles clients, plaintes, activités terrain et analyse de performance.
+// Sources, sans double saisie :
+//  • compta_clients.agent_id : portefeuille (client apporté par l'agent ou confié) ;
+//  • compta_documents (factures non annulées) : chiffre d'affaires du portefeuille,
+//    compté à partir de la date d'affectation du client à l'agent ;
+//  • compta_reglements (clients, hors crédit) ou « montant payé » des factures :
+//    encaissements — on retient le plus élevé des deux pour ne rien compter en double ;
+//  • compta_plaintes_agents, compta_activites_agents : relation client, terrain, frais.
+const MSG_SCRIPT_AGENTS = "Exécutez d'abord le script supabase/migrations/20261116_agents_prospection.sql dans Supabase (projet ComptaPro, SQL Editor)."
+const GRAVITES_PLAINTE = { mineure:['Mineure','secondary',1], moyenne:['Moyenne','warning',2], grave:['Grave','danger',4] }
+const STATUTS_PLAINTE = { ouverte:['Ouverte','danger'], resolue:['Résolue','success'], non_fondee:['Non fondée','secondary'] }
+// Pondération de la note globale sur 100
+const POIDS_SCORE_AGENT = { acquisition:30, ca:25, recouvrement:20, relation:15, fidelisation:10 }
+const LIB_SCORE_AGENT = { acquisition:'Acquisition de clients', ca:"Chiffre d'affaires", recouvrement:'Recouvrement', relation:'Relation client (plaintes)', fidelisation:'Fidélisation (clients actifs)' }
+const nomClientAgent = c => c ? (c.type==='morale' ? (c.nom_societe||'') : [c.nom, c.prenom].filter(Boolean).join(' ')) : ''
+const nomAgent = a => a ? [a.nom, a.prenom].filter(Boolean).join(' ') : ''
+const cleLocalite = s => toUpperNoAccent(String(s||'').trim())
+const listeLocalites = s => [...new Set(String(s||'').split(/[,;\n]/).map(cleLocalite).filter(Boolean))]
+const moisDePeriode = p => {
+  if (!p.du || !p.au) return 1
+  const j = Math.round((new Date(p.au) - new Date(p.du)) / 86400000) + 1
+  return j > 0 ? Math.round(j / 30.4375 * 10) / 10 : 0
+}
+const pctAgent = v => v == null ? '—' : `${Math.round(v)} %`
+
+function statsAgent(ag, { clients, factures, reglements, plaintes, activites }, periode) {
+  const jour = v => String(v||'').slice(0, 10)
+  const dans = d => !!d && (!periode.du || d >= periode.du) && (!periode.au || d <= periode.au)
+  const somme = (l, f) => l.reduce((t, x) => t + (+f(x) || 0), 0)
+  const porte = clients.filter(c => String(c.agent_id) === String(ag.id))
+  const depuis = new Map(porte.map(c => [String(c.id), jour(c.date_affectation_agent)]))
+  // Une vente ne compte pour l'agent qu'à partir du jour où le client lui est rattaché
+  const suivi = (id, d) => depuis.has(String(id)) && d >= depuis.get(String(id))
+  const nouveaux = porte.filter(c => c.apporte_par_agent && dans(jour(c.date_affectation_agent) || jour(c.created_at)))
+
+  const fac = factures.filter(f => dans(jour(f.date_doc)) && suivi(f.client_id, jour(f.date_doc)))
+  const ca = somme(fac, f => f.montant_ttc)
+  const parClient = new Map()
+  fac.forEach(f => { const k = String(f.client_id); const x = parClient.get(k) || { n:0, ca:0 }; x.n++; x.ca += +f.montant_ttc || 0; parClient.set(k, x) })
+  const reg = reglements.filter(r => r.modalite_paiement !== 'credit' && dans(jour(r.date_paiement)) && suivi(r.tiers_id, jour(r.date_paiement)))
+  const encaisse = Math.max(somme(reg, r => r.montant_paye), somme(fac, f => f.montant_paye))
+
+  const pl = plaintes.filter(p => String(p.agent_id) === String(ag.id) && dans(jour(p.date_plainte)))
+  const retenues = pl.filter(p => p.statut !== 'non_fondee')
+  const act = activites.filter(a => String(a.agent_id) === String(ag.id) && dans(jour(a.date_activite)))
+  const prospects = somme(act, a => a.nb_prospects), frais = somme(act, a => a.frais)
+
+  const zone = listeLocalites(ag.localites)
+  const locClients = new Set(porte.map(c => cleLocalite(c.provenance)).filter(Boolean))
+  const locVisitees = new Set(act.map(a => cleLocalite(a.localite)).filter(Boolean))
+  const couvertes = zone.filter(z => locClients.has(z))
+
+  const mois = moisDePeriode(periode)
+  const objClients = (+ag.objectif_clients_mois || 0) * mois, objCa = (+ag.objectif_ca_mois || 0) * mois
+  const salaire = (+ag.salaire_mensuel || 0) * mois
+  const commission = encaisse * (+ag.taux_commission || 0) / 100
+  const cout = salaire + commission + frais
+  const actifs = parClient.size
+  return {
+    ag, porte, nouveaux, fac, ca, encaisse, impayes: Math.max(0, ca - encaisse),
+    recouvrement: ca > 0 ? Math.min(100, encaisse / ca * 100) : null,
+    actifs, dormants: porte.length - actifs,
+    tauxActivite: porte.length ? actifs / porte.length * 100 : null,
+    fideles: [...parClient.values()].filter(x => x.n >= 2).length,
+    panierMoyen: fac.length ? ca / fac.length : null,
+    caParClient: actifs ? ca / actifs : null,
+    parClient, plaintes: pl, nbPlaintes: retenues.length,
+    plaintesGraves: retenues.filter(p => p.gravite === 'grave').length,
+    plaintesOuvertes: retenues.filter(p => p.statut === 'ouverte').length,
+    pointsPlaintes: somme(retenues, p => (GRAVITES_PLAINTE[p.gravite] || GRAVITES_PLAINTE.moyenne)[2]),
+    activites: act, prospects, frais,
+    conversion: prospects > 0 ? Math.min(100, nouveaux.length / prospects * 100) : null,
+    zone, couvertes, locClients: [...locClients].sort(), locVisitees: [...locVisitees].sort(),
+    horsZone: zone.length ? [...locClients].filter(l => !zone.includes(l)).sort() : [],
+    couverture: zone.length ? couvertes.length / zone.length * 100 : null,
+    mois, objClients, objCa,
+    atteinteClients: objClients > 0 ? nouveaux.length / objClients * 100 : null,
+    atteinteCa: objCa > 0 ? ca / objCa * 100 : null,
+    salaire, commission, cout,
+    coutAcquisition: nouveaux.length && cout > 0 ? cout / nouveaux.length : null,
+    rentabilite: cout > 0 ? ca / cout : null,     // FCFA de CA pour 1 FCFA dépensé
+    net: encaisse - cout,
+  }
+}
+
+// Note sur 100 : part de l'objectif atteinte quand un objectif est fixé, sinon
+// position par rapport au meilleur agent de la période.
+function noterAgents(stats) {
+  const maxN = Math.max(1, ...stats.map(s => s.nouveaux.length)), maxCa = Math.max(1, ...stats.map(s => s.ca))
+  const borne = v => Math.max(0, Math.min(100, v))
+  return stats.map(s => {
+    const notes = {
+      acquisition: borne(s.atteinteClients ?? s.nouveaux.length / maxN * 100),
+      ca: borne(s.atteinteCa ?? s.ca / maxCa * 100),
+      recouvrement: borne(s.recouvrement ?? 0),
+      relation: borne(100 - 100 * s.pointsPlaintes / Math.max(5, s.porte.length)),
+      fidelisation: borne(s.tauxActivite ?? 0),
+    }
+    const score = Math.round(Object.keys(POIDS_SCORE_AGENT).reduce((t, k) => t + notes[k] * POIDS_SCORE_AGENT[k] / 100, 0))
+    return { ...s, notes, score, evalue: s.porte.length > 0 || s.activites.length > 0 }
+  })
+}
+
+function AgentsProspectionPage({ companies, companyId, toast, readOnly=false }) {
+  const [d, setD] = useState({ agents:[], clients:[], factures:[], reglements:[], plaintes:[], activites:[], loading:true, absent:false })
+  const iso = dt => `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`
+  const now = new Date(), an = now.getFullYear()
+  const [periode, setPeriode] = useState({ du:`${an}-01-01`, au:`${an}-12-31` })
+  const [onglet, setOnglet] = useState('performance')
+  const [tri, setTri] = useState('score')
+  const [fiche, setFiche] = useState(null)        // id de l'agent dont on affiche la fiche
+  const [modal, setModal] = useState(null)        // 'agent' | 'plainte' | 'activite'
+  const [form, setForm] = useState({})
+  const [saving, setSaving] = useState(false)
+  const [agentSel, setAgentSel] = useState('')    // agent choisi (portefeuille, filtres)
+  const [recherche, setRecherche] = useState('')
+  const [coches, setCoches] = useState([])
+  const [affect, setAffect] = useState({ date:today(), apporte:'oui' })
+  const company = companies.find(c => c.id === companyId)
+
+  const load = useCallback(async () => {
+    if (!companyId) { setD(x => ({ ...x, agents:[], clients:[], loading:false })); return }
+    const tout = (t, cols, f) => fetchAllRows(() => { const q = supabase.from(t).select(cols).eq('company_id', companyId).order('id'); return f ? f(q) : q })
+    const [ag, cl, fa, re, pl, ac] = await Promise.all([
+      tout('compta_agents_prospection', '*'),
+      tout('compta_clients', 'id,type,nom,prenom,nom_societe,telephone,provenance,numero_compte,created_at,agent_id,date_affectation_agent,apporte_par_agent', q => q.eq('actif', true)),
+      tout('compta_documents', 'id,numero,client_id,date_doc,montant_ttc,montant_paye,statut', q => q.eq('type_doc', 'facture')),
+      tout('compta_reglements', 'id,tiers_id,date_paiement,montant_paye,modalite_paiement', q => q.eq('tiers_type', 'client')),
+      tout('compta_plaintes_agents', '*'),
+      tout('compta_activites_agents', '*'),
+    ])
+    const err = ag.error || cl.error || pl.error || ac.error
+    if (err) {
+      const absent = /relation|does not exist|schema cache|column/i.test(err.message || '')
+      if (!absent) toast.error(err.message)
+      setD(x => ({ ...x, loading:false, absent })); return
+    }
+    setD({ agents:(ag.data||[]).sort((a,b) => nomAgent(a).localeCompare(nomAgent(b))), clients:cl.data||[],
+      factures:(fa.data||[]).filter(f => f.statut !== 'annulé'), reglements:re.data||[], plaintes:pl.data||[], activites:ac.data||[], loading:false, absent:false })
+  }, [companyId])
+  useEffect(() => { load() }, [load])
+
+  const stats = noterAgents(d.agents.map(a => statsAgent(a, d, periode)))
+  const cles = { score:s=>s.score, nouveaux:s=>s.nouveaux.length, ca:s=>s.ca, recouvrement:s=>s.recouvrement ?? -1, plaintes:s=>-s.nbPlaintes, rentabilite:s=>s.rentabilite ?? -1, couverture:s=>s.couverture ?? -1 }
+  const classes = [...stats].sort((a,b) => (b.ag.actif?1:0) - (a.ag.actif?1:0) || cles[tri](b) - cles[tri](a) || b.score - a.score)
+  const rangs = new Map(stats.filter(s => s.evalue && s.ag.actif).sort((a,b) => b.score - a.score || b.ca - a.ca).map((s,i) => [s.ag.id, i+1]))
+  const medaille = r => r===1?'🥇':r===2?'🥈':r===3?'🥉':r?`${r}e`:'—'
+  const tot = stats.reduce((t,s) => ({ nouveaux:t.nouveaux+s.nouveaux.length, porte:t.porte+s.porte.length, ca:t.ca+s.ca, enc:t.enc+s.encaisse, pl:t.pl+s.nbPlaintes, cout:t.cout+s.cout }), { nouveaux:0, porte:0, ca:0, enc:0, pl:0, cout:0 })
+  const sFiche = fiche ? stats.find(s => s.ag.id === fiche) : null
+  const agentDe = id => d.agents.find(a => String(a.id) === String(id))
+  const clientDe = id => d.clients.find(c => String(c.id) === String(id))
+  const txtPeriode = `${dateDoc(periode.du)} au ${dateDoc(periode.au)}`
+  const couleurScore = v => v >= 70 ? '#16a34a' : v >= 45 ? '#b45309' : '#dc2626'
+
+  const raccourcisPeriode = [
+    ['Ce mois', () => ({ du:iso(new Date(an, now.getMonth(), 1)), au:iso(new Date(an, now.getMonth()+1, 0)) })],
+    ['Ce trimestre', () => { const t = Math.floor(now.getMonth()/3)*3; return { du:iso(new Date(an, t, 1)), au:iso(new Date(an, t+3, 0)) } }],
+    ['Cette année', () => ({ du:`${an}-01-01`, au:`${an}-12-31` })],
+  ]
+
+  // ── Enregistrements ──
+  const setF = e => setForm(f => ({ ...f, [e.target.name]: e.target.value }))
+  const num = v => parseFloat(String(v ?? '').replace(',', '.')) || 0
+  const ouvrir = (type, valeurs) => { setForm(valeurs); setModal(type) }
+  const nouvelAgent = () => ouvrir('agent', { code:'', nom:'', prenom:'', telephone:'', email:'', zone:'', localites:'', date_recrutement:today(), objectif_clients_mois:'', objectif_ca_mois:'', salaire_mensuel:'', taux_commission:'', actif:'oui', observations:'' })
+  const nouvellePlainte = agent => ouvrir('plainte', { agent_id:agent||agentSel||d.agents[0]?.id||'', client_id:'', client_nom:'', date_plainte:today(), motif:'', gravite:'moyenne', description:'', statut:'ouverte', date_resolution:'', suite_donnee:'' })
+  const nouvelleActivite = agent => ouvrir('activite', { agent_id:agent||agentSel||d.agents[0]?.id||'', date_activite:today(), localite:'', nb_prospects:'', frais:'', observations:'' })
+
+  const enregistrer = async e => {
+    e.preventDefault()
+    const uid = (await supabase.auth.getUser()).data?.user?.id
+    let table, payload
+    if (modal === 'agent') {
+      if (!String(form.nom||'').trim()) { toast.error("Le nom de l'agent est obligatoire."); return }
+      let code = String(form.code||'').trim()
+      if (!code) {
+        const n = Math.max(0, ...d.agents.map(a => parseInt(String(a.code).replace(/\D/g, ''), 10) || 0)) + 1
+        code = `AGP-${String(n).padStart(3, '0')}`
+      }
+      if (d.agents.some(a => a.id !== form.id && String(a.code).toUpperCase() === code.toUpperCase())) { toast.error(`Le code ${code} est déjà utilisé.`); return }
+      table = 'compta_agents_prospection'
+      payload = { code, nom:form.nom.trim(), prenom:form.prenom||null, telephone:form.telephone||null, email:form.email||null,
+        zone:form.zone||null, localites:listeLocalites(form.localites).join(', ')||null, date_recrutement:form.date_recrutement||null,
+        objectif_clients_mois:num(form.objectif_clients_mois), objectif_ca_mois:num(form.objectif_ca_mois),
+        salaire_mensuel:num(form.salaire_mensuel), taux_commission:num(form.taux_commission), actif:form.actif !== 'non', observations:form.observations||null }
+      if (payload.taux_commission > 100) { toast.error('Le taux de commission ne peut pas dépasser 100 %.'); return }
+    } else if (modal === 'plainte') {
+      if (!form.agent_id) { toast.error("Choisissez l'agent concerné."); return }
+      if (!String(form.motif||'').trim()) { toast.error('Le motif de la plainte est obligatoire.'); return }
+      const cli = clientDe(form.client_id)
+      table = 'compta_plaintes_agents'
+      payload = { agent_id:form.agent_id, client_id:cli ? cli.id : null, client_nom:cli ? nomClientAgent(cli) : (form.client_nom||null),
+        date_plainte:form.date_plainte, motif:form.motif.trim(), gravite:form.gravite, description:form.description||null, statut:form.statut,
+        date_resolution:form.statut === 'ouverte' ? null : (form.date_resolution || today()), suite_donnee:form.suite_donnee||null }
+    } else {
+      if (!form.agent_id) { toast.error("Choisissez l'agent concerné."); return }
+      table = 'compta_activites_agents'
+      payload = { agent_id:form.agent_id, date_activite:form.date_activite, localite:form.localite||null,
+        nb_prospects:Math.round(num(form.nb_prospects)), frais:num(form.frais), observations:form.observations||null }
+      if (payload.nb_prospects < 0 || payload.frais < 0) { toast.error('Les prospects et les frais ne peuvent pas être négatifs.'); return }
+    }
+    setSaving(true)
+    const { error } = form.id
+      ? await supabase.from(table).update(payload).eq('id', form.id)
+      : await supabase.from(table).insert({ ...payload, company_id:companyId, user_id:uid })
+    setSaving(false)
+    if (error) { toast.error(error.message); return }
+    toast.success('Enregistré !'); setModal(null); load()
+  }
+
+  const supprimer = async (table, id, question) => {
+    if (!confirm(question)) return
+    const { error } = await supabase.from(table).delete().eq('id', id)
+    if (error) { toast.error(error.message); return }
+    toast.success('Supprimé.'); load()
+  }
+
+  // ── Portefeuille ──
+  const majClients = async (ids, valeurs) => {
+    for (let i = 0; i < ids.length; i += 150) {
+      const { error } = await supabase.from('compta_clients').update(valeurs).in('id', ids.slice(i, i + 150))
+      if (error) return error
+    }
+    return null
+  }
+  const affecter = async () => {
+    if (!agentSel || !coches.length) return
+    if (!affect.date) { toast.error("Indiquez la date d'affectation."); return }
+    setSaving(true)
+    const error = await majClients(coches, { agent_id:agentSel, date_affectation_agent:affect.date, apporte_par_agent:affect.apporte === 'oui' })
+    setSaving(false)
+    if (error) { toast.error(error.message); return }
+    toast.success(`${coches.length} client(s) ajouté(s) au portefeuille.`); setCoches([]); load()
+  }
+  const retirer = async c => {
+    if (!confirm(`Retirer ${nomClientAgent(c)} du portefeuille ?`)) return
+    const error = await majClients([c.id], { agent_id:null, date_affectation_agent:null, apporte_par_agent:false })
+    if (error) { toast.error(error.message); return }
+    toast.success('Client retiré du portefeuille.'); load()
+  }
+  const basculerApport = async c => {
+    const error = await majClients([c.id], { apporte_par_agent:!c.apporte_par_agent })
+    if (error) { toast.error(error.message); return }
+    load()
+  }
+
+  // ── Impressions ──
+  const imprimerClassement = () => openPrintWindow(gabaritDocumentHtml({ comp:company, titre:'PERFORMANCE DES AGENTS DE PROSPECTION', numero:'', date:new Date().toLocaleDateString('fr-FR'),
+    infos:[['Période', txtPeriode], ['Agents', String(stats.length)]],
+    tiersLabel:'Synthèse', tiers:{ nom:`${tot.nouveaux} nouveau(x) client(s) — CA ${fcfaDoc(tot.ca)}`, adresse:`Encaissé ${fcfaDoc(tot.enc)} — ${tot.pl} plainte(s) — coût des agents ${fcfaDoc(tot.cout)}` },
+    colonnes:[{label:'Rang',align:'c',largeur:'6%'},{label:'Agent'},{label:'Zone'},{label:'Nouv. clients',align:'d'},{label:'Portef.',align:'d'},{label:'CA facturé',align:'d'},{label:'Recouvr.',align:'d'},{label:'Plaintes',align:'d'},{label:'Coût',align:'d'},{label:'Note /100',align:'d'}],
+    lignes:classes.map(s => [medaille(rangs.get(s.ag.id)), echapHtml(nomAgent(s.ag)), echapHtml(s.ag.zone||''), s.nouveaux.length, s.porte.length, fcfaDoc(s.ca), pctAgent(s.recouvrement), s.nbPlaintes, fcfaDoc(s.cout), s.evalue ? s.score : '—']),
+    totaux:[['Nouveaux clients', String(tot.nouveaux)], ['Coût total des agents', fcfaDoc(tot.cout)], ["Chiffre d'affaires des portefeuilles", fcfaDoc(tot.ca), true]],
+    signatures:['Le responsable commercial','La direction'] }), 'performance_agents_prospection')
+
+  const imprimerFiche = s => openPrintWindow(gabaritDocumentHtml({ comp:company, titre:"FICHE DE PERFORMANCE — AGENT DE PROSPECTION", numero:s.ag.code||'', date:new Date().toLocaleDateString('fr-FR'),
+    infos:[['Période', txtPeriode], ['Classement', rangs.get(s.ag.id) ? `${rangs.get(s.ag.id)} / ${rangs.size}` : '—'], ['Note globale', s.evalue ? `${s.score} / 100` : '—']],
+    tiersLabel:'Agent', tiers:{ nom:nomAgent(s.ag), adresse:[s.ag.zone && `Zone : ${s.ag.zone}`, s.ag.date_recrutement && `Recruté le ${dateDoc(s.ag.date_recrutement)}`].filter(Boolean).join(' — '), telephone:s.ag.telephone },
+    avantTableau:`<div class="bloc"><table class="grille">
+      <tr><th>Nouveaux clients</th><th>Objectif</th><th>Portefeuille</th><th>Clients actifs</th><th>Clients fidèles</th><th>Prospects visités</th><th>Conversion</th></tr>
+      <tr><td><strong>${s.nouveaux.length}</strong></td><td>${s.objClients ? `${nbFr(Math.round(s.objClients))} (${pctAgent(s.atteinteClients)})` : '—'}</td><td>${s.porte.length}</td><td>${s.actifs} (${pctAgent(s.tauxActivite)})</td><td>${s.fideles}</td><td>${s.prospects}</td><td>${pctAgent(s.conversion)}</td></tr>
+      <tr><th>CA facturé</th><th>Objectif CA</th><th>Encaissé</th><th>Recouvrement</th><th>Impayés</th><th>Panier moyen</th><th>Plaintes (graves)</th></tr>
+      <tr><td><strong>${fcfaDoc(s.ca)}</strong></td><td>${s.objCa ? `${fcfaDoc(s.objCa)} (${pctAgent(s.atteinteCa)})` : '—'}</td><td>${fcfaDoc(s.encaisse)}</td><td>${pctAgent(s.recouvrement)}</td><td>${fcfaDoc(s.impayes)}</td><td>${s.panierMoyen!=null?fcfaDoc(s.panierMoyen):'—'}</td><td>${s.nbPlaintes} (${s.plaintesGraves})</td></tr>
+      <tr><th>Salaire fixe</th><th>Commission</th><th>Frais terrain</th><th>Coût total</th><th>Coût par nouveau client</th><th>CA pour 1 F dépensé</th><th>Encaissé net du coût</th></tr>
+      <tr><td>${fcfaDoc(s.salaire)}</td><td>${fcfaDoc(s.commission)}</td><td>${fcfaDoc(s.frais)}</td><td><strong>${fcfaDoc(s.cout)}</strong></td><td>${s.coutAcquisition!=null?fcfaDoc(s.coutAcquisition):'—'}</td><td>${s.rentabilite!=null?s.rentabilite.toFixed(1):'—'}</td><td><strong>${fcfaDoc(s.net)}</strong></td></tr>
+    </table>
+    <p style="font-size:11px;margin:8px 0 0"><strong>Zone de couverture :</strong> ${echapHtml(s.ag.zone||'—')}${s.zone.length ? ` — ${s.couvertes.length} localité(s) couverte(s) sur ${s.zone.length} (${pctAgent(s.couverture)})` : ''}. Localités des clients : ${echapHtml(s.locClients.join(', ')||'—')}.</p>
+    </div><div class="lib" style="margin-top:12px">Clients du portefeuille</div>`,
+    colonnes:[{label:'Client'},{label:'Localité'},{label:'Affecté le',largeur:'12%'},{label:'Origine'},{label:'Factures',align:'d'},{label:'CA période',align:'d'}],
+    lignes:[...s.porte].sort((a,b) => (s.parClient.get(String(b.id))?.ca||0) - (s.parClient.get(String(a.id))?.ca||0)).map(c => [echapHtml(nomClientAgent(c)), echapHtml(c.provenance||''), dateDoc(c.date_affectation_agent), c.apporte_par_agent ? 'Apporté' : 'Confié', s.parClient.get(String(c.id))?.n||0, fcfaDoc(s.parClient.get(String(c.id))?.ca||0)]),
+    totaux:[], signatures:["L'agent",'Le responsable commercial'] }), `performance_${s.ag.code||s.ag.nom}`)
+
+  // ── Rendu ──
+  const champDate = { padding:'6px 10px', borderRadius:8, border:'1px solid #d1d5db' }
+  const zoneTexte = { width:'100%', padding:'9px 12px', borderRadius:8, border:'1px solid #d1d5db', fontSize:13.5, boxSizing:'border-box', fontFamily:'inherit' }
+  const lib = { display:'block', fontSize:12.5, fontWeight:600, color:'#374151', marginBottom:5 }
+  const optAgents = [{ value:'', label:'— Choisir un agent —' }, ...d.agents.map(a => ({ value:a.id, label:`${a.code} — ${nomAgent(a)}${a.actif?'':' (inactif)'}` }))]
+  const th = (k, l) => <TH right><span onClick={()=>setTri(k)} style={{ cursor:'pointer', textDecoration:tri===k?'underline':'none' }}>{l}{tri===k?' ▾':''}</span></TH>
+  const vide = (n, msg) => <tr><td colSpan={n} style={{ padding:20, textAlign:'center', color:'#94a3b8' }}>{msg}</td></tr>
+  const tuile = (l, v, sous, c) => (
+    <div key={l} style={{ background:'#f8fafc', borderRadius:10, padding:'10px 12px' }}>
+      <div style={{ fontSize:11.5, color:'#64748b' }}>{l}</div>
+      <div style={{ fontSize:17, fontWeight:800, color:c||'#0f172a' }}>{v}</div>
+      {sous && <div style={{ fontSize:11, color:'#94a3b8' }}>{sous}</div>}
+    </div>)
+  const ONGLETS = [['performance','🏆 Performance'], ['agents','🧑‍💼 Agents'], ['portefeuille','👥 Portefeuilles'], ['plaintes','📣 Plaintes'], ['activites','🧭 Activités terrain']]
+  const dansPeriode = v => { const j = String(v||'').slice(0,10); return (!periode.du || j >= periode.du) && (!periode.au || j <= periode.au) }
+  const plaintesVues = d.plaintes.filter(p => (!agentSel || String(p.agent_id) === String(agentSel)) && dansPeriode(p.date_plainte)).sort((a,b) => String(b.date_plainte).localeCompare(String(a.date_plainte)))
+  const activitesVues = d.activites.filter(a => (!agentSel || String(a.agent_id) === String(agentSel)) && dansPeriode(a.date_activite)).sort((a,b) => String(b.date_activite).localeCompare(String(a.date_activite)))
+  const portefeuille = agentSel ? d.clients.filter(c => String(c.agent_id) === String(agentSel)).sort((a,b) => nomClientAgent(a).localeCompare(nomClientAgent(b))) : []
+  const rech = cleLocalite(recherche)
+  const candidats = agentSel ? d.clients.filter(c => String(c.agent_id) !== String(agentSel) &&
+    (!rech || cleLocalite([nomClientAgent(c), c.provenance, c.telephone, c.numero_compte].join(' ')).includes(rech)))
+    .sort((a,b) => (a.agent_id?1:0) - (b.agent_id?1:0) || nomClientAgent(a).localeCompare(nomClientAgent(b))) : []
+  const clientsAgentForm = modal === 'plainte' && form.agent_id ? d.clients.filter(c => String(c.agent_id) === String(form.agent_id)).sort((a,b) => nomClientAgent(a).localeCompare(nomClientAgent(b))) : []
+  const filtrePeriode = (
+    <div style={{ display:'flex', gap:10, flexWrap:'wrap', alignItems:'center', fontSize:13 }}>
+      <label>Du <input type="date" value={periode.du} onChange={e=>setPeriode(p=>({...p, du:e.target.value}))} style={champDate} /></label>
+      <label>au <input type="date" value={periode.au} onChange={e=>setPeriode(p=>({...p, au:e.target.value}))} style={champDate} /></label>
+      {raccourcisPeriode.map(([l, f]) => <Btn key={l} sm variant="secondary" onClick={()=>setPeriode(f())}>{l}</Btn>)}
+    </div>)
+  const filtreAgent = (
+    <select value={agentSel} onChange={e=>{ setAgentSel(e.target.value); setCoches([]) }} style={{ ...champDate, background:'white', minWidth:220 }}>
+      <option value="">Tous les agents</option>
+      {d.agents.map(a => <option key={a.id} value={a.id}>{a.code} — {nomAgent(a)}</option>)}
+    </select>)
+
+  return (
+    <div>
+      <PageHeader title="Agents de prospection" subtitle={company ? company.raison_sociale : "Sélectionnez une société en haut de l'écran"}
+        actions={<>
+          {onglet==='performance' && <Btn sm variant="secondary" onClick={imprimerClassement} disabled={!stats.length}>🖨️ Classement</Btn>}
+          {!readOnly && !d.absent && companyId && onglet==='agents' && <Btn sm onClick={nouvelAgent}>+ Nouvel agent</Btn>}
+          {!readOnly && !d.absent && d.agents.length>0 && onglet==='plaintes' && <Btn sm onClick={()=>nouvellePlainte()}>+ Nouvelle plainte</Btn>}
+          {!readOnly && !d.absent && d.agents.length>0 && onglet==='activites' && <Btn sm onClick={()=>nouvelleActivite()}>+ Nouvelle activité</Btn>}
+        </>} />
+      {d.absent && <Card style={{ marginBottom:12, background:'#fffbeb', border:'1px solid #fcd34d', color:'#92400e', fontSize:13 }}>⚠️ Le suivi des agents de prospection n'est pas encore activé. {MSG_SCRIPT_AGENTS}</Card>}
+      <div style={{ display:'flex', gap:6, flexWrap:'wrap', marginBottom:14 }}>
+        {ONGLETS.map(([k, l]) => <Btn key={k} sm variant={onglet===k?'primary':'secondary'} onClick={()=>setOnglet(k)}>{l}</Btn>)}
+      </div>
+
+      {!companyId ? <Card style={{ textAlign:'center', color:'#64748b' }}>Sélectionnez une société pour suivre ses agents de prospection.</Card>
+      : d.loading ? <Card>Chargement…</Card>
+      : onglet==='performance' ? <>
+        <Card style={{ marginBottom:16, padding:'12px 20px' }}>
+          {filtrePeriode}
+          <div style={{ fontSize:13, color:'#64748b', marginTop:8 }}>Nouveaux clients : <strong>{tot.nouveaux}</strong> — clients en portefeuille : <strong>{tot.porte}</strong> — CA des portefeuilles : <strong>{fcfa(tot.ca)}</strong> — encaissé : <strong>{fcfa(tot.enc)}</strong> — plaintes : <strong style={{ color:tot.pl?'#dc2626':'inherit' }}>{tot.pl}</strong> — coût des agents : <strong>{fcfa(tot.cout)}</strong></div>
+        </Card>
+        <TableWrap>
+          <table style={{ width:'100%', borderCollapse:'collapse', background:'white', borderRadius:12 }}>
+            <thead><tr><TH>Rang</TH><TH>Agent</TH>{th('nouveaux','Nouveaux clients')}<TH right>Portefeuille</TH>{th('couverture','Couverture zone')}{th('ca','CA facturé')}{th('recouvrement','Recouvrement')}{th('plaintes','Plaintes')}{th('rentabilite','Coût / rentabilité')}{th('score','Note /100')}<TH></TH></tr></thead>
+            <tbody>
+              {classes.map(s => (
+                <TR key={s.ag.id}>
+                  <TD>{medaille(rangs.get(s.ag.id))}</TD>
+                  <TD bold>{nomAgent(s.ag)}{!s.ag.actif && <span style={{ marginLeft:6 }}><Badge type="secondary">Inactif</Badge></span>}<div style={{ fontSize:11, color:'#94a3b8', fontWeight:400 }}>{[s.ag.code, s.ag.zone].filter(Boolean).join(' — ')}</div></TD>
+                  <TD right><strong>{s.nouveaux.length}</strong>{s.objClients>0 && <div style={{ fontSize:11, color:s.atteinteClients>=100?'#16a34a':'#b45309' }}>{pctAgent(s.atteinteClients)} de l'objectif</div>}{s.conversion!=null && <div style={{ fontSize:11, color:'#94a3b8' }}>conversion {pctAgent(s.conversion)}</div>}</TD>
+                  <TD right>{s.porte.length}<div style={{ fontSize:11, color:'#94a3b8' }}>{s.actifs} actif(s){s.dormants>0?`, ${s.dormants} dormant(s)`:''}</div></TD>
+                  <TD right>{s.zone.length ? <>{s.couvertes.length} / {s.zone.length}<div style={{ fontSize:11, color:'#94a3b8' }}>{pctAgent(s.couverture)}</div></> : <>{s.locClients.length || '—'}<div style={{ fontSize:11, color:'#94a3b8' }}>{s.locClients.length ? 'localité(s)' : 'zone non définie'}</div></>}</TD>
+                  <TD right>{s.ca ? fcfa(s.ca) : '—'}{s.objCa>0 && <div style={{ fontSize:11, color:s.atteinteCa>=100?'#16a34a':'#b45309' }}>{pctAgent(s.atteinteCa)} de l'objectif</div>}</TD>
+                  <TD right><strong style={{ color:s.recouvrement==null?'#94a3b8':s.recouvrement>=85?'#16a34a':s.recouvrement>=60?'#b45309':'#dc2626' }}>{pctAgent(s.recouvrement)}</strong>{s.impayes>0 && <div style={{ fontSize:11, color:'#dc2626' }}>impayés {fcfa(s.impayes)}</div>}</TD>
+                  <TD right><span style={{ color:s.nbPlaintes?'#dc2626':'inherit', fontWeight:s.nbPlaintes?700:400 }}>{s.nbPlaintes}</span>{(s.plaintesGraves>0 || s.plaintesOuvertes>0) && <div style={{ fontSize:11, color:'#dc2626' }}>{[s.plaintesGraves && `${s.plaintesGraves} grave(s)`, s.plaintesOuvertes && `${s.plaintesOuvertes} ouverte(s)`].filter(Boolean).join(', ')}</div>}</TD>
+                  <TD right>{s.cout ? fcfa(s.cout) : '—'}{s.rentabilite!=null && <div style={{ fontSize:11, color:s.rentabilite>=1?'#16a34a':'#dc2626' }}>{s.rentabilite.toFixed(1)} F de CA pour 1 F</div>}</TD>
+                  <TD right>{s.evalue ? <strong style={{ fontSize:16, color:couleurScore(s.score) }}>{s.score}</strong> : '—'}</TD>
+                  <TD><Btn sm variant="secondary" onClick={()=>setFiche(s.ag.id)}>Fiche</Btn></TD>
+                </TR>))}
+              {!classes.length && vide(11, d.absent ? 'Suivi non activé.' : "Aucun agent enregistré : ajoutez-les dans l'onglet « Agents ».")}
+            </tbody>
+          </table>
+        </TableWrap>
+        <div style={{ fontSize:12, color:'#64748b', marginTop:8, lineHeight:1.6 }}>
+          <strong>Note sur 100</strong> : {Object.keys(POIDS_SCORE_AGENT).map(k => `${LIB_SCORE_AGENT[k]} ${POIDS_SCORE_AGENT[k]}`).join(' · ')}. Acquisition et chiffre d'affaires sont notés sur l'objectif de l'agent quand il est fixé, sinon par rapport au meilleur agent de la période.
+          Le chiffre d'affaires d'un client compte à partir de sa date d'affectation à l'agent (factures non annulées). Les plaintes jugées non fondées ne sont pas comptées. Coût = salaire fixe + commission sur l'encaissé + frais terrain.
+        </div>
+      </>
+
+      : onglet==='agents' ? (
+        <TableWrap>
+          <table style={{ width:'100%', borderCollapse:'collapse', background:'white', borderRadius:12 }}>
+            <thead><tr><TH>Code</TH><TH>Agent</TH><TH>Zone de couverture</TH><TH>Recruté le</TH><TH right>Objectif / mois</TH><TH right>Salaire fixe</TH><TH right>Commission</TH><TH right>Portefeuille</TH><TH>Statut</TH><TH></TH></tr></thead>
+            <tbody>
+              {d.agents.map(a => (
+                <TR key={a.id}>
+                  <TD bold>{a.code}</TD>
+                  <TD>{nomAgent(a)}<div style={{ fontSize:11, color:'#94a3b8' }}>{[a.telephone, a.email].filter(Boolean).join(' — ')}</div></TD>
+                  <TD>{a.zone||'—'}{a.localites && <div style={{ fontSize:11, color:'#94a3b8', maxWidth:260 }}>{a.localites}</div>}</TD>
+                  <TD sm>{dateDoc(a.date_recrutement)||'—'}</TD>
+                  <TD right>{+a.objectif_clients_mois ? `${nbFr(a.objectif_clients_mois)} client(s)` : '—'}{+a.objectif_ca_mois>0 && <div style={{ fontSize:11, color:'#94a3b8' }}>{fcfa(a.objectif_ca_mois)}</div>}</TD>
+                  <TD right>{+a.salaire_mensuel ? fcfa(a.salaire_mensuel) : '—'}</TD>
+                  <TD right>{+a.taux_commission ? `${nbFr(a.taux_commission)} %` : '—'}</TD>
+                  <TD right>{d.clients.filter(c => String(c.agent_id) === String(a.id)).length}</TD>
+                  <TD><Badge type={a.actif?'success':'secondary'}>{a.actif?'Actif':'Inactif'}</Badge></TD>
+                  <TD><div style={{ display:'flex', gap:6 }}>
+                    <Btn sm variant="secondary" onClick={()=>{ setAgentSel(a.id); setCoches([]); setOnglet('portefeuille') }}>Portefeuille</Btn>
+                    {!readOnly && <Btn sm variant="secondary" onClick={()=>ouvrir('agent', { ...a, actif:a.actif?'oui':'non' })}>✏️</Btn>}
+                    {!readOnly && <Btn sm variant="danger" onClick={()=>supprimer('compta_agents_prospection', a.id, `Supprimer l'agent ${nomAgent(a)} ?\n\nSes plaintes et activités seront effacées et ses clients n'auront plus d'agent. Pour garder l'historique, passez-le plutôt en « Inactif ».`)}>🗑️</Btn>}
+                  </div></TD>
+                </TR>))}
+              {!d.agents.length && vide(10, d.absent ? 'Suivi non activé.' : 'Aucun agent enregistré.')}
+            </tbody>
+          </table>
+        </TableWrap>)
+
+      : onglet==='portefeuille' ? <>
+        <Card style={{ marginBottom:16, padding:'12px 20px' }}>
+          <div style={{ display:'flex', gap:12, flexWrap:'wrap', alignItems:'center', fontSize:13 }}>
+            <span>Portefeuille de</span>{filtreAgent}
+            {agentSel && <span style={{ color:'#64748b' }}><strong>{portefeuille.length}</strong> client(s), dont <strong>{portefeuille.filter(c=>c.apporte_par_agent).length}</strong> apporté(s) par l'agent</span>}
+          </div>
+        </Card>
+        {!agentSel ? <Card style={{ textAlign:'center', color:'#64748b' }}>Choisissez un agent pour voir et composer son portefeuille de clients.</Card> : (
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(340px,1fr))', gap:16, alignItems:'start' }}>
+            <Card style={{ padding:16 }}>
+              <SectionTitle>Clients du portefeuille</SectionTitle>
+              <div style={{ maxHeight:460, overflowY:'auto' }}>
+                {portefeuille.map(c => (
+                  <div key={c.id} style={{ display:'flex', alignItems:'center', gap:8, padding:'7px 0', borderBottom:'1px solid #f1f5f9', fontSize:13 }}>
+                    <div style={{ flex:1 }}><strong>{nomClientAgent(c)}</strong><div style={{ fontSize:11, color:'#94a3b8' }}>{[c.provenance, c.telephone, c.date_affectation_agent && `depuis le ${dateDoc(c.date_affectation_agent)}`].filter(Boolean).join(' — ')}</div></div>
+                    <span onClick={readOnly ? undefined : ()=>basculerApport(c)} title={readOnly ? '' : 'Cliquer pour changer'} style={{ cursor:readOnly?'default':'pointer' }}><Badge type={c.apporte_par_agent?'success':'info'}>{c.apporte_par_agent?'Apporté':'Confié'}</Badge></span>
+                    {!readOnly && <Btn sm variant="danger" onClick={()=>retirer(c)}>Retirer</Btn>}
+                  </div>))}
+                {!portefeuille.length && <div style={{ fontSize:13, color:'#94a3b8' }}>Aucun client dans ce portefeuille.</div>}
+              </div>
+            </Card>
+            {!readOnly && <Card style={{ padding:16 }}>
+              <SectionTitle>Ajouter des clients</SectionTitle>
+              <input value={recherche} onChange={e=>setRecherche(e.target.value)} placeholder="Rechercher : nom, localité, téléphone, n° de compte" style={{ ...zoneTexte, marginBottom:8 }} />
+              <div style={{ maxHeight:300, overflowY:'auto', border:'1px solid #f1f5f9', borderRadius:8 }}>
+                {candidats.slice(0, 200).map(c => (
+                  <label key={c.id} style={{ display:'flex', alignItems:'center', gap:8, padding:'6px 10px', borderBottom:'1px solid #f8fafc', fontSize:13, cursor:'pointer' }}>
+                    <input type="checkbox" checked={coches.includes(c.id)} onChange={e=>setCoches(l => e.target.checked ? [...l, c.id] : l.filter(x => x !== c.id))} />
+                    <span style={{ flex:1 }}>{nomClientAgent(c)}<span style={{ color:'#94a3b8', fontSize:11 }}>{c.provenance ? ` — ${c.provenance}` : ''}</span></span>
+                    {c.agent_id && <span style={{ fontSize:11, color:'#b45309' }}>chez {nomAgent(agentDe(c.agent_id)) || 'un autre agent'}</span>}
+                  </label>))}
+                {!candidats.length && <div style={{ padding:12, fontSize:13, color:'#94a3b8' }}>Aucun client à ajouter.</div>}
+              </div>
+              {candidats.length > 200 && <div style={{ fontSize:11, color:'#94a3b8', marginTop:4 }}>200 premiers clients affichés sur {candidats.length} : précisez la recherche.</div>}
+              <div style={{ display:'flex', gap:10, flexWrap:'wrap', alignItems:'flex-end', marginTop:12 }}>
+                <div><label style={lib}>Date d'affectation</label><input type="date" value={affect.date} onChange={e=>setAffect(a=>({...a, date:e.target.value}))} style={champDate} /></div>
+                <div><label style={lib}>Origine</label>
+                  <select value={affect.apporte} onChange={e=>setAffect(a=>({...a, apporte:e.target.value}))} style={{ ...champDate, background:'white' }}>
+                    <option value="oui">Nouveau client apporté par l'agent</option>
+                    <option value="non">Client existant confié à l'agent</option>
+                  </select></div>
+                <Btn onClick={affecter} disabled={!coches.length || saving}>Ajouter {coches.length || ''} au portefeuille</Btn>
+              </div>
+              <div style={{ fontSize:11.5, color:'#64748b', marginTop:8 }}>Seuls les clients « apportés » comptent dans les nouveaux clients de l'agent. Un client déjà suivi par un autre agent change de portefeuille. Les nouveaux clients se créent dans Référentiel › Clients.</div>
+            </Card>}
+          </div>)}
+      </>
+
+      : onglet==='plaintes' ? <>
+        <Card style={{ marginBottom:16, padding:'12px 20px' }}><div style={{ display:'flex', gap:12, flexWrap:'wrap', alignItems:'center' }}>{filtreAgent}{filtrePeriode}</div></Card>
+        <TableWrap>
+          <table style={{ width:'100%', borderCollapse:'collapse', background:'white', borderRadius:12 }}>
+            <thead><tr><TH>Date</TH><TH>Agent</TH><TH>Client</TH><TH>Motif</TH><TH>Gravité</TH><TH>Statut</TH><TH></TH></tr></thead>
+            <tbody>
+              {plaintesVues.map(p => (
+                <TR key={p.id}>
+                  <TD sm>{dateDoc(p.date_plainte)}</TD>
+                  <TD bold>{nomAgent(agentDe(p.agent_id))||'—'}</TD>
+                  <TD>{nomClientAgent(clientDe(p.client_id)) || p.client_nom || '—'}</TD>
+                  <TD>{p.motif}{p.description && <div style={{ fontSize:11, color:'#94a3b8', maxWidth:320 }}>{p.description}</div>}{p.suite_donnee && <div style={{ fontSize:11, color:'#16a34a', maxWidth:320 }}>Suite : {p.suite_donnee}</div>}</TD>
+                  <TD><Badge type={(GRAVITES_PLAINTE[p.gravite]||GRAVITES_PLAINTE.moyenne)[1]}>{(GRAVITES_PLAINTE[p.gravite]||GRAVITES_PLAINTE.moyenne)[0]}</Badge></TD>
+                  <TD><Badge type={(STATUTS_PLAINTE[p.statut]||STATUTS_PLAINTE.ouverte)[1]}>{(STATUTS_PLAINTE[p.statut]||STATUTS_PLAINTE.ouverte)[0]}</Badge>{p.date_resolution && <div style={{ fontSize:11, color:'#94a3b8' }}>le {dateDoc(p.date_resolution)}</div>}</TD>
+                  <TD>{!readOnly && <div style={{ display:'flex', gap:6 }}>
+                    <Btn sm variant="secondary" onClick={()=>ouvrir('plainte', { ...p, client_id:p.client_id||'', date_resolution:p.date_resolution||'' })}>✏️</Btn>
+                    <Btn sm variant="danger" onClick={()=>supprimer('compta_plaintes_agents', p.id, 'Supprimer cette plainte ?')}>🗑️</Btn>
+                  </div>}</TD>
+                </TR>))}
+              {!plaintesVues.length && vide(7, 'Aucune plainte sur la période.')}
+            </tbody>
+          </table>
+        </TableWrap>
+      </>
+
+      : <>
+        <Card style={{ marginBottom:16, padding:'12px 20px' }}><div style={{ display:'flex', gap:12, flexWrap:'wrap', alignItems:'center' }}>{filtreAgent}{filtrePeriode}</div>
+          <div style={{ fontSize:13, color:'#64748b', marginTop:8 }}>Prospects visités : <strong>{activitesVues.reduce((t,a)=>t+(+a.nb_prospects||0),0)}</strong> — frais terrain : <strong>{fcfa(activitesVues.reduce((t,a)=>t+(+a.frais||0),0))}</strong></div></Card>
+        <TableWrap>
+          <table style={{ width:'100%', borderCollapse:'collapse', background:'white', borderRadius:12 }}>
+            <thead><tr><TH>Date</TH><TH>Agent</TH><TH>Localité visitée</TH><TH right>Prospects visités</TH><TH right>Frais terrain</TH><TH>Observations</TH><TH></TH></tr></thead>
+            <tbody>
+              {activitesVues.map(a => (
+                <TR key={a.id}>
+                  <TD sm>{dateDoc(a.date_activite)}</TD>
+                  <TD bold>{nomAgent(agentDe(a.agent_id))||'—'}</TD>
+                  <TD>{a.localite||'—'}</TD>
+                  <TD right>{a.nb_prospects||0}</TD>
+                  <TD right>{+a.frais ? fcfa(a.frais) : '—'}</TD>
+                  <TD sm>{a.observations||''}</TD>
+                  <TD>{!readOnly && <div style={{ display:'flex', gap:6 }}>
+                    <Btn sm variant="secondary" onClick={()=>ouvrir('activite', { ...a })}>✏️</Btn>
+                    <Btn sm variant="danger" onClick={()=>supprimer('compta_activites_agents', a.id, 'Supprimer cette activité ?')}>🗑️</Btn>
+                  </div>}</TD>
+                </TR>))}
+              {!activitesVues.length && vide(7, 'Aucune activité terrain sur la période.')}
+            </tbody>
+          </table>
+        </TableWrap>
+      </>}
+
+      {/* Fiche de performance */}
+      <Modal open={!!sFiche} onClose={()=>setFiche(null)} title={sFiche ? `Performance — ${nomAgent(sFiche.ag)}` : ''} size="xl">
+        {sFiche && <>
+          <div style={{ fontSize:12.5, color:'#64748b', marginBottom:10 }}>Période du {txtPeriode} ({nbFr(sFiche.mois)} mois){sFiche.ag.zone ? ` — zone : ${sFiche.ag.zone}` : ''}</div>
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))', gap:10, marginBottom:14 }}>
+            {tuile('Note globale', sFiche.evalue ? `${sFiche.score} / 100` : '—', rangs.get(sFiche.ag.id) ? `${medaille(rangs.get(sFiche.ag.id))} sur ${rangs.size}` : 'non classé', sFiche.evalue ? couleurScore(sFiche.score) : null)}
+            {tuile('Nouveaux clients apportés', sFiche.nouveaux.length, sFiche.objClients ? `objectif ${nbFr(Math.round(sFiche.objClients))} — ${pctAgent(sFiche.atteinteClients)}` : 'aucun objectif fixé')}
+            {tuile('Portefeuille', `${sFiche.porte.length} client(s)`, `${sFiche.actifs} actif(s), ${sFiche.dormants} dormant(s), ${sFiche.fideles} fidèle(s)`)}
+            {tuile('Prospects visités', sFiche.prospects, sFiche.conversion!=null ? `taux de conversion ${pctAgent(sFiche.conversion)}` : 'aucune tournée saisie')}
+            {tuile('CA facturé', fcfa(sFiche.ca), sFiche.objCa ? `objectif ${fcfa(sFiche.objCa)} — ${pctAgent(sFiche.atteinteCa)}` : `${sFiche.fac.length} facture(s)`)}
+            {tuile('Encaissé', fcfa(sFiche.encaisse), `recouvrement ${pctAgent(sFiche.recouvrement)}`)}
+            {tuile('Impayés', fcfa(sFiche.impayes), null, sFiche.impayes ? '#dc2626' : null)}
+            {tuile('Panier moyen', sFiche.panierMoyen!=null ? fcfa(sFiche.panierMoyen) : '—', sFiche.caParClient!=null ? `${fcfa(sFiche.caParClient)} par client actif` : null)}
+            {tuile('Plaintes', sFiche.nbPlaintes, `${sFiche.plaintesGraves} grave(s), ${sFiche.plaintesOuvertes} non résolue(s)`, sFiche.nbPlaintes ? '#dc2626' : null)}
+            {tuile("Coût de l'agent", fcfa(sFiche.cout), `fixe ${fcfa(sFiche.salaire)} · comm. ${fcfa(sFiche.commission)} · frais ${fcfa(sFiche.frais)}`)}
+            {tuile('Coût par nouveau client', sFiche.coutAcquisition!=null ? fcfa(sFiche.coutAcquisition) : '—')}
+            {tuile('Rentabilité', sFiche.rentabilite!=null ? `${sFiche.rentabilite.toFixed(1)} F` : '—', sFiche.rentabilite!=null ? `de CA pour 1 F dépensé — net encaissé ${fcfa(sFiche.net)}` : 'coût non renseigné', sFiche.rentabilite!=null ? (sFiche.rentabilite>=1?'#16a34a':'#dc2626') : null)}
+          </div>
+          <div style={{ fontWeight:700, fontSize:13, margin:'6px 0' }}>Détail de la note</div>
+          {Object.keys(POIDS_SCORE_AGENT).map(k => (
+            <div key={k} style={{ display:'flex', alignItems:'center', gap:10, fontSize:12.5, padding:'3px 0' }}>
+              <span style={{ width:210 }}>{LIB_SCORE_AGENT[k]} <span style={{ color:'#94a3b8' }}>(/{POIDS_SCORE_AGENT[k]})</span></span>
+              <div style={{ flex:1, height:8, background:'#f1f5f9', borderRadius:4, overflow:'hidden' }}><div style={{ width:`${sFiche.notes[k]}%`, height:'100%', background:couleurScore(sFiche.notes[k]) }} /></div>
+              <strong style={{ width:44, textAlign:'right' }}>{(sFiche.notes[k] * POIDS_SCORE_AGENT[k] / 100).toFixed(1)}</strong>
+            </div>))}
+          <div style={{ fontWeight:700, fontSize:13, margin:'14px 0 6px' }}>Zone de couverture</div>
+          <div style={{ fontSize:12.5, lineHeight:1.7 }}>
+            {sFiche.zone.length ? <>Localités de la zone : {sFiche.zone.map(z => <span key={z} style={{ marginRight:6 }}><Badge type={sFiche.couvertes.includes(z)?'success':'secondary'}>{z}</Badge></span>)}
+              <div><strong>{sFiche.couvertes.length} sur {sFiche.zone.length}</strong> ont au moins un client ({pctAgent(sFiche.couverture)}).{sFiche.horsZone.length ? ` Clients hors zone : ${sFiche.horsZone.join(', ')}.` : ''}</div></>
+              : <div style={{ color:'#94a3b8' }}>Localités de la zone non renseignées sur la fiche de l'agent. Localités des clients : {sFiche.locClients.join(', ') || '—'}.</div>}
+            {sFiche.locVisitees.length > 0 && <div>Localités visitées sur la période : {sFiche.locVisitees.join(', ')}.</div>}
+          </div>
+          <div style={{ fontWeight:700, fontSize:13, margin:'14px 0 6px' }}>Meilleurs clients de la période</div>
+          {[...sFiche.parClient.entries()].sort((a,b) => b[1].ca - a[1].ca).slice(0, 8).map(([id, x]) => (
+            <div key={id} style={{ fontSize:12.5, padding:'3px 0' }}>• {nomClientAgent(clientDe(id)) || 'Client'} — {fcfa(x.ca)} ({x.n} facture(s))</div>))}
+          {!sFiche.parClient.size && <div style={{ fontSize:12.5, color:'#94a3b8' }}>Aucune facture sur la période pour ce portefeuille.</div>}
+          {sFiche.plaintes.length > 0 && <>
+            <div style={{ fontWeight:700, fontSize:13, margin:'14px 0 6px' }}>Plaintes de la période</div>
+            {sFiche.plaintes.map(p => <div key={p.id} style={{ fontSize:12.5, padding:'3px 0', color:p.statut==='non_fondee'?'#94a3b8':p.gravite==='grave'?'#b91c1c':'inherit' }}>• {dateDoc(p.date_plainte)} — {nomClientAgent(clientDe(p.client_id)) || p.client_nom || 'Client non précisé'} : {p.motif} ({(GRAVITES_PLAINTE[p.gravite]||GRAVITES_PLAINTE.moyenne)[0].toLowerCase()}, {(STATUTS_PLAINTE[p.statut]||STATUTS_PLAINTE.ouverte)[0].toLowerCase()})</div>)}
+          </>}
+          <Row style={{ marginTop:14 }}><Btn variant="secondary" onClick={()=>setFiche(null)}>Fermer</Btn><Btn onClick={()=>imprimerFiche(sFiche)}>🖨️ Imprimer la fiche</Btn></Row>
+        </>}
+      </Modal>
+
+      {/* Formulaires */}
+      <Modal open={!!modal} onClose={()=>setModal(null)} size="lg"
+        title={modal==='agent' ? (form.id ? "Modifier l'agent" : 'Nouvel agent de prospection') : modal==='plainte' ? (form.id ? 'Modifier la plainte' : 'Nouvelle plainte') : (form.id ? "Modifier l'activité" : 'Nouvelle activité terrain')}>
+        {modal && <form onSubmit={enregistrer}>
+          {modal==='agent' && <Grid cols={3}>
+            <Input label="Code (automatique si vide)" name="code" value={form.code} onChange={setF} placeholder="AGP-001" />
+            <Input label="Nom" name="nom" value={form.nom} onChange={setF} required />
+            <Input label="Prénom(s)" name="prenom" value={form.prenom} onChange={setF} />
+            <Input label="Téléphone" name="telephone" type="tel" value={form.telephone} onChange={setF} />
+            <Input label="E-mail" name="email" type="email" value={form.email} onChange={setF} />
+            <Input label="Date de recrutement" name="date_recrutement" type="date" value={form.date_recrutement} onChange={setF} />
+            <Input label="Zone de couverture" name="zone" value={form.zone} onChange={setF} placeholder="EX : ATACORA OUEST" />
+            <div style={{ gridColumn:'span 2' }}><Input label="Localités de la zone (séparées par des virgules)" name="localites" value={form.localites} onChange={setF} placeholder="TANGUIETA, MATERI, COBLY" /></div>
+            <Input label="Objectif : nouveaux clients / mois" name="objectif_clients_mois" type="number" min="0" step="any" value={form.objectif_clients_mois} onChange={setF} />
+            <Input label="Objectif : CA / mois (FCFA)" name="objectif_ca_mois" type="number" min="0" step="any" value={form.objectif_ca_mois} onChange={setF} />
+            <Sel label="Statut" name="actif" value={form.actif} onChange={setF} options={[{value:'oui',label:'Actif'},{value:'non',label:'Inactif'}]} />
+            <Input label="Salaire fixe mensuel (FCFA)" name="salaire_mensuel" type="number" min="0" step="any" value={form.salaire_mensuel} onChange={setF} />
+            <Input label="Commission sur l'encaissé (%)" name="taux_commission" type="number" min="0" step="any" value={form.taux_commission} onChange={setF} />
+            <Span2><label style={lib}>Observations</label><textarea name="observations" value={form.observations||''} onChange={setF} rows={2} style={zoneTexte} /></Span2>
+            <Span2><div style={{ fontSize:11.5, color:'#64748b' }}>Les localités servent à mesurer la couverture : elles sont comparées à la « provenance » des clients du portefeuille. Écrivez-les comme sur les fiches clients.</div></Span2>
+          </Grid>}
+          {modal==='plainte' && <Grid cols={2}>
+            <Sel label="Agent concerné" name="agent_id" value={form.agent_id} onChange={e=>setForm(f=>({...f, agent_id:e.target.value, client_id:''}))} options={optAgents} required />
+            <Input label="Date de la plainte" name="date_plainte" type="date" value={form.date_plainte} onChange={setF} required />
+            <Sel label="Client plaignant (portefeuille de l'agent)" name="client_id" value={form.client_id} onChange={setF}
+              options={[{ value:'', label:'— Autre / non client —' }, ...clientsAgentForm.map(c => ({ value:c.id, label:nomClientAgent(c) }))]} />
+            {!form.client_id ? <Input label="Nom du plaignant" name="client_nom" value={form.client_nom} onChange={setF} /> : <div />}
+            <Span2><Input label="Motif" name="motif" value={form.motif} onChange={setF} required placeholder="EX : PROMESSE NON TENUE, COMPORTEMENT, RETARD DE LIVRAISON" /></Span2>
+            <Sel label="Gravité" name="gravite" value={form.gravite} onChange={setF} options={Object.entries(GRAVITES_PLAINTE).map(([k, v]) => ({ value:k, label:v[0] }))} />
+            <Sel label="Statut" name="statut" value={form.statut} onChange={setF} options={Object.entries(STATUTS_PLAINTE).map(([k, v]) => ({ value:k, label:v[0] }))} />
+            <Span2><label style={lib}>Description</label><textarea name="description" value={form.description||''} onChange={setF} rows={3} style={zoneTexte} /></Span2>
+            {form.statut !== 'ouverte' && <>
+              <Input label="Date de clôture" name="date_resolution" type="date" value={form.date_resolution} onChange={setF} />
+              <div />
+              <Span2><label style={lib}>Suite donnée</label><textarea name="suite_donnee" value={form.suite_donnee||''} onChange={setF} rows={2} style={zoneTexte} /></Span2>
+            </>}
+          </Grid>}
+          {modal==='activite' && <Grid cols={2}>
+            <Sel label="Agent" name="agent_id" value={form.agent_id} onChange={setF} options={optAgents} required />
+            <Input label="Date" name="date_activite" type="date" value={form.date_activite} onChange={setF} required />
+            <Input label="Localité visitée" name="localite" value={form.localite} onChange={setF} />
+            <Input label="Prospects visités" name="nb_prospects" type="number" min="0" step="1" value={form.nb_prospects} onChange={setF} />
+            <Input label="Frais terrain (FCFA) : déplacement, carburant…" name="frais" type="number" min="0" step="any" value={form.frais} onChange={setF} />
+            <div />
+            <Span2><label style={lib}>Observations</label><textarea name="observations" value={form.observations||''} onChange={setF} rows={2} style={zoneTexte} /></Span2>
+          </Grid>}
+          <Row style={{ marginTop:16 }}><Btn variant="secondary" onClick={()=>setModal(null)}>Annuler</Btn><Btn type="submit" disabled={saving}>{saving ? 'Enregistrement…' : 'Enregistrer'}</Btn></Row>
+        </form>}
+      </Modal>
+    </div>
+  )
+}
+
 // ── COMMERCIAL — LISTE ────────────────────────────────────────────────────────
 function CommercialPage({ companies, companyId, setPage, setDocId, toast, readOnly=false }) {
   const [docs, setDocs] = useState([])
@@ -7669,7 +8250,7 @@ function CommercialNewPage({ companies, companyId, typeDoc, setPage, toast }) {
                       <div style={{ width:'100%', padding:'9px 12px', borderRadius:8, border:'1px solid #d1d5db',
                         fontSize:13.5, boxSizing:'border-box', background:'#f8fafc', minHeight:38, display:'flex', alignItems:'center' }}>
                         {matchedFourn
-                          ? <span style={{fontWeight:600,color:'#0f2044'}}>{fourName(matchedFourn)}</span>
+                          ? <span style={{fontWeight:600,color:'#082818'}}>{fourName(matchedFourn)}</span>
                           : normNum(fournNum)
                             ? <span style={{color:'#dc2626',fontWeight:600}}>⚠️ Fournisseur introuvable</span>
                             : <span style={{color:'#94a3b8'}}>—</span>}
@@ -7703,7 +8284,7 @@ function CommercialNewPage({ companies, companyId, typeDoc, setPage, toast }) {
                       <div style={{ width:'100%', padding:'9px 12px', borderRadius:8, border:'1px solid #d1d5db',
                         fontSize:13.5, boxSizing:'border-box', background:'#f8fafc', minHeight:38, display:'flex', alignItems:'center' }}>
                         {matchedCli
-                          ? <span style={{fontWeight:600,color:'#0f2044'}}>{cliName(matchedCli)}</span>
+                          ? <span style={{fontWeight:600,color:'#082818'}}>{cliName(matchedCli)}</span>
                           : normNum(cliNum)
                             ? <span style={{color:'#dc2626',fontWeight:600}}>⚠️ Client introuvable</span>
                             : <span style={{color:'#94a3b8'}}>—</span>}
@@ -7844,7 +8425,7 @@ function CommercialViewPage({ docId, setPage, toast }) {
         <Card>
           <div style={{display:'flex',justifyContent:'space-between',marginBottom:24}}>
             <div>
-              <div style={{fontWeight:800,fontSize:15,color:'#0f2044'}}>{doc.compta_companies?.raison_sociale}</div>
+              <div style={{fontWeight:800,fontSize:15,color:'#082818'}}>{doc.compta_companies?.raison_sociale}</div>
               {doc.compta_companies?.rccm  && <div style={{fontSize:12,color:'#555'}}>RCCM : {doc.compta_companies.rccm}</div>}
               {doc.compta_companies?.adresse && <div style={{fontSize:12,color:'#555'}}>{doc.compta_companies.adresse}</div>}
             </div>
@@ -8028,7 +8609,7 @@ function LotsProductionPage({ companies, companyId, toast, readOnly=false }) {
           display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', padding:16 }}>
           <div style={{ background:'white', borderRadius:12, width:'100%', maxWidth:860,
             maxHeight:'92vh', display:'flex', flexDirection:'column', boxShadow:'0 30px 80px rgba(0,0,0,.4)' }}>
-            <div style={{ padding:'12px 20px', background:'#0f2044', borderRadius:'12px 12px 0 0', display:'flex', alignItems:'center', justifyContent:'space-between' }}>
+            <div style={{ padding:'12px 20px', background:'#082818', borderRadius:'12px 12px 0 0', display:'flex', alignItems:'center', justifyContent:'space-between' }}>
               <span style={{ color:'white', fontWeight:700 }}>👁️ Aperçu — {rowPreview.label}</span>
               <div style={{ display:'flex', gap:8 }}>
                 <button onClick={()=>{ openPrintWindow(rowPreview.html) }}
@@ -8107,7 +8688,7 @@ function ProductionRowPreviewModal({ open, onClose, it, title, fields, companyNa
       <div style={{ background:'white', borderRadius:12, width:'100%', maxWidth:860,
         maxHeight:'92vh', display:'flex', flexDirection:'column', boxShadow:'0 30px 80px rgba(0,0,0,.4)' }}>
         <div style={{ padding:'12px 20px', borderBottom:'1px solid #e2e8f0', display:'flex',
-          alignItems:'center', justifyContent:'space-between', background:'#0f2044', borderRadius:'12px 12px 0 0' }}>
+          alignItems:'center', justifyContent:'space-between', background:'#082818', borderRadius:'12px 12px 0 0' }}>
           <span style={{ color:'white', fontWeight:700, fontSize:15 }}>👁️ Aperçu — {title}</span>
           <div style={{ display:'flex', gap:8 }}>
             <button onClick={()=>{ openPrintWindow(html) }}
@@ -8378,7 +8959,7 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
       <head><meta charset="UTF-8"><style>
         table{border-collapse:collapse;width:100%}
         th,td{border:1px solid #d1d5db;padding:5px 8px;font-size:10pt}
-        h2{font-family:Arial;color:#0f2044}p{font-family:Arial;font-size:9pt;color:#555}
+        h2{font-family:Arial;color:#082818}p{font-family:Arial;font-size:9pt;color:#555}
       </style></head><body>
       <h2>${title}</h2>
       <p>${companyName}${dateFrom||dateTo?` — Période : ${dateFrom||'—'} → ${dateTo||'—'}`:''} — ${items.length} enregistrement(s) — Exporté le ${new Date().toLocaleDateString('fr-FR')}</p>
@@ -8516,7 +9097,7 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
         <form onSubmit={save}>
           {/* Bandeau résultats calculés — toujours visible en haut du formulaire */}
           {fields.some(f=>f.calc) && (
-            <div style={{display:'grid',gridTemplateColumns:`repeat(${fields.filter(f=>f.calc).length},1fr)`,gap:10,marginBottom:16,padding:'12px 16px',background:'#0f2044',borderRadius:10}}>
+            <div style={{display:'grid',gridTemplateColumns:`repeat(${fields.filter(f=>f.calc).length},1fr)`,gap:10,marginBottom:16,padding:'12px 16px',background:'#082818',borderRadius:10}}>
               {fields.filter(f=>f.calc).map(f=>{
                 const val = getCalcValue(f.name)
                 const isNeg = val < 0
@@ -8654,7 +9235,7 @@ function PrestationPreviewModal({ open, onClose, row, companyName }) {
       <div style={{ background:'white', borderRadius:12, width:'100%', maxWidth:900,
         maxHeight:'92vh', display:'flex', flexDirection:'column', boxShadow:'0 30px 80px rgba(0,0,0,.4)' }}>
         <div style={{ padding:'12px 20px', borderBottom:'1px solid #e2e8f0', display:'flex',
-          alignItems:'center', justifyContent:'space-between', background:'#0f2044', borderRadius:'12px 12px 0 0' }}>
+          alignItems:'center', justifyContent:'space-between', background:'#082818', borderRadius:'12px 12px 0 0' }}>
           <span style={{ color:'white', fontWeight:700, fontSize:15 }}>
             👁️ Aperçu — {row.numero_facture||'Prestation'}
           </span>
@@ -8912,7 +9493,7 @@ function PrestationPage({ companies, companyId, toast, readOnly=false, setPage }
       <head><meta charset="UTF-8"><style>
         table{border-collapse:collapse;width:100%}
         th,td{border:1px solid #d1d5db;padding:5px 8px;font-size:10pt}
-        h2{font-family:Arial;color:#0f2044}p{font-family:Arial;font-size:9pt;color:#555}
+        h2{font-family:Arial;color:#082818}p{font-family:Arial;font-size:9pt;color:#555}
       </style></head><body>
       <h2>Prestations</h2>
       <p>${companyName} — ${items.length} enregistrement(s) — Exporté le ${new Date().toLocaleDateString('fr-FR')}</p>
@@ -9462,7 +10043,7 @@ function LotsSemiFinisPage({ companies, companyId, toast, readOnly=false }) {
           display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:16}}>
           <div style={{background:'white',borderRadius:12,width:'100%',maxWidth:860,
             maxHeight:'92vh',display:'flex',flexDirection:'column',boxShadow:'0 30px 80px rgba(0,0,0,.4)'}}>
-            <div style={{padding:'12px 20px',background:'#0f2044',borderRadius:'12px 12px 0 0',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+            <div style={{padding:'12px 20px',background:'#082818',borderRadius:'12px 12px 0 0',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
               <span style={{color:'white',fontWeight:700}}>👁️ Aperçu — {rowPreview.label}</span>
               <div style={{display:'flex',gap:8}}>
                 <button onClick={()=>{ openPrintWindow(rowPreview.html) }}
@@ -9503,7 +10084,7 @@ const ALL_SECTIONS = [
   ['dashboard','Tableau de bord'],['companies','Sociétés'],['clients','Clients'],
   ['fournisseurs','Fournisseurs'],['categories_fournisseurs','Catégories fournisseurs'],['stock','Articles & Stock'],['mouvements','Mouvements'],['bons_stock',"Bons d'entrée / sortie"],
   ['inventaire','Inventaire'],['commercial','Documents commerciaux'],['reglements_clients','Règlements Clients'],['reglements_fourn','Règlements Fournisseurs'],
-  ['prestations','Prestations'],['suivi_lot','Suivi de lot'],['registre_tracabilite','Registre de traçabilité'],['tracabilite','Traçabilité (QR)'],['lots','Lots Production'],
+  ['prestations','Prestations'],['agents_prospection','Agents de prospection'],['suivi_lot','Suivi de lot'],['registre_tracabilite','Registre de traçabilité'],['tracabilite','Traçabilité (QR)'],['lots','Lots Production'],
   ['etuvage','Étuvage'],['decorticage','Décorticage'],['calibrage','Calibrage'],
   ['tri_optique','Tri optique'],['conditionnement','Conditionnement'],
   ['etv_repertoire','Répertoire Étuveuses'],['etv_envois','Envois aux étuveuses'],['etv_performance','Performance des étuveuses'],['etv_avances','Avances'],
@@ -9521,7 +10102,7 @@ const ALL_SECTIONS = [
 const SECTION_GROUPS = [
   {group:'Référentiel', ids:['companies','clients','fournisseurs','categories_fournisseurs']},
   {group:'Stock', ids:['stock','mouvements','bons_stock','inventaire','categories_articles']},
-  {group:'Commercial', ids:['commercial','reglements_clients','reglements_fourn','prestations']},
+  {group:'Commercial', ids:['commercial','reglements_clients','reglements_fourn','prestations','agents_prospection']},
   {group:'Traçabilité', ids:['registre_tracabilite','tracabilite']},
   {group:'Production', ids:['suivi_lot','lots','etuvage','decorticage','calibrage','tri_optique','conditionnement']},
   {group:'Étuveuses', ids:['etv_repertoire','etv_envois','etv_performance','etv_avances','etv_bc','etv_br','etv_entrees','etv_sorties','etv_inventaire','etv_tresorerie']},
@@ -9684,7 +10265,7 @@ function MesUtilisateursPage({ toast, companies, companyId, profile }) {
               <div key={u.id} style={{background:'white',borderRadius:12,border:'1px solid '+(actif?'#e2e8f0':'#fecaca'),padding:20}}>
                 <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:10}}>
                   <div>
-                    <div style={{fontSize:15,fontWeight:800,color:'#0f2044'}}>{'👤 '}{u.nom||'—'}</div>
+                    <div style={{fontSize:15,fontWeight:800,color:'#082818'}}>{'👤 '}{u.nom||'—'}</div>
                     <div style={{fontSize:12,color:'#64748b',marginTop:2}}>{u.email}</div>
                     {u.whatsapp&&<div style={{fontSize:12,color:'#25d366',marginTop:1}}>{'📱 +229 '}{u.whatsapp.replace(/^229/,'')}</div>}
                   </div>
@@ -9711,7 +10292,7 @@ function MesUtilisateursPage({ toast, companies, companyId, profile }) {
 
       <Modal open={modal} onClose={close} title={editItem?'Modifier utilisateur':'Nouvel utilisateur simple'} size="xl">
         <form onSubmit={save}>
-          <div style={{fontSize:12,fontWeight:700,color:'#0f2044',marginBottom:8,textTransform:'uppercase'}}>Informations du compte</div>
+          <div style={{fontSize:12,fontWeight:700,color:'#082818',marginBottom:8,textTransform:'uppercase'}}>Informations du compte</div>
           <Grid cols={3} gap={14} style={{marginBottom:20}}>
             <Input label="Nom complet *" name="nom" value={form.nom||''} onChange={e=>setForm(f=>({...f,nom:e.target.value}))} required />
             <Input label="Email *" name="email" type="email" value={form.email||''} onChange={e=>setForm(f=>({...f,email:e.target.value}))} required={!editItem} disabled={!!editItem} />
@@ -9750,7 +10331,7 @@ function MesUtilisateursPage({ toast, companies, companyId, profile }) {
               options={[{value:'',label:'— Aucun signataire —'},...signataires.map(s=>({value:s.id,label:s.nom+' ('+(s.fonction||'—')+')'}) )]} />
           </Grid>
 
-          <div style={{fontSize:12,fontWeight:700,color:'#0f2044',marginBottom:4,textTransform:'uppercase'}}>{"Droits d'accès par section"}</div>
+          <div style={{fontSize:12,fontWeight:700,color:'#082818',marginBottom:4,textTransform:'uppercase'}}>{"Droits d'accès par section"}</div>
           <div style={{fontSize:12,color:'#64748b',marginBottom:10}}>
             🚫 Aucun accès = section masquée &nbsp;·&nbsp; 👁️ Lecture = consultation &nbsp;·&nbsp; ✏️ Écriture = création et modification
           </div>
@@ -9765,7 +10346,7 @@ function MesUtilisateursPage({ toast, companies, companyId, profile }) {
               return (
                 <div key={g.group} style={{background:'#f8fafc',borderRadius:10,border:'1px solid #e2e8f0',padding:'12px 16px'}}>
                   <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
-                    <span style={{fontSize:12,fontWeight:700,color:'#0f2044'}}>{g.group}</span>
+                    <span style={{fontSize:12,fontWeight:700,color:'#082818'}}>{g.group}</span>
                     <div style={{display:'flex',gap:4}}>
                       <button type="button" onClick={()=>setGroupPerm(g.ids,'write')} style={{padding:'3px 8px',borderRadius:4,border:'none',background:'#dcfce7',color:'#16a34a',fontSize:11,cursor:'pointer',fontWeight:600}}>✏️ Tous</button>
                       <button type="button" onClick={()=>setGroupPerm(g.ids,'read')} style={{padding:'3px 8px',borderRadius:4,border:'none',background:'#fef3c7',color:'#92400e',fontSize:11,cursor:'pointer',fontWeight:600}}>👁️ Tous</button>
@@ -10373,7 +10954,7 @@ function EtvBCPage({ companies, companyId, toast, readOnly=false }) {
             <strong>Date :</strong> {viewItem.date_bc}
           </div>
           <table style={{width:'100%',borderCollapse:'collapse',marginBottom:12}}>
-            <thead><tr style={{background:'#0f2044',color:'white'}}>
+            <thead><tr style={{background:'#082818',color:'white'}}>
               {['N°','Variété','Qté demandée (kg)','Prix U. (FCFA/kg)','Montant'].map(h=><th key={h} style={{padding:'8px 10px',textAlign:'left',fontSize:12}}>{h}</th>)}
             </tr></thead>
             <tbody>
@@ -10388,7 +10969,7 @@ function EtvBCPage({ companies, companyId, toast, readOnly=false }) {
               ))}
             </tbody>
           </table>
-          <div style={{padding:'12px 16px',background:'#0f2044',borderRadius:8,display:'flex',justifyContent:'space-between',color:'white',fontWeight:800}}>
+          <div style={{padding:'12px 16px',background:'#082818',borderRadius:8,display:'flex',justifyContent:'space-between',color:'white',fontWeight:800}}>
             <span>TOTAL</span><span>{fcfa(viewItem.montant_total)}</span>
           </div>
           <Row style={{marginTop:16}}>
@@ -10415,10 +10996,10 @@ function EtvBCPage({ companies, companyId, toast, readOnly=false }) {
             </div>
           </Grid>
 
-          <div style={{fontSize:12,fontWeight:700,color:'#0f2044',marginBottom:8,textTransform:'uppercase'}}>Lignes de commande</div>
+          <div style={{fontSize:12,fontWeight:700,color:'#082818',marginBottom:8,textTransform:'uppercase'}}>Lignes de commande</div>
           <div style={{background:'#f8fafc',borderRadius:8,border:'1px solid #e2e8f0',overflow:'hidden',marginBottom:12}}>
             <table style={{width:'100%',borderCollapse:'collapse'}}>
-              <thead><tr style={{background:'#0f2044',color:'white'}}>
+              <thead><tr style={{background:'#082818',color:'white'}}>
                 {['Variété de riz','Quantité demandée (kg)','Prix unitaire (FCFA/kg)','Montant',''].map(h=><th key={h} style={{padding:'8px 10px',textAlign:'left',fontSize:11}}>{h}</th>)}
               </tr></thead>
               <tbody>
@@ -10452,7 +11033,7 @@ function EtvBCPage({ companies, companyId, toast, readOnly=false }) {
             </table>
             <div style={{padding:'8px 12px',display:'flex',justifyContent:'space-between',alignItems:'center',borderTop:'1px solid #e2e8f0'}}>
               <button type="button" onClick={addLigne} style={{background:'#eff6ff',border:'1px solid #bfdbfe',borderRadius:6,padding:'5px 12px',cursor:'pointer',color:ACCENT,fontSize:13,fontWeight:600}}>+ Ajouter une ligne</button>
-              <div style={{fontWeight:800,fontSize:15,color:'#0f2044'}}>TOTAL : {fcfa(Math.round(totalBC))}</div>
+              <div style={{fontWeight:800,fontSize:15,color:'#082818'}}>TOTAL : {fcfa(Math.round(totalBC))}</div>
             </div>
           </div>
           <Input label="Notes" name="notes" value={form.notes||''} onChange={set} />
@@ -10629,7 +11210,7 @@ function EtvBRPage({ companies, companyId, toast, readOnly=false }) {
             <strong>Étuveuse :</strong> {getEtvName(viewItem.compta_etuveuses)} &nbsp;|&nbsp; <strong>Date :</strong> {viewItem.date_br}
           </div>
           <table style={{width:'100%',borderCollapse:'collapse',marginBottom:12}}>
-            <thead><tr style={{background:'#0f2044',color:'white'}}>
+            <thead><tr style={{background:'#082818',color:'white'}}>
               {['N°','Variété','Qté demandée','Qté accordée','Prix U.','Montant accordé'].map(h=><th key={h} style={{padding:'8px',fontSize:11}}>{h}</th>)}
             </tr></thead>
             <tbody>
@@ -10687,10 +11268,10 @@ function EtvBRPage({ companies, companyId, toast, readOnly=false }) {
 
           {lignes.length>0&&(
             <div style={{marginBottom:12}}>
-              <div style={{fontSize:12,fontWeight:700,color:'#0f2044',marginBottom:8}}>LIGNES — Quantités demandées vs accordées</div>
+              <div style={{fontSize:12,fontWeight:700,color:'#082818',marginBottom:8}}>LIGNES — Quantités demandées vs accordées</div>
               <div style={{overflowX:'auto'}}>
               <table style={{width:'100%',borderCollapse:'collapse',background:'#f8fafc',borderRadius:8,overflow:'hidden'}}>
-                <thead><tr style={{background:'#0f2044',color:'white'}}>
+                <thead><tr style={{background:'#082818',color:'white'}}>
                   {['Variété','Qté demandée (kg)','Qté accordée (kg)','Prix U.','Montant accordé'].map(h=><th key={h} style={{padding:'8px 10px',fontSize:11,textAlign:'left'}}>{h}</th>)}
                 </tr></thead>
                 <tbody>
@@ -10817,7 +11398,7 @@ function EtvEntreesPage({ companies, companyId, toast, readOnly=false }) {
     <div class="totals"><div class="ttc"><span>VALEUR TOTALE</span><span>${Math.round(r.montant||0).toLocaleString('fr-FR')} FCFA</span></div></div>
     <div style="margin-top:24px;padding:16px;background:#eff6ff;border-radius:8px;text-align:center">
       <div style="font-size:9pt;color:#555;margin-bottom:8px">ÉTIQUETTE SAC</div>
-      <div style="font-size:14pt;font-weight:800;border:2px solid #0f2044;display:inline-block;padding:8px 24px;border-radius:6px">
+      <div style="font-size:14pt;font-weight:800;border:2px solid #082818;display:inline-block;padding:8px 24px;border-radius:6px">
         ${r.numero_lot||'—'} | ${r.variete||'—'} | ${r.annee_production||'—'}
       </div>
     </div>
@@ -10879,7 +11460,7 @@ function EtvEntreesPage({ companies, companyId, toast, readOnly=false }) {
             <span style={{fontWeight:600}}>Quantité reçue</span>
             <span style={{fontSize:18,fontWeight:800,color:ACCENT}}>{(viewItem.quantite_kg||0).toLocaleString('fr-FR')} kg</span>
           </div>
-          <div style={{padding:'10px 16px',background:'#0f2044',borderRadius:8,display:'flex',justifyContent:'space-between',color:'white',fontWeight:800}}>
+          <div style={{padding:'10px 16px',background:'#082818',borderRadius:8,display:'flex',justifyContent:'space-between',color:'white',fontWeight:800}}>
             <span>VALEUR TOTALE</span><span>{fcfa(viewItem.montant)}</span>
           </div>
           <Row style={{marginTop:16}}>
@@ -14239,7 +14820,7 @@ function EtvTresoreriePage({ companies, companyId, toast }) {
                 <div style={{padding:'14px 20px',background:sit.bg,display:'flex',justifyContent:'space-between',alignItems:'center',cursor:'pointer'}}
                   onClick={()=>setSelected(selected===e.id?null:e.id)}>
                   <div>
-                    <span style={{fontWeight:800,fontSize:15,color:'#0f2044'}}>{e.code_etuveuse}</span>
+                    <span style={{fontWeight:800,fontSize:15,color:'#082818'}}>{e.code_etuveuse}</span>
                     <span style={{marginLeft:10,fontSize:13,color:'#64748b'}}>{e.nom_etuveuse||'—'}</span>
                     {e.ifu&&<span style={{marginLeft:8,fontSize:11,color:'#94a3b8'}}>IFU: {e.ifu}</span>}
                   </div>
@@ -14274,7 +14855,7 @@ function EtvTresoreriePage({ companies, companyId, toast }) {
 
                       {/* Avances */}
                       <div>
-                        <div style={{fontSize:12,fontWeight:700,color:'#0f2044',marginBottom:8,textTransform:'uppercase'}}>💰 Avances</div>
+                        <div style={{fontSize:12,fontWeight:700,color:'#082818',marginBottom:8,textTransform:'uppercase'}}>💰 Avances</div>
                         {t.avances.length===0?<div style={{fontSize:12,color:'#94a3b8'}}>Aucune avance</div>:(
                           t.avances.map((a,i)=>(
                             <div key={i} style={{padding:'8px 10px',background:'#f8fafc',borderRadius:6,marginBottom:6,fontSize:12}}>
@@ -14290,7 +14871,7 @@ function EtvTresoreriePage({ companies, companyId, toast }) {
 
                       {/* Entrées */}
                       <div>
-                        <div style={{fontSize:12,fontWeight:700,color:'#0f2044',marginBottom:8,textTransform:'uppercase'}}>📥 Livraisons en magasin</div>
+                        <div style={{fontSize:12,fontWeight:700,color:'#082818',marginBottom:8,textTransform:'uppercase'}}>📥 Livraisons en magasin</div>
                         {t.entrees.length===0?<div style={{fontSize:12,color:'#94a3b8'}}>Aucune entrée</div>:(
                           t.entrees.map((en,i)=>(
                             <div key={i} style={{padding:'8px 10px',background:'#f8fafc',borderRadius:6,marginBottom:6,fontSize:12}}>
@@ -14307,7 +14888,7 @@ function EtvTresoreriePage({ companies, companyId, toast }) {
 
                       {/* Situation */}
                       <div>
-                        <div style={{fontSize:12,fontWeight:700,color:'#0f2044',marginBottom:8,textTransform:'uppercase'}}>📊 Bilan</div>
+                        <div style={{fontSize:12,fontWeight:700,color:'#082818',marginBottom:8,textTransform:'uppercase'}}>📊 Bilan</div>
                         <div style={{background:t.soldeDu>0?'#fef2f2':'#f0fdf4',borderRadius:8,padding:16}}>
                           <div style={{display:'grid',gap:8}}>
                             {[
@@ -14568,7 +15149,7 @@ function ComptabilitePage({ companies, companyId, toast, readOnly=false }) {
             const pd=p.lignes.reduce((s,l)=>s+(l.debit||0),0)
             return (
               <div key={p.piece_id} style={{background:'white',borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
-                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'10px 14px',background:'#0f2044',color:'white',flexWrap:'wrap',gap:8}}>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'10px 14px',background:'#082818',color:'white',flexWrap:'wrap',gap:8}}>
                   <div style={{fontWeight:700,fontSize:13}}>
                     <Badge type="info">{p.journal}</Badge> &nbsp;{journalLabel(p.journal)} &nbsp;·&nbsp; {p.date_ecriture} {p.numero_piece?`· Pièce ${p.numero_piece}`:''} {p.numero_facture?`· Fact. ${p.numero_facture}`:''}
                     {p.libelle?<span style={{fontWeight:400,opacity:.85}}> — {p.libelle}</span>:null}
@@ -17108,15 +17689,15 @@ function ControleBudgetairePage({ companies, companyId, toast, readOnly=false })
       @page{size:A4;margin:12mm}
       body{font-family:Arial,sans-serif;font-size:11px;color:#1a1a1a}
       .head{text-align:center;margin-bottom:14px}
-      .cname{font-size:16px;font-weight:800;color:#075E54}
-      h3{background:#075E54;color:white;padding:6px 10px;border-radius:4px;font-size:13px}
+      .cname{font-size:16px;font-weight:800;color:#082818}
+      h3{background:#082818;color:white;padding:6px 10px;border-radius:4px;font-size:13px}
       table{width:100%;border-collapse:collapse;margin-bottom:18px}
       th,td{border:1px solid #ccc;padding:5px 8px}
       th{background:#e8f5ee;font-size:10px}
       .r{text-align:right}
       .sub{background:#f0f9f4;font-weight:700}
       .total{background:#d6f5e0;font-weight:800}
-      .print-btn{margin:10px;padding:8px 16px;background:#25D366;color:white;border:none;border-radius:6px;cursor:pointer}
+      .print-btn{margin:10px;padding:8px 16px;background:#1E824C;color:white;border:none;border-radius:6px;cursor:pointer}
       @media print{.print-btn{display:none}}
     </style></head><body>
       <button class="print-btn" onclick="window.print()">🖨️ Imprimer</button>
@@ -17184,7 +17765,7 @@ function ControleBudgetairePage({ companies, companyId, toast, readOnly=false })
         // ── ÉCART BUDGÉTAIRE (auto) ──────────────────────────────────────────
         <div style={{background:'white',borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
           <table style={{width:'100%',borderCollapse:'collapse',fontSize:13}}>
-            <thead><tr style={{background:'#075E54',color:'white'}}>
+            <thead><tr style={{background:'#082818',color:'white'}}>
               <th style={{padding:10,textAlign:'left'}}>Libellé</th>
               <th style={{padding:10,textAlign:'right'}}>Prévision</th>
               <th style={{padding:10,textAlign:'right'}}>Réalisation</th>
@@ -17216,7 +17797,7 @@ function ControleBudgetairePage({ companies, companyId, toast, readOnly=false })
         // ── FORMULAIRE PRÉVISION / RÉALISATION ───────────────────────────────
         <div style={{background:'white',borderRadius:12,border:'1px solid #e2e8f0',padding:16}}>
           {/* Revenus */}
-          <div style={{fontWeight:700,color:'#075E54',marginBottom:8,fontSize:14}}>💰 REVENUS</div>
+          <div style={{fontWeight:700,color:'#082818',marginBottom:8,fontSize:14}}>💰 REVENUS</div>
           <div style={{overflowX:'auto'}}>
           <table style={{width:'100%',borderCollapse:'collapse',fontSize:13,marginBottom:8}}>
             <thead><tr style={{background:'#e8f5ee'}}>
@@ -17247,7 +17828,7 @@ function ControleBudgetairePage({ companies, companyId, toast, readOnly=false })
           </div>
 
           {/* Charges */}
-          <div style={{fontWeight:700,color:'#075E54',marginBottom:8,fontSize:14}}>📉 CHARGES</div>
+          <div style={{fontWeight:700,color:'#082818',marginBottom:8,fontSize:14}}>📉 CHARGES</div>
           <div style={{overflowX:'auto'}}>
           <table style={{width:'100%',borderCollapse:'collapse',fontSize:13,marginBottom:8}}>
             <thead><tr style={{background:'#fef2f2'}}>
@@ -17289,7 +17870,7 @@ function ControleBudgetairePage({ companies, companyId, toast, readOnly=false })
           </div>
 
           {/* Impôts */}
-          <div style={{fontWeight:700,color:'#075E54',marginBottom:8,fontSize:14}}>🏛️ IMPÔTS & TAXES</div>
+          <div style={{fontWeight:700,color:'#082818',marginBottom:8,fontSize:14}}>🏛️ IMPÔTS & TAXES</div>
           <div style={{overflowX:'auto'}}>
           <table style={{width:'100%',borderCollapse:'collapse',fontSize:13,marginBottom:8}}>
             <tbody>
@@ -17307,7 +17888,7 @@ function ControleBudgetairePage({ companies, companyId, toast, readOnly=false })
             </tbody>
           </table>
           </div>
-          <div style={{background:'#075E54',color:'white',padding:'10px 12px',borderRadius:8,fontWeight:800,display:'flex',justifyContent:'space-between',fontSize:15}}>
+          <div style={{background:'#082818',color:'white',padding:'10px 12px',borderRadius:8,fontWeight:800,display:'flex',justifyContent:'space-between',fontSize:15}}>
             <span>RÉSULTAT APRÈS IMPÔT</span><span>{fmt(totaux.resultat)} FCFA</span>
           </div>
           <div style={{marginTop:10,fontSize:12,color:'#64748b',fontStyle:'italic'}}>
@@ -17482,9 +18063,9 @@ function ChatPage({ profile, toast }) {
           const badge = roleBadge(m.auteur_role)
           return (
             <div key={m.id} style={{display:'flex',justifyContent:mine?'flex-end':'flex-start',marginBottom:10}}>
-              <div style={{maxWidth:'75%',background:mine?'#dcf8c6':'white',borderRadius:10,padding:'8px 12px',boxShadow:'0 1px 1px rgba(0,0,0,0.1)',position:'relative'}}>
+              <div style={{maxWidth:'75%',background:mine?'#eaf6ee':'white',borderRadius:10,padding:'8px 12px',boxShadow:'0 1px 1px rgba(0,0,0,0.1)',position:'relative'}}>
                 {!mine && (
-                  <div style={{fontSize:12,fontWeight:700,color:'#075E54',marginBottom:2,display:'flex',alignItems:'center',gap:6}}>
+                  <div style={{fontSize:12,fontWeight:700,color:'#082818',marginBottom:2,display:'flex',alignItems:'center',gap:6}}>
                     {m.auteur_nom}
                     {badge.label && <span style={{fontSize:10,background:badge.color,color:'white',borderRadius:8,padding:'1px 6px'}}>{badge.label}</span>}
                   </div>
@@ -17517,7 +18098,7 @@ function ChatPage({ profile, toast }) {
               <span style={{fontWeight:600,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>Enreg… {fmtRecTime(recTime)}</span>
             </div>
             <button onClick={()=>stopRecording(false)} title="Envoyer le vocal"
-              style={{background:'#25D366',border:'none',borderRadius:'50%',width:44,height:44,minWidth:44,cursor:'pointer',fontSize:18,color:'white',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+              style={{background:'#1E824C',border:'none',borderRadius:'50%',width:44,height:44,minWidth:44,cursor:'pointer',fontSize:18,color:'white',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
               ➤
             </button>
           </>
@@ -17534,12 +18115,12 @@ function ChatPage({ profile, toast }) {
               style={{flex:1,minWidth:0,padding:'11px 14px',border:'1px solid #e2e8f0',borderRadius:20,fontSize:14,outline:'none',boxSizing:'border-box'}} />
             {text.trim() ? (
               <button onClick={send} disabled={sending}
-                style={{background:'#25D366',border:'none',borderRadius:'50%',width:44,height:44,minWidth:44,cursor:'pointer',fontSize:18,color:'white',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+                style={{background:'#1E824C',border:'none',borderRadius:'50%',width:44,height:44,minWidth:44,cursor:'pointer',fontSize:18,color:'white',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
                 ➤
               </button>
             ) : (
               <button onClick={startRecording} disabled={uploading} title="Enregistrer un vocal"
-                style={{background:'#25D366',border:'none',borderRadius:'50%',width:44,height:44,minWidth:44,cursor:'pointer',fontSize:20,color:'white',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+                style={{background:'#1E824C',border:'none',borderRadius:'50%',width:44,height:44,minWidth:44,cursor:'pointer',fontSize:20,color:'white',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
                 🎤
               </button>
             )}
@@ -17582,7 +18163,7 @@ function ProfilCompletPage({ user, profile, onDone, onSkip, onLogout }) {
     <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',background:'#f1f5f9',padding:16}}>
       <form onSubmit={submit} style={{background:'white',borderRadius:16,padding:'36px 32px',width:'100%',maxWidth:440,boxShadow:'0 10px 30px rgba(15,32,68,.12)'}}>
         <div style={{fontSize:44,textAlign:'center',marginBottom:6}}>👤</div>
-        <h2 style={{margin:'0 0 6px',textAlign:'center',color:'#0f2044'}}>Complétez votre profil</h2>
+        <h2 style={{margin:'0 0 6px',textAlign:'center',color:'#082818'}}>Complétez votre profil</h2>
         <p style={{margin:'0 0 22px',textAlign:'center',fontSize:13,color:'#64748b',lineHeight:1.5}}>
           Première connexion : renseignez votre identité. Elle permet de savoir qui a saisi quoi, et à quelle heure.
         </p>
@@ -17599,7 +18180,7 @@ function ProfilCompletPage({ user, profile, onDone, onSkip, onLogout }) {
           </div>
         )}
         <button type="submit" disabled={saving}
-          style={{width:'100%',background:'#25D366',color:'white',border:'none',borderRadius:10,padding:'12px',fontWeight:700,fontSize:15,cursor:saving?'wait':'pointer'}}>
+          style={{width:'100%',background:'#1E824C',color:'white',border:'none',borderRadius:10,padding:'12px',fontWeight:700,fontSize:15,cursor:saving?'wait':'pointer'}}>
           {saving ? 'Enregistrement…' : 'Enregistrer et continuer'}
         </button>
         {colonneManquante && (
@@ -17717,7 +18298,7 @@ function JournalActivitePanel({ companyId }) {
     <div style={{background:'white',borderRadius:12,border:'1px solid #e2e8f0',padding:20,marginBottom:20}}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:12,flexWrap:'wrap'}}>
         <div>
-          <div style={{fontSize:14,fontWeight:700,color:'#0f2044',marginBottom:4}}>🕒 Journal d'activité</div>
+          <div style={{fontSize:14,fontWeight:700,color:'#082818',marginBottom:4}}>🕒 Journal d'activité</div>
           <div style={{fontSize:13,color:'#64748b'}}>Voir qui a saisi quoi dans chaque section, et à quelle heure.</div>
         </div>
         <Btn sm variant="secondary" onClick={()=>setOuvert(o=>!o)}>{ouvert ? 'Masquer' : 'Ouvrir le journal'}</Btn>
@@ -17754,7 +18335,7 @@ function JournalActivitePanel({ companyId }) {
               <div style={{display:'flex',gap:8,flexWrap:'wrap',marginBottom:12}}>
                 {Object.entries(parPersonne).sort((a,b)=>b[1].n-a[1].n).map(([k,p])=>(
                   <button key={k} onClick={()=>setPersonne(personne===k?'':k)}
-                    style={{border:'1px solid '+(personne===k?'#0f766e':'#e2e8f0'),background:personne===k?'#f0fdfa':'#f8fafc',borderRadius:20,padding:'5px 12px',fontSize:12,cursor:'pointer',color:'#0f2044'}}>
+                    style={{border:'1px solid '+(personne===k?'#0f766e':'#e2e8f0'),background:personne===k?'#f0fdfa':'#f8fafc',borderRadius:20,padding:'5px 12px',fontSize:12,cursor:'pointer',color:'#082818'}}>
                     <strong>{nomDe(p.id)}</strong> — {p.n} saisie(s), de {heure(p.min)} à {heure(p.max)}
                   </button>
                 ))}
@@ -17851,10 +18432,10 @@ function ParametresPage({ toast, companies, companyId }) {
 
       {/* Carte Apparence */}
       <div style={{background:'white',borderRadius:12,border:'1px solid #e2e8f0',padding:20,marginBottom:20}}>
-        <div style={{fontSize:14,fontWeight:700,color:'#0f2044',marginBottom:4}}>🎨 Apparence</div>
+        <div style={{fontSize:14,fontWeight:700,color:'#082818',marginBottom:4}}>🎨 Apparence</div>
         <div style={{fontSize:13,color:'#64748b',marginBottom:14}}>Choisissez le thème de l'application.</div>
         <div style={{display:'flex',gap:12}}>
-          <button onClick={()=>switchTheme('light')} style={{flex:1,maxWidth:200,padding:'14px',borderRadius:10,cursor:'pointer',border:theme==='light'?'2px solid #25D366':'1px solid #e2e8f0',background:theme==='light'?'#f0fdf4':'white',display:'flex',flexDirection:'column',alignItems:'center',gap:8}}>
+          <button onClick={()=>switchTheme('light')} style={{flex:1,maxWidth:200,padding:'14px',borderRadius:10,cursor:'pointer',border:theme==='light'?'2px solid #1E824C':'1px solid #e2e8f0',background:theme==='light'?'#f0fdf4':'white',display:'flex',flexDirection:'column',alignItems:'center',gap:8}}>
             <span style={{fontSize:28}}>☀️</span>
             <span style={{fontSize:13,fontWeight:600,color:'#1e293b'}}>Mode Clair</span>
             {theme==='light' && <span style={{fontSize:11,color:'#16a34a',fontWeight:700}}>✓ Actif</span>}
@@ -17871,7 +18452,7 @@ function ParametresPage({ toast, companies, companyId }) {
 
       <div style={{display:'flex',gap:8,marginBottom:20}}>
         <div style={{flex:1}}>
-          <div style={{fontSize:14,fontWeight:700,color:'#0f2044',marginBottom:4}}>✍️ Signataires autorisés</div>
+          <div style={{fontSize:14,fontWeight:700,color:'#082818',marginBottom:4}}>✍️ Signataires autorisés</div>
           <div style={{fontSize:13,color:'#64748b'}}>Définissez les personnes habilitées à signer chaque type de document. Leurs noms apparaîtront dans les impressions.</div>
         </div>
         <Btn onClick={openAdd}>+ Nouveau signataire</Btn>
@@ -17889,7 +18470,7 @@ function ParametresPage({ toast, companies, companyId }) {
             <div key={s.id} style={{background:'white',borderRadius:12,border:'1px solid #e2e8f0',padding:20}}>
               <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:12}}>
                 <div>
-                  <div style={{fontSize:15,fontWeight:800,color:'#0f2044'}}>{s.nom}</div>
+                  <div style={{fontSize:15,fontWeight:800,color:'#082818'}}>{s.nom}</div>
                   {s.fonction&&<div style={{fontSize:12,color:'#64748b',marginTop:2}}>{s.fonction}</div>}
                 </div>
                 <div style={{display:'flex',gap:6}}>
@@ -17918,7 +18499,7 @@ function ParametresPage({ toast, companies, companyId }) {
             <Input label="Nom complet *" name="nom" value={form.nom||''} onChange={e=>setForm(f=>({...f,nom:e.target.value}))} required />
             <Input label="Fonction / Titre" name="fonction" value={form.fonction||''} onChange={e=>setForm(f=>({...f,fonction:e.target.value}))} placeholder="ex: Directeur Général" />
           </Grid>
-          <div style={{marginBottom:8,fontSize:12,fontWeight:700,color:'#0f2044',textTransform:'uppercase'}}>Documents pour lesquels ce signataire est habilité</div>
+          <div style={{marginBottom:8,fontSize:12,fontWeight:700,color:'#082818',textTransform:'uppercase'}}>Documents pour lesquels ce signataire est habilité</div>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6,padding:12,background:'#f8fafc',borderRadius:8,border:'1px solid #e2e8f0',marginBottom:16}}>
             {DOCUMENTS_TYPES.map(doc=>(
               <label key={doc} style={{display:'flex',alignItems:'center',gap:8,padding:'6px 8px',borderRadius:6,
@@ -18193,7 +18774,7 @@ function DocsValidesPage({ companies, companyId, toast, profile }) {
             <div key={f.id} style={{background:'white',borderRadius:12,border:'1px solid #e2e8f0',padding:'16px 20px',display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:12}}>
               <div>
                 <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:4}}>
-                  <span style={{fontSize:15,fontWeight:700,color:'#0f2044'}}>{f.reference||f.numero||'Fiche'}</span>
+                  <span style={{fontSize:15,fontWeight:700,color:'#082818'}}>{f.reference||f.numero||'Fiche'}</span>
                   <span style={{background:'#f0fdf4',color:'#16a34a',border:'1px solid #bbf7d0',borderRadius:20,padding:'2px 10px',fontSize:11,fontWeight:700}}>✅ Validé</span>
                 </div>
                 <div style={{fontSize:13,color:'#64748b'}}>{f.expression||f.description||''}</div>
@@ -18584,7 +19165,7 @@ function ExpressionBesoinPage({ companies, companyId, toast, readOnly=false, pro
             <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,marginBottom:20}}>
               {/* Signature */}
               <div style={{border:'2px dashed #e2e8f0',borderRadius:10,padding:16,textAlign:'center',background:'#f8fafc'}}>
-                <div style={{fontSize:13,fontWeight:700,color:'#0f2044',marginBottom:8}}>✍️ Signature</div>
+                <div style={{fontSize:13,fontWeight:700,color:'#082818',marginBottom:8}}>✍️ Signature</div>
                 {signatureImg?(
                   <div>
                     <img src={signatureImg} alt="Signature" style={{maxWidth:'100%',maxHeight:80,objectFit:'contain',marginBottom:8}} />
@@ -18601,7 +19182,7 @@ function ExpressionBesoinPage({ companies, companyId, toast, readOnly=false, pro
               </div>
               {/* Cachet */}
               <div style={{border:'2px dashed #e2e8f0',borderRadius:10,padding:16,textAlign:'center',background:'#f8fafc'}}>
-                <div style={{fontSize:13,fontWeight:700,color:'#0f2044',marginBottom:8}}>🔏 Cachet / Tampon</div>
+                <div style={{fontSize:13,fontWeight:700,color:'#082818',marginBottom:8}}>🔏 Cachet / Tampon</div>
                 {cachetImg?(
                   <div>
                     <img src={cachetImg} alt="Cachet" style={{maxWidth:'100%',maxHeight:80,objectFit:'contain',marginBottom:8}} />
@@ -18639,7 +19220,7 @@ function ExpressionBesoinPage({ companies, companyId, toast, readOnly=false, pro
       {validModal&&(
         <Modal open={!!validModal} onClose={()=>setValidModal(null)} title={`Validation — ${validModal.reference}`} size="xl">
           <div style={{marginBottom:16,padding:'12px 16px',background:'#f8fafc',borderRadius:8,display:'flex',gap:24}}>
-            <div><span style={{fontSize:12,color:'#94a3b8'}}>Total demandé</span><div style={{fontSize:16,fontWeight:800,color:'#0f2044'}}>{fcfa(validModal.total_ttc)}</div></div>
+            <div><span style={{fontSize:12,color:'#94a3b8'}}>Total demandé</span><div style={{fontSize:16,fontWeight:800,color:'#082818'}}>{fcfa(validModal.total_ttc)}</div></div>
             <div><span style={{fontSize:12,color:'#94a3b8'}}>Total autorisé</span>
               <div style={{fontSize:16,fontWeight:800,color:'#16a34a'}}>
                 {fcfa(validLignes.reduce((s,l)=>l.validation==='approuve'?s+Math.round(parseFloat(l.montant_autorise)||0):s,0))}
@@ -18649,7 +19230,7 @@ function ExpressionBesoinPage({ companies, companyId, toast, readOnly=false, pro
           <div style={{overflowX:'auto'}}>
             <table style={{width:'100%',borderCollapse:'collapse',minWidth:600}}>
               <thead>
-                <tr style={{background:'#0f2044',color:'white'}}>
+                <tr style={{background:'#082818',color:'white'}}>
                   {['N°','Description','Qté dem.','Montant dem.','Statut','Qté autorisée','Montant autorisé'].map(h=>(
                     <th key={h} style={{padding:'8px 10px',textAlign:'left',fontSize:11,fontWeight:600}}>{h}</th>
                   ))}
@@ -18725,10 +19306,10 @@ function ExpressionBesoinPage({ companies, companyId, toast, readOnly=false, pro
               <div style={{fontWeight:600}}>{viewItem.expression||'—'}</div>
             </div>
           </div>
-          <div style={{fontSize:12,fontWeight:700,color:'#0f2044',marginBottom:6}}>DÉTAIL DES BESOINS</div>
+          <div style={{fontSize:12,fontWeight:700,color:'#082818',marginBottom:6}}>DÉTAIL DES BESOINS</div>
           <div style={{overflowX:'auto',WebkitOverflowScrolling:'touch'}}>
             <table style={{width:'100%',borderCollapse:'collapse',marginBottom:12,minWidth:600}}>
-            <thead><tr style={{background:'#0f2044',color:'white'}}>
+            <thead><tr style={{background:'#082818',color:'white'}}>
               {['N°','Description','Qté dem.','Montant dem.','Statut','Qté aut.','Montant aut.'].map(h=>(
                 <th key={h} style={{padding:'7px 10px',textAlign:'left',fontSize:11}}>{h}</th>
               ))}
@@ -18754,7 +19335,7 @@ function ExpressionBesoinPage({ companies, companyId, toast, readOnly=false, pro
           </table>
           </div>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:12}}>
-            <div style={{padding:'12px 16px',background:'#0f2044',borderRadius:8,display:'flex',justifyContent:'space-between',color:'white',fontWeight:800}}>
+            <div style={{padding:'12px 16px',background:'#082818',borderRadius:8,display:'flex',justifyContent:'space-between',color:'white',fontWeight:800}}>
               <span>TOTAL DEMANDÉ</span><span>{fcfa(viewItem.total_ttc)}</span>
             </div>
             <div style={{padding:'12px 16px',background:'#16a34a',borderRadius:8,display:'flex',justifyContent:'space-between',color:'white',fontWeight:800}}>
@@ -18775,7 +19356,7 @@ function ExpressionBesoinPage({ companies, companyId, toast, readOnly=false, pro
       {/* ── Modal Création fiche ── */}
       <Modal open={modal} onClose={close} title="Nouvelle Fiche d'Expression de Besoin" size="xl">
         <form onSubmit={save}>
-          <div style={{fontSize:12,fontWeight:700,color:'#0f2044',marginBottom:8,textTransform:'uppercase'}}>Informations générales</div>
+          <div style={{fontSize:12,fontWeight:700,color:'#082818',marginBottom:8,textTransform:'uppercase'}}>Informations générales</div>
           <Grid cols={3} gap={14} style={{marginBottom:16}}>
             <Input label="Date *" name="date_fiche" type="date" value={form.date_fiche||''} onChange={set} required />
             <Input label="Référence (auto si vide)" name="reference" value={form.reference||''} onChange={set} placeholder="ex: EB-2026-0001" />
@@ -18784,7 +19365,7 @@ function ExpressionBesoinPage({ companies, companyId, toast, readOnly=false, pro
             <Input label="Fonction" name="fonction" value={form.fonction||''} onChange={set} />
             <Span2><Input label="Expression / Description du besoin *" name="expression" value={form.expression||''} onChange={set} required /></Span2>
           </Grid>
-          <div style={{fontSize:12,fontWeight:700,color:'#0f2044',marginBottom:8,textTransform:'uppercase'}}>Lignes budgétaires concernées</div>
+          <div style={{fontSize:12,fontWeight:700,color:'#082818',marginBottom:8,textTransform:'uppercase'}}>Lignes budgétaires concernées</div>
           <div style={{display:'flex',flexWrap:'wrap',gap:8,marginBottom:16,padding:12,background:'#f8fafc',borderRadius:8,border:'1px solid #e2e8f0'}}>
             {budgets.length===0?<span style={{fontSize:12,color:'#94a3b8'}}>Aucune ligne budgétaire — créez-en dans "Gestion Budget"</span>:
               budgets.map(b=>(
@@ -18795,11 +19376,11 @@ function ExpressionBesoinPage({ companies, companyId, toast, readOnly=false, pro
               ))
             }
           </div>
-          <div style={{fontSize:12,fontWeight:700,color:'#0f2044',marginBottom:8,textTransform:'uppercase'}}>Détail des besoins</div>
+          <div style={{fontSize:12,fontWeight:700,color:'#082818',marginBottom:8,textTransform:'uppercase'}}>Détail des besoins</div>
           <div style={{background:'#f8fafc',borderRadius:8,border:'1px solid #e2e8f0',overflow:'hidden',marginBottom:12}}>
             <div style={{overflowX:'auto',WebkitOverflowScrolling:'touch'}}>
               <table style={{width:'100%',borderCollapse:'collapse',minWidth:600}}>
-              <thead><tr style={{background:'#0f2044',color:'white'}}>
+              <thead><tr style={{background:'#082818',color:'white'}}>
                 {['N°','Description','Quantité','Prix Unitaire (FCFA)','TVA (%)','Montant TTC',''].map(h=><th key={h} style={{padding:'8px 10px',textAlign:'left',fontSize:11}}>{h}</th>)}
               </tr></thead>
               <tbody>
@@ -18823,7 +19404,7 @@ function ExpressionBesoinPage({ companies, companyId, toast, readOnly=false, pro
             </div>
             <div style={{padding:'8px 12px',display:'flex',justifyContent:'space-between',alignItems:'center',borderTop:'1px solid #e2e8f0'}}>
               <button type="button" onClick={addLigne} style={{background:'#eff6ff',border:'1px solid #bfdbfe',borderRadius:6,padding:'5px 12px',cursor:'pointer',color:ACCENT,fontSize:13,fontWeight:600}}>+ Ajouter une ligne</button>
-              <div style={{fontWeight:800,fontSize:15,color:'#0f2044'}}>TOTAL TTC : {fcfa(totalTTC)}</div>
+              <div style={{fontWeight:800,fontSize:15,color:'#082818'}}>TOTAL TTC : {fcfa(totalTTC)}</div>
             </div>
           </div>
           <Row><Btn variant="secondary" onClick={close}>Annuler</Btn><Btn type="submit" disabled={saving}>{saving?'...':'Enregistrer la fiche'}</Btn></Row>
@@ -19536,7 +20117,7 @@ function JournalPage({ table, title, icon, journalType='caisse', companies, comp
     const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
       <head><meta charset="UTF-8"><style>
         table{border-collapse:collapse;width:100%} th,td{border:1px solid #d1d5db;padding:5px 8px;font-size:10pt}
-        h2{font-family:Arial;color:#0f2044} p{font-family:Arial;font-size:9pt;color:#555}
+        h2{font-family:Arial;color:#082818} p{font-family:Arial;font-size:9pt;color:#555}
       </style></head><body>
       <h2>${title}</h2>
       <p>${companyName}${dateFrom||dateTo?` — Période : ${dateFrom||'—'} → ${dateTo||'—'}`:' — Toutes dates'} — ${items.length} opération(s) — Exporté le ${new Date().toLocaleDateString('fr-FR')}</p>
@@ -20317,9 +20898,9 @@ function SuiviLotPage({ companies, companyId, toast }) {
     const html = `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">
       <title>Suivi Lot — ${selectedLot.numero_lot}</title>
       <style>${CSS_PRINT}
-        body{font-size:10pt} h1{font-size:15pt;color:#0f2044;margin-bottom:4px}
+        body{font-size:10pt} h1{font-size:15pt;color:#082818;margin-bottom:4px}
         .lot-info{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:12px 0 16px;padding:12px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0}
-        .lot-info div{font-size:9.5pt} .lot-info strong{display:block;font-size:11pt;color:#0f2044}
+        .lot-info div{font-size:9.5pt} .lot-info strong{display:block;font-size:11pt;color:#082818}
         .progress{display:flex;align-items:center;gap:6px;margin-bottom:14px;padding:8px 12px;background:#dbeafe;border-radius:8px;font-size:10pt}
       </style></head><body>
       <button class="print-btn" onclick="window.print()">🖨️ Imprimer / PDF</button>
@@ -20386,7 +20967,7 @@ function SuiviLotPage({ companies, companyId, toast }) {
           {/* Infos lot */}
           <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))',gap:12,marginBottom:20}}>
             {[
-              {l:'N° Lot',       v:selectedLot.numero_lot,                           c:'#0f2044'},
+              {l:'N° Lot',       v:selectedLot.numero_lot,                           c:'#082818'},
               {l:'Date début',   v:selectedLot.date_debut||'—',                      c:'#374151'},
               {l:'Date fin',     v:selectedLot.date_fin||'En cours',                 c:selectedLot.date_fin?'#374151':'#ca8a04'},
               {l:'Paddy entré',  v:`${(selectedLot.qte_paddy_entree||0).toLocaleString('fr-FR')} kg`, c:'#ea580c'},
@@ -20509,7 +21090,7 @@ const injectCSS = () => {
     /* ── SIDEBAR ── */
     .rh-sidebar {
       width: 220px;
-      background: #1a3a6b;
+      background: #0d3823;
       display: flex;
       flex-direction: column;
       height: 100vh;
@@ -20521,7 +21102,7 @@ const injectCSS = () => {
       margin-left: 220px;
       padding: 32px;
       min-height: 100vh;
-      background: #f0f4ff;
+      background: #f4f6f4;
       width: calc(100% - 220px);
     }
     .rh-topbar { display: none; }
@@ -20547,7 +21128,7 @@ const injectCSS = () => {
     .rh-control {
       min-width: 0;
       background: #fff;
-      border: 1px solid #d0dff5;
+      border: 1px solid #dfe6df;
       border-radius: 8px;
       padding: 8px 12px;
       color: #1a2a4a;
@@ -20601,7 +21182,7 @@ const injectCSS = () => {
     }
     .rh-modal {
       background: #ffffff;
-      border: 1px solid #d0dff5;
+      border: 1px solid #dfe6df;
       border-radius: 10px;
       max-width: 95vw;
       max-height: 90vh;
@@ -20614,7 +21195,7 @@ const injectCSS = () => {
       align-items: center;
       gap: 12px;
       padding: 20px 24px;
-      border-bottom: 1px solid #d0dff5;
+      border-bottom: 1px solid #dfe6df;
     }
     .rh-modal-body { padding: 24px; }
 
@@ -20636,7 +21217,7 @@ const injectCSS = () => {
         position: fixed;
         top: 0; left: 0; right: 0;
         height: 56px;
-        background: #1a3a6b;
+        background: #0d3823;
         z-index: 300;
         align-items: center;
         justify-content: space-between;
@@ -20800,10 +21381,10 @@ const fmtN = v => new Intl.NumberFormat("fr-FR").format(Math.round(parseFloat(v)
 
 // ─── STYLES GLOBAUX ───────────────────────────────────────────────────────────
 const G = {
-  bg:"#f0f4ff", sidebar:"#1a3a6b", card:"#ffffff", border:"#d0dff5",
-  accent:"#1a6dd6", accentDim:"#1558b0", red:"#e53e3e", yellow:"#d97706",
-  text:"#1a2a4a", textDim:"#5a7a9a", input:"#e8f0fe",
-  radius:"10px", shadow:"0 4px 24px rgba(26,61,107,0.12)"
+  bg:"#f4f6f4", sidebar:"#0d3823", card:"#ffffff", border:"#dfe6df",
+  accent:"#1e824c", accentDim:"#166b3d", red:"#e53e3e", yellow:"#d97706",
+  text:"#0b2b1b", textDim:"#5b6b62", input:"#eaf6ee",
+  radius:"10px", shadow:"0 4px 24px rgba(8,40,24,0.12)"
 };
 
 
@@ -20826,7 +21407,7 @@ const RH_ToastContainer = () => {
     const t=setTimeout(()=>setToasts(ts=>ts.slice(1)),4000);
     return ()=>clearTimeout(t);
   },[toasts]);
-  const colors={success:"#1a6dd6",error:"#e53e3e",info:"#1a3a6b",warn:"#d97706"};
+  const colors={success:"#1e824c",error:"#e53e3e",info:"#0d3823",warn:"#d97706"};
   const icons={success:"✅",error:"❌",info:"ℹ️",warn:"⚠️"};
   return (
     <div style={{position:"fixed",bottom:"24px",right:"24px",zIndex:9999,
@@ -20845,7 +21426,7 @@ const RH_ToastContainer = () => {
 };
 
 const RH_Btn = ({children,onClick,variant="primary",small=false,type="button",disabled=false}) => {
-  const bg=variant==="primary"?G.accent:variant==="danger"?G.red:variant==="ghost"?"transparent":"#e8f0fe";
+  const bg=variant==="primary"?G.accent:variant==="danger"?G.red:variant==="ghost"?"transparent":"#eaf6ee";
   const col=variant==="ghost"?G.textDim:variant==="secondary"?G.accent:"#fff";
   const border=variant==="ghost"?`1px solid ${G.border}`:variant==="secondary"?`1px solid ${G.accent}`:"none";
   return (
@@ -20861,7 +21442,7 @@ const RH_Btn = ({children,onClick,variant="primary",small=false,type="button",di
 
 const RH_Input = ({label,value,onChange,type="text",placeholder="",required=false,small=false}) => (
   <div style={{marginBottom:small?0:"14px"}}>
-    {label&&<label style={{display:"block",fontSize:"12px",color:"#1a3a6b",marginBottom:"5px",fontWeight:600}}>{label}</label>}
+    {label&&<label style={{display:"block",fontSize:"12px",color:"#0d3823",marginBottom:"5px",fontWeight:600}}>{label}</label>}
     <input type={type} value={value} onChange={e=>onChange(e.target.value)}
       placeholder={placeholder} required={required}
       style={{width:"100%",background:"#fff",border:`1px solid ${G.border}`,borderRadius:"8px",
@@ -20872,7 +21453,7 @@ const RH_Input = ({label,value,onChange,type="text",placeholder="",required=fals
 
 const Select = ({label,value,onChange,options,small=false}) => (
   <div style={{marginBottom:small?0:"14px"}}>
-    {label&&<label style={{display:"block",fontSize:"12px",color:"#1a3a6b",marginBottom:"5px",fontWeight:600}}>{label}</label>}
+    {label&&<label style={{display:"block",fontSize:"12px",color:"#0d3823",marginBottom:"5px",fontWeight:600}}>{label}</label>}
     <select className="rh-control" value={value} onChange={e=>onChange(e.target.value)}
       style={{width:"100%",background:"#fff",border:`1px solid ${G.border}`,borderRadius:"8px",
               padding:"9px 12px",color:G.text,fontSize:"14px",fontFamily:"inherit",outline:"none"}}>
@@ -20882,7 +21463,7 @@ const Select = ({label,value,onChange,options,small=false}) => (
 );
 
 const RH_Card = ({children,style={}}) => (
-  <div className="rh-card" style={{background:"#ffffff",border:"1px solid #d0dff5",borderRadius:"10px",
+  <div className="rh-card" style={{background:"#ffffff",border:"1px solid #dfe6df",borderRadius:"10px",
                padding:"24px",boxShadow:"0 2px 12px rgba(26,61,107,0.07)",...style}}>{children}</div>
 );
 
@@ -20924,9 +21505,9 @@ const Table = ({cols,rows,onRow}) => (
   <div className="rh-table-wrap">
     <table style={{width:"100%",borderCollapse:"collapse",fontSize:"13px"}}>
       <thead>
-        <tr style={{borderBottom:"2px solid #1a6dd6"}}>
+        <tr style={{borderBottom:"2px solid #1e824c"}}>
           {cols.map(c=><th key={c.key||c.label}
-            style={{padding:"10px 12px",textAlign:"left",color:"#1a3a6b",
+            style={{padding:"10px 12px",textAlign:"left",color:"#0d3823",
                     fontWeight:700,fontSize:"11px",textTransform:"uppercase",
                     letterSpacing:"0.5px"}}>{c.label}</th>)}
         </tr>
@@ -20939,9 +21520,9 @@ const Table = ({cols,rows,onRow}) => (
         )}
         {rows.map((row,i)=>(
           <tr key={row.id||i} onClick={()=>onRow&&onRow(row)}
-            style={{borderBottom:"1px solid #e8f0fe",cursor:onRow?"pointer":"default",
+            style={{borderBottom:"1px solid #eaf6ee",cursor:onRow?"pointer":"default",
                     transition:"background 0.1s"}}
-            onMouseEnter={e=>{if(onRow)e.currentTarget.style.background='#f0f4ff'}}
+            onMouseEnter={e=>{if(onRow)e.currentTarget.style.background='#f4f6f4'}}
             onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
             {cols.map(c=>(
               <td key={c.key||c.label} style={{padding:"10px 12px",color:c.dim?G.textDim:G.text}}>
@@ -21032,16 +21613,16 @@ const PricingPage = ({currentSub, userId, onClose}) => {
   return (
     <div style={{padding:"24px"}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"24px"}}>
-        <h2 style={{fontSize:"22px",fontWeight:700,color:"#1a3a6b"}}>💳 Plans & Abonnements</h2>
+        <h2 style={{fontSize:"22px",fontWeight:700,color:"#0d3823"}}>💳 Plans & Abonnements</h2>
         {onClose&&<RH_Btn onClick={onClose} variant="ghost" small>✕ Fermer</RH_Btn>}
       </div>
-      <div style={{display:"flex",gap:"8px",marginBottom:"24px",background:"#f0f4ff",
+      <div style={{display:"flex",gap:"8px",marginBottom:"24px",background:"#f4f6f4",
                    padding:"4px",borderRadius:"8px",width:"fit-content"}}>
         {["monthly","annual"].map(b=>(
           <button key={b} onClick={()=>setBilling(b)}
             style={{padding:"6px 16px",borderRadius:"6px",border:"none",cursor:"pointer",
                     fontWeight:600,fontSize:"13px",transition:"all 0.15s",
-                    background:billing===b?"#1a3a6b":"transparent",
+                    background:billing===b?"#0d3823":"transparent",
                     color:billing===b?"#fff":"#64748b"}}>
             {b==="monthly"?"Mensuel":"Annuel"}{b==="annual"&&<span style={{color:"#10b981",marginLeft:"4px",fontSize:"11px"}}>-20%</span>}
           </button>
@@ -21053,19 +21634,19 @@ const PricingPage = ({currentSub, userId, onClose}) => {
           const price = prices[key][billing];
           return (
             <div key={key} style={{background:"#fff",borderRadius:"12px",padding:"24px",
-                                   border:`2px solid ${isCurrent?"#1a3a6b":"#e2e8f0"}`,
+                                   border:`2px solid ${isCurrent?"#0d3823":"#e2e8f0"}`,
                                    boxShadow:"0 2px 8px rgba(0,0,0,0.06)"}}>
               <div style={{fontSize:"28px",marginBottom:"8px"}}>{icon}</div>
-              <div style={{fontSize:"18px",fontWeight:700,color:"#1a3a6b"}}>{name}</div>
+              <div style={{fontSize:"18px",fontWeight:700,color:"#0d3823"}}>{name}</div>
               <div style={{fontSize:"12px",color:"#64748b",marginBottom:"12px"}}>{desc}</div>
-              <div style={{fontSize:"24px",fontWeight:800,color:"#1a3a6b",marginBottom:"4px"}}>
+              <div style={{fontSize:"24px",fontWeight:800,color:"#0d3823",marginBottom:"4px"}}>
                 {price.toLocaleString("fr-FR")} <span style={{fontSize:"13px",fontWeight:400}}>FCFA/mois</span>
               </div>
               {isCurrent
                 ? <div style={{background:"#d1fae5",color:"#065f46",padding:"8px",borderRadius:"6px",
                                textAlign:"center",fontSize:"12px",fontWeight:600}}>✅ Plan actuel</div>
                 : <button onClick={()=>pay(key)}
-                    style={{width:"100%",background:"#1a3a6b",color:"#fff",border:"none",
+                    style={{width:"100%",background:"#0d3823",color:"#fff",border:"none",
                             borderRadius:"8px",padding:"10px",cursor:"pointer",fontWeight:600,fontSize:"13px"}}>
                     Choisir {name}
                   </button>
@@ -21104,7 +21685,7 @@ const AdminPanel = () => {
   return (
     <div>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"24px"}}>
-        <h2 style={{fontSize:"22px",fontWeight:700,color:"#1a3a6b"}}>🛡️ Panneau Admin</h2>
+        <h2 style={{fontSize:"22px",fontWeight:700,color:"#0d3823"}}>🛡️ Panneau Admin</h2>
         <div style={{background:"#fee2e2",color:"#dc2626",padding:"4px 12px",borderRadius:"20px",fontSize:"12px",fontWeight:600}}>ADMIN</div>
       </div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:"12px",marginBottom:"24px"}}>
@@ -21117,7 +21698,7 @@ const AdminPanel = () => {
           <div key={s.label} style={{background:"#fff",borderRadius:"10px",padding:"16px",
                                      border:"1px solid #e2e8f0",textAlign:"center"}}>
             <div style={{fontSize:"24px"}}>{s.icon}</div>
-            <div style={{fontSize:"22px",fontWeight:800,color:"#1a3a6b"}}>{s.val}</div>
+            <div style={{fontSize:"22px",fontWeight:800,color:"#0d3823"}}>{s.val}</div>
             <div style={{fontSize:"11px",color:"#64748b"}}>{s.label}</div>
           </div>
         ))}
@@ -21164,8 +21745,8 @@ const AdminPanel = () => {
                           {["starter","pro","enterprise"].map(p=>(
                             <button key={p} onClick={()=>updatePlan(u.user_id,p,"active")}
                               style={{padding:"3px 8px",fontSize:"10px",borderRadius:"4px",border:"1px solid #e2e8f0",
-                                      cursor:"pointer",background:u.plan===p?"#1a3a6b":"#fff",
-                                      color:u.plan===p?"#fff":"#1a3a6b",fontWeight:600}}>
+                                      cursor:"pointer",background:u.plan===p?"#0d3823":"#fff",
+                                      color:u.plan===p?"#fff":"#0d3823",fontWeight:600}}>
                               {p}
                             </button>
                           ))}
@@ -21208,7 +21789,7 @@ const RH_Sidebar = ({page,setPage,user,onLogout,open=false,setOpen=()=>{},sub,on
         <button className="rh-mobile-close" onClick={()=>setOpen(false)}
           style={{position:"absolute",top:"14px",right:"14px",background:"none",border:"none",color:"#fff",fontSize:"24px",cursor:"pointer",lineHeight:1}}>×</button>
         <div className="rh-sidebar-brand-text" style={{fontSize:"18px",fontWeight:800,color:"#ffffff",letterSpacing:"-0.5px"}}>RH-Paie Pro</div>
-        <div className="rh-sidebar-brand-text" style={{fontSize:"11px",color:"#a0c0e8",marginTop:"3px"}}>Gestion de la Paie</div>
+        <div className="rh-sidebar-brand-text" style={{fontSize:"11px",color:"#c9d8cf",marginTop:"3px"}}>Gestion de la Paie</div>
         {/* RH_Badge plan */}
         <div onClick={onUpgrade}
           style={{marginTop:"8px",display:"inline-flex",alignItems:"center",gap:"5px",
@@ -21227,7 +21808,7 @@ const RH_Sidebar = ({page,setPage,user,onLogout,open=false,setOpen=()=>{},sub,on
                     borderRadius:"8px",border:"none",cursor:"pointer",textAlign:"left",
                     fontFamily:"inherit",fontSize:"13px",fontWeight:500,marginBottom:"3px",
                     background:page===n.id?"rgba(255,255,255,0.2)":"transparent",
-                    color:page===n.id?"#ffffff":"#a0c0e8",transition:"all 0.15s"}}>
+                    color:page===n.id?"#ffffff":"#c9d8cf",transition:"all 0.15s"}}>
             <span style={{fontSize:"15px",minWidth:"18px",textAlign:"center"}}>{n.icon}</span>
             <span className="rh-sidebar-label">{n.label}</span>
           </button>
@@ -21269,9 +21850,9 @@ const RH_LoginPage = ({onLogin}) => {
 
   const pageStyle={
     minHeight:"100vh",
-    background:"linear-gradient(135deg,#0f2d6b 0%,#1a4fa8 55%,#2d6fd4 100%)",
+    background:"linear-gradient(135deg,#051a0e 0%,#0d3823 55%,#1e824c 100%)",
     display:"flex",alignItems:"center",justifyContent:"center",
-    fontFamily:"Tahoma,'Segoe UI',Arial,sans-serif",padding:"20px",position:"relative",overflow:"hidden"
+    fontFamily:"'Plus Jakarta Sans',Tahoma,'Segoe UI',Arial,sans-serif",padding:"20px",position:"relative",overflow:"hidden"
   };
   const cardStyle={
     background:"#ffffff",borderRadius:"20px",padding:"2.5rem 2.5rem 2rem",
@@ -21293,7 +21874,7 @@ const RH_LoginPage = ({onLogin}) => {
   const labelStyle={display:"block",fontSize:"13px",fontWeight:600,color:"#334155",marginBottom:"6px"};
   const btnPrimaryStyle={
     width:"100%",padding:"13px",
-    background:loading?"#93c5fd":"linear-gradient(135deg,#1a4fa8,#2d6fd4)",
+    background:loading?"#9bcbb0":"linear-gradient(135deg,#1e824c,#27ae60)",
     color:"#fff",border:"none",borderRadius:"10px",fontSize:"15px",fontWeight:600,
     cursor:loading?"not-allowed":"pointer",letterSpacing:"0.2px",
     transition:"opacity .15s, transform .15s",fontFamily:"inherit"
@@ -21314,7 +21895,7 @@ const RH_LoginPage = ({onLogin}) => {
       <div style={cardStyle}>
         {/* badge */}
         <div style={{position:"absolute",top:"-13px",right:"24px",
-                     background:"linear-gradient(135deg,#1a4fa8,#2d6fd4)",color:"#fff",
+                     background:"linear-gradient(135deg,#1e824c,#27ae60)",color:"#fff",
                      fontSize:"11px",fontWeight:700,padding:"4px 14px",
                      borderRadius:"20px",letterSpacing:"0.3px"}}>
           Bénin / UEMOA
@@ -21322,7 +21903,7 @@ const RH_LoginPage = ({onLogin}) => {
 
         {/* logo */}
         <div style={{display:"flex",alignItems:"center",gap:"12px",marginBottom:"1.75rem"}}>
-          <div style={{width:"44px",height:"44px",background:"linear-gradient(135deg,#1a4fa8,#2d6fd4)",
+          <div style={{width:"44px",height:"44px",background:"linear-gradient(135deg,#1e824c,#27ae60)",
                        borderRadius:"12px",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <rect x="2" y="7" width="20" height="14" rx="2"/>
@@ -21366,7 +21947,7 @@ const RH_LoginPage = ({onLogin}) => {
             <span style={iconStyle}>✉</span>
             <input type="email" value={email} onChange={e=>setEmail(e.target.value)}
               placeholder="exemple@email.com" style={inputStyle}
-              onFocus={e=>{e.target.style.borderColor="#1a4fa8";e.target.style.background="#fff";e.target.style.boxShadow="0 0 0 3px rgba(26,79,168,0.1)";}}
+              onFocus={e=>{e.target.style.borderColor="#1e824c";e.target.style.background="#fff";e.target.style.boxShadow="0 0 0 3px rgba(30,130,76,0.12)";}}
               onBlur={e=>{e.target.style.borderColor="#e2e8f0";e.target.style.background="#f8fafc";e.target.style.boxShadow="none";}}
               onKeyDown={e=>{if(e.key==="Enter") submit();}}
             />
@@ -21380,7 +21961,7 @@ const RH_LoginPage = ({onLogin}) => {
             <span style={iconStyle}>🔒</span>
             <input type={showPass?"text":"password"} value={pass} onChange={e=>setPass(e.target.value)}
               placeholder="••••••••" style={{...inputStyle,paddingRight:"42px"}}
-              onFocus={e=>{e.target.style.borderColor="#1a4fa8";e.target.style.background="#fff";e.target.style.boxShadow="0 0 0 3px rgba(26,79,168,0.1)";}}
+              onFocus={e=>{e.target.style.borderColor="#1e824c";e.target.style.background="#fff";e.target.style.boxShadow="0 0 0 3px rgba(30,130,76,0.12)";}}
               onBlur={e=>{e.target.style.borderColor="#e2e8f0";e.target.style.background="#f8fafc";e.target.style.boxShadow="none";}}
               onKeyDown={e=>{if(e.key==="Enter") submit();}}
             />
@@ -21397,7 +21978,7 @@ const RH_LoginPage = ({onLogin}) => {
         {!isSignup&&(
           <div style={{textAlign:"right",marginBottom:"1.4rem"}}>
             <button onClick={()=>setShowForgot(true)}
-              style={{background:"none",border:"none",color:"#1a4fa8",cursor:"pointer",
+              style={{background:"none",border:"none",color:"#1e824c",cursor:"pointer",
                       fontSize:"13px",fontWeight:500,fontFamily:"inherit",textDecoration:"none"}}>
               Mot de passe oublié ?
             </button>
@@ -21499,8 +22080,8 @@ const ResetPasswordPage = ({onDone}) => {
   };
 
   return (
-    <div style={{minHeight:"100vh",background:"linear-gradient(135deg,#1a3a6b 0%,#1a6dd6 50%,#63a8f0 100%)",
-                 display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"Tahoma,'Segoe UI',Arial,sans-serif"}}>
+    <div style={{minHeight:"100vh",background:"linear-gradient(135deg,#082818 0%,#0d3823 50%,#1e824c 100%)",
+                 display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Plus Jakarta Sans',Tahoma,'Segoe UI',Arial,sans-serif"}}>
       <div style={{width:"100%",maxWidth:"380px",padding:"20px"}}>
         <div style={{textAlign:"center",marginBottom:"32px"}}>
           <div style={{fontSize:"32px",fontWeight:900,color:"#fff",letterSpacing:"-1px"}}>RH-Paie Pro</div>
@@ -21550,7 +22131,7 @@ const RH_Dashboard = ({companies}) => {
   ];
   return (
     <div>
-      <h2 style={{marginBottom:"24px",fontSize:"22px",fontWeight:700,color:"#1a3a6b"}}>Tableau de bord</h2>
+      <h2 style={{marginBottom:"24px",fontSize:"22px",fontWeight:700,color:"#0d3823"}}>Tableau de bord</h2>
       <div className="rh-grid-4">
         {cards.map(c=>(
           <RH_Card key={c.label}>
@@ -21594,7 +22175,7 @@ const LogoUpload = ({value, onChange}) => {
   };
   return (
     <div style={{marginBottom:"14px"}}>
-      <label style={{display:"block",fontSize:"12px",color:"#1a3a6b",marginBottom:"5px",fontWeight:600}}>
+      <label style={{display:"block",fontSize:"12px",color:"#0d3823",marginBottom:"5px",fontWeight:600}}>
         Logo entreprise (optionnel, max 1 Mo)
       </label>
       {value&&(
@@ -21651,7 +22232,7 @@ const Companies = ({companies,reload,userId}) => {
   return (
     <div>
       <div className="rh-page-header">
-        <h2 style={{fontSize:"22px",fontWeight:700,color:"#1a3a6b"}}>Sociétés</h2>
+        <h2 style={{fontSize:"22px",fontWeight:700,color:"#0d3823"}}>Sociétés</h2>
         <div className="rh-btn-group"><RH_Btn onClick={()=>open()}>+ Nouvelle société</RH_Btn></div>
       </div>
       <RH_Card>
@@ -21738,7 +22319,7 @@ const Employees = ({companies}) => {
   return (
     <div>
       <div className="rh-page-header">
-        <h2 style={{fontSize:"22px",fontWeight:700,color:"#1a3a6b"}}>Employés</h2>
+        <h2 style={{fontSize:"22px",fontWeight:700,color:"#0d3823"}}>Employés</h2>
         <div className="rh-inline-actions">
           <select className="rh-control" value={compId} onChange={e=>setCompId(e.target.value)}
             style={{background:"#fff",border:`1px solid ${G.border}`,borderRadius:"8px",
@@ -22095,7 +22676,7 @@ ${lienCasse}
   return (
     <div>
       <div className="rh-page-header">
-        <h2 style={{fontSize:"22px",fontWeight:700,color:"#1a3a6b"}}>Fiches de Paie</h2>
+        <h2 style={{fontSize:"22px",fontWeight:700,color:"#0d3823"}}>Fiches de Paie</h2>
         <div className="rh-btn-group">
           <RH_Btn onClick={genererTout} variant="secondary" small>⚡ Générer tout le mois</RH_Btn>
           <RH_Btn onClick={envoyerTout} variant="ghost" small>📱 Envoyer via WhatsApp</RH_Btn>
@@ -22141,7 +22722,7 @@ ${lienCasse}
               {label:"ITS total",val:payrolls.reduce((s,p)=>s+parseFloat(p.its||0),0)},
               {label:"Net à payer",val:payrolls.reduce((s,p)=>s+parseFloat(p.remuneration_due||0),0)},
             ].map(t=>(
-              <div key={t.label} style={{background:"#f0f4ff",borderRadius:"8px",padding:"12px",border:"1px solid #d0dff5"}}>
+              <div key={t.label} style={{background:"#f4f6f4",borderRadius:"8px",padding:"12px",border:"1px solid #dfe6df"}}>
                 <div style={{fontSize:"11px",color:G.textDim,marginBottom:"4px"}}>{t.label}</div>
                 <div style={{fontSize:"15px",fontWeight:700,color:G.accent}}>{fmt(t.val)}</div>
               </div>
@@ -22211,7 +22792,7 @@ ${lienCasse}
 
           {/* Aperçu calcul */}
           {calc&&(
-            <div style={{background:"#f0f4ff",borderRadius:"10px",padding:"16px",marginTop:"8px",marginBottom:"16px",border:"1px solid #d0dff5"}}>
+            <div style={{background:"#f4f6f4",borderRadius:"10px",padding:"16px",marginTop:"8px",marginBottom:"16px",border:"1px solid #dfe6df"}}>
               <div style={{fontSize:"12px",fontWeight:700,color:G.textDim,marginBottom:"12px",
                            textTransform:"uppercase",letterSpacing:"0.5px"}}>Aperçu du calcul</div>
               <div className="rh-summary-grid-3">
@@ -22689,7 +23270,7 @@ const TemplateManager = ({companies, user, compId, mois, annee, data}) => {
         <RH_Btn onClick={()=>setShowUpload(true)} small>📤 Uploader un modèle</RH_Btn>
       </div>
 
-      <RH_Card style={{marginBottom:"16px",padding:"14px",background:"#f0f4ff"}}>
+      <RH_Card style={{marginBottom:"16px",padding:"14px",background:"#f4f6f4"}}>
         <div style={{fontSize:"11px",fontWeight:700,color:G.accent,marginBottom:"8px",textTransform:"uppercase",letterSpacing:"0.5px"}}>
           Variables disponibles dans vos modèles Excel
         </div>
@@ -22737,7 +23318,7 @@ const TemplateManager = ({companies, user, compId, mois, annee, data}) => {
           <RH_Input label="Description (optionnel)" value={form.description}
                  onChange={v=>setForm(p=>({...p,description:v}))} placeholder="ex: Formulaire officiel CNSS"/>
           <div style={{marginBottom:"14px"}}>
-            <label style={{display:"block",fontSize:"12px",color:"#1a3a6b",marginBottom:"5px",fontWeight:600}}>
+            <label style={{display:"block",fontSize:"12px",color:"#0d3823",marginBottom:"5px",fontWeight:600}}>
               Portée du modèle
             </label>
             <div style={{display:"flex",gap:"16px"}}>
@@ -22757,7 +23338,7 @@ const TemplateManager = ({companies, user, compId, mois, annee, data}) => {
               options={[{value:"",label:"— Aucune société spécifique —"},...companies.map(c=>({value:c.id,label:c.raison_sociale}))]}/>
           )}
           <div style={{marginBottom:"14px"}}>
-            <label style={{display:"block",fontSize:"12px",color:"#1a3a6b",marginBottom:"5px",fontWeight:600}}>
+            <label style={{display:"block",fontSize:"12px",color:"#0d3823",marginBottom:"5px",fontWeight:600}}>
               Fichier (.xlsx, .xls, .pdf) *
             </label>
             <input type="file" accept=".xlsx,.xls,.pdf" onChange={upload} disabled={uploading}
@@ -22881,7 +23462,7 @@ const Declarations = ({companies, user}) => {
   return (
     <div>
       <div className="rh-page-header">
-        <h2 style={{fontSize:"22px",fontWeight:700,color:"#1a3a6b"}}>Déclarations CNSS / VPS / ITS</h2>
+        <h2 style={{fontSize:"22px",fontWeight:700,color:"#0d3823"}}>Déclarations CNSS / VPS / ITS</h2>
         {data?.nb_fiches>0&&(
           <div className="rh-btn-group">
             <RH_Btn onClick={printDecl} variant="secondary" small>🖨 Imprimer</RH_Btn>
@@ -23146,7 +23727,7 @@ const RapportCabinet = ({companies}) => {
   return (
     <div>
       <div className="rh-page-header">
-        <h2 style={{fontSize:"22px",fontWeight:700,color:"#1a3a6b"}}>Rapport Cabinet</h2>
+        <h2 style={{fontSize:"22px",fontWeight:700,color:"#0d3823"}}>Rapport Cabinet</h2>
         <div className="rh-btn-group">
           <RH_Btn onClick={printRapport} variant="secondary" small>🖨 Rapport PDF</RH_Btn>
           <RH_Btn onClick={exportCSV} variant="ghost" small>📊 Export Excel/CSV</RH_Btn>
@@ -23282,7 +23863,7 @@ const Historique = ({companies}) => {
   return (
     <div>
       <div className="rh-page-header">
-        <h2 style={{fontSize:"22px",fontWeight:700,color:"#1a3a6b"}}>Historique des Fiches de Paie</h2>
+        <h2 style={{fontSize:"22px",fontWeight:700,color:"#0d3823"}}>Historique des Fiches de Paie</h2>
       </div>
       <RH_Card style={{marginBottom:"16px",padding:"16px"}}>
         <div className="rh-flex-filters">
@@ -23373,15 +23954,15 @@ const Settings = ({user}) => {
 
   return (
     <div>
-      <h2 style={{marginBottom:"24px",fontSize:"22px",fontWeight:700,color:"#1a3a6b"}}>Paramètres</h2>
+      <h2 style={{marginBottom:"24px",fontSize:"22px",fontWeight:700,color:"#0d3823"}}>Paramètres</h2>
 
       {/* Config WhatsApp expéditeur */}
       <RH_Card style={{maxWidth:"520px",marginBottom:"20px"}}>
         <div style={{fontSize:"14px",fontWeight:600,marginBottom:"16px",color:G.accent}}>
           ⚙️ Configuration WhatsApp — Expéditeur
         </div>
-        <div style={{background:"#f0f4ff",borderRadius:"8px",padding:"12px",marginBottom:"16px",
-                     fontSize:"12px",color:G.textDim,border:"1px solid #d0dff5"}}>
+        <div style={{background:"#f4f6f4",borderRadius:"8px",padding:"12px",marginBottom:"16px",
+                     fontSize:"12px",color:G.textDim,border:"1px solid #dfe6df"}}>
           💡 Renseignez les coordonnées de l'expéditeur qui apparaîtront dans les messages WhatsApp envoyés aux employés.
         </div>
         <RH_Input label="Numéro WhatsApp expéditeur (avec indicatif pays)"
@@ -23393,8 +23974,8 @@ const Settings = ({user}) => {
         <RH_Input label="Message personnalisé (optionnel)"
           value={form.smtp_pass} onChange={v=>f("smtp_pass",v)}
           placeholder="Pour toute question, contactez le service RH."/>
-        <div style={{background:"#f0f4ff",borderRadius:"8px",padding:"12px",marginBottom:"16px",
-                     fontSize:"12px",color:"#1a3a6b",border:"1px solid #d0dff5"}}>
+        <div style={{background:"#f4f6f4",borderRadius:"8px",padding:"12px",marginBottom:"16px",
+                     fontSize:"12px",color:"#0d3823",border:"1px solid #dfe6df"}}>
           📱 <strong>Numéro employé :</strong> renseignez le numéro WhatsApp de chaque employé dans le champ <strong>"Email"</strong> de sa fiche (ex: 22997000000).
         </div>
         <RH_Btn onClick={save} disabled={saving}>
@@ -24075,7 +24656,7 @@ function RH_ChatPage({ user }) {
 
   const roleBadge = (role) => {
     if(role==='super_admin') return { label:'Super Admin', color:'#d97706' }
-    if(role==='admin') return { label:'Admin', color:'#1a6dd6' }
+    if(role==='admin') return { label:'Admin', color:'#1e824c' }
     return { label:'', color:'#94a3b8' }
   }
 
@@ -24099,9 +24680,9 @@ function RH_ChatPage({ user }) {
           const badge = roleBadge(m.auteur_role)
           return (
             <div key={m.id} style={{display:'flex',justifyContent:mine?'flex-end':'flex-start',marginBottom:10}}>
-              <div style={{maxWidth:'75%',background:mine?'#dcf8c6':'white',borderRadius:10,padding:'8px 12px',boxShadow:'0 1px 1px rgba(0,0,0,0.1)',position:'relative'}}>
+              <div style={{maxWidth:'75%',background:mine?'#eaf6ee':'white',borderRadius:10,padding:'8px 12px',boxShadow:'0 1px 1px rgba(0,0,0,0.1)',position:'relative'}}>
                 {!mine && (
-                  <div style={{fontSize:12,fontWeight:700,color:'#1a3a6b',marginBottom:2,display:'flex',alignItems:'center',gap:6}}>
+                  <div style={{fontSize:12,fontWeight:700,color:'#0d3823',marginBottom:2,display:'flex',alignItems:'center',gap:6}}>
                     {m.auteur_nom}
                     {badge.label && <span style={{fontSize:10,background:badge.color,color:'white',borderRadius:8,padding:'1px 6px'}}>{badge.label}</span>}
                   </div>
@@ -24133,7 +24714,7 @@ function RH_ChatPage({ user }) {
               <span style={{fontWeight:600,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>Enreg… {fmtRecTime(recTime)}</span>
             </div>
             <button onClick={()=>stopRecording(false)} title="Envoyer le vocal"
-              style={{background:'#25D366',border:'none',borderRadius:'50%',width:44,height:44,minWidth:44,cursor:'pointer',fontSize:18,color:'white',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+              style={{background:'#1E824C',border:'none',borderRadius:'50%',width:44,height:44,minWidth:44,cursor:'pointer',fontSize:18,color:'white',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
               ➤
             </button>
           </>
@@ -24150,12 +24731,12 @@ function RH_ChatPage({ user }) {
               style={{flex:1,minWidth:0,padding:'11px 14px',border:'1px solid #e2e8f0',borderRadius:20,fontSize:14,outline:'none',boxSizing:'border-box'}} />
             {text.trim() ? (
               <button onClick={send} disabled={sending}
-                style={{background:'#25D366',border:'none',borderRadius:'50%',width:44,height:44,minWidth:44,cursor:'pointer',fontSize:18,color:'white',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+                style={{background:'#1E824C',border:'none',borderRadius:'50%',width:44,height:44,minWidth:44,cursor:'pointer',fontSize:18,color:'white',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
                 ➤
               </button>
             ) : (
               <button onClick={startRecording} disabled={uploading} title="Enregistrer un vocal"
-                style={{background:'#25D366',border:'none',borderRadius:'50%',width:44,height:44,minWidth:44,cursor:'pointer',fontSize:20,color:'white',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+                style={{background:'#1E824C',border:'none',borderRadius:'50%',width:44,height:44,minWidth:44,cursor:'pointer',fontSize:20,color:'white',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
                 🎤
               </button>
             )}
@@ -24240,7 +24821,7 @@ const RH_TableauDeBord = ({companies}) => {
   return (
     <div>
       <div className="rh-page-header">
-        <h2 style={{fontSize:"22px",fontWeight:700,color:"#1a3a6b"}}>Tableau de bord RH</h2>
+        <h2 style={{fontSize:"22px",fontWeight:700,color:"#0d3823"}}>Tableau de bord RH</h2>
         <div className="rh-inline-actions"><RH_SelectSociete companies={companies} compId={compId} setCompId={setCompId}/></div>
       </div>
       {loading ? <RH_Card>Chargement…</RH_Card> : <>
@@ -24340,7 +24921,7 @@ const RH_SimulateurBrutNet = () => {
     }
   }
   const lignes=resultat?[
-    ["Salaire de base",resultat.salaire_base_trouve ?? Math.max(0,cible-(parseFloat(primes)||0)),"#1a3a6b"],
+    ["Salaire de base",resultat.salaire_base_trouve ?? Math.max(0,cible-(parseFloat(primes)||0)),"#0d3823"],
     ["Primes et indemnités",parseFloat(primes)||0],
     ["Salaire brut",resultat.salaire_brut,G.accent,true],
     ["CNSS salariale (3,6 %)",-resultat.cnss_ouvriere],
@@ -24354,7 +24935,7 @@ const RH_SimulateurBrutNet = () => {
   ]:[];
   return (
     <div>
-      <div className="rh-page-header"><h2 style={{fontSize:"22px",fontWeight:700,color:"#1a3a6b"}}>Simulateur Brut ↔ Net</h2></div>
+      <div className="rh-page-header"><h2 style={{fontSize:"22px",fontWeight:700,color:"#0d3823"}}>Simulateur Brut ↔ Net</h2></div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(320px,1fr))",gap:16,alignItems:"start"}}>
         <RH_Card>
           <div style={{display:"flex",gap:6,marginBottom:14}}>
@@ -24558,7 +25139,7 @@ const RH_Conges = ({companies}) => {
   return (
     <div>
       <div className="rh-page-header">
-        <h2 style={{fontSize:"22px",fontWeight:700,color:"#1a3a6b"}}>Congés</h2>
+        <h2 style={{fontSize:"22px",fontWeight:700,color:"#0d3823"}}>Congés</h2>
         <div className="rh-inline-actions">
           <RH_SelectSociete companies={companies} compId={compId} setCompId={setCompId}/>
           <RH_Btn onClick={()=>nouveau()}>+ Nouveau congé</RH_Btn>
@@ -24682,7 +25263,7 @@ const RH_Absences = ({companies}) => {
   return (
     <div>
       <div className="rh-page-header">
-        <h2 style={{fontSize:"22px",fontWeight:700,color:"#1a3a6b"}}>Permissions & absences</h2>
+        <h2 style={{fontSize:"22px",fontWeight:700,color:"#0d3823"}}>Permissions & absences</h2>
         <div className="rh-inline-actions">
           <RH_SelectSociete companies={companies} compId={compId} setCompId={setCompId}/>
           <RH_Btn onClick={nouveau}>+ Nouvelle permission / absence</RH_Btn>
@@ -24876,7 +25457,7 @@ const RH_Prets = ({companies}) => {
   return (
     <div>
       <div className="rh-page-header">
-        <h2 style={{fontSize:"22px",fontWeight:700,color:"#1a3a6b"}}>Prêts & avances au personnel</h2>
+        <h2 style={{fontSize:"22px",fontWeight:700,color:"#0d3823"}}>Prêts & avances au personnel</h2>
         <div className="rh-inline-actions"><RH_SelectSociete companies={companies} compId={compId} setCompId={setCompId}/><RH_Btn onClick={nouveau}>+ Nouveau prêt / avance</RH_Btn></div>
       </div>
       {d.erreur && <RH_Card style={{background:"#fffbeb",border:"1px solid #fcd34d"}}><div style={{fontSize:13,color:"#92400e"}}>⚠️ {MSG_TABLES_RH_LOT3}</div></RH_Card>}
@@ -25000,7 +25581,7 @@ const RH_Missions = ({companies}) => {
   return (
     <div>
       <div className="rh-page-header">
-        <h2 style={{fontSize:"22px",fontWeight:700,color:"#1a3a6b"}}>Missions</h2>
+        <h2 style={{fontSize:"22px",fontWeight:700,color:"#0d3823"}}>Missions</h2>
         <div className="rh-inline-actions"><RH_SelectSociete companies={companies} compId={compId} setCompId={setCompId}/><RH_Btn onClick={nouveau}>+ Nouvelle mission</RH_Btn></div>
       </div>
       {d.erreur && <RH_Card style={{background:"#fffbeb",border:"1px solid #fcd34d"}}><div style={{fontSize:13,color:"#92400e"}}>⚠️ {MSG_TABLES_RH_LOT3}</div></RH_Card>}
@@ -25192,7 +25773,7 @@ const RH_Carriere = ({companies}) => {
   return (
     <div>
       <div className="rh-page-header">
-        <h2 style={{fontSize:"22px",fontWeight:700,color:"#1a3a6b"}}>Carrière</h2>
+        <h2 style={{fontSize:"22px",fontWeight:700,color:"#0d3823"}}>Carrière</h2>
         <div className="rh-inline-actions"><RH_SelectSociete companies={companies} compId={compId} setCompId={setCompId}/><RH_Btn onClick={()=>nouveau()}>+ Nouvel événement</RH_Btn></div>
       </div>
       {d.erreur && <RH_Card style={{background:"#fffbeb",border:"1px solid #fcd34d"}}><div style={{fontSize:13,color:"#92400e"}}>⚠️ {MSG_TABLES_RH_LOT4}</div></RH_Card>}
@@ -25301,7 +25882,7 @@ const RH_Dossiers = ({companies}) => {
   return (
     <div>
       <div className="rh-page-header">
-        <h2 style={{fontSize:"22px",fontWeight:700,color:"#1a3a6b"}}>Dossier du personnel</h2>
+        <h2 style={{fontSize:"22px",fontWeight:700,color:"#0d3823"}}>Dossier du personnel</h2>
         <div className="rh-inline-actions"><RH_SelectSociete companies={companies} compId={compId} setCompId={c=>{setCompId(c);setEmpId("");}}/></div>
       </div>
       {d.erreur && <RH_Card style={{background:"#fffbeb",border:"1px solid #fcd34d"}}><div style={{fontSize:13,color:"#92400e"}}>⚠️ {MSG_TABLES_RH_LOT4}</div></RH_Card>}
@@ -25486,7 +26067,7 @@ const RH_Centralisation = ({companies}) => {
   return (
     <div>
       <div className="rh-page-header">
-        <h2 style={{fontSize:"22px",fontWeight:700,color:"#1a3a6b"}}>Centralisation comptable de la paie</h2>
+        <h2 style={{fontSize:"22px",fontWeight:700,color:"#0d3823"}}>Centralisation comptable de la paie</h2>
         <div className="rh-inline-actions"><RH_SelectSociete companies={companies} compId={compId} setCompId={setCompId}/></div>
       </div>
       <RH_Card>
@@ -25648,7 +26229,7 @@ function SuperAdminDashboard({ companies, onSelect, toast }) {
               onClick={()=>onSelect(c)}
               onMouseEnter={e=>{e.currentTarget.style.boxShadow='0 8px 24px rgba(37,99,235,.15)';e.currentTarget.style.borderColor='#2563eb'}}
               onMouseLeave={e=>{e.currentTarget.style.boxShadow='0 1px 3px rgba(0,0,0,.06)';e.currentTarget.style.borderColor='#e2e8f0'}}>
-              <div style={{padding:'16px 20px',background:'linear-gradient(135deg,#0f2044,#1e3a6e)',color:'white'}}>
+              <div style={{padding:'16px 20px',background:'linear-gradient(135deg,#082818,#0d3823)',color:'white'}}>
                 <div style={{fontWeight:700,fontSize:15,marginBottom:4}}>{c.raison_sociale}</div>
                 <div style={{fontSize:11,opacity:.7}}>{c.rccm||'RCCM non renseigné'}</div>
               </div>
@@ -25960,7 +26541,7 @@ export default function ComptaPro() {
     etv_entrees:'Entrées Magasin', etv_sorties:'Sorties Magasin', etv_inventaire:'Inventaire Étuveuses', etv_tresorerie:'Trésorerie Étuveuses',
     achats_groupes:'Achats groupés de paddy', epargne_fria:'Épargne FRIA', achats:'Achats Semi-finis', lots_semi_finis:'Lots Semi-finis', epierrage:'Épierrage', reglements_clients:'Règlements Clients', reglements_fourn:'Règlements Fournisseurs', etuvage_paiements:'Paiements Étuvage',
     docs_admin:'Documents administratifs', parametres:'Paramètres',
-    prestations:'Prestations', journal_caisse:'Journal Caisse', journal_banque:'Journal Banque',
+    prestations:'Prestations', agents_prospection:'Agents de prospection', journal_caisse:'Journal Caisse', journal_banque:'Journal Banque',
     suivi_lot:'Suivi de Lot', tracabilite:'Traçabilité des lots', registre_tracabilite:'Registre de traçabilité', journal_mobile:'Journal Mobile Money', plan_comptable:'Plan Comptable', grand_livre:'Grand-Livre', ecritures:'Saisie Comptable', balance:'Balance', etats_financiers:'États Financiers',
     categories_articles:'Catégories d\'articles', categories_fournisseurs:'Catégories de fournisseurs',
     rh_employes:'RH — Employés', rh_fiches_paie:'RH — Fiches de Paie', rh_historique:'RH — Historique Paie',
@@ -26028,6 +26609,7 @@ export default function ComptaPro() {
       case 'reglements_clients': return <ReglementsPage {...sp} mode="clients" setPage={setPage} />
       case 'reglements_fourn':    return <ReglementsPage {...sp} mode="fournisseurs" setPage={setPage} />
       case 'prestations':   return <PrestationPage {...sp} setPage={setPage} />
+      case 'agents_prospection': return <AgentsProspectionPage {...sp} readOnly={getReadOnly('agents_prospection')} />
       case 'etuvage_paiements': return <PaiementsEtuvagePage {...sp} lots={lots} />
       case 'journal_caisse':    return <JournalPage table="compta_journal_caisse" title="Journal Caisse" icon="🏦" journalType="caisse" {...sp} />
       case 'journal_banque':    return <JournalPage table="compta_journal_banque" title="Journal Banque" icon="🏛️" journalType="banque" {...sp} />
@@ -26074,7 +26656,7 @@ export default function ComptaPro() {
   const sidebarCollapsed = isMobile || isMobileLandscape
 
   return (
-    <div style={{ fontFamily:"Tahoma,'Segoe UI','MS Sans Serif',Arial,sans-serif", background:'#f1f5f9', color:'#1e293b', minHeight:'100vh' }}>
+    <div style={{ fontFamily:"'Plus Jakarta Sans',Tahoma,'Segoe UI',Arial,sans-serif", background:'#f4f6f4', color:'#1e293b', minHeight:'100vh' }}>
       <Toasts toasts={toast.toasts} />
       {sidebarCollapsed && (
         <Sidebar page={page} setPage={setPage} user={user} profile={profile} onLogout={logout}
@@ -26131,9 +26713,9 @@ export default function ComptaPro() {
             <span style={{fontSize:12,fontWeight:700,color: isOwnCompany?'#15803d':'#92400e'}}>
               {isOwnCompany ? '✏️ MODE ÉDITION — Votre société' : '👁️ MODE CONSULTATION — Lecture seule'}
             </span>
-            <span style={{fontSize:13,fontWeight:600,color:'#0f2044',flex:1}}>{adminViewCompany.raison_sociale}</span>
+            <span style={{fontSize:13,fontWeight:600,color:'#082818',flex:1}}>{adminViewCompany.raison_sociale}</span>
             <button onClick={()=>{ setAdminViewCompany(null); setPage('dashboard') }}
-              style={{background:'#0f2044',color:'white',border:'none',padding:'5px 14px',borderRadius:7,fontWeight:700,fontSize:12,cursor:'pointer'}}>
+              style={{background:'#082818',color:'white',border:'none',padding:'5px 14px',borderRadius:7,fontWeight:700,fontSize:12,cursor:'pointer'}}>
               ← Retour aux sociétés
             </button>
           </div>
@@ -26165,7 +26747,7 @@ export default function ComptaPro() {
         style={{
           position:'fixed', bottom:24, right:24, zIndex:9999,
           width:56, height:56, borderRadius:'50%',
-          background:'#25D366', border:'none',
+          background:'#1E824C', border:'none',
           boxShadow:'0 4px 24px rgba(37,211,102,0.55)',
           display:'flex', alignItems:'center', justifyContent:'center',
           cursor:'pointer',
