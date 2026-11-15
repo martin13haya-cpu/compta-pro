@@ -1611,7 +1611,7 @@ function LoginPage({ onLogin }) {
           <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:18 }}>
             <img src="/logo-psariz.png" alt="" style={{ width:40, height:40, objectFit:'contain', background:'white', borderRadius:'50%' }} />
             <div style={{ flex:1 }}>
-              <div style={{ fontSize:11, fontWeight:800, letterSpacing:2, color:coul, transition:'color .4s ease' }}>PSARIZ SARL</div>
+              <div style={{ fontSize:11, fontWeight:800, letterSpacing:2, color:coul, transition:'color .4s ease' }}>Réseau CEPEA- PSARIZ</div>
               <div style={{ fontSize:11, color:'rgba(255,255,255,.5)' }}>Compta Pro — Gestion commerciale & stock</div>
             </div>
             <span style={{ width:7, height:7, borderRadius:'50%', background:coul, boxShadow:`0 0 10px ${coul}` }} />
@@ -2900,9 +2900,9 @@ function Sidebar({ page, setPage, user, profile, onLogout, open, onClose }) {
       }}>
         <div style={{ padding:'20px 20px 16px', borderBottom:'1px solid rgba(255,255,255,.08)', display:'flex', alignItems:'center', justifyContent:'space-between' }}>
           <div style={{ display:'flex', alignItems:'center', gap:10 }}>
-            <img src="/logo-psariz.png" alt="PSARIZ SARL" style={{ width:42, height:42, objectFit:'contain', background:'white', borderRadius:'50%', flexShrink:0 }} />
+            <img src="/logo-psariz.png" alt="Réseau CEPEA- PSARIZ" style={{ width:42, height:42, objectFit:'contain', background:'white', borderRadius:'50%', flexShrink:0 }} />
             <div>
-              <div style={{ color:'white', fontWeight:700, fontSize:14 }}>PSARIZ SARL</div>
+              <div style={{ color:'white', fontWeight:700, fontSize:14 }}>Réseau CEPEA- PSARIZ</div>
               {isSuperAdmin
                 ? <div style={{ color:'#fbbf24', fontSize:10, fontWeight:600 }}>👑 Super Admin</div>
                 : <div style={{ color:'rgba(255,255,255,.5)', fontSize:10 }}>Compta Pro — Gestion & Stock</div>}
@@ -26497,7 +26497,7 @@ export default function ComptaPro() {
   if (loading) return (
     <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',background:'#f1f5f9'}}>
       <div style={{textAlign:'center',color:'#64748b'}}>
-        <img src="/logo-psariz.png" alt="PSARIZ SARL" style={{width:96,height:96,objectFit:'contain',marginBottom:12}} />
+        <img src="/logo-psariz.png" alt="Réseau CEPEA- PSARIZ" style={{width:96,height:96,objectFit:'contain',marginBottom:12}} />
         <div style={{fontWeight:600}}>Chargement Compta Pro…</div>
       </div>
     </div>
@@ -26770,8 +26770,8 @@ export default function ComptaPro() {
           <div style={{ display:'flex', alignItems:'center', gap:12 }}>
             {!sidebarCollapsed && (
               <div onClick={()=>setPage('dashboard')} title="Tableau de bord" style={{ display:'flex', alignItems:'center', gap:8, cursor:'pointer', paddingRight:12, borderRight:'1px solid #e2e8f0' }}>
-                <img src="/logo-psariz.png" alt="PSARIZ SARL" style={{ width:34, height:34, objectFit:'contain', background:'white', borderRadius:'50%', flexShrink:0 }} />
-                <div style={{ fontWeight:800, fontSize:14, color:'#0f172a', whiteSpace:'nowrap' }}>PSARIZ SARL</div>
+                <img src="/logo-psariz.png" alt="Réseau CEPEA- PSARIZ" style={{ width:34, height:34, objectFit:'contain', background:'white', borderRadius:'50%', flexShrink:0 }} />
+                <div style={{ fontWeight:800, fontSize:14, color:'#0f172a', whiteSpace:'nowrap' }}>Réseau CEPEA- PSARIZ</div>
               </div>
             )}
             {sidebarCollapsed && (
