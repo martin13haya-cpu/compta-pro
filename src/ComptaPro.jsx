@@ -1488,8 +1488,8 @@ function LoginPage({ onLogin }) {
     <div style={{width:'40%',background:'linear-gradient(160deg,#082818,#0d3823)',padding:'48px 40px',color:'white',display:'flex',flexDirection:'column',justifyContent:'space-between'}}>
       <div>
         <div style={{display:'flex',alignItems:'center',gap:14,marginBottom:32}}>
-          <div style={{width:52,height:52,background:'rgba(255,255,255,.15)',borderRadius:14,display:'flex',alignItems:'center',justifyContent:'center',fontSize:24}}>📊</div>
-          <div><div style={{fontSize:22,fontWeight:800}}>Compta Pro</div><div style={{fontSize:12,opacity:.75}}>Gestion Commerciale & Stock</div></div>
+          <img src="/logo-psariz.png" alt="PSARIZ SARL" style={{ width:64, height:64, objectFit:'contain', background:'white', borderRadius:'50%', flexShrink:0 }} />
+          <div><div style={{fontSize:22,fontWeight:800}}>PSARIZ SARL</div><div style={{fontSize:12,opacity:.75}}>Compta Pro — Gestion Commerciale & Stock</div></div>
         </div>
         {['Gestion multi-sociétés','Documents commerciaux','Stocks & Production riz','Clients & Fournisseurs','Paiements & Règlements'].map(f=>(
           <div key={f} style={{display:'flex',alignItems:'center',gap:10,marginBottom:12,fontSize:13.5,opacity:.85}}>
@@ -2798,12 +2798,12 @@ function Sidebar({ page, setPage, user, profile, onLogout, open, onClose }) {
       }}>
         <div style={{ padding:'20px 20px 16px', borderBottom:'1px solid rgba(255,255,255,.08)', display:'flex', alignItems:'center', justifyContent:'space-between' }}>
           <div style={{ display:'flex', alignItems:'center', gap:10 }}>
-            <div style={{ width:36, height:36, background:ACCENT, borderRadius:10, display:'flex', alignItems:'center', justifyContent:'center', fontSize:18 }}>📊</div>
+            <img src="/logo-psariz.png" alt="PSARIZ SARL" style={{ width:42, height:42, objectFit:'contain', background:'white', borderRadius:'50%', flexShrink:0 }} />
             <div>
-              <div style={{ color:'white', fontWeight:700, fontSize:14 }}>Compta Pro</div>
+              <div style={{ color:'white', fontWeight:700, fontSize:14 }}>PSARIZ SARL</div>
               {isSuperAdmin
                 ? <div style={{ color:'#fbbf24', fontSize:10, fontWeight:600 }}>👑 Super Admin</div>
-                : <div style={{ color:'rgba(255,255,255,.5)', fontSize:10 }}>Gestion & Stock</div>}
+                : <div style={{ color:'rgba(255,255,255,.5)', fontSize:10 }}>Compta Pro — Gestion & Stock</div>}
             </div>
           </div>
           {collapsed && <span onClick={onClose} style={{ color:'rgba(255,255,255,.5)', cursor:'pointer', fontSize:20, lineHeight:1 }}>✕</span>}
@@ -26395,7 +26395,7 @@ export default function ComptaPro() {
   if (loading) return (
     <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',background:'#f1f5f9'}}>
       <div style={{textAlign:'center',color:'#64748b'}}>
-        <div style={{fontSize:40,marginBottom:12}}>📊</div>
+        <img src="/logo-psariz.png" alt="PSARIZ SARL" style={{width:96,height:96,objectFit:'contain',marginBottom:12}} />
         <div style={{fontWeight:600}}>Chargement Compta Pro…</div>
       </div>
     </div>
@@ -26668,8 +26668,8 @@ export default function ComptaPro() {
           <div style={{ display:'flex', alignItems:'center', gap:12 }}>
             {!sidebarCollapsed && (
               <div onClick={()=>setPage('dashboard')} title="Tableau de bord" style={{ display:'flex', alignItems:'center', gap:8, cursor:'pointer', paddingRight:12, borderRight:'1px solid #e2e8f0' }}>
-                <div style={{ width:32, height:32, background:SIDEBAR, borderRadius:9, display:'flex', alignItems:'center', justifyContent:'center', fontSize:16 }}>📊</div>
-                <div style={{ fontWeight:800, fontSize:14, color:'#0f172a', whiteSpace:'nowrap' }}>Compta Pro</div>
+                <img src="/logo-psariz.png" alt="PSARIZ SARL" style={{ width:34, height:34, objectFit:'contain', background:'white', borderRadius:'50%', flexShrink:0 }} />
+                <div style={{ fontWeight:800, fontSize:14, color:'#0f172a', whiteSpace:'nowrap' }}>PSARIZ SARL</div>
               </div>
             )}
             {sidebarCollapsed && (
