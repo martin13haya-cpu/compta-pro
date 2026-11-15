@@ -1429,6 +1429,28 @@ function PasswordChangePage({ onDone }) {
   )
 }
 
+// Écran de connexion : couleurs successives de la lampe (or et vert de la charte d'abord).
+const LAMPE_COULEURS = ['#d4af37', '#27ae60', '#22c7d6', '#f0457a', '#dbe4ff']
+// Petit clic d'interrupteur, suivi d'un léger bourdonnement à l'allumage.
+function sonLampe(allume) {
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext
+    if (!Ctx) return
+    const ctx = sonLampe.ctx || (sonLampe.ctx = new Ctx())
+    const now = ctx.currentTime
+    const note = (type, freq, vol, debut, duree) => {
+      const o = ctx.createOscillator(), g = ctx.createGain()
+      o.type = type; o.frequency.setValueAtTime(freq, now + debut)
+      g.gain.setValueAtTime(0.001, now + debut)
+      g.gain.linearRampToValueAtTime(vol, now + debut + 0.01)
+      g.gain.exponentialRampToValueAtTime(0.001, now + debut + duree)
+      o.connect(g); g.connect(ctx.destination); o.start(now + debut); o.stop(now + debut + duree + 0.02)
+    }
+    note('square', allume ? 900 : 520, 0.035, 0, 0.05)
+    if (allume) note('sine', 120, 0.06, 0.05, 0.3)
+  } catch { /* son indisponible : sans importance */ }
+}
+
 function LoginPage({ onLogin }) {
   const [mode, setMode]       = useState('login') // 'login' | 'register' | 'forgot'
   const [form, setForm]       = useState({ email:'', password:'', nom:'', whatsapp:'' })
@@ -1474,104 +1496,184 @@ function LoginPage({ onLogin }) {
     setForm({ email:'', password:'', nom:'', whatsapp:'' })
   }
 
+  // ── Lampe de bureau ──
+  // On tire le cordon (ou on clique dessus) pour allumer : la lumière révèle le
+  // formulaire. Chaque traction suivante change la couleur, la dernière éteint.
+  // L'état est mémorisé : un utilisateur qui revient retrouve la lampe allumée.
+  const { isMobile } = useResponsive()
+  const [lampe, setLampe] = useState(() => {
+    try { const v = parseInt(localStorage.getItem('psariz_lampe'), 10); return v >= 0 && v < LAMPE_COULEURS.length ? v : -1 } catch { return -1 }
+  })
+  const [tire, setTire] = useState(0)
+  const glisse = useRef(null)
+  const allume = lampe >= 0
+  const coul = allume ? LAMPE_COULEURS[lampe] : '#8b8f98'
+  const basculer = () => {
+    const suivant = lampe + 1 >= LAMPE_COULEURS.length ? -1 : lampe + 1
+    setLampe(suivant); sonLampe(suivant >= 0)
+    try { localStorage.setItem('psariz_lampe', String(suivant)) } catch { /* stockage indisponible */ }
+  }
+  const debutTire = e => { e.preventDefault(); glisse.current = { y:e.clientY, max:0 }; e.currentTarget.setPointerCapture?.(e.pointerId) }
+  const bougeTire = e => {
+    if (!glisse.current) return
+    const d = Math.max(0, Math.min(70, e.clientY - glisse.current.y))
+    glisse.current.max = Math.max(glisse.current.max, d); setTire(d)
+  }
+  const finTire = () => {
+    if (!glisse.current) return
+    const { max } = glisse.current
+    glisse.current = null; setTire(0)
+    if (max > 22 || max < 4) basculer()      // vraie traction, ou simple clic
+  }
+  const retour = tire > 0 ? 'none' : 'transform .5s cubic-bezier(.3,1.9,.5,1)'
+  const changer = m => { setMode(m); setError(''); setSuccess('') }
+
   const inp = (label, name, type='text', placeholder='', required=false, extra={}) => (
-    <div style={{marginBottom:16}}>
-      <label style={{display:'block',fontSize:12.5,fontWeight:700,color:'#374151',marginBottom:6}}>
-        {label}{required&&<span style={{color:'#dc2626'}}>*</span>}
+    <div style={{marginBottom:14}}>
+      <label style={{display:'block',fontSize:12,fontWeight:600,color:'rgba(255,255,255,.75)',marginBottom:6}}>
+        {label}{required&&<span style={{color:coul}}> *</span>}
       </label>
-      <input type={type} name={name} value={form[name]} onChange={set} required={required} placeholder={placeholder} {...extra}
-        style={{width:'100%',padding:'11px 16px',borderRadius:10,border:'1.5px solid #e2e8f0',fontSize:14,boxSizing:'border-box'}} />
+      <input className="lampe-champ" type={type} name={name} value={form[name]} onChange={set} required={required} placeholder={placeholder} {...extra} />
     </div>
   )
 
-  const panel = (
-    <div style={{width:'40%',background:'linear-gradient(160deg,#082818,#0d3823)',padding:'48px 40px',color:'white',display:'flex',flexDirection:'column',justifyContent:'space-between'}}>
-      <div>
-        <div style={{display:'flex',alignItems:'center',gap:14,marginBottom:32}}>
-          <img src="/logo-psariz.png" alt="PSARIZ SARL" style={{ width:64, height:64, objectFit:'contain', background:'white', borderRadius:'50%', flexShrink:0 }} />
-          <div><div style={{fontSize:22,fontWeight:800}}>PSARIZ SARL</div><div style={{fontSize:12,opacity:.75}}>Compta Pro — Gestion Commerciale & Stock</div></div>
-        </div>
-        {['Gestion multi-sociétés','Documents commerciaux','Stocks & Production riz','Clients & Fournisseurs','Paiements & Règlements'].map(f=>(
-          <div key={f} style={{display:'flex',alignItems:'center',gap:10,marginBottom:12,fontSize:13.5,opacity:.85}}>
-            <span style={{color:'#d4af37'}}>✓</span>{f}
-          </div>
-        ))}
-      </div>
-      <div>
-        <div style={{fontSize:12,opacity:.7,marginBottom:8}}>Besoin d'aide ? Contactez l'admin :</div>
-        <a href={`https://wa.me/${SUPER_ADMIN_WHATSAPP}?text=Bonjour, j'ai besoin d'aide pour Compta Pro`}
-          target="_blank" rel="noopener noreferrer"
-          style={{display:'inline-flex',alignItems:'center',gap:8,background:'#25d366',color:'white',padding:'8px 16px',borderRadius:20,fontSize:12,fontWeight:700,textDecoration:'none'}}>
-          <span style={{fontSize:16}}>📱</span> WhatsApp Admin
-        </a>
-        <div style={{fontSize:11,opacity:.4,marginTop:12}}>© Compta Pro — Bénin</div>
-      </div>
-    </div>
+  const lampeSvg = (
+    <svg viewBox="0 0 300 380" width={isMobile ? 200 : 300} height={isMobile ? 253 : 380} style={{ overflow:'visible', flexShrink:0, position:'relative', zIndex:1 }} aria-hidden="false">
+      <defs>
+        <linearGradient id="lampe-abat" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor="#3a3e48" /><stop offset=".55" stopColor="#1b1d23" /><stop offset="1" stopColor="#0b0c0f" /></linearGradient>
+        <linearGradient id="lampe-cone" gradientUnits="userSpaceOnUse" x1="170" y1="150" x2="520" y2="420"><stop offset="0" stopColor={coul} stopOpacity=".55" /><stop offset=".5" stopColor={coul} stopOpacity=".16" /><stop offset="1" stopColor={coul} stopOpacity="0" /></linearGradient>
+        <filter id="lampe-flou" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="9" /></filter>
+        <filter id="lampe-halo" x="-100%" y="-100%" width="300%" height="300%"><feGaussianBlur stdDeviation="5" /></filter>
+      </defs>
+      {/* Faisceau */}
+      <polygon points="119,166 223,132 660,330 330,540" fill="url(#lampe-cone)" filter="url(#lampe-flou)" style={{ opacity:allume?1:0, transition:'opacity .5s ease' }} />
+      {/* Socle */}
+      <ellipse cx="118" cy="356" rx="74" ry="9" fill="rgba(0,0,0,.45)" filter="url(#lampe-halo)" />
+      <ellipse cx="118" cy="348" rx="60" ry="10" fill="#08090b" />
+      <ellipse cx="118" cy="345" rx="60" ry="9" fill="#17191e" />
+      {/* Bras */}
+      <line x1="118" y1="338" x2="88" y2="232" stroke="#101216" strokeWidth="8" strokeLinecap="round" />
+      <line x1="121" y1="337" x2="91" y2="231" stroke="#2c2f37" strokeWidth="2" strokeLinecap="round" />
+      <line x1="88" y1="232" x2="142" y2="96" stroke="#101216" strokeWidth="6" strokeLinecap="round" />
+      <line x1="90" y1="233" x2="144" y2="97" stroke="#2c2f37" strokeWidth="1.5" strokeLinecap="round" />
+      {[[118,338],[88,232]].map(([x,y]) => <g key={y}><circle cx={x} cy={y} r="10" fill="#0d0e11" stroke="#d4af37" strokeWidth="3.5" /><circle cx={x} cy={y} r="3" fill="#d4af37" /></g>)}
+      {/* Abat-jour */}
+      <g transform="rotate(-18 165 130)">
+        <path d="M110,150 Q108,68 165,68 Q222,68 220,150 Z" fill="url(#lampe-abat)" />
+        <ellipse cx="165" cy="150" rx="55" ry="15" fill={allume ? coul : '#14161a'} stroke="#d4af37" strokeWidth="2.2" style={{ transition:'fill .4s ease' }} />
+        <ellipse cx="165" cy="150" rx="40" ry="9" fill="#ffffff" filter="url(#lampe-halo)" style={{ opacity:allume?.85:0, transition:'opacity .4s ease' }} />
+        <circle cx="165" cy="146" r="9" fill={allume ? '#ffffff' : '#2a2d35'} style={{ transition:'fill .3s ease' }} />
+      </g>
+      {/* Cordon */}
+      <line x1="171" y1="150" x2="171" y2="228" stroke="#d4af37" strokeWidth="2" style={{ transformOrigin:'171px 150px', transform:`scaleY(${(78 + tire) / 78})`, transition:retour }} />
+      <g role="button" tabIndex={0} aria-label={allume ? 'Tirer le cordon pour changer la lumière ou éteindre' : 'Tirer le cordon pour allumer la lampe'}
+        onPointerDown={debutTire} onPointerMove={bougeTire} onPointerUp={finTire} onPointerCancel={finTire}
+        onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); basculer() } }}
+        style={{ cursor:'grab', touchAction:'none', outline:'none', transform:`translateY(${tire}px)`, transition:retour }}>
+        <circle cx="171" cy="236" r="26" fill="transparent" />
+        <circle cx="171" cy="236" r="15" fill={coul} filter="url(#lampe-halo)" style={{ opacity:allume?.7:0, transition:'opacity .4s ease' }} />
+        <circle cx="171" cy="236" r="9" fill={allume ? coul : '#e5e7eb'} stroke="rgba(255,255,255,.55)" strokeWidth="1.5" style={{ transition:'fill .4s ease', animation:allume||tire?'none':'lampeInvite 1.6s ease-in-out infinite' }} />
+      </g>
+      {!allume && (
+        <g style={{ pointerEvents:'none' }}>
+          <rect x="192" y="224" width="112" height="24" rx="12" fill="rgba(255,255,255,.07)" stroke="rgba(255,255,255,.16)" />
+          <text x="248" y="240" textAnchor="middle" fontSize="11" fontWeight="600" fill="rgba(255,255,255,.8)">‹ Tirer pour allumer</text>
+        </g>
+      )}
+    </svg>
   )
 
   return (
-    <div style={{minHeight:'100vh',background:'linear-gradient(135deg,#082818,#0d3823)',display:'flex',alignItems:'center',justifyContent:'center',padding:16}}>
-      <div style={{display:'flex',width:'100%',maxWidth:860,borderRadius:20,overflow:'hidden',boxShadow:'0 30px 80px rgba(0,0,0,.4)'}}>
-        {window.innerWidth >= 640 && panel}
-        <div style={{flex:1,background:'white',padding:'40px 32px',display:'flex',flexDirection:'column',justifyContent:'center'}}>
-          <h3 style={{margin:'0 0 6px',fontSize:24,fontWeight:800,color:'#0f172a'}}>
-            {mode==='login'?'Connexion':mode==='register'?'Créer un compte':'Mot de passe oublié'}
+    <div className="lampe-scene" style={{ '--lampe':coul, minHeight:'100vh', position:'relative', overflow:'hidden', display:'flex', alignItems:'center', justifyContent:'center', padding:isMobile?'16px 16px 32px':24,
+      background:'radial-gradient(ellipse at 30% 40%, #1b2420 0%, #0e1412 55%, #070a09 100%)' }}>
+      <style>{`
+        .lampe-champ{width:100%;padding:11px 14px;border-radius:10px;border:1px solid rgba(255,255,255,.12);background:rgba(0,0,0,.35);color:#f1f5f2;font-size:14px;box-sizing:border-box;outline:none;transition:border-color .2s,box-shadow .2s}
+        .lampe-champ::placeholder{color:rgba(255,255,255,.3)}
+        .lampe-champ:focus{border-color:var(--lampe);box-shadow:0 0 0 3px rgba(255,255,255,.07)}
+        .lampe-champ:-webkit-autofill{-webkit-text-fill-color:#f1f5f2;-webkit-box-shadow:0 0 0 40px #101613 inset;caret-color:#f1f5f2}
+        .lampe-scene [role=button]:focus-visible circle:last-child{stroke:#fff;stroke-width:3}
+        @keyframes lampeAllumage{0%{opacity:0}18%{opacity:.9}30%{opacity:.35}55%{opacity:1}100%{opacity:1}}
+        @keyframes lampeInvite{0%,100%{transform:translateY(0)}50%{transform:translateY(6px)}}
+        @media (prefers-reduced-motion:reduce){.lampe-scene *{animation:none!important;transition:none!important}}
+      `}</style>
+      {/* Lumière d'ambiance */}
+      <div key={lampe} style={{ position:'absolute', inset:0, pointerEvents:'none', opacity:allume?1:0, animation:allume?'lampeAllumage .7s ease-out':'none',
+        background:`radial-gradient(ellipse 75% 85% at ${isMobile?'50% 22%':'34% 42%'}, ${coul}55 0%, ${coul}1f 38%, transparent 72%)` }} />
+
+      <div style={{ position:'relative', display:'flex', flexDirection:isMobile?'column':'row', alignItems:'center', justifyContent:'center', gap:isMobile?4:56, width:'100%', maxWidth:860 }}>
+        {lampeSvg}
+
+        <div aria-hidden={!allume} style={{ position:'relative', zIndex:2, width:'100%', maxWidth:390, boxSizing:'border-box', borderRadius:18, padding:isMobile?'24px 20px':'30px 28px',
+          background:'rgba(16,22,19,.86)', backdropFilter:'blur(8px)', WebkitBackdropFilter:'blur(8px)', border:'1px solid rgba(255,255,255,.09)', borderTop:`2px solid ${coul}`,
+          boxShadow:`0 30px 80px rgba(0,0,0,.55), 0 0 70px ${coul}26`, color:'#f1f5f2',
+          opacity:allume?1:0, transform:allume?'none':'translateY(14px) scale(.98)', visibility:allume?'visible':'hidden', pointerEvents:allume?'auto':'none',
+          transition:`opacity .5s ease, transform .5s ease, border-color .4s ease, box-shadow .4s ease, visibility 0s linear ${allume?'0s':'.5s'}` }}>
+          <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:18 }}>
+            <img src="/logo-psariz.png" alt="" style={{ width:40, height:40, objectFit:'contain', background:'white', borderRadius:'50%' }} />
+            <div style={{ flex:1 }}>
+              <div style={{ fontSize:11, fontWeight:800, letterSpacing:2, color:coul, transition:'color .4s ease' }}>PSARIZ SARL</div>
+              <div style={{ fontSize:11, color:'rgba(255,255,255,.5)' }}>Compta Pro — Gestion commerciale & stock</div>
+            </div>
+            <span style={{ width:7, height:7, borderRadius:'50%', background:coul, boxShadow:`0 0 10px ${coul}` }} />
+          </div>
+          <h3 style={{ margin:'0 0 4px', fontSize:28, fontWeight:500, fontFamily:"Georgia,'Times New Roman',serif", color:'#fff' }}>
+            {mode==='login'?'Bienvenue':mode==='register'?'Créer un compte':'Mot de passe oublié'}
           </h3>
-          <p style={{margin:'0 0 20px',color:'#64748b',fontSize:13.5}}>
-            {mode==='login'?'Accédez à votre espace de gestion'
-             :mode==='register'?'Votre compte sera activé par l\'administrateur'
+          <p style={{ margin:'0 0 16px', color:'rgba(255,255,255,.55)', fontSize:12.5 }}>
+            {mode==='login'?'Connectez-vous pour accéder à votre espace de gestion'
+             :mode==='register'?"Votre compte sera activé par l'administrateur"
              :'Entrez votre email pour recevoir un lien de réinitialisation'}
           </p>
-          {error   && <div style={{background:'#fee2e2',color:'#dc2626',padding:'10px 14px',borderRadius:10,marginBottom:16,fontSize:13}}>{error}</div>}
-          {success && <div style={{background:'#dcfce7',color:'#16a34a',padding:'10px 14px',borderRadius:10,marginBottom:16,fontSize:13}}>{success}</div>}
+          {mode!=='forgot' && (
+            <div style={{ display:'flex', gap:20, borderBottom:'1px solid rgba(255,255,255,.1)', marginBottom:16 }}>
+              {[['login','Connexion'],['register','Inscription']].map(([m, l]) => (
+                <button key={m} type="button" onClick={()=>changer(m)} style={{ background:'none', border:'none', padding:'0 0 8px', marginBottom:-1, cursor:'pointer', fontSize:13, fontWeight:700,
+                  color:mode===m?'#fff':'rgba(255,255,255,.45)', borderBottom:`2px solid ${mode===m?coul:'transparent'}`, transition:'border-color .4s ease' }}>{l}</button>))}
+            </div>
+          )}
+          {error   && <div style={{background:'rgba(220,38,38,.16)',border:'1px solid rgba(248,113,113,.4)',color:'#fca5a5',padding:'9px 12px',borderRadius:10,marginBottom:14,fontSize:12.5}}>{error}</div>}
+          {success && <div style={{background:'rgba(39,174,96,.16)',border:'1px solid rgba(74,222,128,.4)',color:'#86efac',padding:'9px 12px',borderRadius:10,marginBottom:14,fontSize:12.5}}>{success}</div>}
           <form onSubmit={mode==='login'?submitLogin:mode==='register'?submitRegister:submitForgot}>
             {mode==='register' && inp('Nom complet','nom','text','Votre nom complet',true)}
-            {inp('Email','email','email','votre@email.bj',true)}
+            {inp('Email','email','email','votre@email.bj',true,{autoComplete:'email'})}
             {mode==='register' && (
-              <div style={{marginBottom:16}}>
-                <label style={{display:'block',fontSize:12.5,fontWeight:700,color:'#374151',marginBottom:6}}>
-                  Numéro WhatsApp <span style={{color:'#dc2626'}}>*</span>
-                  <span style={{fontWeight:400,color:'#64748b',marginLeft:6}}>(ex: 0197777777)</span>
+              <div style={{marginBottom:14}}>
+                <label style={{display:'block',fontSize:12,fontWeight:600,color:'rgba(255,255,255,.75)',marginBottom:6}}>
+                  Numéro WhatsApp <span style={{color:coul}}>*</span>
+                  <span style={{fontWeight:400,color:'rgba(255,255,255,.45)',marginLeft:6}}>(ex : 0197777777)</span>
                 </label>
-                <div style={{display:'flex',alignItems:'center',border:'1.5px solid #e2e8f0',borderRadius:10,overflow:'hidden'}}>
-                  <span style={{padding:'11px 12px',background:'#f8fafc',borderRight:'1px solid #e2e8f0',fontSize:14,color:'#374151',whiteSpace:'nowrap'}}>📱 +229</span>
-                  <input type="tel" name="whatsapp" value={form.whatsapp} onChange={set} required placeholder="97000000"
-                    style={{flex:1,padding:'11px 14px',border:'none',fontSize:14,outline:'none'}} />
+                <div style={{display:'flex',gap:8,alignItems:'center'}}>
+                  <span style={{padding:'11px 10px',borderRadius:10,background:'rgba(255,255,255,.07)',border:'1px solid rgba(255,255,255,.12)',fontSize:13,color:'rgba(255,255,255,.8)',whiteSpace:'nowrap'}}>📱 +229</span>
+                  <input className="lampe-champ" type="tel" name="whatsapp" value={form.whatsapp} onChange={set} required placeholder="97000000" />
                 </div>
               </div>
             )}
-            {mode!=='forgot' && inp('Mot de passe','password','password','••••••••',true,{minLength:6})}
+            {mode!=='forgot' && inp('Mot de passe','password','password','••••••••',true,{minLength:6,autoComplete:mode==='login'?'current-password':'new-password'})}
             {mode==='login' && (
-              <div style={{textAlign:'right',marginTop:-8,marginBottom:14}}>
-                <span onClick={()=>{setMode('forgot');setError('');setSuccess('')}}
-                  style={{fontSize:12.5,color:ACCENT,cursor:'pointer',fontWeight:600}}>
-                  Mot de passe oublié ?
-                </span>
+              <div style={{textAlign:'right',marginTop:-6,marginBottom:14}}>
+                <span onClick={()=>changer('forgot')} style={{fontSize:12,color:coul,cursor:'pointer',fontWeight:600,transition:'color .4s ease'}}>Mot de passe oublié ?</span>
               </div>
             )}
             <button type="submit" disabled={loading}
-              style={{width:'100%',background:ACCENT,color:'white',border:'none',borderRadius:10,padding:12,fontSize:15,fontWeight:700,cursor:'pointer',opacity:(loading?0.7:1)}}>
+              style={{width:'100%',background:coul,color:'#0b1210',border:'none',borderRadius:10,padding:12,fontSize:14.5,fontWeight:800,cursor:loading?'wait':'pointer',opacity:(loading?0.7:1),
+                boxShadow:`0 8px 24px ${coul}40`,transition:'background .4s ease, box-shadow .4s ease'}}>
               {loading?'Chargement...'
-                :mode==='login'?'→ Se connecter'
-                :mode==='register'?'→ Créer mon compte'
+                :mode==='login'?'Se connecter →'
+                :mode==='register'?'Créer mon compte →'
                 :'📧 Envoyer le lien de réinitialisation'}
             </button>
           </form>
-          <div style={{marginTop:20,textAlign:'center',fontSize:13,color:'#64748b'}}>
-            {mode==='login' && (
-              <span>Pas encore de compte ? <span onClick={()=>{setMode('register');setError('');setSuccess('')}} style={{color:ACCENT,cursor:'pointer',fontWeight:600}}>{"S'inscrire"}</span></span>
-            )}
-            {mode==='register' && (
-              <span>{"Déjà un compte ?"} <span onClick={()=>{setMode('login');setError('');setSuccess('')}} style={{color:ACCENT,cursor:'pointer',fontWeight:600}}>Se connecter</span></span>
-            )}
-            {mode==='forgot' && (
-              <span>
-                <span onClick={()=>{setMode('login');setError('');setSuccess('')}}
-                  style={{color:ACCENT,cursor:'pointer',fontWeight:600}}>
-                  ← Retour à la connexion
-                </span>
-              </span>
-            )}
+          {mode==='forgot' && (
+            <div style={{marginTop:16,textAlign:'center',fontSize:12.5}}>
+              <span onClick={()=>changer('login')} style={{color:coul,cursor:'pointer',fontWeight:600}}>← Retour à la connexion</span>
+            </div>
+          )}
+          <div style={{ marginTop:18, paddingTop:14, borderTop:'1px solid rgba(255,255,255,.08)', display:'flex', alignItems:'center', justifyContent:'space-between', gap:10, flexWrap:'wrap' }}>
+            <a href={`https://wa.me/${SUPER_ADMIN_WHATSAPP}?text=Bonjour, j'ai besoin d'aide pour Compta Pro`} target="_blank" rel="noopener noreferrer"
+              style={{display:'inline-flex',alignItems:'center',gap:6,background:'#25d366',color:'white',padding:'6px 12px',borderRadius:20,fontSize:11.5,fontWeight:700,textDecoration:'none'}}>
+              <span style={{fontSize:14}}>📱</span> Aide : WhatsApp Admin
+            </a>
+            <span style={{fontSize:10.5,color:'rgba(255,255,255,.35)'}}>© Compta Pro — Bénin</span>
           </div>
         </div>
       </div>
