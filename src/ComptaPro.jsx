@@ -6716,24 +6716,24 @@ function BonsStockPage({ companies, companyId, toast, readOnly=false }) {
   }
 
   // Annulation : le stock est remis comme avant le bon, puis le bon et ses
-  // mouvements sont supprimés.
+  // mouvements sont supprimés. Un bon né d'un remboursement FRIA emporte ce
+  // remboursement avec lui (épargne du producteur et écriture d'achat).
   const annuler = async b => {
-    if (!confirm(`Annuler le ${b.type === 'sortie' ? 'bon de sortie' : "bon d'entrée"} ${b.numero} ?\n\nLe stock des ${(b.lignes || []).length} article(s) sera remis comme avant ce bon.`)) return
-    const ids = [...new Set((b.lignes || []).map(l => l.article_id))]
-    const { data:frais } = await supabase.from('compta_articles').select('id,designation,stock_actuel').in('id', ids)
-    const cumul = {}
-    ;(b.lignes || []).forEach(l => { cumul[l.article_id] = (cumul[l.article_id] || 0) + (Number(l.quantite) || 0) })
-    if (b.type === 'entree') {
-      const negatif = (frais || []).find(a => (a.stock_actuel || 0) - cumul[a.id] < 0)
-      if (negatif) { toast.error(`Impossible : le stock de ${negatif.designation} deviendrait négatif (une partie de cette entrée a déjà été consommée).`); return }
+    const lie = b.type === 'entree' ? /^Remboursement FRIA (.+)$/.exec(b.tiers || '') : null
+    let mvt = null
+    if (lie) {
+      const { data } = await supabase.from('compta_fria_mouvements').select('*').eq('company_id', b.company_id).eq('numero', lie[1]).maybeSingle()
+      mvt = data || null
     }
-    for (const a of frais || []) {
-      await supabase.from('compta_articles').update({ stock_actuel:b.type === 'entree' ? (a.stock_actuel || 0) - cumul[a.id] : (a.stock_actuel || 0) + cumul[a.id] }).eq('id', a.id)
-    }
-    await supabase.from('compta_mouvements_stock').delete().eq('company_id', b.company_id).eq('reference', b.numero)
-    const { error } = await supabase.from('compta_bons_stock').delete().eq('id', b.id)
-    if (error) { toast.error(error.message); return }
-    toast.success(`Bon ${b.numero} annulé, stock rétabli.`)
+    if (!confirm(`Annuler le ${b.type === 'sortie' ? 'bon de sortie' : "bon d'entrée"} ${b.numero} ?\n\nLe stock des ${(b.lignes || []).length} article(s) sera remis comme avant ce bon.${mvt ? `\n\nCe bon vient du remboursement ${pieceFria(mvt)} (${fcfaDoc(mvt.montant)}). Ce remboursement sera supprimé lui aussi : l'épargne FRIA du producteur et l'écriture d'achat seront annulées.` : ''}`)) return
+    const r = await retirerBonStock(b)
+    if (r.abandon) return
+    if (r.error) { toast.error(r.error.message); return }
+    if (mvt) {
+      const e = await supprimerMouvementFria(b.company_id, mvt)
+      if (e) toast.error(`Bon ${b.numero} annulé, mais le remboursement ${pieceFria(mvt)} n'a pas pu être supprimé : ${e.message}`)
+      else toast.success(`Bon ${b.numero} annulé, stock rétabli — remboursement ${pieceFria(mvt)}, épargne FRIA et écriture d'achat annulés.`)
+    } else toast.success(`Bon ${b.numero} annulé, stock rétabli.`)
     charger()
   }
 
@@ -12102,6 +12102,36 @@ async function passerEcrituresAchatGroupe(companyId, g, lignes, compteDe) {
 
 // Entre du paddy en stock : bon d'entrée BE-…, mouvement, stock de l'article et prix
 // d'achat au coût moyen pondéré. Renvoie { bon } ou { erreur }.
+// Annule un bon de stock : remet le stock comme avant le bon, supprime ses mouvements
+// puis le bon. Si le retrait d'une entrée rend le stock négatif (stock déjà négatif avant
+// l'entrée, ou marchandise déjà sortie), on demande confirmation au lieu de bloquer.
+// Retourne { abandon:true } si l'utilisateur renonce, sinon { error }.
+async function retirerBonStock(b) {
+  const ids = [...new Set((b.lignes || []).map(l => l.article_id).filter(Boolean))]
+  const { data:frais } = ids.length ? await supabase.from('compta_articles').select('id,designation,unite,stock_actuel').in('id', ids) : { data:[] }
+  const cumul = {}
+  ;(b.lignes || []).forEach(l => { cumul[l.article_id] = (cumul[l.article_id] || 0) + (Number(l.quantite) || 0) })
+  if (b.type === 'entree') {
+    const neg = (frais || []).filter(a => (a.stock_actuel || 0) - cumul[a.id] < 0)
+    if (neg.length && !confirm(`Attention : après annulation du bon ${b.numero}, le stock sera négatif :\n${neg.map(a => `• ${a.designation} : ${nbFr(a.stock_actuel || 0)} → ${nbFr((a.stock_actuel || 0) - cumul[a.id])} ${a.unite || ''}`).join('\n')}\n\nCela arrive quand le stock était déjà négatif avant cette entrée, ou quand une partie a déjà été sortie. Annuler quand même ?`)) return { abandon:true }
+  }
+  for (const a of frais || []) {
+    await supabase.from('compta_articles').update({ stock_actuel:b.type === 'entree' ? (a.stock_actuel || 0) - cumul[a.id] : (a.stock_actuel || 0) + cumul[a.id] }).eq('id', a.id)
+  }
+  await supabase.from('compta_mouvements_stock').delete().eq('company_id', b.company_id).eq('reference', b.numero)
+  const { error } = await supabase.from('compta_bons_stock').delete().eq('id', b.id)
+  return { error }
+}
+
+// Supprime un mouvement de l'épargne FRIA avec ses suites comptables : écriture
+// d'achat ou d'opérations diverses, sortie de trésorerie. Retourne l'erreur éventuelle.
+async function supprimerMouvementFria(companyId, m) {
+  await supabase.from('compta_ecritures').delete().eq('piece_id', uuidPiece(pieceFria(m), companyId)).eq('company_id', companyId)
+  for (const tb of Object.values(JOURNAL_TABLE)) await supabase.from(tb).delete().eq('source_type', 'fria').eq('source_id', m.id)
+  const { error } = await supabase.from('compta_fria_mouvements').delete().eq('id', m.id)
+  return error
+}
+
 async function entrerPaddyEnStock(companyId, { article_id, date_bon, quantite, prix_unitaire, tiers, observations, observationLigne }) {
   const q = numFR(quantite), pu = numFR(prix_unitaire)
   if (!article_id) return { erreur:"Choisissez l'article du stock (ex. RIZ PADDY)." }
@@ -13196,16 +13226,27 @@ function EpargneFriaPage({ companies, companyId, toast, readOnly=false }) {
     charger()
   }
 
+  // Suppression : tout ce que le mouvement a entraîné est annulé — bon d'entrée
+  // et stock (paddy entré en magasin), écriture comptable, sortie de trésorerie.
   const supprimer = async m => {
-    const bon = d.bons.find(b => b.tiers === tiersBonFria(m))
-    if (bon) return toast.error(`Impossible : le paddy de ce remboursement est entré en stock (bon ${bon.numero}). Annulez d'abord ce bon dans Stock > Bons d'entrée / sortie.`)
+    const lien = d.bons.find(b => b.tiers === tiersBonFria(m))
     const f = frsDe(m.fournisseur_id)
-    if (!confirm(`Supprimer le mouvement ${pieceFria(m)} (${TYPES_MVT_FRIA[m.type][0]}, ${fcfaDoc(m.montant)}) ? Son écriture comptable ou sa sortie de trésorerie sera annulée.${m.type === 'utilisation' ? `\n\nLe Kit FRIA ${m.campagne||''} saisi au renouvellement reste dans la fiche de ${nomTiersTraca(f)} : corrigez-le si besoin.` : ''}`)) return
-    await supabase.from('compta_ecritures').delete().eq('piece_id', uuidPiece(pieceFria(m), companyId)).eq('company_id', companyId)
-    for (const t of Object.values(JOURNAL_TABLE)) await supabase.from(t).delete().eq('source_type', 'fria').eq('source_id', m.id)
-    const { error } = await supabase.from('compta_fria_mouvements').delete().eq('id', m.id)
+    if (m.type === 'remboursement' && f) {
+      const s = sit(f)
+      if (s.rembourse - (+m.montant || 0) < s.finance + s.restitue - 0.5) return toast.error(`Impossible : l'épargne née de ce remboursement a déjà été utilisée ou restituée (${fcfaDoc(s.finance + s.restitue)}). Supprimez d'abord le renouvellement ou la restitution.`)
+    }
+    if (!confirm(`Supprimer le mouvement ${pieceFria(m)} (${TYPES_MVT_FRIA[m.type][0]}, ${fcfaDoc(m.montant)}) ?\n\nSeront annulés :\n• ${m.type === 'remboursement' ? "l'épargne FRIA créditée au producteur" : "le débit de l'épargne FRIA"}\n• ${m.type === 'remboursement' ? "l'écriture d'achat (journal des achats)" : 'son écriture comptable ou sa sortie de trésorerie'}${lien ? `\n• le bon d'entrée ${lien.numero} et le paddy entré en stock` : ''}${m.type === 'utilisation' ? `\n\nLe Kit FRIA ${m.campagne||''} saisi au renouvellement reste dans la fiche de ${nomTiersTraca(f)} : corrigez-le si besoin.` : ''}`)) return
+    if (lien) {
+      const { data:bon } = await supabase.from('compta_bons_stock').select('*').eq('company_id', companyId).eq('numero', lien.numero).maybeSingle()
+      if (bon) {
+        const r = await retirerBonStock(bon)
+        if (r.abandon) return
+        if (r.error) return toast.error(`Suppression interrompue : le bon ${lien.numero} n'a pas pu être annulé — ${r.error.message}`)
+      }
+    }
+    const error = await supprimerMouvementFria(companyId, m)
     if (error) return toast.error(error.message)
-    toast.success(`Mouvement ${pieceFria(m)} supprimé.`); charger()
+    toast.success(`Mouvement ${pieceFria(m)} supprimé${lien ? ` — bon ${lien.numero} annulé, stock rétabli` : ''}.`); charger()
   }
 
   // Repasse l'écriture d'achat de tous les groupes clôturés (fonds intrant → 4018…).
