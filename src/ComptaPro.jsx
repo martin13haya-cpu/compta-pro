@@ -12393,13 +12393,17 @@ function AchatsGroupesPage({ companies, companyId, toast, readOnly=false }) {
     const incomplet = ls.find(l => !(+l.quantite_kg > 0) || !(+l.prix_unitaire > 0))
     if (!ls.length) return toast.error('Le groupe ne contient aucun producteur.')
     if (incomplet) return toast.error(`Quantité ou prix manquant pour ${incomplet.nom} : complétez le groupe avant de le clôturer.`)
-    if (!confirm(`Clôturer le groupe ${g.numero} ? Il ne sera plus modifiable et ses producteurs pourront entrer dans un nouveau groupe.`)) return
+    if (!confirm(`Clôturer le groupe ${g.numero} ? Il ne sera plus modifiable et ses producteurs pourront entrer dans un nouveau groupe.
+
+Après la clôture, le bon d'entrée en stock du paddy (${nbFr(totauxAchatGroupe(ls).quantite_kg)} kg) vous sera proposé.`)) return
     const { error } = await supabase.from('compta_achats_groupes').update({ statut:'cloture' }).eq('id', g.id)
     if (error) return toast.error(error.message)
     const { error:ee } = await passerEcrituresAchat(g)
     if (ee) toast.error(`Groupe clôturé, mais écriture d'achat non passée : ${ee.message}`)
     else toast.success(`Groupe ${g.numero} clôturé — achat passé en comptabilité (journal des achats, pièce ${pieceAchatGroupe(g)}).`)
     charger()
+    // Enchaîne sur l'entrée en stock du paddy (formulaire prérempli, à valider ou à fermer).
+    if (!readOnly && !bonDe(g)) ouvrirEntreeStock({ ...g, statut:'cloture' })
   }
   const compteDe = fid => d.comptes[String(fid)] || null
   const passerEcrituresAchat = g => passerEcrituresAchatGroupe(companyId, g, lignesDe(g.id), compteDe)
