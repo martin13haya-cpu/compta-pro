@@ -13183,8 +13183,7 @@ function EpargneFriaPage({ companies, companyId, toast, readOnly=false }) {
     if (!form.date) return toast.error('Saisissez la date.')
     let montant, q = +m.quantite_kg || 0, pu = +m.prix_unitaire || 0
     if (type === 'remboursement') {
-      if (form.bon) montant = ancien                       // paddy déjà entré en stock : quantité et prix figés
-      else { q = numFR(form.quantite_kg); pu = numFR(form.prix_unitaire); montant = Math.round(q * pu) }
+      q = numFR(form.quantite_kg); pu = numFR(form.prix_unitaire); montant = Math.round(q * pu)
       if (!(montant > 0)) return toast.error('Saisissez la quantité livrée et le prix au kg.')
       if (s.rembourse - ancien + montant < s.finance + s.restitue - 0.5) return toast.error(`Impossible : ${fcfaDoc(s.finance + s.restitue)} d'épargne ont déjà été utilisés ou restitués. Le remboursement ne peut pas descendre sous ce montant.`)
       const resteAvant = Math.max(0, s.kit - s.finance - (s.rembourse - ancien) - s.enCours)
@@ -13193,6 +13192,20 @@ function EpargneFriaPage({ companies, companyId, toast, readOnly=false }) {
       montant = Math.round(numFR(form.montant))
       if (!(montant > 0)) return toast.error('Saisissez le montant restitué.')
       if (montant > s.epargne + ancien + 0.5) return toast.error(`Le montant dépasse l'épargne disponible (${fcfaDoc(s.epargne + ancien)}).`)
+    }
+    // Paddy entré en stock : le bon d'entrée, son mouvement et le stock de l'article suivent la correction.
+    let bon = null, ligneBon = null, article = null, ecart = 0
+    if (type === 'remboursement' && form.bon) {
+      const { data } = await supabase.from('compta_bons_stock').select('*').eq('company_id', companyId).eq('numero', form.bon).maybeSingle()
+      bon = data || null
+      ligneBon = bon?.lignes?.[0] || null
+      if (ligneBon) {
+        ecart = q - (Number(ligneBon.quantite) || 0)
+        const { data:a } = await supabase.from('compta_articles').select('id,designation,unite,stock_actuel').eq('id', ligneBon.article_id).maybeSingle()
+        article = a || null
+        if (article && ecart < 0 && (article.stock_actuel || 0) + ecart < 0 &&
+          !confirm(`Attention : après correction, le stock de ${article.designation} sera négatif (${nbFr(article.stock_actuel || 0)} → ${nbFr((article.stock_actuel || 0) + ecart)} ${article.unite || ''}).\n\nCela arrive quand le stock était déjà négatif avant cette entrée, ou quand une partie a déjà été sortie. Continuer ?`)) return
+      }
     }
     setSaving(true)
     if (type === 'restitution') {
@@ -13215,6 +13228,15 @@ function EpargneFriaPage({ companies, companyId, toast, readOnly=false }) {
         { numero_compte:cptFria, compte_libelle:`Épargne FRIA — ${nom}`, libelle:lib, debit:0, credit:montant },
       ].map(r => ({ ...r, company_id:companyId, user_id:uid, piece_id:uuidPiece(piece, companyId), journal:'JA', date_ecriture:form.date, numero_piece:piece, numero_facture:'', reference:form.reference||'' })))
       if (ee) alerte = "Mouvement modifié, mais l'écriture d'achat n'a pas pu être repassée : " + ee.message
+      if (bon && ligneBon) {
+        const { error:eb } = await supabase.from('compta_bons_stock').update({ lignes:[{ ...ligneBon, quantite:q, prix_unitaire:pu, montant }, ...bon.lignes.slice(1)],
+          total:montant + bon.lignes.slice(1).reduce((s, l) => s + (Number(l.montant) || 0), 0) }).eq('id', bon.id)
+        if (eb) alerte = `Mouvement modifié, mais le bon ${bon.numero} n'a pas pu être corrigé : ${eb.message}`
+        else {
+          await supabase.from('compta_mouvements_stock').update({ quantite:q, prix_unitaire:pu, montant }).eq('company_id', companyId).eq('reference', bon.numero).eq('article_id', ligneBon.article_id)
+          if (article && ecart) await supabase.from('compta_articles').update({ stock_actuel:(article.stock_actuel || 0) + ecart }).eq('id', article.id)
+        }
+      }
     } else {
       for (const tb of Object.values(JOURNAL_TABLE)) await supabase.from(tb).delete().eq('source_type', 'fria').eq('source_id', m.id)
       const { error:ej } = await supabase.from(JOURNAL_TABLE[form.mode_reglement]).insert({ company_id:companyId, user_id:uid, date_operation:form.date, numero_piece:piece,
@@ -13222,7 +13244,7 @@ function EpargneFriaPage({ companies, companyId, toast, readOnly=false }) {
       if (ej) alerte = "Mouvement modifié, mais la sortie de trésorerie n'a pas pu être réécrite : " + ej.message
     }
     setSaving(false); setForm(null)
-    if (alerte) toast.error(alerte); else toast.success(`Mouvement ${piece} modifié — ${fcfaDoc(ancien)} → ${fcfaDoc(montant)}.`)
+    if (alerte) toast.error(alerte); else toast.success(`Mouvement ${piece} modifié — ${fcfaDoc(ancien)} → ${fcfaDoc(montant)}${bon && ligneBon ? ` ; bon ${bon.numero} et stock corrigés` : ''}.`)
     charger()
   }
 
@@ -13406,12 +13428,12 @@ function EpargneFriaPage({ companies, companyId, toast, readOnly=false }) {
           </Grid>
           {form.type === 'remboursement' && <>
             <Grid cols={3} gap={12} style={{ marginBottom:12 }}>
-              <Input label="Paddy livré (kg)" name="quantite_kg" type="number" step="any" value={form.quantite_kg} onChange={e=>setF('quantite_kg', e.target.value)} required readOnly={!!form.bon} />
-              <Input label="Prix au kg (FCFA)" name="prix_unitaire" type="number" step="any" value={form.prix_unitaire} onChange={e=>setF('prix_unitaire', e.target.value)} required readOnly={!!form.bon} />
+              <Input label="Paddy livré (kg)" name="quantite_kg" type="number" step="any" value={form.quantite_kg} onChange={e=>setF('quantite_kg', e.target.value)} required />
+              <Input label="Prix au kg (FCFA)" name="prix_unitaire" type="number" step="any" value={form.prix_unitaire} onChange={e=>setF('prix_unitaire', e.target.value)} required />
               <div><label style={{ display:'block', fontSize:12.5, fontWeight:600, color:'#374151', marginBottom:5 }}>Valeur remboursée</label>
                 <div style={{ padding:'9px 12px', background:'#f0fdf4', borderRadius:8, border:'1px solid #bbf7d0', fontWeight:800, color:'#166534' }}>{fcfaDoc(numFR(form.quantite_kg) * numFR(form.prix_unitaire))}</div></div>
             </Grid>
-            {form.bon && <div style={{ fontSize:12.5, color:'#92400e', background:'#fffbeb', border:'1px solid #fde68a', borderRadius:8, padding:'8px 12px', marginBottom:12 }}>📦 Ce paddy est entré en stock (bon {form.bon}) : la quantité et le prix ne sont plus modifiables. Pour les corriger, annulez d'abord ce bon dans Stock › Bons d'entrée / sortie.</div>}
+            {form.bon && <div style={{ fontSize:12.5, color:'#92400e', background:'#fffbeb', border:'1px solid #fde68a', borderRadius:8, padding:'8px 12px', marginBottom:12 }}>📦 Ce paddy est entré en stock (bon {form.bon}) : si vous changez la quantité ou le prix, le bon d'entrée et le stock de l'article seront corrigés automatiquement.</div>}
             {!form.edit && <label style={{ fontSize:13, display:'flex', gap:8, alignItems:'center', marginBottom:8 }}>
               <input type="checkbox" checked={form.stock} onChange={e=>setF('stock', e.target.checked)} /> Entrer le paddy en stock (bon d'entrée en magasin)</label>}
             {form.stock && <div style={{ marginBottom:12 }}><Sel label="Article du stock" name="article_id" value={form.article_id} onChange={e=>setF('article_id', e.target.value)}
