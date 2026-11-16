@@ -44,6 +44,10 @@ async function buildQuery(q, uid, companyId, isAdmin) {
   return q.eq('user_id', uid)
 }
 
+// Les données d'une société sont communes à tous ses utilisateurs : on filtre par
+// société (les règles RLS de la base font la sécurité), par auteur seulement à défaut.
+const parSociete = (q, cid, uid) => cid ? q.eq('company_id', cid) : q.eq('user_id', uid)
+
 // Helper inline pour les fonctions load des étuveuses
 async function etvFilter(q, uid, companyId, isAdmin) {
   return buildQuery(q, uid, companyId, isAdmin)
@@ -1141,7 +1145,7 @@ function useTiersComptes(type, companyId) {
     const results = await Promise.all(tables.map(async t => {
       let q = supabase.from(t).select('id,type,nom,nom_societe,numero_compte').eq('actif', true)
       if (isAdmin) { if (companyId) q = q.eq('company_id', companyId) }
-      else { q = q.eq('user_id', uid); if (companyId) q = q.eq('company_id', companyId) }
+      else { if (companyId) q = q.eq('company_id', companyId); else q = q.eq('user_id', uid) }
       const { data } = await q
       return (data || []).map(r => ({ ...r, _table: t }))
     }))
@@ -2982,7 +2986,7 @@ function Dashboard({ companyId, toast, setPage }) {
       const docsQ = () => {
         let q = supabase.from('compta_documents').select('id,numero,type_doc,date_doc,montant_ttc,montant_paye,statut').order('created_at',{ascending:false}).limit(6)
         if (isAdmin && companyId) q = q.eq('company_id', companyId)
-        else if (companyId) q = q.eq('user_id', uid).eq('company_id', companyId)
+        else if (companyId) q = q.eq('company_id', companyId)
         else q = q.eq('user_id', uid)
         return q
       }
@@ -3557,7 +3561,7 @@ async function numerosSousCompte(collectif, cid) {
   const uid = ad?.user?.id; const isAdmin = ad?.user?.email===SUPER_ADMIN_EMAIL
   let q = supabase.from('compta_plan_comptable').select('numero').like('numero', collectif+'%')
   if (isAdmin) { if (cid) q = q.eq('company_id', cid) }
-  else { q = q.eq('user_id', uid); if (cid) q = q.eq('company_id', cid) }
+  else { if (cid) q = q.eq('company_id', cid); else q = q.eq('user_id', uid) }
   const { data } = await q
   const nums = new Set((data||[]).map(r=>String(r.numero)))
   // Filet de sécurité anti-doublon : si un tiers porte déjà un numero_compte de ce collectif
@@ -3567,7 +3571,7 @@ async function numerosSousCompte(collectif, cid) {
   if (tiersTable) {
     let qt = supabase.from(tiersTable).select('numero_compte').like('numero_compte', collectif+'%')
     if (isAdmin) { if (cid) qt = qt.eq('company_id', cid) }
-    else { qt = qt.eq('user_id', uid); if (cid) qt = qt.eq('company_id', cid) }
+    else { if (cid) qt = qt.eq('company_id', cid); else qt = qt.eq('user_id', uid) }
     const { data:dt } = await qt
     ;(dt||[]).forEach(r=>{ if (r.numero_compte) nums.add(String(r.numero_compte)) })
   }
@@ -6265,7 +6269,7 @@ function StockPage({ companies, companyId, setPage, toast, readOnly=false }) {
     const uid = ad?.user?.id; const isAdmin = ad?.user?.email === SUPER_ADMIN_EMAIL
     let q = supabase.from('compta_articles').select('*,compta_companies(raison_sociale)').eq('actif',true).order('designation')
     if (isAdmin && companyId) q = q.eq('company_id', companyId)
-    else if (companyId) q = q.eq('user_id', uid).eq('company_id', companyId)
+    else if (companyId) q = q.eq('company_id', companyId)
     else q = q.eq('user_id', uid)
     if (catFilter) q=q.eq('categorie',catFilter)
     const { data } = await q; setArticles(data||[])
@@ -7306,7 +7310,6 @@ function InventairePage({ companies, companyId, setCompanyId, toast }) {
     const { data:ad } = await supabase.auth.getUser()
     const uid = ad?.user?.id; const isAdmin = ad?.user?.email === SUPER_ADMIN_EMAIL
     let q = supabase.from('compta_articles').select('*').eq('company_id',companyId).eq('actif',true).order('categorie,designation')
-    if (!isAdmin) q = q.eq('user_id', uid)
     const { data } = await q
     setArticles(data||[])
   },[companyId])
@@ -8111,7 +8114,7 @@ function CommercialPage({ companies, companyId, setPage, setDocId, toast, readOn
     const { data:ad } = await supabase.auth.getUser()
     const uid=ad?.user?.id; const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
     let q = supabase.from('compta_documents').select('*,compta_clients(nom,prenom,nom_societe,type),compta_fournisseurs(nom,nom_societe,type),compta_companies(raison_sociale)').order('date_doc',{ascending:false})
-    q = isAdmin&&companyId ? q.eq('company_id',companyId) : q.eq('user_id',uid)
+    q = companyId ? q.eq('company_id',companyId) : q.eq('user_id',uid)
     if (companyId&&!isAdmin) q=q.eq('company_id',companyId)
     if (typeF)     q=q.eq('type_doc',typeF)
     if (statF)     q=q.eq('statut',statF)
@@ -8288,7 +8291,7 @@ function CommercialNewPage({ companies, companyId, typeDoc, setPage, toast }) {
     const uid = (await supabase.auth.getUser()).data?.user?.id
     const year = new Date().getFullYear()
     const prefix = TYPE_DOC_PREFIX[form.type_doc]||'DOC'
-    const { count } = await supabase.from('compta_documents').select('id',{count:'exact',head:true}).eq('user_id',uid).eq('type_doc',form.type_doc)
+    const { count } = await parSociete(supabase.from('compta_documents').select('id',{count:'exact',head:true}), form.company_id, uid).eq('type_doc',form.type_doc)
     const numero = `${prefix}-${year}-${String((count||0)+1).padStart(4,'0')}`
     const { data:docData, error:docErr } = await supabase.from('compta_documents').insert({
       company_id:form.company_id, user_id:uid, type_doc:form.type_doc, numero,
@@ -8854,7 +8857,7 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
       const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
       let q = supabase.from('compta_lots_production').select('id,numero_lot,statut,qte_paddy_entree').order('created_at',{ascending:false})
       if (isAdmin && companyId) q=q.eq('company_id',companyId)
-      else if (companyId) q=q.eq('user_id',uid).eq('company_id',companyId)
+      else if (companyId) q=q.eq('company_id', companyId)
       else q=q.eq('user_id',uid)
       const { data }=await q; setLocalLots(data||[])
       // Origine du paddy de chaque lot : réceptions producteurs et achats
@@ -8882,7 +8885,7 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
     const uid = authD?.user?.id; const isAdm = authD?.user?.email === SUPER_ADMIN_EMAIL
     if (!uid) return
     let q = supabase.from(tableName).select('*,compta_lots_production(numero_lot)').order('date_etape',{ascending:false})
-    q = isAdm && companyId ? q.eq('company_id',companyId) : q.eq('user_id',uid)
+    q = companyId ? q.eq('company_id',companyId) : q.eq('user_id',uid)
     if (companyId && !isAdm) q=q.eq('company_id',companyId)
     if (dateFrom)  q=q.gte('date_etape',dateFrom)
     if (dateTo)    q=q.lte('date_etape',dateTo)
@@ -9393,7 +9396,7 @@ function PrestationPage({ companies, companyId, toast, readOnly=false, setPage }
 
   const openAdd = async ()=>{
     const uid = (await supabase.auth.getUser()).data?.user?.id
-    const { count } = await supabase.from('compta_prestations').select('id',{count:'exact',head:true}).eq('user_id',uid)
+    const { count } = await parSociete(supabase.from('compta_prestations').select('id',{count:'exact',head:true}), companyId||companies[0]?.id, uid)
     const numero = `PREST-${new Date().getFullYear()}-${String((count||0)+1).padStart(4,'0')}`
     setEditItem(null)
     setForm({ company_id:companyId||companies[0]?.id||'', numero_facture:numero, date_prestation:today(), client_id:null, numero_compte:'', nom_client:'', description:'', quantite:1, prix:0, montant:0 })
@@ -10006,7 +10009,7 @@ function LotsSemiFinisPage({ companies, companyId, toast, readOnly=false }) {
     if (!uid) return
     let q=supabase.from('compta_lots_semi_finis').select('*,compta_companies(raison_sociale)').order('date_reception',{ascending:false})
     if(isAdmin&&companyId) q=q.eq('company_id',companyId)
-    else q=q.eq('user_id',uid)
+    else if(!companyId) q=q.eq('user_id',uid)
     if(companyId&&!isAdmin) q=q.eq('company_id',companyId)
     if(dateFrom) q=q.gte('date_reception',dateFrom)
     if(dateTo)   q=q.lte('date_reception',dateTo)
@@ -10228,11 +10231,12 @@ function MesUtilisateursPage({ toast, companies, companyId, profile }) {
 
   const load=useCallback(async()=>{
     const {data:ad}=await supabase.auth.getUser(); const uid=ad?.user?.id
-    const {data}=await supabase.from('compta_profiles')
-      .select('*').eq('created_by',uid).eq('role','utilisateur_simple')
-      .order('created_at',{ascending:false})
+    // Utilisateurs que j'ai créés, plus ceux de la société affichée (créés par un autre administrateur)
+    let q=supabase.from('compta_profiles').select('*').eq('role','utilisateur_simple')
+    q = companyId ? q.or(`created_by.eq.${uid},company_id.eq.${companyId}`) : q.eq('created_by',uid)
+    const {data}=await q.order('created_at',{ascending:false})
     setUsers(data||[])
-  },[])
+  },[companyId])
 
   const loadSigs=useCallback(async()=>{
     const {data:ad}=await supabase.auth.getUser(); const uid=ad?.user?.id
@@ -10765,7 +10769,7 @@ function EtvAvancesPage({ companies, companyId, toast, readOnly=false }) {
     e.preventDefault(); setSaving(true)
     const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
     const year=new Date().getFullYear()
-    const { count }=await supabase.from('compta_avances_etuveuses').select('id',{count:'exact',head:true}).eq('user_id',uid)
+    const { count }=await parSociete(supabase.from('compta_avances_etuveuses').select('id',{count:'exact',head:true}), form.company_id||companyId, uid)
     const numero=form.numero||`AVA-${year}-${String((count||0)+1).padStart(4,'0')}`
     const { error }=await supabase.from('compta_avances_etuveuses').insert({
       ...form, user_id:uid, company_id:form.company_id||companyId,
@@ -10967,7 +10971,7 @@ function EtvBCPage({ companies, companyId, toast, readOnly=false }) {
     e.preventDefault(); setSaving(true)
     const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
     const year=new Date().getFullYear()
-    const { count }=await supabase.from('compta_bc_etuveuses').select('id',{count:'exact',head:true}).eq('user_id',uid)
+    const { count }=await parSociete(supabase.from('compta_bc_etuveuses').select('id',{count:'exact',head:true}), form.company_id||companyId, uid)
     const numero=form.numero||`BC-ETV-${year}-${String((count||0)+1).padStart(4,'0')}`
     const montant_total=Math.round(totalBC)
     const { error }=await supabase.from('compta_bc_etuveuses').insert({
@@ -11231,7 +11235,7 @@ function EtvBRPage({ companies, companyId, toast, readOnly=false }) {
     e.preventDefault(); setSaving(true)
     const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
     const year=new Date().getFullYear()
-    const { count }=await supabase.from('compta_br_etuveuses').select('id',{count:'exact',head:true}).eq('user_id',uid)
+    const { count }=await parSociete(supabase.from('compta_br_etuveuses').select('id',{count:'exact',head:true}), form.company_id||companyId, uid)
     const numero=form.numero||`BR-ETV-${year}-${String((count||0)+1).padStart(4,'0')}`
     const { error }=await supabase.from('compta_br_etuveuses').insert({
       company_id:form.company_id||companyId, user_id:uid,
@@ -15364,7 +15368,7 @@ function GrandLivrePage({ companies, companyId, toast, readOnly=false }) {
     setLoading(true)
     const { data:ad } = await supabase.auth.getUser()
     const uid=ad?.user?.id; const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
-    const scope = (q) => { if (isAdmin) { if(companyId) q=q.eq('company_id',companyId) } else { q=q.eq('user_id',uid); if(companyId) q=q.eq('company_id',companyId) } return q }
+    const scope = (q) => { if (isAdmin) { if(companyId) q=q.eq('company_id',companyId) } else { if (companyId) q = q.eq('company_id', companyId); else q = q.eq('user_id', uid) } return q }
     const [pc, fo, cl, ac, ps, rg, fa, jc, jb, jm, ec] = await Promise.all([
       scope(supabase.from('compta_plan_comptable').select('numero,libelle,est_collectif')),
       scope(supabase.from('compta_fournisseurs').select('id,type,nom,nom_societe,numero_compte')),
@@ -16473,7 +16477,7 @@ function EtatsFinanciersPage({ companies, companyId, toast }) {
   const chargerSoldesN = useCallback(async () => {
     const { data: ad } = await supabase.auth.getUser()
     const uid = ad?.user?.id; const isAdmin = ad?.user?.email === SUPER_ADMIN_EMAIL
-    const scope = (q) => { if (isAdmin) { if (companyId) q = q.eq('company_id', companyId) } else { q = q.eq('user_id', uid); if (companyId) q = q.eq('company_id', companyId) } return q }
+    const scope = (q) => { if (isAdmin) { if (companyId) q = q.eq('company_id', companyId) } else { if (companyId) q = q.eq('company_id', companyId); else q = q.eq('user_id', uid) } return q }
     const [pc, fo, cl, ac, rg, fa, jc, jb, jm, ec] = await Promise.all([
       scope(supabase.from('compta_plan_comptable').select('numero,libelle,est_collectif')),
       scope(supabase.from('compta_fournisseurs').select('id,type,nom,nom_societe,numero_compte')),
@@ -16524,7 +16528,7 @@ function EtatsFinanciersPage({ companies, companyId, toast }) {
   const chargerN1etRAN = useCallback(async () => {
     const { data: ad } = await supabase.auth.getUser()
     const uid = ad?.user?.id; const isAdmin = ad?.user?.email === SUPER_ADMIN_EMAIL
-    const scope = (q) => { if (isAdmin) { if (companyId) q = q.eq('company_id', companyId) } else { q = q.eq('user_id', uid); if (companyId) q = q.eq('company_id', companyId) } return q }
+    const scope = (q) => { if (isAdmin) { if (companyId) q = q.eq('company_id', companyId) } else { if (companyId) q = q.eq('company_id', companyId); else q = q.eq('user_id', uid) } return q }
     const { data: bn1 } = await scope(supabase.from('compta_balance_n1').select('id,numero_compte,intitule,solde_debiteur,solde_crediteur').eq('exercice', exercice))
     setSoldesN1((bn1 || []).map(r => ({ numero: r.numero_compte, soldeD: r.solde_debiteur || 0, soldeC: r.solde_crediteur || 0 })))
     setN1Rows((bn1 || []).sort((a, b) => String(a.numero_compte).localeCompare(String(b.numero_compte), undefined, { numeric: true })))
@@ -16541,7 +16545,7 @@ function EtatsFinanciersPage({ companies, companyId, toast }) {
     const { data: ad } = await supabase.auth.getUser()
     const uid = ad?.user?.id; const isAdmin = ad?.user?.email === SUPER_ADMIN_EMAIL
     let q = supabase.from('compta_plan_comptable').select('numero,libelle')
-    if (isAdmin) { if (companyId) q = q.eq('company_id', companyId) } else { q = q.eq('user_id', uid); if (companyId) q = q.eq('company_id', companyId) }
+    if (isAdmin) { if (companyId) q = q.eq('company_id', companyId) } else { if (companyId) q = q.eq('company_id', companyId); else q = q.eq('user_id', uid) }
     const { data } = await q
     setPlanComptes((data || []).sort((a, b) => String(a.numero).localeCompare(String(b.numero), undefined, { numeric: true })))
   }, [companyId])
@@ -17038,7 +17042,7 @@ function BalancePage({ companies, companyId, toast }) {
     setLoading(true)
     const { data:ad } = await supabase.auth.getUser()
     const uid=ad?.user?.id; const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
-    const scope = (q) => { if (isAdmin) { if(companyId) q=q.eq('company_id',companyId) } else { q=q.eq('user_id',uid); if(companyId) q=q.eq('company_id',companyId) } return q }
+    const scope = (q) => { if (isAdmin) { if(companyId) q=q.eq('company_id',companyId) } else { if (companyId) q = q.eq('company_id', companyId); else q = q.eq('user_id', uid) } return q }
     const [pc, fo, cl, ac, ps, rg, fa, jc, jb, jm, ec] = await Promise.all([
       scope(supabase.from('compta_plan_comptable').select('numero,libelle,est_collectif')),
       scope(supabase.from('compta_fournisseurs').select('id,type,nom,nom_societe,numero_compte')),
@@ -17071,7 +17075,7 @@ function BalancePage({ companies, companyId, toast }) {
     const { data:ad } = await supabase.auth.getUser()
     const uid=ad?.user?.id; const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
     let q = supabase.from('compta_balance_n1').select('numero_compte,solde_debiteur,solde_crediteur').eq('exercice', exercice)
-    if (isAdmin) { if(companyId) q=q.eq('company_id',companyId) } else { q=q.eq('user_id',uid); if(companyId) q=q.eq('company_id',companyId) }
+    if (isAdmin) { if(companyId) q=q.eq('company_id',companyId) } else { if (companyId) q = q.eq('company_id', companyId); else q = q.eq('user_id', uid) }
     const { data } = await q
     const map = {}
     ;(data||[]).forEach(r=>{ map[r.numero_compte] = { soldeD: r.solde_debiteur||0, soldeC: r.solde_crediteur||0 } })
@@ -17252,7 +17256,7 @@ function PlanComptablePage({ companies, companyId, toast, readOnly=false }) {
     const uid=ad?.user?.id; const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
     let q = supabase.from('compta_plan_comptable').select('*')
     if (isAdmin) { if (companyId) q=q.eq('company_id',companyId) }
-    else { q=q.eq('user_id',uid); if (companyId) q=q.eq('company_id',companyId) }
+    else { if (companyId) q = q.eq('company_id', companyId); else q = q.eq('user_id', uid) }
     const { data } = await q
     const sorted = (data||[]).sort((a,b)=>{
       const pa=String(a.numero).slice(0,4), pb=String(b.numero).slice(0,4)
@@ -18638,7 +18642,7 @@ function EpierragePage({ companies, companyId, toast, readOnly=false, lots=[] })
       const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
       let q=supabase.from('compta_lots_semi_finis').select('id,numero_lot').order('date_reception',{ascending:false})
       if(isAdmin&&companyId) q=q.eq('company_id',companyId)
-      else if(companyId) q=q.eq('user_id',uid).eq('company_id',companyId)
+      else if(companyId) q=q.eq('company_id', companyId)
       else q=q.eq('user_id',uid)
       const { data }=await q; setLocalLots(data||[])
     }
@@ -18649,7 +18653,7 @@ function EpierragePage({ companies, companyId, toast, readOnly=false, lots=[] })
     const { data:ad }=await supabase.auth.getUser()
     const uid=ad?.user?.id; const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
     let q=supabase.from('compta_epierrage').select('*,compta_companies(raison_sociale)').order('date_epierrage',{ascending:false})
-    q = isAdmin&&companyId ? q.eq('company_id',companyId) : q.eq('user_id',uid)
+    q = companyId ? q.eq('company_id',companyId) : q.eq('user_id',uid)
     if(companyId&&!isAdmin) q=q.eq('company_id',companyId)
     if(dateFrom) q=q.gte('date_epierrage',dateFrom)
     if(dateTo)   q=q.lte('date_epierrage',dateTo)
@@ -18690,7 +18694,7 @@ function EpierragePage({ companies, companyId, toast, readOnly=false, lots=[] })
     e.preventDefault(); setSaving(true)
     const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
     const year=new Date().getFullYear()
-    const { count }=await supabase.from('compta_epierrage').select('id',{count:'exact',head:true}).eq('user_id',uid)
+    const { count }=await parSociete(supabase.from('compta_epierrage').select('id',{count:'exact',head:true}), form.company_id||companyId, uid)
     const numero=`EP-${year}-${String((count||0)+1).padStart(4,'0')}`
     const poids_avant=parseFloat(form.poids_avant)||0
     const poids_apres=parseFloat(form.poids_apres)||0
@@ -18959,7 +18963,7 @@ function BudgetPage({ companies, companyId, toast, readOnly=false }) {
     const { data:ad }=await supabase.auth.getUser()
     const uid=ad?.user?.id; const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
     let q=supabase.from('compta_budget').select('*').order('code',{ascending:true})
-    q = isAdmin&&companyId ? q.eq('company_id',companyId) : q.eq('user_id',uid)
+    q = companyId ? q.eq('company_id',companyId) : q.eq('user_id',uid)
     if(companyId&&!isAdmin) q=q.eq('company_id',companyId)
     const { data }=await q; setItems(data||[])
   },[companyId])
@@ -19083,7 +19087,7 @@ function ExpressionBesoinPage({ companies, companyId, toast, readOnly=false, pro
       if(companyId) q=q.eq('company_id',companyId) // filtré si société sélectionnée
       // sinon pas de filtre = toutes les fiches
     } else if(companyId){
-      q=q.eq('user_id',uid).eq('company_id',companyId)
+      q=q.eq('company_id', companyId)
     } else {
       q=q.eq('user_id',uid)
     }
@@ -19094,7 +19098,7 @@ function ExpressionBesoinPage({ companies, companyId, toast, readOnly=false, pro
     const { data:ad }=await supabase.auth.getUser()
     const uid=ad?.user?.id; const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
     let q=supabase.from('compta_budget').select('*').order('code',{ascending:true})
-    q = isAdmin&&companyId ? q.eq('company_id',companyId) : q.eq('user_id',uid)
+    q = companyId ? q.eq('company_id',companyId) : q.eq('user_id',uid)
     if(companyId&&!isAdmin) q=q.eq('company_id',companyId)
     const { data }=await q; setBudgets(data||[])
   },[companyId])
@@ -19132,7 +19136,7 @@ function ExpressionBesoinPage({ companies, companyId, toast, readOnly=false, pro
     e.preventDefault(); setSaving(true)
     const { data:ad }=await supabase.auth.getUser(); const uid=ad?.user?.id
     const year=new Date().getFullYear()
-    const { count }=await supabase.from('compta_expression_besoin').select('id',{count:'exact',head:true}).eq('user_id',uid)
+    const { count }=await parSociete(supabase.from('compta_expression_besoin').select('id',{count:'exact',head:true}), form.company_id||companyId, uid)
     const autoRef=`EB-${year}-${String((count||0)+1).padStart(4,'0')}`
     const payload={
       company_id:form.company_id||companyId, user_id:uid,
@@ -19538,7 +19542,7 @@ async function getSoldeCompte(compte, cid) {
   const uid = ad?.user?.id; const isAdmin = ad?.user?.email===SUPER_ADMIN_EMAIL
   let q = supabase.from(table).select('type_operation,montant')
   if (isAdmin) q = q.eq('company_id', cid)
-  else q = q.eq('user_id', uid).eq('company_id', cid)
+  else q = q.eq('company_id', cid)
   const { data } = await q
   return (data||[]).reduce((s,r)=> s + (r.type_operation==='entree' ? (r.montant||0) : -(r.montant||0)), 0)
 }
@@ -19554,7 +19558,7 @@ async function getSoldeTiers(numeroCompte, cid) {
   if (!numeroCompte || !cid) return null
   const { data:ad } = await supabase.auth.getUser()
   const uid = ad?.user?.id; const isAdmin = ad?.user?.email===SUPER_ADMIN_EMAIL
-  const scope = q => isAdmin ? q.eq('company_id', cid) : q.eq('user_id', uid).eq('company_id', cid)
+  const scope = q => isAdmin ? q.eq('company_id', cid) : q.eq('company_id', cid)
 
   const [foR, clR] = await Promise.all([
     scope(supabase.from('compta_fournisseurs').select('id').eq('numero_compte', numeroCompte)).maybeSingle(),
@@ -19639,7 +19643,7 @@ function ReglementsPage({ companies, companyId, toast, readOnly=false, mode='cli
       .select('*,compta_companies(raison_sociale)')
       .eq('tiers_type', filterKey)
       .order('date_paiement',{ascending:false})
-    q = isAdmin&&companyId ? q.eq('company_id',companyId) : q.eq('user_id',uid)
+    q = companyId ? q.eq('company_id',companyId) : q.eq('user_id',uid)
     if(companyId&&!isAdmin) q=q.eq('company_id',companyId)
     if(dateFrom) q=q.gte('date_paiement',dateFrom)
     if(dateTo)   q=q.lte('date_paiement',dateTo)
@@ -19654,7 +19658,7 @@ function ReglementsPage({ companies, companyId, toast, readOnly=false, mode='cli
     let q = supabase.from('compta_documents')
       .select('id,numero,type_doc,statut,montant_ttc,client_id,compta_clients(nom,prenom,nom_societe,type,numero_compte)')
       .order('created_at',{ascending:false})
-    q = isAdmin&&companyId ? q.eq('company_id',companyId) : q.eq('user_id',uid)
+    q = companyId ? q.eq('company_id',companyId) : q.eq('user_id',uid)
     if(companyId&&!isAdmin) q=q.eq('company_id',companyId)
     const { data }=await q; setFactures(data||[])
   },[companyId,isClients])
@@ -20019,7 +20023,7 @@ function JournalPage({ table, title, icon, journalType='caisse', companies, comp
     let q = supabase.from(table).select('*,compta_companies(raison_sociale)').order('date_operation',{ascending:true})
     // Super admin : filtre uniquement par company_id (RLS désactivé sur ces tables)
     if (isAdmin && companyId) q = q.eq('company_id', companyId)
-    else if (companyId) q = q.eq('user_id', uid).eq('company_id', companyId)
+    else if (companyId) q = q.eq('company_id', companyId)
     else q = q.eq('user_id', uid)
     if (dateFrom) q = q.gte('date_operation', dateFrom)
     if (dateTo)   q = q.lte('date_operation', dateTo)
@@ -20456,7 +20460,7 @@ function PaiementsEtuvagePage({ companies, companyId, lots, toast, readOnly=fals
       const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
       let q = supabase.from('compta_etuvage').select('id,numero_lot,etuveuse_cooperative').order('created_at',{ascending:false})
       if (isAdmin && companyId) q=q.eq('company_id',companyId)
-      else if (companyId) q=q.eq('user_id',uid).eq('company_id',companyId)
+      else if (companyId) q=q.eq('company_id', companyId)
       else q=q.eq('user_id',uid)
       const { data }=await q; setLocalLots(data||[])
     }
@@ -20531,7 +20535,7 @@ function PaiementsEtuvagePage({ companies, companyId, lots, toast, readOnly=fals
       }
     }
     const year = new Date().getFullYear()
-    const { count } = await supabase.from('compta_paiements_etuvage').select('id',{count:'exact',head:true}).eq('user_id',uid)
+    const { count } = await parSociete(supabase.from('compta_paiements_etuvage').select('id',{count:'exact',head:true}), cid, uid)
     const numero = `PE-${year}-${String((count||0)+1).padStart(4,'0')}`
     const { data:ins, error } = await supabase.from('compta_paiements_etuvage').insert({
       company_id:cid, user_id:uid, numero,
@@ -20942,7 +20946,7 @@ function SuiviLotPage({ companies, companyId, toast }) {
       const isAdmin=ad?.user?.email===SUPER_ADMIN_EMAIL
       let q = supabase.from('compta_lots_production').select('*').order('created_at',{ascending:false})
       if (isAdmin && companyId) q=q.eq('company_id',companyId)
-      else if (companyId) q=q.eq('user_id',uid).eq('company_id',companyId)
+      else if (companyId) q=q.eq('company_id', companyId)
       else q=q.eq('user_id',uid)
       const { data }=await q; setAllLots(data||[])
     }
@@ -20957,7 +20961,6 @@ function SuiviLotPage({ companies, companyId, toast }) {
     const results = {}
     await Promise.all(SUIVI_STAGES.map(async s => {
       let q = supabase.from(s.table).select('*').eq('lot_id', lot.id).order('created_at',{ascending:false})
-      if (!isAdmin) q=q.eq('user_id',uid)
       const { data } = await q; results[s.key] = data||[]
     }))
     setStageData(results); setLoading(false)
