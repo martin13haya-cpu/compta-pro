@@ -12969,6 +12969,7 @@ function EpargneFriaPage({ companies, companyId, toast, readOnly=false }) {
   const [filtre, setFiltre] = useState({ campagne:'', village:'', q:'', vue:'producteurs', tous:false })
   const [form, setForm] = useState(null)
   const [saving, setSaving] = useState(false)
+  const [choix, setChoix] = useState(null)   // { f, liste } : mouvements d'un producteur parmi lesquels choisir celui à modifier
   const company = companies.find(c => c.id === companyId)
   const campSoc = campagneSociete(company)
 
@@ -13043,6 +13044,7 @@ function EpargneFriaPage({ companies, companyId, toast, readOnly=false }) {
 
   const enregistrer = async e => {
     e.preventDefault()
+    if (form.edit) return modifier()
     const { type, f, s } = form
     const compteFrs = f.numero_compte || COLLECTIF_FOURNISSEUR
     const cptFria = compteFriaDe(compteFrs), nom = nomTiersTraca(f)
@@ -13125,6 +13127,72 @@ function EpargneFriaPage({ companies, companyId, toast, readOnly=false }) {
       : type === 'utilisation' ? `Contrat renouvelé pour ${form.campagne} — ${fcfaDoc(montant)} financés par l'épargne FRIA.`
       : `Épargne restituée — ${fcfaDoc(montant)} (${JOURNAL_LABEL[form.mode_reglement]}).`)
     imprimerRecu(m, f)
+    charger()
+  }
+
+  // ── Modification d'un remboursement hors groupe ou d'une restitution déjà saisis ──
+  const ouvrirModif = m => {
+    if (!verifier()) return
+    if (m.type === 'utilisation') return toast.error("Un renouvellement de contrat ne se modifie pas : supprimez-le puis ressaisissez-le (son nouveau kit et son écriture sont liés).")
+    const f = frsDe(m.fournisseur_id)
+    if (!f) return toast.error('Producteur introuvable.')
+    const bon = d.bons.find(b => b.tiers === tiersBonFria(m))
+    setChoix(null)
+    setForm({ type:m.type, f, s:sit(f), edit:m, bon:bon?.numero || '', date:m.date_mouvement, campagne:m.campagne||'', quantite_kg:String(+m.quantite_kg||''), prix_unitaire:String(+m.prix_unitaire||''),
+      montant:String(+m.montant||''), mode_reglement:m.mode_reglement||'caisse', reference:m.reference||'', observations:m.observations||'', stock:false, article_id:'' })
+  }
+  const choisirModif = f => {
+    if (!verifier()) return
+    const liste = d.mvts.filter(m => String(m.fournisseur_id) === String(f.id) && m.type !== 'utilisation')
+    if (!liste.length) return toast.error(`${nomTiersTraca(f)} n'a ni remboursement hors groupe ni restitution à modifier. Un remboursement fait par un achat groupé se corrige dans le groupe (Achats › Achats groupés de paddy).`)
+    if (liste.length === 1) ouvrirModif(liste[0]); else setChoix({ f, liste })
+  }
+  const modifier = async () => {
+    const { type, f, s, edit:m } = form
+    const cptFria = compteFriaDe(f.numero_compte || COLLECTIF_FOURNISSEUR), nom = nomTiersTraca(f), ancien = +m.montant || 0
+    if (!form.date) return toast.error('Saisissez la date.')
+    let montant, q = +m.quantite_kg || 0, pu = +m.prix_unitaire || 0
+    if (type === 'remboursement') {
+      if (form.bon) montant = ancien                       // paddy déjà entré en stock : quantité et prix figés
+      else { q = numFR(form.quantite_kg); pu = numFR(form.prix_unitaire); montant = Math.round(q * pu) }
+      if (!(montant > 0)) return toast.error('Saisissez la quantité livrée et le prix au kg.')
+      if (s.rembourse - ancien + montant < s.finance + s.restitue - 0.5) return toast.error(`Impossible : ${fcfaDoc(s.finance + s.restitue)} d'épargne ont déjà été utilisés ou restitués. Le remboursement ne peut pas descendre sous ce montant.`)
+      const resteAvant = Math.max(0, s.kit - s.finance - (s.rembourse - ancien) - s.enCours)
+      if (montant > resteAvant + 0.5 && !confirm(`La valeur livrée (${fcfaDoc(montant)}) dépasse le Kit FRIA restant à rembourser (${fcfaDoc(resteAvant)}). Continuer ?`)) return
+    } else {
+      montant = Math.round(numFR(form.montant))
+      if (!(montant > 0)) return toast.error('Saisissez le montant restitué.')
+      if (montant > s.epargne + ancien + 0.5) return toast.error(`Le montant dépasse l'épargne disponible (${fcfaDoc(s.epargne + ancien)}).`)
+    }
+    setSaving(true)
+    if (type === 'restitution') {
+      const solde = await getSoldeCompte(form.mode_reglement, companyId)
+      const dejaSorti = form.mode_reglement === m.mode_reglement ? ancien : 0
+      if (montant > solde + dejaSorti) { setSaving(false); return toast.error(`Modification impossible : solde insuffisant (${JOURNAL_LABEL[form.mode_reglement]} : ${fcfaDoc(solde + dejaSorti)}).`) }
+    }
+    const uid = (await supabase.auth.getUser()).data?.user?.id
+    const { error } = await supabase.from('compta_fria_mouvements').update({ date_mouvement:form.date, campagne:form.campagne||null, quantite_kg:q, prix_unitaire:pu, montant,
+      mode_reglement: type === 'remboursement' ? null : form.mode_reglement, reference:form.reference||null, observations:form.observations||null }).eq('id', m.id)
+    if (error) { setSaving(false); return toast.error(error.message) }
+    const piece = pieceFria(m)
+    let alerte = null
+    if (type === 'remboursement') {
+      await assurerComptesFria(companyId, uid, [{ numero:cptFria, libelle:nom }])
+      await supabase.from('compta_ecritures').delete().eq('piece_id', uuidPiece(piece, companyId)).eq('company_id', companyId)
+      const lib = `Remboursement Kit FRIA en nature — ${nom} (${nbFr(q)} kg)`
+      const { error:ee } = await supabase.from('compta_ecritures').insert([
+        { numero_compte:COMPTE_ACHAT_PADDY, compte_libelle:'Achats de matières premières (riz paddy)', libelle:lib, debit:montant, credit:0 },
+        { numero_compte:cptFria, compte_libelle:`Épargne FRIA — ${nom}`, libelle:lib, debit:0, credit:montant },
+      ].map(r => ({ ...r, company_id:companyId, user_id:uid, piece_id:uuidPiece(piece, companyId), journal:'JA', date_ecriture:form.date, numero_piece:piece, numero_facture:'', reference:form.reference||'' })))
+      if (ee) alerte = "Mouvement modifié, mais l'écriture d'achat n'a pas pu être repassée : " + ee.message
+    } else {
+      for (const tb of Object.values(JOURNAL_TABLE)) await supabase.from(tb).delete().eq('source_type', 'fria').eq('source_id', m.id)
+      const { error:ej } = await supabase.from(JOURNAL_TABLE[form.mode_reglement]).insert({ company_id:companyId, user_id:uid, date_operation:form.date, numero_piece:piece,
+        libelle:`Restitution épargne FRIA — ${nom}`, tiers:nom, type_operation:'sortie', montant, reference:form.reference||'', source_type:'fria', source_id:m.id, numero_compte:cptFria })
+      if (ej) alerte = "Mouvement modifié, mais la sortie de trésorerie n'a pas pu être réécrite : " + ej.message
+    }
+    setSaving(false); setForm(null)
+    if (alerte) toast.error(alerte); else toast.success(`Mouvement ${piece} modifié — ${fcfaDoc(ancien)} → ${fcfaDoc(montant)}.`)
     charger()
   }
 
@@ -13247,6 +13315,8 @@ function EpargneFriaPage({ companies, companyId, toast, readOnly=false }) {
                     { couleur:'#16a34a', label:'🌾 Remboursement en nature (hors groupe)', onClick:()=>ouvrir('remboursement', f) },
                     { couleur:'#2563eb', label:'🔁 Renouveler le contrat (kit financé par l\'épargne)', onClick:()=>ouvrir('utilisation', f) },
                     { couleur:'#b45309', label:"💸 Restituer l'épargne", onClick:()=>ouvrir('restitution', f) },
+                    null,
+                    { couleur:'#475569', label:'✏️ Modifier un remboursement / une restitution', onClick:()=>choisirModif(f) },
                   ]} />}</TD>
                 </TR>))}
               {!lignesSit.length && <tr><td colSpan={10} style={{ padding:20, textAlign:'center', color:'#94a3b8' }}>{companyId ? 'Aucun producteur avec un Kit FRIA ou une épargne. Cochez « Tous les producteurs » pour tous les voir.' : 'Sélectionnez une société.'}</td></tr>}
@@ -13271,6 +13341,7 @@ function EpargneFriaPage({ companies, companyId, toast, readOnly=false }) {
                     <TD sm>{m.type === 'remboursement' ? <>Achat paddy (602){bon && <div style={{ color:'#1d4ed8' }}>📦 {bon.numero}</div>}</> : m.mode_reglement === 'fournisseur' ? (m.tiers_nom||'Fournisseur') : (JOURNAL_LABEL[m.mode_reglement]||m.mode_reglement||'—')}</TD>
                     <TD><ActionsMenu sm items={[
                       { couleur:'#2563eb', label:'🖨️ Reçu', onClick:()=>imprimerRecu(m, f) },
+                      !readOnly && m.type !== 'utilisation' && { couleur:'#475569', label:'✏️ Modifier', onClick:()=>ouvrirModif(m) },
                       !readOnly && { label:'🗑️ Supprimer', danger:true, onClick:()=>supprimer(m) },
                     ]} /></TD>
                   </TR>) })}
@@ -13281,7 +13352,7 @@ function EpargneFriaPage({ companies, companyId, toast, readOnly=false }) {
       )}
 
       <Modal open={!!form} onClose={()=>setForm(null)} size={form?.type === 'utilisation' ? 'lg' : 'md'}
-        title={!form ? '' : form.type === 'remboursement' ? `Remboursement du Kit FRIA en nature — ${nomTiersTraca(form.f)}` : form.type === 'utilisation' ? `Renouvellement du contrat — ${nomTiersTraca(form.f)}` : `Restitution de l'épargne FRIA — ${nomTiersTraca(form.f)}`}>
+        title={!form ? '' : (form.edit ? `Modifier ${pieceFria(form.edit)} — ` : '') + (form.type === 'remboursement' ? `Remboursement du Kit FRIA en nature — ${nomTiersTraca(form.f)}` : form.type === 'utilisation' ? `Renouvellement du contrat — ${nomTiersTraca(form.f)}` : `Restitution de l'épargne FRIA — ${nomTiersTraca(form.f)}`)}>
         {form && <form onSubmit={enregistrer}>
           <div style={{ padding:'9px 12px', borderRadius:8, background:'#f8fafc', border:'1px solid #e2e8f0', fontSize:12.5, marginBottom:14, lineHeight:1.6 }}>
             Kit reçu : <strong>{fcfaDoc(form.s.kit)}</strong> — remboursé : <strong>{fcfaDoc(form.s.rembourse)}</strong> — reste à rembourser : <strong style={{ color:'#b45309' }}>{fcfaDoc(form.s.reste)}</strong>
@@ -13294,13 +13365,14 @@ function EpargneFriaPage({ companies, companyId, toast, readOnly=false }) {
           </Grid>
           {form.type === 'remboursement' && <>
             <Grid cols={3} gap={12} style={{ marginBottom:12 }}>
-              <Input label="Paddy livré (kg)" name="quantite_kg" type="number" step="any" value={form.quantite_kg} onChange={e=>setF('quantite_kg', e.target.value)} required />
-              <Input label="Prix au kg (FCFA)" name="prix_unitaire" type="number" step="any" value={form.prix_unitaire} onChange={e=>setF('prix_unitaire', e.target.value)} required />
+              <Input label="Paddy livré (kg)" name="quantite_kg" type="number" step="any" value={form.quantite_kg} onChange={e=>setF('quantite_kg', e.target.value)} required readOnly={!!form.bon} />
+              <Input label="Prix au kg (FCFA)" name="prix_unitaire" type="number" step="any" value={form.prix_unitaire} onChange={e=>setF('prix_unitaire', e.target.value)} required readOnly={!!form.bon} />
               <div><label style={{ display:'block', fontSize:12.5, fontWeight:600, color:'#374151', marginBottom:5 }}>Valeur remboursée</label>
                 <div style={{ padding:'9px 12px', background:'#f0fdf4', borderRadius:8, border:'1px solid #bbf7d0', fontWeight:800, color:'#166534' }}>{fcfaDoc(numFR(form.quantite_kg) * numFR(form.prix_unitaire))}</div></div>
             </Grid>
-            <label style={{ fontSize:13, display:'flex', gap:8, alignItems:'center', marginBottom:8 }}>
-              <input type="checkbox" checked={form.stock} onChange={e=>setF('stock', e.target.checked)} /> Entrer le paddy en stock (bon d'entrée en magasin)</label>
+            {form.bon && <div style={{ fontSize:12.5, color:'#92400e', background:'#fffbeb', border:'1px solid #fde68a', borderRadius:8, padding:'8px 12px', marginBottom:12 }}>📦 Ce paddy est entré en stock (bon {form.bon}) : la quantité et le prix ne sont plus modifiables. Pour les corriger, annulez d'abord ce bon dans Stock › Bons d'entrée / sortie.</div>}
+            {!form.edit && <label style={{ fontSize:13, display:'flex', gap:8, alignItems:'center', marginBottom:8 }}>
+              <input type="checkbox" checked={form.stock} onChange={e=>setF('stock', e.target.checked)} /> Entrer le paddy en stock (bon d'entrée en magasin)</label>}
             {form.stock && <div style={{ marginBottom:12 }}><Sel label="Article du stock" name="article_id" value={form.article_id} onChange={e=>setF('article_id', e.target.value)}
               options={[{ value:'', label:'— Choisir —' }, ...d.articles.map(a => ({ value:a.id, label:`${a.designation} (${a.unite||''})` })), ...(d.articles.some(a => /paddy/i.test(a.designation)) ? [] : [{ value:'__nouveau_paddy__', label:'+ Créer l\'article RIZ PADDY' }])]} /></div>}
             <div style={{ fontSize:12, color:'#64748b', marginBottom:12 }}>Écriture automatique (journal des achats) : Débit 602 Achats de matières premières / Crédit {compteFriaDe(form.f.numero_compte)} Épargne FRIA.</div>
@@ -13344,8 +13416,20 @@ function EpargneFriaPage({ companies, companyId, toast, readOnly=false }) {
             <div style={{ fontSize:12, color:'#64748b', marginBottom:12 }}>Sortie de trésorerie sur le compte {compteFriaDe(form.f.numero_compte)} Épargne FRIA (Débit 4018… / Crédit {JOURNAL_LABEL[form.mode_reglement]}).</div>
           </>}
           <div style={{ marginBottom:12 }}><Input label="Observations" name="observations" value={form.observations} onChange={e=>setF('observations', e.target.value)} /></div>
-          <Row><Btn variant="secondary" onClick={()=>setForm(null)}>Annuler</Btn><Btn type="submit" disabled={saving}>{saving ? '…' : 'Enregistrer'}</Btn></Row>
+          <Row><Btn variant="secondary" onClick={()=>setForm(null)}>Annuler</Btn><Btn type="submit" disabled={saving}>{saving ? '…' : form.edit ? 'Enregistrer la modification' : 'Enregistrer'}</Btn></Row>
         </form>}
+      </Modal>
+
+      <Modal open={!!choix} onClose={()=>setChoix(null)} title={choix ? `Quel mouvement modifier ? — ${nomTiersTraca(choix.f)}` : ''}>
+        {choix && <>
+          {choix.liste.map(m => (
+            <div key={m.id} style={{ display:'flex', alignItems:'center', gap:10, padding:'9px 0', borderBottom:'1px solid #f1f5f9', fontSize:13 }}>
+              <div style={{ flex:1 }}><strong>{pieceFria(m)}</strong> — {dateDoc(m.date_mouvement)} <Badge type={TYPES_MVT_FRIA[m.type]?.[1]}>{TYPES_MVT_FRIA[m.type]?.[0]||m.type}</Badge>
+                <div style={{ fontSize:12, color:'#64748b' }}>{+m.quantite_kg > 0 ? `${nbFr(m.quantite_kg)} kg × ${nbFr(m.prix_unitaire)} — ` : ''}{fcfaDoc(m.montant)}</div></div>
+              <Btn sm onClick={()=>ouvrirModif(m)}>✏️ Modifier</Btn>
+            </div>))}
+          <Row style={{ marginTop:14 }}><Btn variant="secondary" onClick={()=>setChoix(null)}>Fermer</Btn></Row>
+        </>}
       </Modal>
     </div>
   )
