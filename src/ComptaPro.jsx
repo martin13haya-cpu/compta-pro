@@ -48,6 +48,25 @@ async function buildQuery(q, uid, companyId, isAdmin) {
 // société (les règles RLS de la base font la sécurité), par auteur seulement à défaut.
 const parSociete = (q, cid, uid) => cid ? q.eq('company_id', cid) : q.eq('user_id', uid)
 
+// compta_ecritures.piece_id est de type uuid en base : un numéro de pièce lisible
+// (FRIA-2026-002, AG-…, PREST-…, PAIE-…) y est refusé. On en dérive un uuid stable,
+// propre à la société : la même pièce donne toujours le même identifiant, ce qui
+// permet de retrouver, remplacer ou supprimer ses lignes.
+const RE_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+function uuidPiece(piece, companyId) {
+  const p = String(piece ?? '')
+  if (RE_UUID.test(p)) return p
+  const s = `${companyId || ''}|${p}`
+  const h = graine => {
+    let x = 0x811c9dc5 ^ graine
+    for (let i = 0; i < s.length; i++) { x ^= s.charCodeAt(i); x = Math.imul(x, 0x01000193) }
+    x ^= x >>> 15; x = Math.imul(x, 0x2c1b3c6d); x ^= x >>> 12
+    return (x >>> 0).toString(16).padStart(8, '0')
+  }
+  const hex = h(1) + h(2) + h(3) + h(4)
+  return `${hex.slice(0,8)}-${hex.slice(8,12)}-5${hex.slice(13,16)}-a${hex.slice(17,20)}-${hex.slice(20,32)}`
+}
+
 // Helper inline pour les fonctions load des étuveuses
 async function etvFilter(q, uid, companyId, isAdmin) {
   return buildQuery(q, uid, companyId, isAdmin)
@@ -9425,7 +9444,7 @@ function PrestationPage({ companies, companyId, toast, readOnly=false, setPage }
     // laisser un doublon ou un montant perime dans le journal des ventes,
     // avant de la recreer ci-dessous avec les valeurs a jour.
     if (editItem) {
-      await supabase.from('compta_ecritures').delete().eq('piece_id', numero_facture).eq('company_id', company_id)
+      await supabase.from('compta_ecritures').delete().eq('piece_id', uuidPiece(numero_facture, company_id)).eq('company_id', company_id)
     }
 
     const { error } = editItem
@@ -9437,7 +9456,7 @@ function PrestationPage({ companies, companyId, toast, readOnly=false, setPage }
     // "Services vendus". Sans cette ecriture, la prestation n'apparaissait
     // jamais dans le Grand Livre / la Balance / les etats financiers.
     if (!error && montant > 0) {
-      const piece_id = numero_facture
+      const piece_id = uuidPiece(numero_facture, company_id)
       const libelle = `Prestation ${description||''} — ${nom_client||''}`.trim()
       const rows = [
         { company_id, user_id:uid, piece_id, journal:'JV', date_ecriture:date_prestation,
@@ -9465,7 +9484,7 @@ function PrestationPage({ companies, companyId, toast, readOnly=false, setPage }
     // Supprime aussi l'ecriture comptable liee (meme piece_id = numero_facture),
     // pour ne pas laisser une ecriture fantome dans le Grand Livre / la Balance.
     if (item?.numero_facture) {
-      await supabase.from('compta_ecritures').delete().eq('piece_id', item.numero_facture).eq('company_id', item.company_id)
+      await supabase.from('compta_ecritures').delete().eq('piece_id', uuidPiece(item.numero_facture, item.company_id)).eq('company_id', item.company_id)
     }
     toast.success('Supprimée.'); load()
   }
@@ -9563,7 +9582,7 @@ function PrestationPage({ companies, companyId, toast, readOnly=false, setPage }
           if (!errMaj) backfillClientId++
         }
 
-        const piece_id = r.numero_facture
+        const piece_id = uuidPiece(r.numero_facture, companyId)
         const libelle = `Prestation ${r.description||''} — ${r.nom_client||''}`.trim()
         const rows = [
           { company_id:companyId, user_id:uid, piece_id, journal:'JV', date_ecriture:r.date_prestation,
@@ -12072,7 +12091,7 @@ async function assurerComptesFria(cid, uid, comptes) {
 // Passe (ou repasse) l'écriture d'achat d'un groupe clôturé au journal des achats.
 async function passerEcrituresAchatGroupe(companyId, g, lignes, compteDe) {
   const uid = (await supabase.auth.getUser()).data?.user?.id
-  const piece_id = pieceAchatGroupe(g)
+  const piece_id = uuidPiece(pieceAchatGroupe(g), companyId)
   const fria = lignes.filter(l => +l.fonds_intrant > 0).map(l => ({ numero:compteFriaDe(compteDe(l.fournisseur_id)), libelle:l.nom }))
   if (fria.length) await assurerComptesFria(companyId, uid, fria)
   await supabase.from('compta_ecritures').delete().eq('piece_id', piece_id).eq('company_id', companyId)
@@ -12363,14 +12382,14 @@ function AchatsGroupesPage({ companies, companyId, toast, readOnly=false }) {
     if (!confirm(`Rouvrir le groupe ${g.numero} pour le modifier ? L'écriture d'achat sera retirée de la comptabilité et repassée à la prochaine clôture.`)) return
     const { error } = await supabase.from('compta_achats_groupes').update({ statut:'ouvert' }).eq('id', g.id)
     if (error) return toast.error(error.message)
-    await supabase.from('compta_ecritures').delete().eq('piece_id', pieceAchatGroupe(g)).eq('company_id', companyId)
+    await supabase.from('compta_ecritures').delete().eq('piece_id', uuidPiece(pieceAchatGroupe(g), companyId)).eq('company_id', companyId)
     charger()
   }
   const supprimer = async g => {
     if (!confirm(`Supprimer le groupe ${g.numero} et ses ${lignesDe(g.id).length} producteur(s) ? Les fonds intrant retenus redeviennent disponibles.`)) return
     const { error } = await supabase.from('compta_achats_groupes').delete().eq('id', g.id)
     if (error) return toast.error(error.message)
-    await supabase.from('compta_ecritures').delete().eq('piece_id', pieceAchatGroupe(g)).eq('company_id', companyId)
+    await supabase.from('compta_ecritures').delete().eq('piece_id', uuidPiece(pieceAchatGroupe(g), companyId)).eq('company_id', companyId)
     toast.success(`Groupe ${g.numero} supprimé.`); charger()
   }
 
@@ -13065,7 +13084,7 @@ function EpargneFriaPage({ companies, companyId, toast, readOnly=false }) {
     const annuler = async msg => { await supabase.from('compta_fria_mouvements').delete().eq('id', m.id); setSaving(false); toast.error(msg) }
     await assurerComptesFria(companyId, uid, [{ numero:cptFria, libelle:nom }])
     const piece_id = pieceFria(m)
-    const ecr = (journal, rows) => supabase.from('compta_ecritures').insert(rows.map(r => ({ ...r, company_id:companyId, user_id:uid, piece_id, journal,
+    const ecr = (journal, rows) => supabase.from('compta_ecritures').insert(rows.map(r => ({ ...r, company_id:companyId, user_id:uid, piece_id:uuidPiece(piece_id, companyId), journal,
       date_ecriture:form.date, numero_piece:piece_id, numero_facture:'', reference:form.reference||'' })))
     if (type === 'remboursement') {
       const lib = `Remboursement Kit FRIA en nature — ${nom} (${nbFr(q)} kg)`
@@ -13114,7 +13133,7 @@ function EpargneFriaPage({ companies, companyId, toast, readOnly=false }) {
     if (bon) return toast.error(`Impossible : le paddy de ce remboursement est entré en stock (bon ${bon.numero}). Annulez d'abord ce bon dans Stock > Bons d'entrée / sortie.`)
     const f = frsDe(m.fournisseur_id)
     if (!confirm(`Supprimer le mouvement ${pieceFria(m)} (${TYPES_MVT_FRIA[m.type][0]}, ${fcfaDoc(m.montant)}) ? Son écriture comptable ou sa sortie de trésorerie sera annulée.${m.type === 'utilisation' ? `\n\nLe Kit FRIA ${m.campagne||''} saisi au renouvellement reste dans la fiche de ${nomTiersTraca(f)} : corrigez-le si besoin.` : ''}`)) return
-    await supabase.from('compta_ecritures').delete().eq('piece_id', pieceFria(m)).eq('company_id', companyId)
+    await supabase.from('compta_ecritures').delete().eq('piece_id', uuidPiece(pieceFria(m), companyId)).eq('company_id', companyId)
     for (const t of Object.values(JOURNAL_TABLE)) await supabase.from(t).delete().eq('source_type', 'fria').eq('source_id', m.id)
     const { error } = await supabase.from('compta_fria_mouvements').delete().eq('id', m.id)
     if (error) return toast.error(error.message)
@@ -26082,7 +26101,7 @@ const COMPTES_PAIE = [
   ["423","Personnel, oppositions et saisies-arrêts","C",t=>t.saisies],
   ["438","Organismes sociaux (assurance santé)","C",t=>t.assurance],
 ]
-const pieceIdPaie = (companyId, mois, annee) => `PAIE-${annee}-${String(mois).padStart(2,"0")}-${companyId}`
+const pieceIdPaie = (companyId, mois, annee) => uuidPiece(`PAIE-${annee}-${String(mois).padStart(2,"0")}`, companyId)
 const numeroPiecePaie = (mois, annee) => `PAIE-${annee}-${String(mois).padStart(2,"0")}`
 const dernierJourMois = (mois, annee) => `${annee}-${String(mois).padStart(2,"0")}-${String(new Date(annee,mois,0).getDate()).padStart(2,"0")}`
 
