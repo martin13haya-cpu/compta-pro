@@ -12419,12 +12419,52 @@ Après la clôture, le bon d'entrée en stock du paddy (${nbFr(totauxAchatGroupe
     await supabase.from('compta_ecritures').delete().eq('piece_id', uuidPiece(pieceAchatGroupe(g), companyId)).eq('company_id', companyId)
     charger()
   }
+  // Suppression d'un groupe, ouvert ou clôturé, avec tout ce qu'il a entraîné :
+  // paiements et sorties de trésorerie, bon d'entrée et stock, versement dans un
+  // lot, écriture d'achat, et le remboursement FRIA porté par ses fonds intrant.
   const supprimer = async g => {
-    if (!confirm(`Supprimer le groupe ${g.numero} et ses ${lignesDe(g.id).length} producteur(s) ? Les fonds intrant retenus redeviennent disponibles.`)) return
-    const { error } = await supabase.from('compta_achats_groupes').delete().eq('id', g.id)
-    if (error) return toast.error(error.message)
+    const ls = lignesDe(g.id), pas = paiementsDe(g.id), bon = bonDe(g), lot = g.lot_id ? lotDe(g.lot_id) : null
+    const fonds = Math.round(ls.reduce((s, l) => s + (+l.fonds_intrant || 0), 0))
+    const fids = [...new Set(ls.filter(l => +l.fonds_intrant > 0 && l.fournisseur_id).map(l => l.fournisseur_id))]
+    let fria = []
+    if (g.statut === 'cloture' && fids.length) {
+      const { data } = await supabase.from('compta_fria_mouvements').select('numero,type,fournisseur_id').eq('company_id', companyId).in('type', ['utilisation','restitution']).in('fournisseur_id', fids)
+      fria = data || []
+    }
+    const suites = [
+      pas.length && `• ${pas.length} paiement(s) (${fcfaDoc(pas.reduce((s, x) => s + (+x.montant || 0), 0))}) et leurs sorties de trésorerie`,
+      bon && `• le bon d'entrée ${bon.numero} et le paddy entré en stock`,
+      lot && `• le versement dans le lot ${lot.numero_lot || ''}`,
+      g.statut === 'cloture' && `• l'écriture d'achat ${pieceAchatGroupe(g)} (journal des achats)`,
+      g.statut === 'cloture' && fonds > 0 && `• les remboursements de Kit FRIA (${fcfaDoc(fonds)}) : l'épargne FRIA des producteurs diminue d'autant`,
+    ].filter(Boolean)
+    if (!confirm(`Supprimer DÉFINITIVEMENT le groupe ${g.numero} et ses ${ls.length} producteur(s) ?${suites.length ? `\n\nSeront aussi annulés :\n${suites.join('\n')}` : ''}${fria.length ? `\n\n⚠️ ${fria.length} producteur(s) de ce groupe ont déjà utilisé ou retiré leur épargne FRIA (${[...new Set(fria.map(m => 'FRIA-' + m.numero))].join(', ')}). Leur épargne pourrait devenir insuffisante : vérifiez-les dans Épargne FRIA.` : ''}`)) return
+    if (g.statut === 'cloture' && !confirm(`Confirmez-vous la suppression du groupe clôturé ${g.numero} ? Cette action est irréversible.`)) return
+    setSaving(true)
+    const echec = msg => { setSaving(false); toast.error(`Suppression interrompue : ${msg}`); charger() }
+    for (const pa of pas) {
+      const ids = d.reps.filter(r => r.paiement_id === pa.id).map(r => r.id)
+      for (const tb of Object.values(JOURNAL_TABLE)) if (ids.length) await supabase.from(tb).delete().eq('source_type', 'paiement_groupe').in('source_id', ids)
+      const { error } = await supabase.from('compta_achats_groupes_paiements').delete().eq('id', pa.id)
+      if (error) return echec(`paiement ${pa.numero} — ${error.message}`)
+    }
+    if (bon) {
+      const r = await retirerBonStock(bon)
+      if (r.abandon) return echec(`le bon d'entrée ${bon.numero} n'a pas été annulé.`)
+      if (r.error) return echec(`bon d'entrée ${bon.numero} — ${r.error.message}`)
+    }
+    if (lot) {
+      await supabase.from('compta_lot_origines').delete().eq('achat_groupe_id', g.id)
+      if (+g.lot_qte_ajoutee > 0) {
+        const { data:l } = await supabase.from('compta_lots_production').select('qte_paddy_entree').eq('id', g.lot_id).single()
+        if (l) await supabase.from('compta_lots_production').update({ qte_paddy_entree:Math.max(0, Math.round(((+l.qte_paddy_entree||0) - (+g.lot_qte_ajoutee))*1000)/1000) }).eq('id', g.lot_id)
+      }
+    }
     await supabase.from('compta_ecritures').delete().eq('piece_id', uuidPiece(pieceAchatGroupe(g), companyId)).eq('company_id', companyId)
-    toast.success(`Groupe ${g.numero} supprimé.`); charger()
+    const { error } = await supabase.from('compta_achats_groupes').delete().eq('id', g.id)
+    if (error) return echec(error.message)
+    setSaving(false)
+    toast.success(`Groupe ${g.numero} supprimé${suites.length ? ' avec ses paiements, son stock, son écriture et ses remboursements FRIA' : ''}.`); charger()
   }
 
   const imprimerRegistre = (g, ls) => {
@@ -12671,8 +12711,8 @@ Après la clôture, le bon d'entrée en stock du paddy (${nbFr(totauxAchatGroupe
                       !readOnly && g.lot_id && { couleur:'#64748b', label:`↩️ Détacher du lot ${lotDe(g.lot_id)?.numero_lot||''}`, onClick:()=>detacherDuLot(g) },
                       !readOnly && g.statut === 'cloture' && { couleur:'#4f46e5', label:"📒 Passer l'écriture d'achat", onClick:async()=>{ const { error } = await passerEcrituresAchat(g); error ? toast.error(error.message) : toast.success(`Écriture d'achat ${pieceAchatGroupe(g)} passée au journal des achats.`) } },
                       !readOnly && g.statut === 'cloture' && { couleur:'#b45309', label:'🔓 Rouvrir', onClick:()=>rouvrir(g) },
-                      !readOnly && g.statut === 'ouvert' && null,
-                      !readOnly && g.statut === 'ouvert' && { label:'🗑️ Supprimer', danger:true, onClick:()=>supprimer(g) },
+                      !readOnly && null,
+                      !readOnly && { label: g.statut === 'cloture' ? '🗑️ Supprimer le groupe (tout annuler)' : '🗑️ Supprimer', danger:true, onClick:()=>supprimer(g) },
                     ]} /></TD>
                   </TR>) })}
               {!visibles.length && <tr><td colSpan={13} style={{ padding:20, textAlign:'center', color:'#94a3b8' }}>{companyId ? 'Aucun groupe.' : 'Sélectionnez une société.'}</td></tr>}
@@ -13375,7 +13415,7 @@ function EpargneFriaPage({ companies, companyId, toast, readOnly=false }) {
                 <TR key={f.id}>
                   <TD bold>{nomTiersTraca(f)}<CodeTrace code={f.code_trace} /></TD><TD sm>{f.village||'—'}</TD>
                   <TD right>{nbFr(kitC)}</TD><TD right>{nbFr(s.kit)}</TD><TD right>{nbFr(s.finance)}</TD>
-                  <TD right>{nbFr(s.rembourse)}</TD><TD right>{s.enCours > 0 ? nbFr(s.enCours) : '—'}</TD>
+                  <TD right>{nbFr(s.rembourse)}{s.rembourse > 0 && <div style={{ fontSize:10.5, color:'#94a3b8', whiteSpace:'nowrap' }}>{[s.rembGroupes > 0 && `groupe${s.groupes.length > 1 ? 's' : ''} ${s.groupes.join(', ')}`, s.rembIsole > 0 && 'hors groupe'].filter(Boolean).join(' + ')}</div>}</TD><TD right>{s.enCours > 0 ? nbFr(s.enCours) : '—'}</TD>
                   <TD right>{s.reste > 0 ? <strong style={{ color:'#b45309' }}>{nbFr(s.reste)}</strong> : <span style={{ color:'#15803d' }}>Soldé ✔</span>}</TD>
                   <TD right><strong style={{ color:'#0f766e' }}>{nbFr(s.epargne)}</strong></TD>
                   <TD>{!readOnly && <ActionsMenu sm items={[
