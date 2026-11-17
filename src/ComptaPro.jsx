@@ -6757,6 +6757,23 @@ function BonsStockPage({ companies, companyId, toast, readOnly=false }) {
     const r = await retirerBonStock(b)
     if (r.abandon) return
     if (r.error) { toast.error(r.error.message); return }
+    const ag = b.type === 'entree' ? /^Achat groupé (.+)$/.exec(b.tiers || '') : null
+    if (ag) {
+      const { data:g } = await supabase.from('compta_achats_groupes').select('*').eq('company_id', b.company_id).eq('numero', ag[1]).maybeSingle()
+      if (g && confirm(`Bon ${b.numero} annulé, stock rétabli.
+
+Ce bon vient de l'achat groupé ${g.numero}. Supprimer aussi ce groupe et tout ce qu'il a entraîné ?
+• ses paiements et sorties de trésorerie
+• son écriture d'achat
+• les remboursements de Kit FRIA de ses producteurs (Remboursé / Épargne FRIA)
+
+OK = tout supprimer — Annuler = garder le groupe (seul le stock est annulé).`)) {
+        const s = await supprimerAchatGroupeComplet(b.company_id, g)
+        if (s.error) toast.error(`Bon ${b.numero} annulé, mais le groupe ${g.numero} n'a pas pu être supprimé : ${s.error}`)
+        else toast.success(`Bon ${b.numero} et groupe ${g.numero} supprimés — paiements, écriture et remboursements FRIA annulés.`)
+        charger(); return
+      }
+    }
     if (mvt) {
       const e = await supprimerMouvementFria(b.company_id, mvt)
       if (e) toast.error(`Bon ${b.numero} annulé, mais le remboursement ${pieceFria(mvt)} n'a pas pu être supprimé : ${e.message}`)
@@ -12159,6 +12176,37 @@ async function retirerBonStock(b) {
 
 // Supprime un mouvement de l'épargne FRIA avec ses suites comptables : écriture
 // d'achat ou d'opérations diverses, sortie de trésorerie. Retourne l'erreur éventuelle.
+// Supprime un achat groupé et tout ce qu'il a entraîné : paiements et sorties de
+// trésorerie, bon d'entrée et stock, versement dans un lot, écriture d'achat ; ses
+// lignes (et donc les remboursements FRIA portés par leurs fonds intrant) partent avec lui.
+// Retourne { abandon:true }, { error:'message' } ou {}.
+async function supprimerAchatGroupeComplet(companyId, g) {
+  const { data:pas } = await supabase.from('compta_achats_groupes_paiements').select('id,numero').eq('groupe_id', g.id)
+  for (const pa of pas || []) {
+    const { data:rp } = await supabase.from('compta_achats_groupes_repartitions').select('id').eq('paiement_id', pa.id)
+    const ids = (rp || []).map(r => r.id)
+    for (const tb of Object.values(JOURNAL_TABLE)) if (ids.length) await supabase.from(tb).delete().eq('source_type', 'paiement_groupe').in('source_id', ids)
+    const { error } = await supabase.from('compta_achats_groupes_paiements').delete().eq('id', pa.id)
+    if (error) return { error:`paiement ${pa.numero} — ${error.message}` }
+  }
+  const { data:bons } = await supabase.from('compta_bons_stock').select('*').eq('company_id', companyId).eq('tiers', `Achat groupé ${g.numero}`)
+  for (const bon of bons || []) {
+    const r = await retirerBonStock(bon)
+    if (r.abandon) return { abandon:true, error:`le bon d'entrée ${bon.numero} n'a pas été annulé.` }
+    if (r.error) return { error:`bon d'entrée ${bon.numero} — ${r.error.message}` }
+  }
+  if (g.lot_id) {
+    await supabase.from('compta_lot_origines').delete().eq('achat_groupe_id', g.id)
+    if (+g.lot_qte_ajoutee > 0) {
+      const { data:l } = await supabase.from('compta_lots_production').select('qte_paddy_entree').eq('id', g.lot_id).single()
+      if (l) await supabase.from('compta_lots_production').update({ qte_paddy_entree:Math.max(0, Math.round(((+l.qte_paddy_entree||0) - (+g.lot_qte_ajoutee))*1000)/1000) }).eq('id', g.lot_id)
+    }
+  }
+  await supabase.from('compta_ecritures').delete().eq('piece_id', uuidPiece(pieceAchatGroupe(g), companyId)).eq('company_id', companyId)
+  const { error } = await supabase.from('compta_achats_groupes').delete().eq('id', g.id)
+  return error ? { error:error.message } : {}
+}
+
 async function supprimerMouvementFria(companyId, m) {
   await supabase.from('compta_ecritures').delete().eq('piece_id', uuidPiece(pieceFria(m), companyId)).eq('company_id', companyId)
   for (const tb of Object.values(JOURNAL_TABLE)) await supabase.from(tb).delete().eq('source_type', 'fria').eq('source_id', m.id)
@@ -12475,28 +12523,8 @@ Après la clôture, le bon d'entrée en stock du paddy (${nbFr(totauxAchatGroupe
     if (!confirm(`Supprimer DÉFINITIVEMENT le groupe ${g.numero} et ses ${ls.length} producteur(s) ?${suites.length ? `\n\nSeront aussi annulés :\n${suites.join('\n')}` : ''}${fria.length ? `\n\n⚠️ ${fria.length} producteur(s) de ce groupe ont déjà utilisé ou retiré leur épargne FRIA (${[...new Set(fria.map(m => 'FRIA-' + m.numero))].join(', ')}). Leur épargne pourrait devenir insuffisante : vérifiez-les dans Épargne FRIA.` : ''}`)) return
     if (g.statut === 'cloture' && !confirm(`Confirmez-vous la suppression du groupe clôturé ${g.numero} ? Cette action est irréversible.`)) return
     setSaving(true)
-    const echec = msg => { setSaving(false); toast.error(`Suppression interrompue : ${msg}`); charger() }
-    for (const pa of pas) {
-      const ids = d.reps.filter(r => r.paiement_id === pa.id).map(r => r.id)
-      for (const tb of Object.values(JOURNAL_TABLE)) if (ids.length) await supabase.from(tb).delete().eq('source_type', 'paiement_groupe').in('source_id', ids)
-      const { error } = await supabase.from('compta_achats_groupes_paiements').delete().eq('id', pa.id)
-      if (error) return echec(`paiement ${pa.numero} — ${error.message}`)
-    }
-    if (bon) {
-      const r = await retirerBonStock(bon)
-      if (r.abandon) return echec(`le bon d'entrée ${bon.numero} n'a pas été annulé.`)
-      if (r.error) return echec(`bon d'entrée ${bon.numero} — ${r.error.message}`)
-    }
-    if (lot) {
-      await supabase.from('compta_lot_origines').delete().eq('achat_groupe_id', g.id)
-      if (+g.lot_qte_ajoutee > 0) {
-        const { data:l } = await supabase.from('compta_lots_production').select('qte_paddy_entree').eq('id', g.lot_id).single()
-        if (l) await supabase.from('compta_lots_production').update({ qte_paddy_entree:Math.max(0, Math.round(((+l.qte_paddy_entree||0) - (+g.lot_qte_ajoutee))*1000)/1000) }).eq('id', g.lot_id)
-      }
-    }
-    await supabase.from('compta_ecritures').delete().eq('piece_id', uuidPiece(pieceAchatGroupe(g), companyId)).eq('company_id', companyId)
-    const { error } = await supabase.from('compta_achats_groupes').delete().eq('id', g.id)
-    if (error) return echec(error.message)
+    const r = await supprimerAchatGroupeComplet(companyId, g)
+    if (r.error) { setSaving(false); toast.error(`Suppression interrompue : ${r.error}`); charger(); return }
     setSaving(false)
     toast.success(`Groupe ${g.numero} supprimé${suites.length ? ' avec ses paiements, son stock, son écriture et ses remboursements FRIA' : ''}.`); charger()
   }
