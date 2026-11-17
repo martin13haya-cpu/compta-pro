@@ -4258,7 +4258,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
           supabase.from('compta_fria_mouvements').select('fournisseur_id,type,montant').eq('fournisseur_id', it.id),
         ])
         const lignes = (ls||[]).filter(l => l.compta_achats_groupes)
-        setRembAG(situationFria(it.id, { avances:av, lignes, groupes:lignes.map(l => l.compta_achats_groupes), mvts:mv||[] }))
+        setRembAG(situationFria(it.id, { avances:av, lignes, groupes:lignes.map(l => l.compta_achats_groupes), mvts:mv||[], prix:numFR(it.prix_contrat)||0 }))
       })()
     }
   }
@@ -12071,8 +12071,14 @@ function situationFria(fid, d, sauf) {
   const rembIsole = som(mv.filter(m => m.type === 'remboursement'))
   const restitue = som(mv.filter(m => m.type === 'restitution'))
   const rembourse = rembGroupes + rembIsole
+  // Le Kit se rembourse en kg entiers de paddy : un reliquat inférieur au prix d'1 kg
+  // (fraction de kg) est ignoré et le producteur est considéré comme soldé.
+  const frs = d.prix != null ? null : [...(d.tous||[]), ...(d.fournisseurs||[])].find(de2 => String(de2.id) === String(fid))
+  const prixKg = +(d.prix != null ? d.prix : frs?.prix_contrat) || 0
+  let reste = Math.max(0, kit - finance - rembourse - enCours)
+  if (prixKg > 0 && reste < prixKg) reste = 0
   return { kit, finance, rembGroupes, rembIsole, rembourse, enCours, restitue,
-    reste:Math.max(0, kit - finance - rembourse - enCours),
+    reste,
     epargne:Math.max(0, rembourse - finance - restitue),
     groupes:[...new Set(ls.filter(l => grp[l.groupe_id].statut !== 'annule').map(l => grp[l.groupe_id].numero))] }
 }
