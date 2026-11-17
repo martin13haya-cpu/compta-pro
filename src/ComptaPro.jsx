@@ -2133,7 +2133,7 @@ const consolTiersVal = (it,c) => ({
   'Nationalité': it.nationalite||'',
   'Total Kit FRIA (FCFA)': (Array.isArray(it._avances)?it._avances:[]).reduce((sm,a)=>sm+(Number(a.valeur_remboursement)||0),0) || '',
   'Prix/contrat (FCFA)': it.prix_contrat||'',
-  'Riz paddy équiv. (kg)': (()=>{ const tt=(Array.isArray(it._avances)?it._avances:[]).reduce((sm,a)=>sm+(Number(a.valeur_remboursement)||0),0); const pp=Number(it.prix_contrat)||0; return pp>0?(tt/pp).toFixed(2):'' })(),
+  'Riz paddy équiv. (kg)': (()=>{ const tt=(Array.isArray(it._avances)?it._avances:[]).reduce((sm,a)=>sm+(Number(a.valeur_remboursement)||0),0); const pp=Number(it.prix_contrat)||0; return pp>0?Math.floor(tt/pp):'' })(),
   'Labour - Qté': consolAvVal(it,'Labour','quantite_recue'),
   'Labour - Montant (FCFA)': consolAvVal(it,'Labour','valeur_remboursement'),
   'Semences - Qté': consolAvVal(it,'Semences','quantite_recue'),
@@ -3335,7 +3335,7 @@ function printFicheTiers(it, kind='fournisseur') {
   const avList = Array.isArray(it._avances) ? it._avances : []
   const totalAv = avList.reduce((sm,a)=>sm+(Number(a.valeur_remboursement)||0),0)
   const prixC = Number(it.prix_contrat)||0
-  const rizP = prixC>0 ? totalAv/prixC : 0
+  const rizP = prixC>0 ? Math.floor(totalAv/prixC) : 0   // kg entiers : la fraction de kg est ignorée
   const avancesBloc = (isFourn && (avList.length || prixC>0)) ? `
     <h3 style="margin:18px 0 6px;font-size:11pt;color:#082818">💰 Kit FRIA reçu</h3>
     <table><thead><tr><th style="text-align:left">Type de Kit FRIA</th><th class="r">Quantité reçue</th><th class="r">Montant (FCFA)</th></tr></thead><tbody>
@@ -3344,7 +3344,7 @@ function printFicheTiers(it, kind='fournisseur') {
     </tbody></table>
     <table style="margin-top:8px"><tbody>
       <tr><td style="font-weight:600;width:42%">Prix /contrat</td><td class="r" style="text-align:left">${prixC>0?prixC.toLocaleString('fr-FR')+' FCFA':'—'}</td></tr>
-      <tr><td style="font-weight:600;width:42%">Riz paddy équivalente</td><td class="r" style="text-align:left">${prixC>0?rizP.toLocaleString('fr-FR',{maximumFractionDigits:2})+' kg':'—'}</td></tr>
+      <tr><td style="font-weight:600;width:42%">Riz paddy équivalente</td><td class="r" style="text-align:left">${prixC>0?rizP.toLocaleString('fr-FR')+' kg':'—'}</td></tr>
     </tbody></table>` : ''
 
   const mentorBloc = (isFourn && !isMorale) ? `
@@ -4176,7 +4176,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     'Nationalité': it.nationalite||'',
     'Total Kit FRIA (FCFA)': (Array.isArray(it._avances)?it._avances:[]).reduce((sm,a)=>sm+(Number(a.valeur_remboursement)||0),0) || '',
     'Prix/contrat (FCFA)': it.prix_contrat||'',
-    'Riz paddy équiv. (kg)': (()=>{ const tt=(Array.isArray(it._avances)?it._avances:[]).reduce((sm,a)=>sm+(Number(a.valeur_remboursement)||0),0); const pp=Number(it.prix_contrat)||0; return pp>0?(tt/pp).toFixed(2):'' })(),
+    'Riz paddy équiv. (kg)': (()=>{ const tt=(Array.isArray(it._avances)?it._avances:[]).reduce((sm,a)=>sm+(Number(a.valeur_remboursement)||0),0); const pp=Number(it.prix_contrat)||0; return pp>0?Math.floor(tt/pp):'' })(),
     'Labour - Qté': avVal(it,'Labour','quantite_recue'),
     'Labour - Montant (FCFA)': avVal(it,'Labour','valeur_remboursement'),
     'Semences - Qté': avVal(it,'Semences','quantite_recue'),
@@ -5969,7 +5969,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
             const campagnesKit = [...new Set([campagneKit, campagneSociete(companies.find(c => c.id === (form.company_id || companyId))), ...(avances||[]).map(a => a.campagne).filter(Boolean)])].filter(Boolean).sort()
             const totalAvance = lignesKit.reduce((sm,x)=>sm+numFR(x.a.montant),0)
             const prixContrat = numFR(form.prix_contrat)
-            const rizPaddy = prixContrat>0 ? totalAvance/prixContrat : 0
+            const rizPaddy = prixContrat>0 ? Math.floor(totalAvance/prixContrat) : 0   // kg entiers : la fraction de kg est ignorée
             return (
               <div style={{marginBottom:16}}>
                 <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
@@ -6039,7 +6039,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
                   <div>
                     <label style={{display:'block',fontSize:12.5,fontWeight:600,color:'#374151',marginBottom:5}}>Riz paddy équivalente (kg)</label>
                     <div style={{padding:'9px 12px',background:'#f0fdf4',borderRadius:8,border:'1px solid #bbf7d0',fontSize:14,fontWeight:800,color:'#166534',minHeight:38,display:'flex',alignItems:'center'}}>
-                      {prixContrat>0 ? rizPaddy.toLocaleString('fr-FR',{maximumFractionDigits:2}) + ' kg' : '—'}
+                      {prixContrat>0 ? rizPaddy.toLocaleString('fr-FR') + ' kg' : '—'}
                     </div>
                   </div>
                 </div>
@@ -12244,7 +12244,7 @@ function situationAvancesProducteurs(fournisseurs, d) {
     const recu = Math.max(0, s.kit - s.finance), rembourse = s.rembourse, enCours = s.enCours, reste = s.reste
     const statut = reste <= 0 && enCours <= 0 ? 'solde' : rembourse + enCours > 0 ? 'partiel' : 'non_rembourse'
     const prix = +f.prix_contrat || 0
-    return { f, recu, rembourse, enCours, reste, statut, epargne:s.epargne, resteKg: prix > 0 ? Math.round(reste / prix * 100) / 100 : null, groupes:s.groupes }
+    return { f, recu, rembourse, enCours, reste, statut, epargne:s.epargne, resteKg: prix > 0 ? Math.floor(reste / prix) : null, groupes:s.groupes }
   }).filter(x => x.recu > 0)
 }
 
@@ -13091,7 +13091,7 @@ function EpargneFriaPage({ companies, companyId, toast, readOnly=false }) {
     const s = sit(f)
     if (type === 'remboursement') {
       const prix = +f.prix_contrat || 0
-      setForm({ type, f, s, date:today(), campagne:campSoc, quantite_kg: prix > 0 && s.reste > 0 ? String(Math.round(s.reste / prix * 100) / 100) : '',
+      setForm({ type, f, s, date:today(), campagne:campSoc, quantite_kg: prix > 0 && s.reste > 0 ? String(Math.floor(s.reste / prix)) : '',
         prix_unitaire:String(prix || ''), observations:'', stock:false, article_id:d.articles.find(a => /paddy/i.test(a.designation))?.id || '', reference:'' })
     } else if (type === 'utilisation') {
       if (!(s.epargne > 0)) return toast.error(`${nomTiersTraca(f)} n'a pas d'épargne FRIA disponible.`)
