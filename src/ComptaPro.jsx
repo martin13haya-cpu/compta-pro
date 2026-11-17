@@ -1406,6 +1406,7 @@ function printFilteredList({ title, subtitle='', headers, rows, companyName='', 
 function PasswordChangePage({ onDone }) {
   const [pwd, setPwd]       = useState('')
   const [pwd2, setPwd2]     = useState('')
+  const [voirMdp, setVoirMdp] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError]   = useState('')
 
@@ -1432,15 +1433,21 @@ function PasswordChangePage({ onDone }) {
         <form onSubmit={submit}>
           <div style={{marginBottom:16}}>
             <label style={{display:'block',fontSize:13,fontWeight:600,color:'#374151',marginBottom:6}}>Nouveau mot de passe *</label>
-            <input type="password" value={pwd} onChange={e=>setPwd(e.target.value)} required minLength={6}
+<div style={{position:'relative'}}>
+            <input type={voirMdp ? 'text' : 'password'} value={pwd} onChange={e=>setPwd(e.target.value)} required minLength={6}
               placeholder="Au moins 6 caractères"
-              style={{width:'100%',padding:'10px 14px',border:'1px solid #d1d5db',borderRadius:8,fontSize:14,boxSizing:'border-box'}} />
+              style={{width:'100%',padding:'10px 14px',border:'1px solid #d1d5db',borderRadius:8,fontSize:14,boxSizing:'border-box',paddingRight:44}} />
+            <OeilMdp visible={voirMdp} onClick={()=>setVoirMdp(x=>!x)} couleur="#64748b" />
+            </div>
           </div>
           <div style={{marginBottom:24}}>
             <label style={{display:'block',fontSize:13,fontWeight:600,color:'#374151',marginBottom:6}}>Confirmer le mot de passe *</label>
-            <input type="password" value={pwd2} onChange={e=>setPwd2(e.target.value)} required
+<div style={{position:'relative'}}>
+            <input type={voirMdp ? 'text' : 'password'} value={pwd2} onChange={e=>setPwd2(e.target.value)} required
               placeholder="Retapez le mot de passe"
-              style={{width:'100%',padding:'10px 14px',border:'1px solid #d1d5db',borderRadius:8,fontSize:14,boxSizing:'border-box'}} />
+              style={{width:'100%',padding:'10px 14px',border:'1px solid #d1d5db',borderRadius:8,fontSize:14,boxSizing:'border-box',paddingRight:44}} />
+            <OeilMdp visible={voirMdp} onClick={()=>setVoirMdp(x=>!x)} couleur="#64748b" />
+            </div>
           </div>
           <button type="submit" disabled={saving}
             style={{width:'100%',padding:'12px',background:saving?'#94a3b8':'#2d6a4f',color:'white',border:'none',borderRadius:8,fontSize:15,fontWeight:600,cursor:saving?'not-allowed':'pointer'}}>
@@ -1474,9 +1481,25 @@ function sonLampe(allume) {
   } catch { /* son indisponible : sans importance */ }
 }
 
+// Bouton « œil » placé dans un champ mot de passe : affiche / masque la saisie.
+function OeilMdp({ visible, onClick, couleur='rgba(255,255,255,.6)' }) {
+  return (
+    <button type="button" onClick={onClick} title={visible ? 'Masquer le mot de passe' : 'Afficher le mot de passe'}
+      aria-label={visible ? 'Masquer le mot de passe' : 'Afficher le mot de passe'} aria-pressed={visible}
+      style={{ position:'absolute', right:6, top:'50%', transform:'translateY(-50%)', width:34, height:34, display:'flex', alignItems:'center', justifyContent:'center',
+        background:'transparent', border:'none', borderRadius:6, cursor:'pointer', color:couleur, padding:0 }}>
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z" /><circle cx="12" cy="12" r="3" />
+        {visible && <line x1="3" y1="3" x2="21" y2="21" />}
+      </svg>
+    </button>
+  )
+}
+
 function LoginPage({ onLogin }) {
   const [mode, setMode]       = useState('login') // 'login' | 'register' | 'forgot'
   const [form, setForm]       = useState({ email:'', password:'', nom:'', whatsapp:'' })
+  const [voirMdp, setVoirMdp] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError]     = useState('')
   const [success, setSuccess] = useState('')
@@ -1556,7 +1579,12 @@ function LoginPage({ onLogin }) {
       <label style={{display:'block',fontSize:12,fontWeight:600,color:'rgba(255,255,255,.75)',marginBottom:6}}>
         {label}{required&&<span style={{color:coul}}> *</span>}
       </label>
-      <input className="lampe-champ" type={type} name={name} value={form[name]} onChange={set} required={required} placeholder={placeholder} {...extra} />
+      {type === 'password'
+        ? <div style={{ position:'relative' }}>
+            <input className="lampe-champ" type={voirMdp ? 'text' : 'password'} name={name} value={form[name]} onChange={set} required={required} placeholder={placeholder} {...extra} style={{ paddingRight:44 }} />
+            <OeilMdp visible={voirMdp} onClick={()=>setVoirMdp(v=>!v)} />
+          </div>
+        : <input className="lampe-champ" type={type} name={name} value={form[name]} onChange={set} required={required} placeholder={placeholder} {...extra} />}
     </div>
   )
 
