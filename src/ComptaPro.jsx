@@ -2781,7 +2781,7 @@ const NAV = [
   { id:'etv_inventaire',  icon:'📊', label:'Inventaire' },
   { id:'etv_tresorerie',  icon:'💼', label:'Trésorerie' },
   { section:'Achats' },
-  { id:'achats_groupes',     icon:'🌾', label:'Achats groupés de paddy' },
+  { id:'achats_groupes',     icon:'🌾', label:'Achats hors FRIA' },
   { id:'epargne_fria',       icon:'🏦', label:'Épargne FRIA' },
   { id:'achats',             icon:'🛒', label:'Achats semi-finis' },
   { id:'lots_semi_finis',    icon:'📦', label:'Lots Semi-finis' },
@@ -9286,7 +9286,7 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
             {groupesAchat.length>0 && <Span2>
               <Sel label="Achat d'origine (achat groupé)" name="groupe_origine" value={groupesAchat.find(g=>g.lot_id && String(g.lot_id)===String(form.lot_id))?.id||''}
                 onChange={e=>{ const g = groupesAchat.find(x=>x.id===e.target.value); if (!g) return
-                  if (!g.lot_id) { toast.error(`Le groupe ${g.numero} n'est pas encore versé dans un lot de production : faites-le depuis Achats > Achats groupés de paddy (🏭 Verser dans un lot).`); return }
+                  if (!g.lot_id) { toast.error(`Le groupe ${g.numero} n'est pas encore versé dans un lot de production : faites-le depuis Achats > Achats hors FRIA (🏭 Verser dans un lot).`); return }
                   set({ target:{ name:'lot_id', value:g.lot_id } }) }}
                 options={[{value:'',label:'— Retrouver le lot par son achat groupé —'},...groupesAchat.map(g=>{ const lot = localLots.find(l=>String(l.id)===String(g.lot_id))
                   return {value:g.id,label:`${g.numero}${g.village?' — '+g.village:''} → ${lot ? lot.numero_lot : 'pas encore versé dans un lot'}`} })]} />
@@ -9298,7 +9298,7 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
             {form.lot_id && <Span2><div style={{fontSize:12.5,padding:'7px 12px',borderRadius:8,background:originesLots[form.lot_id]?'#f0fdf4':'#fffbeb',color:originesLots[form.lot_id]?'#166534':'#92400e',marginTop:-6}}>
               {originesLots[form.lot_id]
                 ? <>Origine du paddy : <strong>{originesLots[form.lot_id].refs.join(', ')||'réceptions producteurs'}</strong> — {originesLots[form.lot_id].producteurs} producteur(s), {fmtKg(originesLots[form.lot_id].kg)}</>
-                : <>Aucun achat relié à ce lot : versez-y un achat groupé (Achats groupés de paddy) ou ajoutez ses producteurs dans Traçabilité (QR).</>}
+                : <>Aucun achat relié à ce lot : versez-y un achat (Achats hors FRIA) ou ajoutez ses producteurs dans Traçabilité (QR).</>}
             </div></Span2>}
             {estEtuvage && form.lot_id && resteLot(form.lot_id) != null && (()=>{ const reste = resteLot(form.lot_id); const envoye = parseFloat(form.paddy_envoye_kg)||0
               return <Span2><div style={{fontSize:12.5,padding:'8px 12px',borderRadius:8,background:envoye>reste+0.001?'#fef2f2':'#f0f9ff',color:envoye>reste+0.001?'#b91c1c':'#0c4a6e'}}>
@@ -10259,7 +10259,7 @@ const ALL_SECTIONS = [
   ['etv_repertoire','Répertoire Étuveuses'],['etv_envois','Envois aux étuveuses'],['etv_performance','Performance des étuveuses'],['etv_avances','Avances'],
   ['etv_bc','Bons de Commande'],['etv_br','Bons de Réception'],
   ['etv_entrees','Entrées Magasin'],['etv_sorties','Sorties Magasin'],['etv_inventaire','Inventaire'],['etv_tresorerie','Trésorerie'],
-  ['achats_groupes','Achats groupés de paddy'],['epargne_fria','Épargne FRIA'],['achats','Achats semi-finis'],['lots_semi_finis','Lots Semi-finis'],
+  ['achats_groupes','Achats hors FRIA'],['epargne_fria','Épargne FRIA'],['achats','Achats semi-finis'],['lots_semi_finis','Lots Semi-finis'],
   ['epierrage','Épierrage'],['etuvage_paiements','Paiements étuvage'],
   ['docs_admin','Documents administratifs'],
   ['rh_employes','Employés'],['rh_fiches_paie','Fiches de Paie'],['rh_historique','Historique Paie'],
@@ -12416,7 +12416,7 @@ function AchatsGroupesPage({ companies, companyId, toast, readOnly=false }) {
     if (!ajout.length) return toast.error('Cochez au moins un producteur.')
     setEd(e => ({ ...e,
       village: e.village || ajout[0].village || '', commune: e.commune || ajout[0].commune || '',
-      lignes:[...e.lignes, ...ajout.map(f => { const dispo = fondsIntrantDisponible(f.id, d, e.id)
+      lignes:[...e.lignes, ...ajout.map(f => { const dispo = 0   // achats hors FRIA : aucune retenue sur le Kit FRIA
         return { cle:`n${f.id}`, fournisseur_id:f.id, nom:nomTiersTraca(f), telephone:f.telephone||'', cip:f.cip||'', village:f.village||'',
           cooperative:f.cooperative_affiliee||'', variete:'', quantite_kg:'', prix_unitaire: e.prix_unitaire || String(f.prix_contrat||''),
           fonds_intrant:String(dispo), fonds_dispo:dispo } })] }))
@@ -12541,6 +12541,7 @@ Après la clôture, le bon d'entrée en stock du paddy (${nbFr(totauxAchatGroupe
   }
 
   const paiementsDe = gid => d.paiements.filter(p => p.groupe_id === gid)
+  const friaListe = d.lignes.some(l => +l.fonds_intrant > 0)   // anciens groupes avec retenue Kit FRIA
   const repsDe = gid => d.reps.filter(r => r.groupe_id === gid)
   const sitPaie = g => situationPaiementGroupe(lignesDe(g.id), repsDe(g.id))
 
@@ -12725,10 +12726,11 @@ Après la clôture, le bon d'entrée en stock du paddy (${nbFr(totauxAchatGroupe
   const selStyle = { padding:'8px 12px', borderRadius:8, border:'1px solid #d1d5db', fontSize:13 }
   const numStyle = { width:'100%', minWidth:70, padding:'5px 6px', borderRadius:6, border:'1px solid #d1d5db', fontSize:13, textAlign:'right' }
   const tEd = ed ? totauxAchatGroupe(ed.lignes) : null
+  const friaEd = !!ed && ed.lignes.some(l => numFR(l.fonds_intrant) > 0)   // anciens groupes avec retenue Kit FRIA
 
   return (
     <div>
-      <PageHeader title="Achats groupés de paddy" subtitle={company ? `${company.raison_sociale} — ${ouverts.length} groupe(s) ouvert(s) : ${fmtKg(totOuverts.quantite_kg)} — reste à payer sur les groupes clôturés : ${fcfaDoc(resteClotures)}` : "Sélectionnez une société en haut de l'écran"}
+      <PageHeader title="Achats hors FRIA" subtitle={company ? `${company.raison_sociale} — ${ouverts.length} groupe(s) ouvert(s) : ${fmtKg(totOuverts.quantite_kg)} — reste à payer sur les groupes clôturés : ${fcfaDoc(resteClotures)}` : "Sélectionnez une société en haut de l'écran"}
         actions={<>
           <Btn sm variant="info" onClick={()=>companyId ? setPointAchats(true) : toast.error("Sélectionnez une société en haut de l'écran.")}>📥 Point des achats</Btn>
           <Btn sm variant="secondary" onClick={()=>setAvSit({ village:'', statut:'', q:'' })}>📊 Situation des avances</Btn>
@@ -12746,7 +12748,7 @@ Après la clôture, le bon d'entrée en stock du paddy (${nbFr(totauxAchatGroupe
       {d.loading ? <Card>Chargement…</Card> : (
         <TableWrap><div style={{ overflowX:'auto' }}>
           <table style={{ width:'100%', borderCollapse:'collapse' }}>
-            <thead><tr><TH>N° groupe</TH><TH>Date</TH><TH>Commune / village</TH><TH>Chef de groupe</TH><TH right>Producteurs</TH><TH right>Quantité</TH><TH right>Montant</TH><TH right>Fonds intrant</TH><TH right>Net à percevoir</TH><TH right>Payé</TH><TH right>Reste</TH><TH>Statut</TH><TH>Actions</TH></tr></thead>
+            <thead><tr><TH>N° groupe</TH><TH>Date</TH><TH>Commune / village</TH><TH>Chef de groupe</TH><TH right>Producteurs</TH><TH right>Quantité</TH><TH right>Montant</TH>{friaListe && <TH right>Fonds intrant</TH>}<TH right>Net à percevoir</TH><TH right>Payé</TH><TH right>Reste</TH><TH>Statut</TH><TH>Actions</TH></tr></thead>
             <tbody>
               {visibles.map(g => { const ls = lignesDe(g.id), t = totauxAchatGroupe(ls), sp = sitPaie(g), np = paiementsDe(g.id).length
                 return (
@@ -12754,7 +12756,7 @@ Après la clôture, le bon d'entrée en stock du paddy (${nbFr(totauxAchatGroupe
                     <TD bold>{g.numero}<CodeTrace code={g.code_trace} /></TD><TD sm>{dateDoc(g.date_achat)}</TD>
                     <TD>{[g.commune, g.village].filter(Boolean).join(' / ') || '—'}</TD><TD>{g.chef_groupe||'—'}</TD>
                     <TD right>{ls.length}</TD><TD right>{nbFr(t.quantite_kg)} kg</TD><TD right>{nbFr(t.montant)}</TD>
-                    <TD right>{nbFr(t.fonds_intrant)}</TD><TD right><strong>{nbFr(t.net_a_percevoir)}</strong></TD>
+                    {friaListe && <TD right>{nbFr(t.fonds_intrant)}</TD>}<TD right><strong>{nbFr(t.net_a_percevoir)}</strong></TD>
                     <TD right>{nbFr(sp.percu)}</TD><TD right>{sp.reste > 0 ? <strong style={{ color:'#b45309' }}>{nbFr(sp.reste)}</strong> : '0'}</TD>
                     <TD><Badge type={STATUTS_AG[g.statut]?.[1]||'info'}>{STATUTS_AG[g.statut]?.[0]||g.statut}</Badge>
                       {g.statut === 'cloture' && <div style={{ marginTop:3 }}><Badge type={STATUTS_PAIE_AG[sp.statut][1]}>{STATUTS_PAIE_AG[sp.statut][0]}</Badge></div>}
@@ -12777,7 +12779,7 @@ Après la clôture, le bon d'entrée en stock du paddy (${nbFr(totauxAchatGroupe
                       !readOnly && { label: g.statut === 'cloture' ? '🗑️ Supprimer le groupe (tout annuler)' : '🗑️ Supprimer', danger:true, onClick:()=>supprimer(g) },
                     ]} /></TD>
                   </TR>) })}
-              {!visibles.length && <tr><td colSpan={13} style={{ padding:20, textAlign:'center', color:'#94a3b8' }}>{companyId ? 'Aucun groupe.' : 'Sélectionnez une société.'}</td></tr>}
+              {!visibles.length && <tr><td colSpan={friaListe ? 13 : 12} style={{ padding:20, textAlign:'center', color:'#94a3b8' }}>{companyId ? 'Aucun groupe.' : 'Sélectionnez une société.'}</td></tr>}
             </tbody>
           </table>
         </div></TableWrap>
@@ -12824,7 +12826,7 @@ Après la clôture, le bon d'entrée en stock du paddy (${nbFr(totauxAchatGroupe
                     onChange={e=>setChoix(c=>({...c, sel:e.target.checked ? libres.map(f=>f.id) : []}))} />
                   Tout cocher ({libres.length} disponible{libres.length>1?'s':''})
                 </label>}
-                {candidats.map(f => { const autre = groupeOuvertDe(f.id, ed.id), dispo = fondsIntrantDisponible(f.id, d, ed.id)
+                {candidats.map(f => { const autre = groupeOuvertDe(f.id, ed.id), dispo = 0
                   return (
                     <label key={f.id} style={{ display:'flex', gap:8, alignItems:'center', padding:'5px 10px', fontSize:12.5, borderBottom:'1px solid #f8fafc', cursor:autre?'not-allowed':'pointer', color:autre?'#94a3b8':'#1e293b' }}>
                       <input type="checkbox" disabled={!!autre} checked={choix.sel.includes(f.id)} onChange={()=>basculer(f.id)} />
@@ -12841,7 +12843,7 @@ Après la clôture, le bon d'entrée en stock du paddy (${nbFr(totauxAchatGroupe
               <table style={{ width:'100%', borderCollapse:'collapse', fontSize:13 }}>
                 <thead><tr style={{ background:'#f1f5f9' }}>
                   {['N°','Producteur','Village / coopérative','Quantité (kg)','Prix (F/kg)','Montant','Fonds intrant','Rembours. (kg)','Net à percevoir',''].map((h,i)=>
-                    <th key={i} style={{ padding:'8px 6px', textAlign: i>=3 && i<=8 ? 'right' : 'left', fontSize:11.5, color:'#475569', whiteSpace:'nowrap' }}>{h}</th>)}
+                    (friaEd || (i !== 6 && i !== 7)) && <th key={i} style={{ padding:'8px 6px', textAlign: i>=3 && i<=8 ? 'right' : 'left', fontSize:11.5, color:'#475569', whiteSpace:'nowrap' }}>{h}</th>)}
                 </tr></thead>
                 <tbody>
                   {ed.lignes.map((l,i) => { const c = calculLigneAchatGroupe(l)
@@ -12854,21 +12856,21 @@ Après la clôture, le bon d'entrée en stock du paddy (${nbFr(totauxAchatGroupe
                         <td style={{ padding:6 }}><input type="number" min="0" step="0.001" style={numStyle} value={l.quantite_kg} onChange={e=>setLigne(i,'quantite_kg',e.target.value)} /></td>
                         <td style={{ padding:6 }}><input type="number" min="0" step="1" style={numStyle} value={l.prix_unitaire} onChange={e=>setLigne(i,'prix_unitaire',e.target.value)} /></td>
                         <td style={{ padding:6, textAlign:'right', whiteSpace:'nowrap' }}>{nbFr(c.montant)}</td>
-                        <td style={{ padding:6 }}><input type="number" min="0" step="1" style={numStyle} value={l.fonds_intrant} onChange={e=>setLigne(i,'fonds_intrant',e.target.value)} />
+                        {friaEd && <><td style={{ padding:6 }}><input type="number" min="0" step="1" style={numStyle} value={l.fonds_intrant} onChange={e=>setLigne(i,'fonds_intrant',e.target.value)} />
                           <div style={{ fontSize:10.5, color: numFR(l.fonds_intrant) > c.montant ? '#b91c1c' : '#64748b', textAlign:'right' }}>
                             {numFR(l.fonds_intrant) > c.montant ? `plafonné à ${nbFr(c.montant)}` : `avances dues : ${nbFr(l.fonds_dispo||0)}`}</div></td>
-                        <td style={{ padding:6, textAlign:'right' }}>{nbFr(c.remboursement_kg)}</td>
+                        <td style={{ padding:6, textAlign:'right' }}>{nbFr(c.remboursement_kg)}</td></>}
                         <td style={{ padding:6, textAlign:'right', whiteSpace:'nowrap' }}><strong>{nbFr(c.net_a_percevoir)}</strong></td>
                         <td style={{ padding:6, whiteSpace:'nowrap' }}>
                           {!verrou && <button type="button" title="Retirer du groupe" onClick={()=>retirerLigne(i)} style={{ border:'none', background:'none', cursor:'pointer', fontSize:14 }}>🗑️</button>}
                         </td>
                       </tr>) })}
-                  {!ed.lignes.length && <tr><td colSpan={10} style={{ padding:16, textAlign:'center', color:'#94a3b8' }}>Aucun producteur dans ce groupe.</td></tr>}
+                  {!ed.lignes.length && <tr><td colSpan={friaEd ? 10 : 8} style={{ padding:16, textAlign:'center', color:'#94a3b8' }}>Aucun producteur dans ce groupe.</td></tr>}
                   {ed.lignes.length > 0 && <tr style={{ borderTop:'2px solid #cbd5e1', background:'#f8fafc', fontWeight:700 }}>
                     <td colSpan={3} style={{ padding:8 }}>Total — {ed.lignes.length} producteur{ed.lignes.length>1?'s':''}</td>
                     <td style={{ padding:8, textAlign:'right' }}>{nbFr(tEd.quantite_kg)}</td><td></td>
-                    <td style={{ padding:8, textAlign:'right' }}>{nbFr(tEd.montant)}</td><td style={{ padding:8, textAlign:'right' }}>{nbFr(tEd.fonds_intrant)}</td>
-                    <td style={{ padding:8, textAlign:'right' }}>{nbFr(tEd.remboursement_kg)}</td><td style={{ padding:8, textAlign:'right', color:'#15803d' }}>{nbFr(tEd.net_a_percevoir)}</td><td></td>
+                    <td style={{ padding:8, textAlign:'right' }}>{nbFr(tEd.montant)}</td>{friaEd && <><td style={{ padding:8, textAlign:'right' }}>{nbFr(tEd.fonds_intrant)}</td>
+                    <td style={{ padding:8, textAlign:'right' }}>{nbFr(tEd.remboursement_kg)}</td></>}<td style={{ padding:8, textAlign:'right', color:'#15803d' }}>{nbFr(tEd.net_a_percevoir)}</td><td></td>
                   </tr>}
                 </tbody>
               </table>
@@ -13328,7 +13330,7 @@ function EpargneFriaPage({ companies, companyId, toast, readOnly=false }) {
   const choisirModif = f => {
     if (!verifier()) return
     const liste = d.mvts.filter(m => String(m.fournisseur_id) === String(f.id) && m.type !== 'utilisation')
-    if (!liste.length) return toast.error(`${nomTiersTraca(f)} n'a ni remboursement hors groupe ni restitution à modifier. Un remboursement fait par un achat groupé se corrige dans le groupe (Achats › Achats groupés de paddy).`)
+    if (!liste.length) return toast.error(`${nomTiersTraca(f)} n'a ni remboursement hors groupe ni restitution à modifier. Un remboursement fait par un achat groupé se corrige dans le groupe (Achats › Achats hors FRIA).`)
     if (liste.length === 1) ouvrirModif(liste[0]); else setChoix({ f, liste })
   }
   const modifier = async () => {
@@ -13738,7 +13740,7 @@ function pointAchatsHtml(comp, { du, au, type }, rows) {
         <thead><tr><th>N°</th><th>Date</th><th>Type</th><th>Référence</th><th>Producteur / fournisseur</th><th>Village / provenance</th><th>Produit</th><th>Quantité</th>
           <th>P.U.</th><th>Montant</th><th>Fonds intrant</th><th>Net</th><th>Payé</th><th>Reste à payer</th></tr></thead>
         <tbody>${corps || '<tr><td colspan="14" class="c">Aucun achat sur la période</td></tr>'}
-          ${type === 'tous' && tg.lignes && ti.lignes ? ligneTot('Achats groupés', tg) + ligneTot('Achats individuels', ti) : ''}
+          ${type === 'tous' && tg.lignes && ti.lignes ? ligneTot('Achats hors FRIA', tg) + ligneTot('Achats individuels', ti) : ''}
           ${ligneTot('TOTAL', t)}
         </tbody>
       </table>
@@ -13799,7 +13801,7 @@ function PointAchatsModal({ companies, companyId, toast, onClose, typeInitial = 
         {[['Ce mois', premierDuMois(), today()], ['Cette année', `${today().slice(0, 4)}-01-01`, today()], ['Tout', '', '']].map(([lib, du, au]) =>
           <button key={lib} type="button" onClick={()=>setF(x=>({...x, du, au}))} style={{ ...selStyle, cursor:'pointer', background:f.du===du&&f.au===au?'#ede9fe':'#fff' }}>{lib}</button>)}
         <select style={selStyle} value={f.type} onChange={e=>setF(x=>({...x, type:e.target.value}))}>
-          <option value="tous">Achats groupés et individuels</option><option value="groupe">Achats groupés seulement</option><option value="individuel">Achats individuels seulement</option>
+          <option value="tous">Achats hors FRIA et individuels</option><option value="groupe">Achats hors FRIA seulement</option><option value="individuel">Achats individuels seulement</option>
         </select>
         <input style={{ ...selStyle, flex:'1 1 150px' }} placeholder="Fournisseur, village, produit…" value={f.q} onChange={e=>setF(x=>({...x, q:e.target.value}))} />
       </div>
@@ -14718,7 +14720,7 @@ function EtvEnvoisPage({ companies, companyId, toast, readOnly=false }) {
             {orig.groupes.length>0 && <Span2>
               <Sel label="Achat d'origine (achat groupé)" name="groupe_origine" value={orig.groupes.find(g=>g.lot_id && String(g.lot_id)===String(form.lot_id))?.id||''}
                 onChange={e=>{ const g = orig.groupes.find(x=>x.id===e.target.value); if (!g) return
-                  if (!g.lot_id) return toast.error(`Le groupe ${g.numero} n'est pas encore versé dans un lot de production : faites-le depuis Achats › Achats groupés de paddy (🏭 Verser dans un lot).`)
+                  if (!g.lot_id) return toast.error(`Le groupe ${g.numero} n'est pas encore versé dans un lot de production : faites-le depuis Achats › Achats hors FRIA (🏭 Verser dans un lot).`)
                   setForm(f=>({...f, lot_id:g.lot_id})) }}
                 options={[{value:'',label:'— Retrouver le lot par son achat groupé —'},...orig.groupes.map(g=>{ const lot = d.lots.find(l=>String(l.id)===String(g.lot_id))
                   return {value:g.id,label:`${g.numero}${g.village?' — '+g.village:''} → ${lot ? lot.numero_lot : 'pas encore versé dans un lot'}`} })]} />
@@ -18644,7 +18646,7 @@ const JOURNAL_SECTIONS = [
   { key:'reglements', label:'Règlements', table:'compta_reglements' },
   { key:'prestations', label:'Prestations', table:'compta_prestations' },
   { key:'lots', label:'Lots de production', table:'compta_lots_production' },
-  { key:'achats_groupes', label:'Achats groupés', table:'compta_achats_groupes' },
+  { key:'achats_groupes', label:'Achats hors FRIA', table:'compta_achats_groupes' },
   { key:'fria_mouvements', label:'Mouvements épargne FRIA', table:'compta_fria_mouvements' },
   { key:'achats_semi', label:'Achats semi-finis', table:'compta_achats_semi_finis' },
   { key:'etuveuses', label:'Étuveuses (répertoire)', table:'compta_etuveuses' },
@@ -26968,7 +26970,7 @@ export default function ComptaPro() {
     etv_repertoire:'Répertoire Étuveuses', etv_envois:'Envois aux étuveuses', etv_performance:'Performance des étuveuses', etv_avances:'Avances sur Commande',
     etv_bc:'Bons de Commande', etv_br:'Bons de Réception',
     etv_entrees:'Entrées Magasin', etv_sorties:'Sorties Magasin', etv_inventaire:'Inventaire Étuveuses', etv_tresorerie:'Trésorerie Étuveuses',
-    achats_groupes:'Achats groupés de paddy', epargne_fria:'Épargne FRIA', achats:'Achats Semi-finis', lots_semi_finis:'Lots Semi-finis', epierrage:'Épierrage', reglements_clients:'Règlements Clients', reglements_fourn:'Règlements Fournisseurs', etuvage_paiements:'Paiements Étuvage',
+    achats_groupes:'Achats hors FRIA', epargne_fria:'Épargne FRIA', achats:'Achats Semi-finis', lots_semi_finis:'Lots Semi-finis', epierrage:'Épierrage', reglements_clients:'Règlements Clients', reglements_fourn:'Règlements Fournisseurs', etuvage_paiements:'Paiements Étuvage',
     docs_admin:'Documents administratifs', parametres:'Paramètres',
     prestations:'Prestations', agents_prospection:'Agents de prospection', journal_caisse:'Journal Caisse', journal_banque:'Journal Banque',
     suivi_lot:'Suivi de Lot', tracabilite:'Traçabilité des lots', registre_tracabilite:'Registre de traçabilité', journal_mobile:'Journal Mobile Money', plan_comptable:'Plan Comptable', grand_livre:'Grand-Livre', ecritures:'Saisie Comptable', balance:'Balance', etats_financiers:'États Financiers',
