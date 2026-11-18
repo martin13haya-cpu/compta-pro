@@ -6943,39 +6943,50 @@ function MouvementsPage({ companies, companyId, setPage, toast, readOnly=false }
 
   useEffect(()=>{ load() },[load])
 
-  // Remboursements FRIA en nature dont le paddy n'est pas encore entré en stock :
-  // un bon d'entrée (tiers « Remboursement FRIA <n°> ») est créé pour chacun.
+  // Paddy acheté mais pas encore entré en stock : remboursements FRIA en nature
+  // (bon « Remboursement FRIA <n°> ») et achats hors FRIA clôturés (bon « Achat groupé GRP-… »).
+  // Un bon d'entrée est créé pour chacun ; ce qui est déjà en stock n'est jamais repris.
   const [synchro, setSynchro] = useState(false)
-  const actualiserFria = async () => {
+  const actualiserAchats = async () => {
     if (!companyId) { toast?.error("Sélectionnez une société précise (en haut de l'écran)."); return }
     setSynchro(true)
     const fin = () => { setSynchro(false); load() }
-    const [{ data:mv, error:e1 }, { data:bons }, { data:arts }] = await Promise.all([
+    const [{ data:mv }, { data:grs }, { data:bons }, { data:arts }] = await Promise.all([
       supabase.from('compta_fria_mouvements').select('*').eq('company_id', companyId).eq('type', 'remboursement').order('date_mouvement').order('numero'),
-      supabase.from('compta_bons_stock').select('tiers').eq('company_id', companyId).like('tiers', 'Remboursement FRIA %'),
+      supabase.from('compta_achats_groupes').select('*').eq('company_id', companyId).eq('statut', 'cloture').order('date_achat'),
+      supabase.from('compta_bons_stock').select('tiers').eq('company_id', companyId).eq('type', 'entree'),
       supabase.from('compta_articles').select('id,designation').eq('company_id', companyId).eq('actif', true),
     ])
-    if (e1) { toast?.error(e1.message); return fin() }
     const dejaEntres = new Set((bons || []).map(b => b.tiers))
-    const manquants = (mv || []).filter(m => +m.quantite_kg > 0 && !dejaEntres.has(tiersBonFria(m)))
-    if (!manquants.length) { toast?.success('Tous les remboursements FRIA en nature sont déjà entrés en stock.'); return fin() }
-    const kg = manquants.reduce((s, m) => s + (+m.quantite_kg || 0), 0)
-    if (!confirm(`${manquants.length} remboursement(s) FRIA en nature ne sont pas encore entrés en stock (${nbFr(kg)} kg de paddy) :\n${manquants.slice(0, 15).map(m => `• ${pieceFria(m)} — ${nbFr(m.quantite_kg)} kg`).join('\n')}${manquants.length > 15 ? '\n…' : ''}\n\nCréer leurs bons d'entrée en magasin maintenant ?`)) return fin()
+    const friaManq = (mv || []).filter(m => +m.quantite_kg > 0 && !dejaEntres.has(tiersBonFria(m)))
+    const grpCand = (grs || []).filter(g => !dejaEntres.has(`Achat groupé ${g.numero}`))
+    const { data:lignes } = grpCand.length ? await supabase.from('compta_achats_groupes_lignes').select('*').in('groupe_id', grpCand.map(g => g.id)) : { data:[] }
+    const grpManq = grpCand.map(g => { const ls = (lignes || []).filter(l => l.groupe_id === g.id); return { g, ls, t:totauxAchatGroupe(ls) } }).filter(x => x.t.quantite_kg > 0)
+    if (!friaManq.length && !grpManq.length) { toast?.success('Tout le paddy acheté (remboursements FRIA et achats hors FRIA) est déjà entré en stock.'); return fin() }
+    const kgF = friaManq.reduce((s, m) => s + (+m.quantite_kg || 0), 0), kgG = grpManq.reduce((s, x) => s + x.t.quantite_kg, 0)
+    const liste = [...friaManq.map(m => `• ${pieceFria(m)} — ${nbFr(m.quantite_kg)} kg`), ...grpManq.map(x => `• Achat ${x.g.numero} — ${nbFr(x.t.quantite_kg)} kg`)]
+    if (!confirm(`Paddy acheté mais pas encore entré en stock (${nbFr(kgF + kgG)} kg) :\n${friaManq.length ? `– ${friaManq.length} remboursement(s) FRIA en nature : ${nbFr(kgF)} kg\n` : ''}${grpManq.length ? `– ${grpManq.length} achat(s) hors FRIA clôturé(s) : ${nbFr(kgG)} kg\n` : ''}\n${liste.slice(0, 15).join('\n')}${liste.length > 15 ? '\n…' : ''}\n\nCréer leurs bons d'entrée en magasin maintenant ?`)) return fin()
     const paddy = (arts || []).find(a => /paddy/i.test(a.designation || '') && !/[ée]tuv/i.test(a.designation || ''))
     let articleId = paddy?.id || '__nouveau_paddy__'
-    const { data:frs } = await supabase.from('compta_fournisseurs').select('id,nom,prenom,nom_societe,village').in('id', [...new Set(manquants.map(m => m.fournisseur_id))])
+    const { data:frs } = friaManq.length ? await supabase.from('compta_fournisseurs').select('id,nom,prenom,nom_societe,village').in('id', [...new Set(friaManq.map(m => m.fournisseur_id))]) : { data:[] }
     let ok = 0; const erreurs = []
-    for (const m of manquants) {
-      const f = (frs || []).find(x => String(x.id) === String(m.fournisseur_id)) || {}
-      const nom = nomTiersTraca(f) || 'producteur'
-      const date = m.date_mouvement && m.date_mouvement <= today() ? m.date_mouvement : today()
-      const { bon, erreur } = await entrerPaddyEnStock(companyId, { article_id:articleId, date_bon:date, quantite:m.quantite_kg, prix_unitaire:m.prix_unitaire,
-        tiers:tiersBonFria(m), observationLigne:`Remboursement FRIA ${m.numero}`, observations:`Remboursement du Kit FRIA en nature — ${nom}${f.village ? ` (${f.village})` : ''}, pièce ${pieceFria(m)}.` })
-      if (erreur) erreurs.push(`${pieceFria(m)} : ${erreur}`)
+    const entrer = async (piece, valeurs) => {
+      const { bon, erreur } = await entrerPaddyEnStock(companyId, { article_id:articleId, ...valeurs })
+      if (erreur) erreurs.push(`${piece} : ${erreur}`)
       else { ok++; if (articleId === '__nouveau_paddy__') articleId = bon._article.id }
     }
-    if (erreurs.length) toast?.error(`${ok} entré(s) en stock, ${erreurs.length} en erreur — ${erreurs[0]}`)
-    else toast?.success(`${ok} remboursement(s) FRIA entrés en stock (${nbFr(kg)} kg de paddy).`)
+    const dateOk = d => d && d <= today() ? d : today()
+    for (const m of friaManq) {
+      const f = (frs || []).find(x => String(x.id) === String(m.fournisseur_id)) || {}
+      await entrer(pieceFria(m), { date_bon:dateOk(m.date_mouvement), quantite:m.quantite_kg, prix_unitaire:m.prix_unitaire, tiers:tiersBonFria(m),
+        observationLigne:`Remboursement FRIA ${m.numero}`, observations:`Remboursement du Kit FRIA en nature — ${nomTiersTraca(f) || 'producteur'}${f.village ? ` (${f.village})` : ''}, pièce ${pieceFria(m)}.` })
+    }
+    for (const { g, ls, t:tg } of grpManq) {
+      await entrer(g.numero, { date_bon:dateOk(g.date_achat), quantite:tg.quantite_kg, prix_unitaire:Math.round(tg.montant / tg.quantite_kg * 100) / 100, tiers:`Achat groupé ${g.numero}`,
+        observationLigne:`Achat groupé ${g.numero}`, observations:`Achat groupé ${g.numero}${g.village ? ` — ${g.village}` : ''}${g.commune ? ` (${g.commune})` : ''} : ${ls.length} producteur(s)${g.chef_groupe ? `, chef de groupe ${g.chef_groupe}` : ''}.` })
+    }
+    if (erreurs.length) toast?.error(`${ok} entrée(s) en stock, ${erreurs.length} en erreur — ${erreurs[0]}`)
+    else toast?.success(`${ok} achat(s) entrés en stock (${nbFr(kgF + kgG)} kg de paddy).`)
     fin()
   }
 
@@ -7034,7 +7045,7 @@ function MouvementsPage({ companies, companyId, setPage, toast, readOnly=false }
         actions={<>
           {!readOnly && <Btn sm variant="success" onClick={()=>setPage('stock-entree')}>↓ Entrée</Btn>}
           {!readOnly && <Btn sm variant="warning" onClick={()=>setPage('stock-sortie')}>↑ Sortie</Btn>}
-          {!readOnly && <Btn sm variant="secondary" onClick={actualiserFria} disabled={synchro} title="Entrer en stock le paddy des remboursements FRIA qui n'y sont pas encore">{synchro ? '…' : '🔄 Actualiser FRIA'}</Btn>}
+          {!readOnly && <Btn sm variant="secondary" onClick={actualiserAchats} disabled={synchro} title="Entrer en stock le paddy acheté qui n'y est pas encore : remboursements FRIA en nature et achats hors FRIA clôturés">{synchro ? '…' : '🔄 Actualiser les achats'}</Btn>}
           <Btn sm variant="info" onClick={exportCSV}>📊 Exporter Excel</Btn>
         </>}
       />
