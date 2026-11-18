@@ -6933,16 +6933,51 @@ function MouvementsPage({ companies, companyId, setPage, toast, readOnly=false }
   const [typeFilter, setTypeFilter] = useState('')
 
   const load = useCallback(async()=>{
-    const uid = (await supabase.auth.getUser()).data?.user?.id
-    const { data:adock } = await supabase.auth.getUser(); const uidock=adock?.user?.id; const isAdmock=adock?.user?.email===SUPER_ADMIN_EMAIL
+    const { data:adock } = await supabase.auth.getUser(); const uidock=adock?.user?.id
     let q = supabase.from('compta_mouvements_stock').select('*,compta_articles(designation,unite)').order('date_mvt',{ascending:false}).limit(500)
-    q = isAdmock&&companyId ? q.eq('company_id',companyId) : q.eq('user_id',uidock); if(companyId&&!isAdmock) q=q.eq('company_id',companyId)
+    q = parSociete(q, companyId, uidock)   // toute la société, pas seulement les saisies de l'utilisateur
     if (dateFrom)  q=q.gte('date_mvt',dateFrom)
     if (dateTo)    q=q.lte('date_mvt',dateTo)
     const { data } = await q; setItems(data||[])
   },[companyId,dateFrom,dateTo])
 
   useEffect(()=>{ load() },[load])
+
+  // Remboursements FRIA en nature dont le paddy n'est pas encore entré en stock :
+  // un bon d'entrée (tiers « Remboursement FRIA <n°> ») est créé pour chacun.
+  const [synchro, setSynchro] = useState(false)
+  const actualiserFria = async () => {
+    if (!companyId) { toast?.error("Sélectionnez une société précise (en haut de l'écran)."); return }
+    setSynchro(true)
+    const fin = () => { setSynchro(false); load() }
+    const [{ data:mv, error:e1 }, { data:bons }, { data:arts }] = await Promise.all([
+      supabase.from('compta_fria_mouvements').select('*').eq('company_id', companyId).eq('type', 'remboursement').order('date_mouvement').order('numero'),
+      supabase.from('compta_bons_stock').select('tiers').eq('company_id', companyId).like('tiers', 'Remboursement FRIA %'),
+      supabase.from('compta_articles').select('id,designation').eq('company_id', companyId).eq('actif', true),
+    ])
+    if (e1) { toast?.error(e1.message); return fin() }
+    const dejaEntres = new Set((bons || []).map(b => b.tiers))
+    const manquants = (mv || []).filter(m => +m.quantite_kg > 0 && !dejaEntres.has(tiersBonFria(m)))
+    if (!manquants.length) { toast?.success('Tous les remboursements FRIA en nature sont déjà entrés en stock.'); return fin() }
+    const kg = manquants.reduce((s, m) => s + (+m.quantite_kg || 0), 0)
+    if (!confirm(`${manquants.length} remboursement(s) FRIA en nature ne sont pas encore entrés en stock (${nbFr(kg)} kg de paddy) :\n${manquants.slice(0, 15).map(m => `• ${pieceFria(m)} — ${nbFr(m.quantite_kg)} kg`).join('\n')}${manquants.length > 15 ? '\n…' : ''}\n\nCréer leurs bons d'entrée en magasin maintenant ?`)) return fin()
+    const paddy = (arts || []).find(a => /paddy/i.test(a.designation || '') && !/[ée]tuv/i.test(a.designation || ''))
+    let articleId = paddy?.id || '__nouveau_paddy__'
+    const { data:frs } = await supabase.from('compta_fournisseurs').select('id,nom,prenom,nom_societe,village').in('id', [...new Set(manquants.map(m => m.fournisseur_id))])
+    let ok = 0; const erreurs = []
+    for (const m of manquants) {
+      const f = (frs || []).find(x => String(x.id) === String(m.fournisseur_id)) || {}
+      const nom = nomTiersTraca(f) || 'producteur'
+      const date = m.date_mouvement && m.date_mouvement <= today() ? m.date_mouvement : today()
+      const { bon, erreur } = await entrerPaddyEnStock(companyId, { article_id:articleId, date_bon:date, quantite:m.quantite_kg, prix_unitaire:m.prix_unitaire,
+        tiers:tiersBonFria(m), observationLigne:`Remboursement FRIA ${m.numero}`, observations:`Remboursement du Kit FRIA en nature — ${nom}${f.village ? ` (${f.village})` : ''}, pièce ${pieceFria(m)}.` })
+      if (erreur) erreurs.push(`${pieceFria(m)} : ${erreur}`)
+      else { ok++; if (articleId === '__nouveau_paddy__') articleId = bon._article.id }
+    }
+    if (erreurs.length) toast?.error(`${ok} entré(s) en stock, ${erreurs.length} en erreur — ${erreurs[0]}`)
+    else toast?.success(`${ok} remboursement(s) FRIA entrés en stock (${nbFr(kg)} kg de paddy).`)
+    fin()
+  }
 
   const exportCSV = async () => {
     const XLSX = await import('https://cdn.sheetjs.com/xlsx-0.20.0/package/xlsx.mjs')
@@ -6999,6 +7034,7 @@ function MouvementsPage({ companies, companyId, setPage, toast, readOnly=false }
         actions={<>
           {!readOnly && <Btn sm variant="success" onClick={()=>setPage('stock-entree')}>↓ Entrée</Btn>}
           {!readOnly && <Btn sm variant="warning" onClick={()=>setPage('stock-sortie')}>↑ Sortie</Btn>}
+          {!readOnly && <Btn sm variant="secondary" onClick={actualiserFria} disabled={synchro} title="Entrer en stock le paddy des remboursements FRIA qui n'y sont pas encore">{synchro ? '…' : '🔄 Actualiser FRIA'}</Btn>}
           <Btn sm variant="info" onClick={exportCSV}>📊 Exporter Excel</Btn>
         </>}
       />
