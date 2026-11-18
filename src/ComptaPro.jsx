@@ -13107,33 +13107,33 @@ const tiersBonFria = m => `Remboursement FRIA ${m.numero}`
 // quantité, la date et le nombre de sacs sont repris du remboursement s'ils sont connus.
 function imprimerBordereauFria(company, f, opts={}) {
   const c = company || {}, e = v => echapHtml(v == null ? '' : String(v))
-  const champ = (v, min=160) => `<span class="v" style="min-width:${min}px">${e(v) || '&nbsp;'}</span>`
+  const champ = (v, poids=1) => `<span class="v" style="flex-grow:${poids}" title="${e(v)}">${e(v) || '&nbsp;'}</span>`
   const kg = +opts.quantite_kg > 0 ? nbFr(Math.floor(+opts.quantite_kg)) : ''
   const date = opts.date ? dateDoc(opts.date) : ''
   const commune = f.commune || ''
   const html = `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><title>Bordereau de réception Kit-FRIA — ${e(nomTiersTraca(f))}</title>
   <style>
-    @page { size:A5 landscape; margin:10mm }
-    *{ box-sizing:border-box } body{ font-family:Arial, Helvetica, sans-serif; color:#111; margin:0; padding:14px; font-size:12.5px }
+    @page { size:A5 landscape; margin:6mm }
+    *{ box-sizing:border-box } body{ font-family:Arial, Helvetica, sans-serif; color:#111; margin:0; padding:14px; font-size:11.5px }
     .print-btn{ position:fixed; top:10px; right:10px; padding:8px 14px; background:#082818; color:#fff; border:none; border-radius:6px; cursor:pointer; font-weight:700 }
-    @media print{ .print-btn{ display:none } body{ padding:0 } }
-    .feuille{ max-width:780px; margin:0 auto; border:1.5px solid #111; padding:16px 20px }
-    .l{ display:flex; gap:10px; align-items:flex-end; margin:7px 0; flex-wrap:wrap }
-    .l b{ white-space:nowrap } .v{ display:inline-block; border-bottom:1px dotted #333; padding:0 4px 1px; flex:1; font-weight:600; color:#0b3d91 }
-    h1{ text-align:center; font-size:17px; letter-spacing:.5px; text-decoration:underline; margin:12px 0 10px }
-    table{ width:100%; border-collapse:collapse; margin:12px 0 } td{ border:1.2px solid #111; padding:8px 10px; height:34px }
+    @media print{ .print-btn{ display:none } body{ padding:0 } .feuille{ break-inside:avoid; page-break-inside:avoid } }
+    .feuille{ max-width:780px; margin:0 auto; border:1.5px solid #111; padding:10px 16px }
+    .l{ display:flex; gap:8px; align-items:flex-end; margin:6px 0 }
+    .l b{ white-space:nowrap } .v{ display:inline-block; border-bottom:1px dotted #333; padding:0 4px 1px; flex:1 1 0; min-width:0; font-weight:600; color:#0b3d91; overflow-wrap:anywhere }
+    h1{ text-align:center; font-size:15px; letter-spacing:.5px; text-decoration:underline; margin:7px 0 5px }
+    table{ width:100%; border-collapse:collapse; margin:7px 0 } td{ border:1.2px solid #111; padding:5px 10px; height:29px }
     td.k{ width:42%; font-weight:700 } td.u{ width:44px; text-align:center; font-weight:700 } td.val{ font-weight:600; color:#0b3d91 }
-    .sig{ display:grid; grid-template-columns:1fr 1fr; gap:26px 40px; margin-top:16px } .sig div{ text-align:center; font-style:italic; min-height:58px }
-    .sig div span{ display:block; font-style:normal; font-size:11px; color:#555; margin-top:34px; border-top:1px dotted #333; padding-top:3px }
+    .sig{ display:grid; grid-template-columns:1fr 1fr; gap:8px 40px; margin-top:6px } .sig div{ text-align:center; font-style:italic }
+    .sig div span{ display:block; font-style:normal; font-size:10px; color:#555; margin-top:32px; border-top:1px dotted #333; padding-top:2px }
   </style></head><body>
   <button class="print-btn" onclick="window.print()">🖨️ Imprimer / PDF</button>
   <div class="feuille">
-    <div class="l"><b>Agro-industrie :</b>${champ(c.raison_sociale, 260)}<b>Tél :</b>${champ(c.tel, 140)}</div>
-    <div class="l"><b>Commune :</b>${champ(commune, 220)}</div>
+    <div class="l"><b>Agro-industrie :</b>${champ(c.raison_sociale, 3)}<b>Tél :</b>${champ(c.tel, 1)}</div>
+    <div class="l"><b>Commune :</b>${champ(commune, 1)}</div>
     <h1>BORDEREAU DE RÉCEPTION KIT-FRIA</h1>
-    <div class="l"><b>Nom et prénoms :</b>${champ(nomTiersTraca(f), 200)}<b>Coopérative :</b>${champ(f.cooperative_affiliee, 110)}<b>Village :</b>${champ(f.village, 100)}</div>
-    <div class="l"><b>Numéro CIP/NPI :</b>${champ(f.cip, 150)}<b>Réf contrat :</b>${champ(f.numero_contrat, 110)}<b>Téléphone :</b>${champ(f.telephone, 110)}</div>
-    <div class="l"><b>Désignation du produit et variété :</b>${champ('Riz paddy' + (opts.variete ? ' — ' + opts.variete : ''), 260)}</div>
+    <div class="l"><b>Nom et prénoms :</b>${champ(nomTiersTraca(f), 2)}<b>Coopérative :</b>${champ(f.cooperative_affiliee, 1)}<b>Village :</b>${champ(f.village, 1)}</div>
+    <div class="l"><b>Numéro CIP/NPI :</b>${champ(f.cip, 1)}<b>Réf contrat :</b>${champ(f.numero_contrat, 1)}<b>Téléphone :</b>${champ(f.telephone, 1)}</div>
+    <div class="l"><b>Désignation du produit et variété :</b>${champ('Riz paddy' + (opts.variete ? ' — ' + opts.variete : ''), 1)}</div>
     <table>
       <tr><td class="k">Quantité (poids)</td><td class="val">${kg}</td><td class="u">kg</td></tr>
       <tr><td class="k">Code du producteur</td><td class="val" colspan="2">${e(f.code_trace)}</td></tr>
