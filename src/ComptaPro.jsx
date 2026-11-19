@@ -2197,6 +2197,125 @@ const CONSOL_TYPES = {
   fournisseurs: { label:'Fournisseurs',     table:'compta_fournisseurs', icon:'🚚', columns:CONSOL_TIERS_COLUMNS(true),  val:consolTiersVal },
   clients:      { label:'Clients',          table:'compta_clients',      icon:'👥', columns:CONSOL_TIERS_COLUMNS(false), val:consolTiersVal },
   articles:     { label:'Articles & Stock', table:'compta_articles',     icon:'📦', columns:CONSOL_ARTICLES_COLUMNS,     val:consolArticleVal },
+  stock_periode:{ label:'Stocks sur période', icon:'🏬', special:true },
+}
+
+// ── Stocks centralisés sur une période (super administrateur) ──
+// Pour chaque article de chaque société : stock au début, entrées, sorties, stock à la
+// fin, reconstitués à partir du stock actuel et des mouvements de stock (les mouvements
+// postérieurs à la période sont « défaits »). Les articles de même désignation et unité
+// sont additionnés dans la vue consolidée.
+function ConsolStockPeriode({ selectedIds, allCompanies, toast }) {
+  const [du, setDu] = useState(`${new Date().getFullYear()}-01-01`)
+  const [au, setAu] = useState(today())
+  const [vue, setVue] = useState('consolide')
+  const [q, setQ] = useState('')
+  const [res, setRes] = useState(null)
+  const [chargement, setChargement] = useState(false)
+  const nomSoc = id => allCompanies.find(c => c.id === id)?.raison_sociale || '—'
+
+  const calculer = async () => {
+    if (!selectedIds.length) { toast.error('Sélectionnez au moins une société.'); return }
+    if (du && au && du > au) { toast.error('La date de début est après la date de fin.'); return }
+    setChargement(true)
+    try {
+      const [{ data:arts, error:ea }, { data:mvts, error:em }] = await Promise.all([
+        fetchAllRows(() => supabase.from('compta_articles').select('id,company_id,code,designation,unite,categorie,stock_actuel,prix_achat,actif').in('company_id', selectedIds).order('designation')),
+        fetchAllRows(() => { let r = supabase.from('compta_mouvements_stock').select('id,article_id,company_id,type,quantite,date_mvt').in('company_id', selectedIds); if (du) r = r.gte('date_mvt', du); return r.order('date_mvt').order('id') }),
+      ])
+      if (ea || em) { toast.error((ea || em).message); return }
+      const parArt = {}
+      for (const m of mvts || []) {
+        const x = parArt[m.article_id] || (parArt[m.article_id] = { entP:0, sorP:0, entApres:0, sorApres:0 })
+        const qte = +m.quantite || 0, apres = au && m.date_mvt > au
+        if (m.type === 'entree') { if (apres) x.entApres += qte; else x.entP += qte }
+        else if (m.type === 'sortie') { if (apres) x.sorApres += qte; else x.sorP += qte }
+      }
+      const r3 = v => Math.round(v * 1000) / 1000
+      const lignes = (arts || []).map(a => {
+        const x = parArt[a.id] || { entP:0, sorP:0, entApres:0, sorApres:0 }
+        const fin = r3((+a.stock_actuel || 0) - x.entApres + x.sorApres)
+        const debut = r3(fin - x.entP + x.sorP)
+        return { societe:nomSoc(a.company_id), company_id:a.company_id, code:a.code || '', designation:a.designation || '', unite:a.unite || '', categorie:CAT_LABELS[a.categorie] || a.categorie || '',
+          debut, entrees:r3(x.entP), sorties:r3(x.sorP), fin, prix:+a.prix_achat || 0, valeur:Math.round(fin * (+a.prix_achat || 0)), actif:a.actif !== false }
+      }).filter(l => l.actif || l.debut || l.entrees || l.sorties || l.fin)
+      const groupes = {}
+      for (const l of lignes) {
+        const k = toUpperNoAccent(l.designation).trim() + '|' + (l.unite || '').toLowerCase()
+        const g = groupes[k] || (groupes[k] = { designation:l.designation, unite:l.unite, categorie:l.categorie, debut:0, entrees:0, sorties:0, fin:0, valeur:0, societes:new Set() })
+        g.debut += l.debut; g.entrees += l.entrees; g.sorties += l.sorties; g.fin += l.fin; g.valeur += l.valeur; g.societes.add(l.company_id)
+      }
+      const consolide = Object.values(groupes).map(g => ({ ...g, debut:r3(g.debut), entrees:r3(g.entrees), sorties:r3(g.sorties), fin:r3(g.fin), nbSoc:g.societes.size,
+        prixMoyen:g.fin > 0 ? Math.round(g.valeur / g.fin) : 0 })).sort((a, b) => a.designation.localeCompare(b.designation, 'fr'))
+      lignes.sort((a, b) => a.societe.localeCompare(b.societe, 'fr') || a.designation.localeCompare(b.designation, 'fr'))
+      setRes({ lignes, consolide, du, au, nbSoc:selectedIds.length })
+    } finally { setChargement(false) }
+  }
+
+  const filtre = l => !q || `${l.designation} ${l.societe || ''} ${l.code || ''}`.toLowerCase().includes(q.toLowerCase())
+  const exporter = async () => {
+    if (!res) return
+    const XLSX = await import('https://cdn.sheetjs.com/xlsx-0.20.0/package/xlsx.mjs')
+    const periode = `${res.du ? dateDoc(res.du) : "l'origine"} au ${res.au ? dateDoc(res.au) : "aujourd'hui"}`
+    const entete = [[`Stocks centralisés — période du ${periode}`], [`${res.nbSoc} société(s) — exporté le ${new Date().toLocaleDateString('fr-FR')}`], []]
+    const t1 = [['Article', 'Unité', 'Catégorie', 'Sociétés', 'Stock début', 'Entrées', 'Sorties', 'Stock fin', 'Prix moyen (FCFA)', 'Valeur stock fin (FCFA)'],
+      ...res.consolide.map(g => [g.designation, g.unite, g.categorie, g.nbSoc, g.debut, g.entrees, g.sorties, g.fin, g.prixMoyen, g.valeur]),
+      ['TOTAL', '', '', '', '', '', '', '', '', res.consolide.reduce((s, g) => s + g.valeur, 0)]]
+    const t2 = [['Société', 'Code', 'Article', 'Unité', 'Catégorie', 'Stock début', 'Entrées', 'Sorties', 'Stock fin', 'Prix achat (FCFA)', 'Valeur stock fin (FCFA)'],
+      ...res.lignes.map(l => [l.societe, l.code, l.designation, l.unite, l.categorie, l.debut, l.entrees, l.sorties, l.fin, l.prix, l.valeur]),
+      ['TOTAL', '', '', '', '', '', '', '', '', '', res.lignes.reduce((s, l) => s + l.valeur, 0)]]
+    const wb = XLSX.utils.book_new()
+    const ws1 = XLSX.utils.aoa_to_sheet([...entete, ...t1]); ws1['!cols'] = [{ wch:30 }, { wch:8 }, { wch:16 }, { wch:9 }, ...Array(6).fill({ wch:14 })]
+    const ws2 = XLSX.utils.aoa_to_sheet([...entete, ...t2]); ws2['!cols'] = [{ wch:36 }, { wch:10 }, { wch:30 }, { wch:8 }, { wch:16 }, ...Array(6).fill({ wch:14 })]
+    XLSX.utils.book_append_sheet(wb, ws1, 'Consolidé par article')
+    XLSX.utils.book_append_sheet(wb, ws2, 'Détail par société')
+    XLSX.writeFile(wb, `stocks_centralises_${res.du || 'origine'}_${res.au || today()}.xlsx`)
+  }
+
+  const champ = { padding:'7px 10px', borderRadius:8, border:'1px solid #d1d5db', fontSize:13 }
+  const th = (h, r) => <th key={h} style={{ padding:'8px 10px', textAlign:r ? 'right' : 'left', fontSize:11.5, color:'#475569', background:'#f1f5f9', whiteSpace:'nowrap' }}>{h}</th>
+  const td = (v, r, b) => <td style={{ padding:'7px 10px', textAlign:r ? 'right' : 'left', fontWeight:b ? 700 : 400, borderTop:'1px solid #f1f5f9', whiteSpace:'nowrap' }}>{v}</td>
+  const mouv = l => <>{td(nbFr(l.debut), 1)}{td(<span style={{ color:'#15803d' }}>+{nbFr(l.entrees)}</span>, 1)}{td(<span style={{ color:'#b45309' }}>−{nbFr(l.sorties)}</span>, 1)}{td(nbFr(l.fin), 1, 1)}{td(nbFr(l.valeur), 1)}</>
+  const liste = res ? (vue === 'consolide' ? res.consolide : res.lignes).filter(filtre) : []
+  return (
+    <>
+      <Card style={{ marginBottom:16, padding:'16px 20px' }}>
+        <div style={{ fontSize:12, fontWeight:700, color:'#082818', marginBottom:8, textTransform:'uppercase' }}>3. Période</div>
+        <div style={{ display:'flex', gap:10, alignItems:'center', flexWrap:'wrap' }}>
+          <span style={{ fontSize:13 }}>Du</span><input type="date" style={champ} value={du} onChange={e=>setDu(e.target.value)} />
+          <span style={{ fontSize:13 }}>au</span><input type="date" style={champ} value={au} onChange={e=>setAu(e.target.value)} />
+          <Btn onClick={calculer} disabled={chargement}>{chargement ? '⏳ Calcul…' : '🏬 Centraliser les stocks'}</Btn>
+          {res && <Btn variant="info" onClick={exporter}>📊 Exporter Excel</Btn>}
+        </div>
+        <div style={{ fontSize:11.5, color:'#64748b', marginTop:8 }}>Le stock de début et de fin est reconstitué à partir du stock actuel et des mouvements de stock (entrées, sorties, bons). Laissez « Du » vide pour partir de l'origine.</div>
+      </Card>
+      {res && <Card style={{ padding:0, overflow:'hidden' }}>
+        <div style={{ display:'flex', gap:10, alignItems:'center', flexWrap:'wrap', padding:'12px 16px' }}>
+          <select style={champ} value={vue} onChange={e=>setVue(e.target.value)}>
+            <option value="consolide">Consolidé par article ({res.consolide.length})</option>
+            <option value="societe">Détail par société ({res.lignes.length})</option>
+          </select>
+          <input style={{ ...champ, flex:'1 1 200px' }} placeholder="Rechercher un article ou une société…" value={q} onChange={e=>setQ(e.target.value)} />
+          <span style={{ fontSize:12.5, color:'#64748b' }}>Du {res.du ? dateDoc(res.du) : "l'origine"} au {res.au ? dateDoc(res.au) : "aujourd'hui"} — {res.nbSoc} société(s)</span>
+        </div>
+        <div style={{ overflowX:'auto' }}>
+          <table style={{ width:'100%', borderCollapse:'collapse', fontSize:13 }}>
+            <thead><tr>{vue === 'consolide'
+              ? [th('Article'), th('Unité'), th('Sociétés', 1), th('Stock début', 1), th('Entrées', 1), th('Sorties', 1), th('Stock fin', 1), th('Valeur fin (FCFA)', 1)]
+              : [th('Société'), th('Article'), th('Unité'), th('Stock début', 1), th('Entrées', 1), th('Sorties', 1), th('Stock fin', 1), th('Valeur fin (FCFA)', 1)]}</tr></thead>
+            <tbody>
+              {liste.map((l, i) => <tr key={i}>{vue === 'consolide'
+                ? <>{td(l.designation, 0, 1)}{td(l.unite)}{td(l.nbSoc, 1)}{mouv(l)}</>
+                : <>{td(l.societe)}{td(l.designation, 0, 1)}{td(l.unite)}{mouv(l)}</>}</tr>)}
+              {!liste.length && <tr><td colSpan={8} style={{ padding:18, textAlign:'center', color:'#94a3b8' }}>Aucun article.</td></tr>}
+              {liste.length > 0 && <tr style={{ background:'#f8fafc' }}><td colSpan={7} style={{ padding:'9px 10px', textAlign:'right', fontWeight:700 }}>Valeur totale du stock en fin de période</td>
+                {td(nbFr(liste.reduce((s, l) => s + l.valeur, 0)) + ' FCFA', 1, 1)}</tr>}
+            </tbody>
+          </table>
+        </div>
+      </Card>}
+    </>
+  )
 }
 
 function ConsolidationPage({ toast }) {
@@ -2225,7 +2344,7 @@ function ConsolidationPage({ toast }) {
   const changeDataType = key => { setDataType(key); setSelectedCols(null) }
 
   const cfg = CONSOL_TYPES[dataType]
-  const allColumns = cfg.columns
+  const allColumns = cfg.columns || []
   // L'ordre d'export suit l'ordre de selectedCols, pas l'ordre fixe de allColumns —
   // meme convention que TiersPage, pour permettre le reordonnancement via moveCol.
   const visibleColumns = (selectedCols===null ? allColumns.map(c=>c.key) : selectedCols)
@@ -2345,6 +2464,7 @@ function ConsolidationPage({ toast }) {
         </div>
       </Card>
 
+      {cfg.special ? <ConsolStockPeriode selectedIds={selectedIds} allCompanies={allCompanies} toast={toast} /> : <>
       <Card style={{marginBottom:16,padding:'16px 20px'}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
           <div style={{fontSize:12,fontWeight:700,color:'#082818',textTransform:'uppercase'}}>3. Colonnes à inclure</div>
@@ -2387,6 +2507,7 @@ function ConsolidationPage({ toast }) {
         <Btn onClick={generate} disabled={generating}>{generating?'⏳ Génération…':'📊 Télécharger Excel consolidé'}</Btn>
         {lastResult && <span style={{fontSize:13,color:'#64748b'}}>Dernier export : {lastResult.total} ligne(s) sur {lastResult.nbSocietes} société(s).</span>}
       </div>
+      </>}
     </div>
   )
 }
