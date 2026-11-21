@@ -7052,6 +7052,39 @@ function MouvementsPage({ companies, companyId, setPage, toast, readOnly=false }
   const [dateTo,   setDateTo]   = useState('')
   const [artFilter,  setArtFilter]  = useState('')
   const [typeFilter, setTypeFilter] = useState('')
+  const [communeFilter, setCommuneFilter] = useState('')
+  const [communes, setCommunes] = useState({})   // référence du bon -> commune
+
+  // Commune d'un mouvement : celle du producteur (remboursement FRIA) ou de l'achat
+  // (achat hors FRIA), retrouvée par le bon d'entrée / de sortie du mouvement.
+  const chargerCommunes = useCallback(async mvts => {
+    const refs = [...new Set(mvts.map(m => m.reference).filter(Boolean))]
+    if (!companyId || !refs.length) { setCommunes({}); return }
+    const { data:bons } = await supabase.from('compta_bons_stock').select('numero,tiers').eq('company_id', companyId).in('numero', refs)
+    const fria = {}, grp = {}
+    for (const b of bons || []) {
+      const f = /^Remboursement FRIA (.+)$/.exec(b.tiers || ''), g = /^Achat groupé (.+)$/.exec(b.tiers || '')
+      if (f) fria[b.numero] = f[1]; else if (g) grp[b.numero] = g[1]
+    }
+    const [{ data:mv }, { data:gs }] = await Promise.all([
+      Object.keys(fria).length ? supabase.from('compta_fria_mouvements').select('numero,fournisseur_id').eq('company_id', companyId).in('numero', Object.values(fria)) : { data:[] },
+      Object.keys(grp).length ? supabase.from('compta_achats_groupes').select('numero,commune').eq('company_id', companyId).in('numero', Object.values(grp)) : { data:[] },
+    ])
+    const fids = [...new Set((mv || []).map(m => m.fournisseur_id))]
+    const { data:frs } = fids.length ? await supabase.from('compta_fournisseurs').select('id,commune').in('id', fids) : { data:[] }
+    const propre = c => String(c || '').trim().toUpperCase()
+    const res = {}
+    for (const [ref, num] of Object.entries(fria)) {
+      const m = (mv || []).find(x => x.numero === num), f = m && (frs || []).find(x => String(x.id) === String(m.fournisseur_id))
+      if (propre(f?.commune)) res[ref] = propre(f.commune)
+    }
+    for (const [ref, num] of Object.entries(grp)) { const g = (gs || []).find(x => x.numero === num); if (propre(g?.commune)) res[ref] = propre(g.commune) }
+    setCommunes(res)
+  }, [companyId])
+  const communeDe = m => communes[m.reference] || ''
+  const filtreMvt = m => (!artFilter || m.article_id === artFilter) && (!typeFilter || m.type === typeFilter)
+    && (!communeFilter || (communeFilter === '__aucune__' ? !communeDe(m) : communeDe(m) === communeFilter))
+  const listeCommunes = [...new Set(Object.values(communes))].sort((a, b) => a.localeCompare(b, 'fr'))
 
   const load = useCallback(async()=>{
     const { data:adock } = await supabase.auth.getUser(); const uidock=adock?.user?.id
@@ -7059,8 +7092,8 @@ function MouvementsPage({ companies, companyId, setPage, toast, readOnly=false }
     q = parSociete(q, companyId, uidock)   // toute la société, pas seulement les saisies de l'utilisateur
     if (dateFrom)  q=q.gte('date_mvt',dateFrom)
     if (dateTo)    q=q.lte('date_mvt',dateTo)
-    const { data } = await q; setItems(data||[])
-  },[companyId,dateFrom,dateTo])
+    const { data } = await q; setItems(data||[]); chargerCommunes(data||[])
+  },[companyId,dateFrom,dateTo,chargerCommunes])
 
   useEffect(()=>{ load() },[load])
 
@@ -7114,10 +7147,8 @@ function MouvementsPage({ companies, companyId, setPage, toast, readOnly=false }
   const exportCSV = async () => {
     const XLSX = await import('https://cdn.sheetjs.com/xlsx-0.20.0/package/xlsx.mjs')
     const fq = v => { const n = parseFloat(v)||0; return n%1===0 ? n : parseFloat(n.toFixed(3)) }
-    const visibles = items
-      .filter(m => !artFilter  || m.article_id === artFilter)
-      .filter(m => !typeFilter || m.type === typeFilter)
-    const header = ['Date','Article','Unité','Type','Motif','Quantité','Prix Unitaire (FCFA)','Montant (FCFA)','Référence']
+    const visibles = items.filter(filtreMvt)
+    const header = ['Date','Article','Unité','Type','Motif','Quantité','Prix Unitaire (FCFA)','Montant (FCFA)','Référence','Commune']
     const rows = visibles.map(m=>[
       m.date_mvt||'',
       m.compta_articles?.designation||'',
@@ -7128,9 +7159,10 @@ function MouvementsPage({ companies, companyId, setPage, toast, readOnly=false }
       Math.round(m.prix_unitaire||0),
       Math.round(m.montant||0),
       m.reference||'',
+      communeDe(m),
     ])
     const ws = XLSX.utils.aoa_to_sheet([header,...rows])
-    ws['!cols'] = [{wch:12},{wch:28},{wch:8},{wch:8},{wch:18},{wch:12},{wch:20},{wch:18},{wch:20}]
+    ws['!cols'] = [{wch:12},{wch:28},{wch:8},{wch:8},{wch:18},{wch:12},{wch:20},{wch:18},{wch:20},{wch:16}]
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Mouvements')
     const period = dateFrom||dateTo ? `_${dateFrom||'debut'}_${dateTo||'fin'}` : ''
@@ -7162,7 +7194,7 @@ function MouvementsPage({ companies, companyId, setPage, toast, readOnly=false }
 
   return (
     <div>
-      <PageHeader title="Mouvements de stock" subtitle={`${items.filter(m=>(!artFilter||m.article_id===artFilter)&&(!typeFilter||m.type===typeFilter)).length} / ${items.length} mouvement(s)`}
+      <PageHeader title="Mouvements de stock" subtitle={`${items.filter(filtreMvt).length} / ${items.length} mouvement(s)`}
         actions={<>
           {!readOnly && <Btn sm variant="success" onClick={()=>setPage('stock-entree')}>↓ Entrée</Btn>}
           {!readOnly && <Btn sm variant="warning" onClick={()=>setPage('stock-sortie')}>↑ Sortie</Btn>}
@@ -7197,8 +7229,14 @@ function MouvementsPage({ companies, companyId, setPage, toast, readOnly=false }
               .sort((a,b)=>a[1].localeCompare(b[1]))
               .map(([id,des])=><option key={id} value={id}>{des}</option>)}
           </select>
-          {(dateFrom||dateTo||artFilter||typeFilter) && (
-            <Btn sm variant="secondary" onClick={()=>{setDateFrom('');setDateTo('');setArtFilter('');setTypeFilter('')}}>✕ Tout réinitialiser</Btn>
+          <select value={communeFilter} onChange={e=>setCommuneFilter(e.target.value)}
+            style={{padding:'6px 12px',borderRadius:7,border:'1px solid #d1d5db',fontSize:13,background:'white',maxWidth:200}}>
+            <option value="">Toutes les communes</option>
+            {listeCommunes.map(c=><option key={c} value={c}>{c}</option>)}
+            <option value="__aucune__">Commune non précisée</option>
+          </select>
+          {(dateFrom||dateTo||artFilter||typeFilter||communeFilter) && (
+            <Btn sm variant="secondary" onClick={()=>{setDateFrom('');setDateTo('');setArtFilter('');setTypeFilter('');setCommuneFilter('')}}>✕ Tout réinitialiser</Btn>
           )}
         </div>
       </Card>
@@ -7210,12 +7248,11 @@ function MouvementsPage({ companies, companyId, setPage, toast, readOnly=false }
             <table style={{width:'100%',borderCollapse:'collapse',minWidth:600}}>
             <thead><tr>
               <TH>Date</TH><TH>Article</TH><TH>Type</TH><TH>Motif</TH>
-              <TH right>Quantité</TH><TH right>P.U</TH><TH right>Montant</TH><TH>Référence</TH><TH></TH>
+              <TH right>Quantité</TH><TH right>P.U</TH><TH right>Montant</TH><TH>Référence</TH><TH>Commune</TH><TH></TH>
             </tr></thead>
             <tbody>
               {items
-                .filter(m => !artFilter  || m.article_id === artFilter)
-                .filter(m => !typeFilter || m.type === typeFilter)
+                .filter(filtreMvt)
                 .map(m=>(
                 <TR key={m.id}>
                   <TD sm>{m.date_mvt}</TD>
@@ -7226,6 +7263,7 @@ function MouvementsPage({ companies, companyId, setPage, toast, readOnly=false }
                   <TD right sm>{fcfa(m.prix_unitaire)}</TD>
                   <TD right bold>{fcfa(m.montant)}</TD>
                   <TD sm>{m.reference||'—'}</TD>
+                  <TD sm>{communeDe(m)||'—'}</TD>
                   <TD>{!readOnly && <button onClick={()=>delMvt(m.id)} title="Supprimer" style={{background:'none',border:'none',cursor:'pointer',color:'#dc2626',fontSize:16,padding:'2px 6px',borderRadius:4}} onMouseOver={e=>e.target.style.background='#fee2e2'} onMouseOut={e=>e.target.style.background='none'}>🗑️</button>}</TD>
                 </TR>
               ))}
@@ -13320,7 +13358,7 @@ function imprimerBordereauFria(company, f, opts={}) {
 
 function EpargneFriaPage({ companies, companyId, toast, readOnly=false }) {
   const [d, setD] = useState({ fournisseurs:[], tous:[], avances:[], lignes:[], groupes:[], mvts:[], articles:[], bons:[], loading:true, erreur:false })
-  const [filtre, setFiltre] = useState({ campagne:'', village:'', q:'', vue:'producteurs', tous:false })
+  const [filtre, setFiltre] = useState({ campagne:'', commune:'', village:'', q:'', vue:'producteurs', tous:false })
   const [form, setForm] = useState(null)
   const [saving, setSaving] = useState(false)
   const [choix, setChoix] = useState(null)   // { f, liste } : mouvements d'un producteur parmi lesquels choisir celui à modifier
@@ -13352,13 +13390,16 @@ function EpargneFriaPage({ companies, companyId, toast, readOnly=false }) {
   const sit = f => situationFria(f.id, d)
   const kitCampagne = (f, camp) => Math.round(d.avances.filter(a => String(a.fournisseur_id) === String(f.id) && (!camp || a.campagne === camp)).reduce((t,a)=>t+(+a.valeur_remboursement||0),0))
   const campagnes = [...new Set([campSoc, ...d.avances.map(a => a.campagne), ...d.mvts.map(m => m.campagne)].filter(Boolean))].sort().reverse()
-  const villages = [...new Set(d.fournisseurs.map(f => f.village).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'fr'))
+  const communeF = f => String(f?.commune || '').trim().toUpperCase()
+  const communes = [...new Set(d.fournisseurs.map(communeF).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'fr'))
+  const okCommune = f => !filtre.commune || (filtre.commune === '__aucune__' ? !communeF(f) : communeF(f) === filtre.commune)
+  const villages = [...new Set(d.fournisseurs.filter(okCommune).map(f => f.village).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'fr'))
   const lignesSit = d.fournisseurs.map(f => ({ f, s:sit(f), kitC:kitCampagne(f, filtre.campagne) }))
     .filter(x => filtre.tous || x.s.kit > 0 || x.s.rembourse > 0 || x.s.epargne > 0 || x.s.enCours > 0)
-    .filter(x => (!filtre.village || (x.f.village||'') === filtre.village)
+    .filter(x => okCommune(x.f) && (!filtre.village || (x.f.village||'') === filtre.village)
       && (!filtre.q || normAG(`${nomTiersTraca(x.f)} ${x.f.code_trace||''} ${x.f.cip||''} ${x.f.cooperative_affiliee||''}`).includes(normAG(filtre.q))))
   const tot = k => lignesSit.reduce((t,x)=>t+(k === 'kitC' ? x.kitC : x.s[k]),0)
-  const mvtsVisibles = d.mvts.filter(m => (!filtre.campagne || m.campagne === filtre.campagne)
+  const mvtsVisibles = d.mvts.filter(m => (!filtre.campagne || m.campagne === filtre.campagne) && okCommune(frsDe(m.fournisseur_id))
     && (!filtre.q || normAG(`${m.numero} ${nomTiersTraca(frsDe(m.fournisseur_id))} ${m.tiers_nom||''}`).includes(normAG(filtre.q))))
 
   const verifier = () => {
@@ -13637,7 +13678,7 @@ function EpargneFriaPage({ companies, companyId, toast, readOnly=false }) {
   const imprimerEtat = () => {
     if (!lignesSit.length) return toast.error('Aucun producteur à imprimer.')
     openPrintWindow(gabaritDocumentHtml({ comp:company, titre:'SITUATION DE L\'ÉPARGNE FRIA', numero:'', date:new Date().toLocaleDateString('fr-FR'),
-      infos:[['Campagne (kit)', filtre.campagne||'Toutes'], ['Village', filtre.village||'Tous'], ['Producteurs', String(lignesSit.length)]],
+      infos:[['Campagne (kit)', filtre.campagne||'Toutes'], ['Commune', filtre.commune === '__aucune__' ? 'Non précisée' : filtre.commune||'Toutes'], ['Village', filtre.village||'Tous'], ['Producteurs', String(lignesSit.length)]],
       tiersLabel:'Kit FRIA', tiers:{ nom:'Remboursement en nature et épargne des producteurs' },
       colonnes:[{label:'Producteur'},{label:'Village'},{label:`Kit ${filtre.campagne||'(toutes)'}`,align:'d'},{label:'Kit total',align:'d'},{label:'Financé épargne',align:'d'},{label:'Remboursé',align:'d'},{label:'Reste à rembourser',align:'d'},{label:'Épargne FRIA',align:'d'}],
       lignes:lignesSit.map(x => [`${echapHtml(nomTiersTraca(x.f))}${x.f.code_trace ? `<br><small>${echapHtml(x.f.code_trace)}</small>` : ''}`, echapHtml(x.f.village||''),
@@ -13648,8 +13689,8 @@ function EpargneFriaPage({ companies, companyId, toast, readOnly=false }) {
   const exporterExcel = async () => {
     if (!lignesSit.length) return toast.error('Aucun producteur à exporter.')
     const XLSX = await import('https://cdn.sheetjs.com/xlsx-0.20.0/package/xlsx.mjs')
-    const rows = [['Producteur','Code','Téléphone','Village','Coopérative',`Kit ${filtre.campagne||'(toutes campagnes)'}`,'Kit total','Financé par épargne','Remboursé (groupes)','Remboursé (hors groupe)','En cours (groupe ouvert)','Reste à rembourser','Restitué','Épargne FRIA disponible'],
-      ...lignesSit.map(x => [nomTiersTraca(x.f), x.f.code_trace||'', x.f.telephone||'', x.f.village||'', x.f.cooperative_affiliee||'', x.kitC, x.s.kit, x.s.finance, x.s.rembGroupes, x.s.rembIsole, x.s.enCours, x.s.reste, x.s.restitue, x.s.epargne])]
+    const rows = [['Producteur','Code','Téléphone','Commune','Village','Coopérative',`Kit ${filtre.campagne||'(toutes campagnes)'}`,'Kit total','Financé par épargne','Remboursé (groupes)','Remboursé (hors groupe)','En cours (groupe ouvert)','Reste à rembourser','Restitué','Épargne FRIA disponible'],
+      ...lignesSit.map(x => [nomTiersTraca(x.f), x.f.code_trace||'', x.f.telephone||'', communeF(x.f), x.f.village||'', x.f.cooperative_affiliee||'', x.kitC, x.s.kit, x.s.finance, x.s.rembGroupes, x.s.rembIsole, x.s.enCours, x.s.reste, x.s.restitue, x.s.epargne])]
     const ws = XLSX.utils.aoa_to_sheet(rows)
     ws['!cols'] = rows[0].map((_,i) => ({ wch: i === 0 ? 30 : 16 }))
     const wb = XLSX.utils.book_new()
@@ -13677,6 +13718,10 @@ function EpargneFriaPage({ companies, companyId, toast, readOnly=false }) {
           </select>
           <select style={selStyle} value={filtre.campagne} onChange={e=>setFiltre(x=>({...x, campagne:e.target.value}))}>
             <option value="">Toutes les campagnes</option>{campagnes.map(c => <option key={c} value={c}>Campagne {c}</option>)}
+          </select>
+          <select style={selStyle} value={filtre.commune} onChange={e=>setFiltre(x=>({...x, commune:e.target.value, village:''}))}>
+            <option value="">Toutes les communes</option>{communes.map(c => <option key={c} value={c}>{c}</option>)}
+            <option value="__aucune__">Commune non précisée</option>
           </select>
           {filtre.vue === 'producteurs' && <select style={selStyle} value={filtre.village} onChange={e=>setFiltre(x=>({...x, village:e.target.value}))}>
             <option value="">Tous les villages</option>{villages.map(v => <option key={v} value={v}>{v}</option>)}
