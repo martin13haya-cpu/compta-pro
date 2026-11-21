@@ -7267,6 +7267,18 @@ function MouvementsPage({ companies, companyId, setPage, toast, readOnly=false }
                   <TD>{!readOnly && <button onClick={()=>delMvt(m.id)} title="Supprimer" style={{background:'none',border:'none',cursor:'pointer',color:'#dc2626',fontSize:16,padding:'2px 6px',borderRadius:4}} onMouseOver={e=>e.target.style.background='#fee2e2'} onMouseOut={e=>e.target.style.background='none'}>🗑️</button>}</TD>
                 </TR>
               ))}
+              {(() => { const vis = items.filter(filtreMvt); if (!vis.length) return null
+                const som = (ty, k) => vis.filter(m => m.type === ty).reduce((s, m) => s + (+m[k] || 0), 0)
+                const unites = [...new Set(vis.map(m => m.compta_articles?.unite || ''))], u = unites.length === 1 ? ' ' + unites[0] : ''
+                const qE = som('entree', 'quantite'), qS = som('sortie', 'quantite'), mE = som('entree', 'montant'), mS = som('sortie', 'montant')
+                const cel = { padding:'10px 16px', textAlign:'right', whiteSpace:'nowrap' }
+                return <tr style={{ background:'#f1f5f9', fontWeight:700, borderTop:'2px solid #cbd5e1' }}>
+                  <td colSpan={4} style={{ padding:'10px 16px', textAlign:'right' }}>Total ({vis.length} mouvement{vis.length > 1 ? 's' : ''})</td>
+                  <td style={cel}>{qE > 0 && <div style={{ color:'#16a34a' }}>+{fmtQty(qE)}{u}</div>}{qS > 0 && <div style={{ color:'#dc2626' }}>−{fmtQty(qS)}{u}</div>}
+                    {qE > 0 && qS > 0 && <div style={{ fontSize:11.5, color:'#334155' }}>Solde : {fmtQty(qE - qS)}{u}</div>}</td>
+                  <td></td>
+                  <td style={cel}>{mE > 0 && <div>{fcfa(mE)}</div>}{mS > 0 && <div style={{ color:'#dc2626' }}>−{fcfa(mS)}</div>}</td>
+                  <td colSpan={3}></td></tr> })()}
             </tbody>
           </table>
           </div>
@@ -13782,6 +13794,16 @@ function EpargneFriaPage({ companies, companyId, toast, readOnly=false }) {
                     ]} /></TD>
                   </TR>) })}
               {!mvtsVisibles.length && <tr><td colSpan={9} style={{ padding:20, textAlign:'center', color:'#94a3b8' }}>Aucun mouvement. Les remboursements par les achats groupés apparaissent dans la situation par producteur.</td></tr>}
+              {mvtsVisibles.length > 0 && (() => {
+                const types = [...new Set(mvtsVisibles.map(m => m.type))]
+                const kg = mvtsVisibles.reduce((s, m) => s + (+m.quantite_kg || 0), 0)
+                const mt = mvtsVisibles.reduce((s, m) => s + (+m.montant || 0), 0)
+                return <tr style={{ background:'#f1f5f9', fontWeight:700, borderTop:'2px solid #cbd5e1' }}>
+                  <td colSpan={5} style={{ padding:'10px 16px', textAlign:'right' }}>Total ({mvtsVisibles.length} mouvement{mvtsVisibles.length > 1 ? 's' : ''})
+                    {types.length > 1 && <div style={{ fontSize:11, fontWeight:500, color:'#64748b' }}>{types.map(ty => { const l = mvtsVisibles.filter(m => m.type === ty)
+                      return `${TYPES_MVT_FRIA[ty]?.[0] || ty} : ${nbFr(l.reduce((s, m) => s + (+m.montant || 0), 0))} F` }).join(' — ')}</div>}</td>
+                  <td style={{ padding:'10px 16px', textAlign:'right', whiteSpace:'nowrap' }}>{kg > 0 ? `${nbFr(kg)} kg` : '—'}</td>
+                  <td style={{ padding:'10px 16px', textAlign:'right', whiteSpace:'nowrap' }}>{nbFr(mt)}</td><td colSpan={2}></td></tr> })()}
             </tbody>
           </table>
         </div></TableWrap>
