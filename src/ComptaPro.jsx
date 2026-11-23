@@ -123,6 +123,19 @@ const today   = () => new Date().toISOString().slice(0, 10)
 // Validation des identifiants numériques (CIP, IFU, Téléphone) — un champ vide est
 // considéré valide (ces champs restent facultatifs), seul un contenu mal formé est rejeté.
 const onlyDigits  = v => String(v||'').replace(/\D/g,'')
+// Numéro béninois : Excel supprime le 0 de tête (0196078696 → 196078696). On le rétablit :
+// 9 chiffres → « 0 » + numéro ; 8 chiffres (ancien format) → « 01 » + numéro ;
+// indicatif 229 conservé devant. Les autres valeurs sont laissées telles quelles.
+const telBenin = v => {
+  const brut = String(v ?? '').trim(); if (!brut) return ''
+  let d = onlyDigits(brut), ind = ''
+  if (/^(\+|00)?229/.test(brut.replace(/\s/g,'')) && d.length > 10) { d = d.replace(/^(00)?229/, ''); ind = '229' }
+  if (d.length === 9) d = '0' + d
+  else if (d.length === 8) d = '01' + d
+  return d.length === 10 ? ind + d : brut
+}
+// NPI / CIP : 10 chiffres ; les 0 de tête supprimés par Excel sont rétablis.
+const npi10 = v => { const d = onlyDigits(v); return d && d.length < 10 && d.length >= 6 ? d.padStart(10, '0') : String(v ?? '').trim() }
 const isValidCIP  = v => !v || onlyDigits(v).length===10
 const isValidIFU  = v => !v || onlyDigits(v).length===13
 const isValidTel  = v => !v || onlyDigits(v).length===10
@@ -4850,6 +4863,8 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
         if (!vals.some(v => v)) continue // ligne entièrement vide
         const obj = {}
         headers.forEach((h,idx)=>{ obj[h]=vals[idx]||'' })
+        ;['telephone','mentor_telephone','mentore_contact'].forEach(k => { if (obj[k]) obj[k] = telBenin(obj[k]) })
+        ;['cip','mentor_cip','mentore_npi'].forEach(k => { if (obj[k]) obj[k] = npi10(obj[k]) })
         // Validation minimale
         const t = /^(morale|soci)/i.test((obj.type||'').trim()) ? 'morale' : 'physique'
         // Étuveuse : une ligne par mentoré ; les lignes d'un même mentor forment une seule étuveuse.
