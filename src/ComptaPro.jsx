@@ -4816,6 +4816,49 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
   Object.values(MODELES_CSV_FRS).forEach(m => m.forEach(([key,label]) => { HEADER_LOOKUP[normalizeHeader(label)] = key }))
   const resolveHeaderKey = (h) => HEADER_LOOKUP[normalizeHeader(h)] || null
 
+  // Rétablit le 0 de tête des téléphones et des NPI déjà enregistrés (supprimé par Excel
+  // avant l'import) : fiches de la société et, pour les étuveuses, leurs mentorés.
+  const [corrigeant, setCorrigeant] = useState(false)
+  const corrigerNumeros = async () => {
+    if (!companyId) { toast.error("Sélectionnez une société précise (en haut de l'écran)."); return }
+    setCorrigeant(true)
+    try {
+      const isF = table === 'compta_fournisseurs'
+      const champsTel = isF ? ['telephone','mentor_telephone'] : ['telephone']
+      const champsNpi = isF ? ['cip','mentor_cip'] : ['cip']
+      const { data:fiches, error } = await fetchAllRows(() => supabase.from(table).select(['id', ...champsTel, ...champsNpi].join(',')).eq('company_id', companyId).order('id'))
+      if (error) { toast.error(error.message); return }
+      const majFiches = []
+      for (const f of fiches || []) {
+        const maj = {}
+        champsTel.forEach(k => { if (f[k] && telBenin(f[k]) !== String(f[k])) maj[k] = telBenin(f[k]) })
+        champsNpi.forEach(k => { if (f[k] && npi10(f[k]) !== String(f[k])) maj[k] = npi10(f[k]) })
+        if (Object.keys(maj).length) majFiches.push([f.id, maj])
+      }
+      let majMentores = []
+      if (isF && (fiches || []).length) {
+        const ids = fiches.map(f => f.id)
+        for (let i = 0; i < ids.length; i += 150) {
+          const { data:ms } = await supabase.from('compta_etuveuses_mentores').select('id,contact,npi').in('fournisseur_id', ids.slice(i, i + 150))
+          for (const m of ms || []) {
+            const maj = {}
+            if (m.contact && telBenin(m.contact) !== String(m.contact)) maj.contact = telBenin(m.contact)
+            if (m.npi && npi10(m.npi) !== String(m.npi)) maj.npi = npi10(m.npi)
+            if (Object.keys(maj).length) majMentores.push([m.id, maj])
+          }
+        }
+      }
+      const n = majFiches.length + majMentores.length
+      if (!n) { toast.success('Aucun numéro à corriger : tous les téléphones et NPI sont complets.'); return }
+      if (!confirm(`${n} enregistrement(s) ont un téléphone ou un NPI sans le 0 de tête (supprimé par Excel) :\n• ${majFiches.length} fiche(s)${isF ? `\n• ${majMentores.length} mentoré(s) d'étuveuses` : ''}\n\nExemple : 196078696 → 0196078696 ; NPI 6777346 → 0006777346.\n\nCorriger maintenant ?`)) return
+      let ok = 0, err = null
+      for (const [id, maj] of majFiches) { const { error:e } = await supabase.from(table).update(maj).eq('id', id); if (e) err = err || e; else ok++ }
+      for (const [id, maj] of majMentores) { const { error:e } = await supabase.from('compta_etuveuses_mentores').update(maj).eq('id', id); if (e) err = err || e; else ok++ }
+      if (err) toast.error(`${ok} corrigé(s), erreur : ${err.message}`); else toast.success(`${ok} enregistrement(s) corrigé(s) : le 0 de tête est rétabli.`)
+      load()
+    } finally { setCorrigeant(false) }
+  }
+
   const importInputRef = useRef(null)
   const importCategorieRef = useRef(null) // catégorie choisie avant l'import (fournisseurs)
   const [csvChoix, setCsvChoix] = useState(null) // 'modele' | 'import' | null
@@ -5768,6 +5811,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
               !readOnly && canImport && null,
               !readOnly && canImport && { couleur:'#64748b', label:'📥 Modèle CSV', onClick:()=> isFourn ? setCsvChoix('modele') : downloadTemplate() },
               !readOnly && canImport && { couleur:'#15803d', label:importing?'⏳ Import…':'📤 Importer CSV', disabled:importing, onClick:()=> isFourn ? setCsvChoix('import') : importInputRef.current?.click() },
+              !readOnly && items.length>0 && { couleur:'#7c3aed', label:corrigeant?'⏳ Correction…':'📞 Corriger les téléphones / NPI (0 manquant)', disabled:corrigeant, onClick:corrigerNumeros },
               !readOnly && table==='compta_fournisseurs' && items.length>0 && null,
               !readOnly && table==='compta_fournisseurs' && items.length>1 && { couleur:'#1d4ed8', label:'🧹 Doublons', onClick:removeDuplicates },
               !readOnly && table==='compta_fournisseurs' && items.length>0 && { label:`🗑️ ${filtered.length!==items.length ? `Supprimer filtrés (${filtered.length})` : 'Vider la liste'}`, danger:true, onClick:deleteAll },
