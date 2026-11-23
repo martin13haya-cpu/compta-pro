@@ -4953,8 +4953,8 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
   const [codesLot, setCodesLot] = useState(false)
   const poserCodesManquants = async () => {
     if (!companyId) { toast.error("Sélectionnez une société précise (en haut de l'écran)."); return }
-    const sansCode = items.filter(f => !f.code_trace && f.categorie && f.categorie !== 'producteur' && LETTRE_CATEGORIE_FRS[f.categorie])
-    if (!sansCode.length) { toast.success('Toutes les fiches (étuveuses, intermédiaires, transporteurs) ont déjà leur code.'); return }
+    const sansCode = items.filter(f => !f.code_trace && f.categorie && f.categorie !== 'producteur' && LETTRE_CATEGORIE_FRS[f.categorie] && dansCat(f))
+    if (!sansCode.length) { toast.success(catSel ? 'Toutes les fiches de cette catégorie ont déjà leur code.' : 'Toutes les fiches (étuveuses, intermédiaires, transporteurs) ont déjà leur code.'); return }
     if (!confirm(`${sansCode.length} fiche(s) sans code. Attribuer les codes maintenant (calculés à partir du NPI / IFU) ?`)) return
     setCodesLot(true)
     let poses = 0
@@ -4985,6 +4985,8 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     if (erreurs.length) toast.error(`${erreurs.length} code(s) non attribué(s) : ${erreurs.slice(0,3).join(' ; ')}${erreurs.length>3?' …':''}`)
     load()
   }
+
+  const choisirCat = (titre, action, sansToutes=false) => setCatChoix({ titre, action, sansToutes })
 
   const mentoresInputRef = useRef(null)
   const [rattachant, setRattachant] = useState(false)
@@ -5289,10 +5291,24 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
   const [selectedMentor, setSelectedMentor] = useState('')
   const [mentorInfo, setMentorInfo] = useState({ intitule_projet:'', financement:'', structure_pilote:'', campagne_agricole:'', numero_contrat:'' })
   const setMentorInfoField = e => setMentorInfo(f=>({...f,[e.target.name]:e.target.value}))
-  const mentors = isFourn ? [...new Set(items.map(i=>i.mentor_nom).filter(Boolean))].sort() : []
+  // Catégorie choisie dans le formulaire qui précède les exports, fiches mentors et codes.
+  const [catSel, setCatSel] = useState('')
+  const [catChoix, setCatChoix] = useState(null)        // { titre, sansToutes, action }
+  const [catAction, setCatAction] = useState(null)      // action à lancer après le choix
+  const dansCat = (it, c=catSel) => !c || (c==='aucune' ? !it.categorie : it.categorie===c)
+  const itemsCat = items.filter(i => dansCat(i))
+  const filteredCat = filtered.filter(i => dansCat(i))
+  const mentors = isFourn ? [...new Set(itemsCat.map(i=>i.mentor_nom).filter(Boolean))].sort() : []
+  useEffect(() => {
+    if (!catAction) return
+    const a = catAction; setCatAction(null)
+    ;({ pdf:printListeTiers, excel:exportExcelTiers, fiche_mentor:openMentorModal, fiches_mentors:openMentorModalAll,
+        liste_mentors:exportExcelMentors,
+        codes:() => (catSel === 'producteur' ? ouvrirCodesProducteurs() : poserCodesManquants()) })[a]?.()
+  }, [catAction]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const openMentorModal = () => {
-    if (mentors.length===0) { toast.error('Aucun fournisseur n\'a de mentor renseigné.'); return }
+    if (mentors.length===0) { toast.error(`Aucun fournisseur${catSel ? ' de cette catégorie' : ''} n'a de mentor renseigné.`); return }
     setSelectedMentor(mentors[0])
     setMentorInfo({ intitule_projet:company?.intitule_projet||'', financement:company?.financement||'', structure_pilote:company?.structure_pilote||'', campagne_agricole:company?.campagne_agricole||'', numero_contrat:'' })
     setMentorBatchMode(false)
@@ -5300,7 +5316,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
   }
 
   const openMentorModalAll = () => {
-    if (mentors.length===0) { toast.error('Aucun fournisseur n\'a de mentor renseigné.'); return }
+    if (mentors.length===0) { toast.error(`Aucun fournisseur${catSel ? ' de cette catégorie' : ''} n'a de mentor renseigné.`); return }
     setMentorInfo({ intitule_projet:company?.intitule_projet||'', financement:company?.financement||'', structure_pilote:company?.structure_pilote||'', campagne_agricole:company?.campagne_agricole||'', numero_contrat:'' })
     setMentorBatchMode(true)
     setMentorModalOpen(true)
@@ -5420,7 +5436,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
   }
 
   const buildFicheMentorHTML = (mentorName, info, ouvriersParF = {}) => {
-    const producteurs = items.filter(i => i.mentor_nom === mentorName)
+    const producteurs = itemsCat.filter(i => i.mentor_nom === mentorName)
     if (producteurs.length===0) return null
     const premier = producteurs[0]
     const rows = producteurs.map((p,i)=>`<tr><td style="text-align:center">${i+1}</td><td>${displayName(p)||''}</td><td>${p.telephone||''}</td><td>${p.numero_contrat||''}</td></tr>`).join('')
@@ -5463,7 +5479,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
   }
 
   const printFicheMentor = async () => {
-    const ids = items.filter(i=>i.mentor_nom===selectedMentor).map(i=>i.id)
+    const ids = itemsCat.filter(i=>i.mentor_nom===selectedMentor).map(i=>i.id)
     const parF = await chargerOuvriers(ids)
     if (!parF) return
     const html = buildFicheMentorHTML(selectedMentor, mentorInfo, parF)
@@ -5473,8 +5489,8 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
   }
 
   const printFichesMentorsTout = async () => {
-    if (mentors.length===0) { toast.error('Aucun fournisseur n\'a de mentor renseigné.'); return }
-    const parF = await chargerOuvriers(items.filter(i=>i.mentor_nom).map(i=>i.id))
+    if (mentors.length===0) { toast.error(`Aucun fournisseur${catSel ? ' de cette catégorie' : ''} n'a de mentor renseigné.`); return }
+    const parF = await chargerOuvriers(itemsCat.filter(i=>i.mentor_nom).map(i=>i.id))
     if (!parF) return
     const docs = mentors.map(m=>buildFicheMentorHTML(m, mentorInfo, parF)).filter(Boolean)
     if (docs.length===0) { toast.error('Aucun producteur pour les mentors.'); return }
@@ -5596,9 +5612,9 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
   }
 
   const exportExcelMentors = () => {
-    if (mentors.length===0) { toast.error('Aucun fournisseur n\'a de mentor renseigné.'); return }
+    if (mentors.length===0) { toast.error(`Aucun fournisseur${catSel ? ' de cette catégorie' : ''} n'a de mentor renseigné.`); return }
     const rows = mentors.map(m => {
-      const producteurs = items.filter(i=>i.mentor_nom===m)
+      const producteurs = itemsCat.filter(i=>i.mentor_nom===m)
       const premier = producteurs[0] || {}
       return { nom:m, telephone:premier.mentor_telephone||'', cip:premier.mentor_cip||'', age:premier.mentor_age||'', nb:producteurs.length }
     })
@@ -5961,14 +5977,15 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
 
   const exportExcelTiers = async () => {
     if (visibleColumns.length===0) { toast.error('Sélectionnez au moins une colonne à exporter.'); return }
+    if (!filteredCat.length) { toast.error('Aucun fournisseur dans cette catégorie (avec les filtres actuels).'); return }
     const XLSX = await import('https://cdn.sheetjs.com/xlsx-0.20.0/package/xlsx.mjs')
     const cols = visibleColumns.map(c=>c.key)
     const rows = [
       [title],
-      [`${companyName} - ${filtered.length} enregistrement(s) - Exporte le ${new Date().toLocaleDateString('fr-FR')}`],
+      [`${companyName}${catSel ? ' - ' + libelleCategorieFrs(catSel) : ''} - ${filteredCat.length} enregistrement(s) - Exporte le ${new Date().toLocaleDateString('fr-FR')}`],
       [],
       cols,
-      ...filtered.map(it => cols.map(c => tiersVal(it,c))),
+      ...filteredCat.map(it => cols.map(c => tiersVal(it,c))),
     ]
     const ws = XLSX.utils.aoa_to_sheet(rows)
     ws['!cols'] = visibleColumns.map(c => ({ wch: Math.max(10, c.w||14) }))
@@ -5982,9 +5999,10 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     if (visibleColumns.length===0) { toast.error('Sélectionnez au moins une colonne à imprimer.'); return }
     const totalW = visibleColumns.reduce((s,c)=>s+c.w,0) || 1
     const headers = visibleColumns.map(c=>({label:c.key, w:c.w/totalW*100}))
-    const rows = filtered.map(it => visibleColumns.map(c=>tiersVal(it,c.key) || '—'))
-    const filename = `liste_${isFourn?'frs':'clients'}_${companyName}`
-    printFilteredList({ title, companyName, headers, rows, filename })
+    if (!filteredCat.length) { toast.error('Aucun fournisseur dans cette catégorie (avec les filtres actuels).'); return }
+    const rows = filteredCat.map(it => visibleColumns.map(c=>tiersVal(it,c.key) || '—'))
+    const filename = `liste_${isFourn?'frs':'clients'}_${catSel||'toutes'}_${companyName}`
+    printFilteredList({ title: catSel ? `${title} — ${libelleCategorieFrs(catSel).replace(/^[^\p{L}\p{N}]+/u,'').trim()}` : title, companyName, headers, rows, filename })
   }
 
   return (
@@ -6013,17 +6031,35 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
                 ))}
               </div>
             </Modal>
+            <Modal open={!!catChoix} onClose={()=>setCatChoix(null)} title={`${catChoix?.titre || ''} — choisissez la catégorie`}>
+              <p style={{fontSize:13.5,color:'#475569',marginTop:0}}>Seuls les fournisseurs de la catégorie choisie seront pris en compte{catChoix?.action==='pdf' || catChoix?.action==='excel' ? ' (les filtres de la page restent appliqués)' : ''}.</p>
+              <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))',gap:10}}>
+                {[...(catChoix?.sansToutes ? [] : [['', '📋 Toutes les catégories']]),
+                  ...CATEGORIES_FOURNISSEUR.map(([k,l]) => [k,l]),
+                  ...(catChoix?.sansToutes ? [] : [['aucune', '❔ Non classé']])].map(([k,l]) => {
+                  const n = items.filter(i => dansCat(i, k)).length
+                  return (
+                    <button key={k||'toutes'} type="button" disabled={!n}
+                      onClick={()=>{ const a = catChoix.action; setCatChoix(null); setCatSel(k); setCatAction(a) }}
+                      style={{padding:'14px 12px',borderRadius:10,border:'1.5px solid #e2e8f0',background:n?'white':'#f8fafc',cursor:n?'pointer':'not-allowed',fontSize:14,fontWeight:700,color:n?'#082818':'#94a3b8',textAlign:'left'}}>
+                      {l}
+                      <div style={{fontSize:11.5,fontWeight:400,color:'#64748b',marginTop:4}}>{n} fiche(s)</div>
+                    </button>
+                  )
+                })}
+              </div>
+            </Modal>
             <ActionsMenu items={[
               items.length>0 && { couleur:'#475569', label:'🧮 Colonnes', onClick:()=>setColModalOpen(true) },
-              items.length>0 && { couleur:'#0891b2', label:'🖨️ PDF liste', onClick:printListeTiers },
-              items.length>0 && { couleur:'#16a34a', label:'📊 Excel', onClick:exportExcelTiers },
+              items.length>0 && { couleur:'#0891b2', label:'🖨️ PDF liste', onClick:()=> isFourn ? choisirCat('PDF liste', 'pdf') : printListeTiers() },
+              items.length>0 && { couleur:'#16a34a', label:'📊 Excel', onClick:()=> isFourn ? choisirCat('Export Excel', 'excel') : exportExcelTiers() },
               isFourn && items.length>0 && null,
-              isFourn && items.length>0 && { couleur:'#7c3aed', label:'🎓 Fiches Mentors', onClick:openMentorModal },
-              isFourn && items.length>0 && { couleur:'#7c3aed', label:'🖨️ Toutes les fiches Mentors', onClick:openMentorModalAll },
-              isFourn && items.length>0 && { couleur:'#16a34a', label:'📊 Liste Mentors', onClick:exportExcelMentors },
+              isFourn && items.length>0 && { couleur:'#7c3aed', label:'🎓 Fiches Mentors', onClick:()=>choisirCat('Fiche Mentor', 'fiche_mentor') },
+              isFourn && items.length>0 && { couleur:'#7c3aed', label:'🖨️ Toutes les fiches Mentors', onClick:()=>choisirCat('Toutes les fiches Mentors', 'fiches_mentors') },
+              isFourn && items.length>0 && { couleur:'#16a34a', label:'📊 Liste Mentors', onClick:()=>choisirCat('Liste Mentors (Excel)', 'liste_mentors') },
               isFourn && items.length>0 && { couleur:'#0f766e', label:'🏷️ Codes producteurs (PDF)', onClick:exportCodesPdf },
               isFourn && items.length>0 && { couleur:'#0f766e', label:'🏷️ Codes producteurs (Excel)', onClick:exportCodesExcel },
-              !readOnly && isFourn && items.length>0 && { couleur:'#0f766e', label:'🔢 Générer les codes producteurs', onClick:ouvrirCodesProducteurs },
+              !readOnly && isFourn && items.length>0 && { couleur:'#0f766e', label:'🔢 Générer les codes', onClick:()=>choisirCat('Générer les codes', 'codes', true) },
               isFourn && items.length>0 && { couleur:'#0369a1', label:`📄 Toutes les PV de réception (${filtered.filter(i=>i.type!=='morale').length})`, onClick:printPvReceptionTout },
               isFourn && items.length>0 && null,
               isFourn && items.length>0 && { couleur:'#ea580c', label:'👷 Liste des ouvriers (PDF)', onClick:printListeOuvriers },
@@ -6034,7 +6070,6 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
               !readOnly && items.length>0 && { couleur:'#7c3aed', label:corrigeant?'⏳ Correction…':'📞 Corriger les téléphones / NPI (0 manquant)', disabled:corrigeant, onClick:corrigerNumeros },
               !readOnly && isFourn && items.some(f => f.categorie === 'etuveuse') && { couleur:'#b45309', label:fusionEtv?'⏳ Fusion…':'🔗 Fusionner les étuveuses en double', disabled:fusionEtv, onClick:fusionnerEtuveuses },
               !readOnly && isFourn && items.some(f => f.categorie === 'etuveuse') && { couleur:'#0e7490', label:rattachant?'⏳ Rattachement…':'👥 Rattacher les mentorés (CSV)', disabled:rattachant, onClick:()=>mentoresInputRef.current?.click() },
-              !readOnly && isFourn && items.some(f => !f.code_trace && f.categorie && f.categorie !== 'producteur') && { couleur:'#0f766e', label:codesLot?'⏳ Codes…':'🏷️ Attribuer les codes manquants', disabled:codesLot, onClick:poserCodesManquants },
               !readOnly && table==='compta_fournisseurs' && items.length>0 && null,
               !readOnly && table==='compta_fournisseurs' && items.length>1 && { couleur:'#1d4ed8', label:'🧹 Doublons', onClick:removeDuplicates },
               !readOnly && table==='compta_fournisseurs' && items.length>0 && { label:`🗑️ ${filtered.length!==items.length ? `Supprimer filtrés (${filtered.length})` : 'Vider la liste'}`, danger:true, onClick:deleteAll },
@@ -6613,7 +6648,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
               {mentors.map(m=><option key={m} value={m}>{m}</option>)}
             </select>
             <div style={{fontSize:12,color:'#64748b',marginTop:8}}>
-              {items.filter(i=>i.mentor_nom===selectedMentor).length} producteur(s) à la charge de ce mentor.
+              {itemsCat.filter(i=>i.mentor_nom===selectedMentor).length} fournisseur(s) à la charge de ce mentor.
             </div>
           </div>
         )}
