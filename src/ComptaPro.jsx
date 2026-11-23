@@ -3578,8 +3578,7 @@ function printFicheTiers(it, kind='fournisseur') {
       ...(isMorale ? [['Représentant', it.nom]] : []),
       ['Téléphone', it.telephone],
       ['Email', it.email],
-      ['Adresse', it.adresse],
-      ['Provenance', it.provenance],
+      ...(it.categorie==='etuveuse' ? [] : [['Adresse', it.adresse], ['Provenance', it.provenance]]),
       ...(isFourn ? [['Coopérative affiliée', it.cooperative_affiliee], ['N° Contrat', it.numero_contrat]] : []),
       ['N° IFU', it.ifu],
       ['N° CIP', it.cip],
@@ -4948,6 +4947,45 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
 
   // Rattache les mentorés d'un CSV d'étuveuses aux fiches étuveuses DÉJÀ présentes (même nom
   // de mentor, ou même NPI), sans créer de fiche : remplace leurs mentorés et complète le contrat.
+  // Pose en une fois le code des étuveuses / intermédiaires / transporteurs qui n'en ont pas
+  // (ex. code encore tenu par une fiche supprimée au moment de l'import) et le recopie sur la
+  // fiche étuveuse liée.
+  const [codesLot, setCodesLot] = useState(false)
+  const poserCodesManquants = async () => {
+    if (!companyId) { toast.error("Sélectionnez une société précise (en haut de l'écran)."); return }
+    const sansCode = items.filter(f => !f.code_trace && f.categorie && f.categorie !== 'producteur' && LETTRE_CATEGORIE_FRS[f.categorie])
+    if (!sansCode.length) { toast.success('Toutes les fiches (étuveuses, intermédiaires, transporteurs) ont déjà leur code.'); return }
+    if (!confirm(`${sansCode.length} fiche(s) sans code. Attribuer les codes maintenant (calculés à partir du NPI / IFU) ?`)) return
+    setCodesLot(true)
+    let poses = 0
+    const sans = [], erreurs = []
+    try {
+      const { data:pris } = await fetchAllRows(() => supabase.from('compta_fournisseurs').select('id,type,code_trace,cip,ifu,nom,prenom,nom_societe').eq('company_id', companyId).eq('actif', true).not('code_trace','is',null).order('id'))
+      const existants = new Map((pris||[]).map(c => [c.code_trace, { cip:onlyDigits(c.type==='morale' ? c.ifu : c.cip), label:labelTiers(c) }]))
+      for (const f of sansCode) {
+        let rc = await poserCodeProducteur(f.id, companyId, f, { existants })
+        if (rc.statut==='erreur' && rc.code && /duplicate|unique/i.test(rc.message||'')) {
+          // Code encore porté par une fiche supprimée : libéré puis réattribué.
+          await supabase.from('compta_fournisseurs').update({ code_trace:null }).eq('company_id', companyId).eq('actif', false).eq('code_trace', rc.code)
+          rc = await poserCodeProducteur(f.id, companyId, f, { existants })
+        }
+        if (rc.statut === 'pose') {
+          poses++
+          if (f.categorie === 'etuveuse') {
+            const { data:autres } = await supabase.from('compta_etuveuses').select('id,fournisseur_id').eq('code_trace', rc.code)
+            for (const a of (autres||[]).filter(a => a.fournisseur_id !== f.id)) await supabase.from('compta_etuveuses').update({ code_trace:null, code_etuveuse:null }).eq('id', a.id)
+            await supabase.from('compta_etuveuses').update({ code_trace:rc.code, code_etuveuse:rc.code }).eq('fournisseur_id', f.id)
+          }
+        } else if (rc.statut === 'sanscode' || rc.statut === 'incomplet') sans.push(`${displayName(f)} (${rc.raison || 'NPI absent ou incomplet'})`)
+        else erreurs.push(`${displayName(f)} : ${rc.message || (rc.doublon ? `même NPI que ${rc.avec||'une autre fiche'}` : rc.statut)}`)
+      }
+    } finally { setCodesLot(false) }
+    toast.success(`${poses} code(s) attribué(s).`)
+    if (sans.length) toast.error(`${sans.length} fiche(s) sans code (NPI manquant ou incomplet) : ${sans.slice(0,4).join(' ; ')}${sans.length>4?' …':''}`)
+    if (erreurs.length) toast.error(`${erreurs.length} code(s) non attribué(s) : ${erreurs.slice(0,3).join(' ; ')}${erreurs.length>3?' …':''}`)
+    load()
+  }
+
   const mentoresInputRef = useRef(null)
   const [rattachant, setRattachant] = useState(false)
   const rattacherMentores = async (e) => {
@@ -5996,6 +6034,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
               !readOnly && items.length>0 && { couleur:'#7c3aed', label:corrigeant?'⏳ Correction…':'📞 Corriger les téléphones / NPI (0 manquant)', disabled:corrigeant, onClick:corrigerNumeros },
               !readOnly && isFourn && items.some(f => f.categorie === 'etuveuse') && { couleur:'#b45309', label:fusionEtv?'⏳ Fusion…':'🔗 Fusionner les étuveuses en double', disabled:fusionEtv, onClick:fusionnerEtuveuses },
               !readOnly && isFourn && items.some(f => f.categorie === 'etuveuse') && { couleur:'#0e7490', label:rattachant?'⏳ Rattachement…':'👥 Rattacher les mentorés (CSV)', disabled:rattachant, onClick:()=>mentoresInputRef.current?.click() },
+              !readOnly && isFourn && items.some(f => !f.code_trace && f.categorie && f.categorie !== 'producteur') && { couleur:'#0f766e', label:codesLot?'⏳ Codes…':'🏷️ Attribuer les codes manquants', disabled:codesLot, onClick:poserCodesManquants },
               !readOnly && table==='compta_fournisseurs' && items.length>0 && null,
               !readOnly && table==='compta_fournisseurs' && items.length>1 && { couleur:'#1d4ed8', label:'🧹 Doublons', onClick:removeDuplicates },
               !readOnly && table==='compta_fournisseurs' && items.length>0 && { label:`🗑️ ${filtered.length!==items.length ? `Supprimer filtrés (${filtered.length})` : 'Vider la liste'}`, danger:true, onClick:deleteAll },
