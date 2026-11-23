@@ -6039,6 +6039,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
                     <Input label="Date de naissance" name="date_naissance" type="date" value={form.date_naissance||''}
                       onChange={e=>{ const d = e.target.value; const a = calculerAge(d); setForm(f=>({...f, date_naissance:d, age:a, tranche_age:trancheDepuisAge(a)})) }} />
                   )}
+                  {!morale && <Input label="Nationalité" name="nationalite" value={form.nationalite||''} onChange={set} placeholder="ex : Béninoise" />}
                   <div>
                     <label style={{display:'block',fontSize:12.5,fontWeight:600,color:'#374151',marginBottom:5}}>Code</label>
                     <div style={{padding:'9px 12px',background:'#f8fafc',borderRadius:8,border:'1px solid #d1d5db',fontSize:13.5,minHeight:38,display:'flex',alignItems:'center',fontFamily:'Consolas, monospace',color:rc.code?'#0f766e':'#94a3b8',fontWeight:rc.code?700:400}}>
