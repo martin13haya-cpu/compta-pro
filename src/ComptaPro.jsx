@@ -4084,7 +4084,7 @@ async function poserCodeCategorie(id, companyId, f, { ancien=null, existants=nul
 // Le premier garde le code, les suivants prennent une lettre : NAT-PK_8791, NAT-PK_8791B, …
 // Si le CIP COMPLET est identique, c'est la même personne saisie deux fois : doublon, pas de lettre.
 const LETTRES_SUFFIXE = 'BCDEFGHIJKLMNOPQRSTUVWXYZ'
-const codeConforme = (code, base) => !!code && (code === base || (code.length === base.length+1 && code.startsWith(base) && /^[B-Z]$/.test(code.slice(-1))))
+const codeConforme = (code, base) => !!code && !!base && (code === base || (code.length === base.length+1 && code.startsWith(base) && /^[B-Z]$/.test(code.slice(-1))))
 // pris : Map code -> { cip (chiffres), label } des fiches qui portent déjà ce code.
 function choisirCodeLibre(base, cip, pris) {
   if (!pris.has(base)) return { code:base }
