@@ -3478,7 +3478,8 @@ function printFicheTiers(it, kind='fournisseur') {
     'cooperative_affiliee','numero_contrat','ifu','cip','genre','handicap',
     'mentor_nom','mentor_telephone','mentor_cip',
     'departement','commune','arrondissement','village','nom_bas_fonds','superficie_bas_fonds',
-    '_avances','prix_contrat',
+    '_avances','_mentores','prix_contrat',
+    ...(it.categorie==='etuveuse' ? ['nombre_jeunes_femmes','nombre_jeunes_hommes'] : []),
     'reside_localite','disponible_formation','accepte_bonnes_pratiques','accepte_partenariat','a_deja_cultive_riz','cooperative_partenaire','propriete_terre',
     'niveau_instruction','acces_garanti_terre','mode_acces_terre','decision',
   ])
@@ -3491,6 +3492,17 @@ function printFicheTiers(it, kind='fournisseur') {
   const autresBloc = autres.length ? `
     <h3 style="margin:18px 0 6px;font-size:11pt;color:#082818">🗂️ Autres informations</h3>
     <table><tbody>${rows(autres)}</tbody></table>` : ''
+
+  // Étuveuse : tableau des mentorés (remplace « Nombre jeunes femmes / hommes »)
+  const mentList = Array.isArray(it._mentores) ? it._mentores : []
+  const dateFr = d => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(d||''); return m ? `${m[3]}/${m[2]}/${m[1]}` : (d||'—') }
+  const nbF = mentList.filter(m => /^f/i.test(m.genre||'')).length
+  const nbH = mentList.filter(m => /^(m|h)/i.test(m.genre||'')).length
+  const mentoresBloc = (isFourn && it.categorie==='etuveuse') ? `
+    <h3 style="margin:18px 0 6px;font-size:11pt;color:#082818">👩‍🏭 Mentorés (${mentList.length}${mentList.length ? ` — ${nbF} femme(s), ${nbH} homme(s)` : ''})</h3>
+    ${mentList.length ? `<table><thead><tr><th style="text-align:left">N°</th><th style="text-align:left">Nom et prénom(s)</th><th style="text-align:left">Village</th><th style="text-align:left">Genre</th><th style="text-align:left">Handicap</th><th style="text-align:left">NPI</th><th style="text-align:left">Date de naissance</th><th style="text-align:left">Contact</th></tr></thead><tbody>
+      ${mentList.map((m,i)=>`<tr><td>${i+1}</td><td>${echapHtml(m.nom_prenoms||'—')}</td><td>${echapHtml(m.village||'—')}</td><td>${echapHtml(m.genre||'—')}</td><td>${m.handicap?'Oui':'Non'}</td><td>${echapHtml(m.npi||'—')}</td><td>${dateFr(m.date_naissance)}</td><td>${echapHtml(m.contact||'—')}</td></tr>`).join('')}
+    </tbody></table>` : `<div style="font-size:10pt;color:#64748b">Aucun mentoré enregistré.</div>`}` : ''
 
   // Bloc Avances reçues (fournisseurs)
   const UNITES_PDF = { Labour:'ha', Semences:'kg', Engrais:'sac', Herbicide:'L', 'Crédits':'FCFA' }
@@ -3562,6 +3574,8 @@ function printFicheTiers(it, kind='fournisseur') {
     ])}</tbody></table>` : ''}
 
     ${autresBloc}
+
+    ${mentoresBloc}
 
     ${avancesBloc}
 
@@ -5944,7 +5958,11 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
                   <TD sm>{it.cip||'—'}</TD>
                   <TD>
                     <ActionsMenu sm items={[
-                      { couleur:'#0891b2', label:'📥 Fiche PDF', onClick:()=>printFicheTiers(it, isFourn?'fournisseur':'client') },
+                      { couleur:'#0891b2', label:'📥 Fiche PDF', onClick:async()=>{
+                        if (isFourn && it.categorie==='etuveuse') {
+                          const { data } = await supabase.from('compta_etuveuses_mentores').select('nom_prenoms,village,genre,handicap,npi,date_naissance,contact').eq('fournisseur_id', it.id).order('ordre')
+                          printFicheTiers({ ...it, _mentores:data||[] }, 'fournisseur')
+                        } else printFicheTiers(it, isFourn?'fournisseur':'client') } },
                       isFourn && it.type!=='morale' && estProducteur(it) && { couleur:'#0369a1', label:'📄 PV de réception', onClick:()=>printPvReception(it) },
                       isFourn && it.type!=='morale' && estProducteur(it) && { couleur:'#16a34a', label:'📝 Contrat', onClick:()=>openContratModal(it) },
                       isFourn && it.type!=='morale' && estProducteur(it) && { couleur:'#ea580c', label:'👷 Ouvriers', onClick:()=>ouvrirOuvriers(it) },
