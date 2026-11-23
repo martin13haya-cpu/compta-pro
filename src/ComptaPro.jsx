@@ -5025,15 +5025,21 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
       }
       const nbM = [...groupes.values()].reduce((s, g) => s + g.mentores.length, 0)
       if (!groupes.size) { toast.error(`Aucune étuveuse du fichier ne correspond aux fiches de cette société${absents.size ? ` (ex. : ${[...absents].slice(0,3).join(', ')})` : ''}.`); return }
-      if (!confirm(`${groupes.size} étuveuse(s) trouvée(s) dans cette société, ${nbM} mentoré(s) à rattacher.${absents.size ? `\n${absents.size} mentor(s) du fichier sans fiche : ${[...absents].slice(0,5).join(', ')}${absents.size>5?'…':''}` : ''}\n\nLes mentorés actuels de ces étuveuses seront remplacés par ceux du fichier. Continuer ?`)) return
+      if (!confirm(`${groupes.size} étuveuse(s) trouvée(s) dans cette société, ${nbM} mentoré(s) à rattacher.${absents.size ? `\n${absents.size} mentor(s) du fichier sans fiche : ${[...absents].slice(0,5).join(', ')}${absents.size>5?'…':''}` : ''}\n\nLes mentorés actuels de ces étuveuses seront remplacés par ceux du fichier, et le NPI du mentor sera complété s'il manque sur la fiche. Continuer ?`)) return
       const uid = (await supabase.auth.getUser()).data?.user?.id
-      let ok = 0, nbOk = 0, err = null
+      let ok = 0, nbOk = 0, nbNpi = 0, err = null
       for (const { f, contrat, mentores } of groupes.values()) {
         const { error:e1 } = await supabase.from('compta_etuveuses_mentores').delete().eq('fournisseur_id', f.id)
         if (e1) { err = err || e1; continue }
         const { error:e2 } = await supabase.from('compta_etuveuses_mentores').insert(mentores.map((m, k) => ({ ...m, company_id:companyId, user_id:uid, fournisseur_id:f.id, ordre:k })))
         if (e2) { err = err || e2; continue }
         ok++; nbOk += mentores.length
+        // NPI du mentor absent de la fiche mais présent dans le fichier : complété.
+        const npiCsv = onlyDigits(npi10(contrat.cip))
+        if (f.type !== 'morale' && !onlyDigits(f.cip) && npiCsv.length === 10) {
+          const { error:eN } = await supabase.from('compta_fournisseurs').update({ cip:npiCsv }).eq('id', f.id)
+          if (eN) err = err || eN; else nbNpi++
+        }
         // Fiche étuveuse (contrat) : créée si absente, sinon date du contrat complétée.
         const dc = parseDateFR(contrat.date_contrat).iso || null
         const { data:etv } = await supabase.from('compta_etuveuses').select('id,date_contrat').eq('fournisseur_id', f.id).maybeSingle()
@@ -5048,7 +5054,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
         } else if (!etv.date_contrat && dc) await supabase.from('compta_etuveuses').update({ date_contrat:dc }).eq('id', etv.id)
       }
       if (err) toast.error(`${nbOk} mentoré(s) rattaché(s) à ${ok} étuveuse(s). Erreur : ${err.message}`)
-      else toast.success(`${nbOk} mentoré(s) rattaché(s) à ${ok} étuveuse(s).`)
+      else toast.success(`${nbOk} mentoré(s) rattaché(s) à ${ok} étuveuse(s).${nbNpi ? ` ${nbNpi} NPI de mentor complété(s) : lancez « 🔢 Générer les codes » › Étuveuse pour leurs codes.` : ''}`)
       load()
     } catch (x) { toast.error('Erreur : ' + x.message) }
     finally { setRattachant(false) }
