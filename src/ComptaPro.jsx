@@ -4946,6 +4946,74 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     } finally { setCorrigeant(false) }
   }
 
+  // Rattache les mentorés d'un CSV d'étuveuses aux fiches étuveuses DÉJÀ présentes (même nom
+  // de mentor, ou même NPI), sans créer de fiche : remplace leurs mentorés et complète le contrat.
+  const mentoresInputRef = useRef(null)
+  const [rattachant, setRattachant] = useState(false)
+  const rattacherMentores = async (e) => {
+    const file = e.target.files?.[0]; e.target.value = ''
+    if (!file) return
+    if (!companyId) { toast.error("Sélectionnez une société précise (en haut de l'écran)."); return }
+    setRattachant(true)
+    try {
+      const text = await readTextFileFR(file)
+      const lines = text.replace(/^\ufeff/,'').split(/\r?\n/).filter(l=>l.trim())
+      const delim = lines[0]?.includes(';') ? ';' : ','
+      let ih = 0
+      for (let i = 0; i < Math.min(lines.length, 5); i++) if (lines[i].split(delim).filter(h=>resolveHeaderKey(h.trim())).length >= 2) { ih = i; break }
+      const headers = lines[ih].split(delim).map(h => resolveHeaderKey(h.trim()) || '')
+      if (!headers.includes('mentore_nom')) { toast.error("Colonne « Mentoré - Nom et prénoms » introuvable : utilisez le modèle CSV des étuveuses."); return }
+      const sansAcc = s => String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim().toLowerCase().replace(/\s+/g,' ')
+      const cleNom = (n, p, s) => [n, p, s].map(sansAcc).join('|')
+      const { data:fiches, error:ef } = await fetchAllRows(() => supabase.from('compta_fournisseurs').select('id,type,nom,prenom,nom_societe,cip,ifu,code_trace').eq('company_id', companyId).eq('actif', true).eq('categorie', 'etuveuse').order('id'))
+      if (ef) { toast.error(ef.message); return }
+      const parNom = new Map(), parId = new Map()
+      ;(fiches||[]).forEach(f => { parNom.set(cleNom(f.nom, f.prenom, f.nom_societe), f); const id = onlyDigits(f.type==='morale' ? f.ifu : f.cip); if (id) parId.set(id, f) })
+      const groupes = new Map(), absents = new Set()
+      for (let i = ih + 1; i < lines.length; i++) {
+        const vals = lines[i].split(delim).map(v => v.trim()); if (!vals.some(Boolean)) continue
+        const o = {}; headers.forEach((h, k) => { if (h) o[h] = vals[k] || '' })
+        if (!o.mentore_nom) continue
+        const morale = /^(morale|soci)/i.test(o.type||'')
+        const f = parNom.get(cleNom(o.nom, o.prenom, o.nom_societe)) || parId.get(npi10(morale ? o.ifu : o.cip))
+        if (!f) { absents.add([o.nom, o.prenom, o.nom_societe].filter(Boolean).join(' ')); continue }
+        if (!groupes.has(f.id)) groupes.set(f.id, { f, contrat:o, mentores:[] })
+        const dm = parseDateFR(o.mentore_date_naissance)
+        groupes.get(f.id).mentores.push({ nom_prenoms:o.mentore_nom, village:o.mentore_village||null, genre:o.mentore_genre||null,
+          handicap:/^(oui|o|yes|y|1|true|vrai)$/i.test(o.mentore_handicap||''), npi:onlyDigits(npi10(o.mentore_npi))||null,
+          date_naissance:dm.iso||null, contact:o.mentore_contact ? telBenin(o.mentore_contact) : null })
+      }
+      const nbM = [...groupes.values()].reduce((s, g) => s + g.mentores.length, 0)
+      if (!groupes.size) { toast.error(`Aucune étuveuse du fichier ne correspond aux fiches de cette société${absents.size ? ` (ex. : ${[...absents].slice(0,3).join(', ')})` : ''}.`); return }
+      if (!confirm(`${groupes.size} étuveuse(s) trouvée(s) dans cette société, ${nbM} mentoré(s) à rattacher.${absents.size ? `\n${absents.size} mentor(s) du fichier sans fiche : ${[...absents].slice(0,5).join(', ')}${absents.size>5?'…':''}` : ''}\n\nLes mentorés actuels de ces étuveuses seront remplacés par ceux du fichier. Continuer ?`)) return
+      const uid = (await supabase.auth.getUser()).data?.user?.id
+      let ok = 0, nbOk = 0, err = null
+      for (const { f, contrat, mentores } of groupes.values()) {
+        const { error:e1 } = await supabase.from('compta_etuveuses_mentores').delete().eq('fournisseur_id', f.id)
+        if (e1) { err = err || e1; continue }
+        const { error:e2 } = await supabase.from('compta_etuveuses_mentores').insert(mentores.map((m, k) => ({ ...m, company_id:companyId, user_id:uid, fournisseur_id:f.id, ordre:k })))
+        if (e2) { err = err || e2; continue }
+        ok++; nbOk += mentores.length
+        // Fiche étuveuse (contrat) : créée si absente, sinon date du contrat complétée.
+        const dc = parseDateFR(contrat.date_contrat).iso || null
+        const { data:etv } = await supabase.from('compta_etuveuses').select('id,date_contrat').eq('fournisseur_id', f.id).maybeSingle()
+        if (!etv) {
+          const ligne = { company_id:companyId, user_id:uid, fournisseur_id:f.id, ifu:f.ifu||null,
+            nom_etuveuse: f.type==='morale' ? (f.nom_societe||'') : [f.nom, f.prenom].filter(Boolean).join(' '),
+            code_etuveuse:f.code_trace||null, code_trace:f.code_trace||null, date_contrat:dc,
+            capacite_kg:numFR(contrat.capacite_kg)||0, zone:contrat.zone||null, observations:contrat.observations||null }
+          let { error:e3 } = await supabase.from('compta_etuveuses').insert(ligne)
+          if (e3 && /duplicate|unique/i.test(e3.message)) ({ error:e3 } = await supabase.from('compta_etuveuses').insert({ ...ligne, code_trace:null, code_etuveuse:null }))
+          if (e3) err = err || e3
+        } else if (!etv.date_contrat && dc) await supabase.from('compta_etuveuses').update({ date_contrat:dc }).eq('id', etv.id)
+      }
+      if (err) toast.error(`${nbOk} mentoré(s) rattaché(s) à ${ok} étuveuse(s). Erreur : ${err.message}`)
+      else toast.success(`${nbOk} mentoré(s) rattaché(s) à ${ok} étuveuse(s).`)
+      load()
+    } catch (x) { toast.error('Erreur : ' + x.message) }
+    finally { setRattachant(false) }
+  }
+
   const importInputRef = useRef(null)
   const importCategorieRef = useRef(null) // catégorie choisie avant l'import (fournisseurs)
   const [csvChoix, setCsvChoix] = useState(null) // 'modele' | 'import' | null
@@ -5134,7 +5202,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
             const menRows = insRows.flatMap((r, idx) => (extrasPerRow[idx]?.mentores||[]).map((m, k) => ({ ...m, company_id:cid, user_id:uid, fournisseur_id:r.id, ordre:k })))
             for (let i = 0; i < menRows.length; i += 200) {
               const { error:errM } = await supabase.from('compta_etuveuses_mentores').insert(menRows.slice(i, i + 200))
-              if (errM) { signaler(errM); break }
+              if (errM) { toast.error(`Étuveuses importées, mais les mentorés n'ont pas été enregistrés : ${errM.message}. Utilisez Actions › « 👥 Rattacher les mentorés (CSV) ».`); break }
             }
           } else {
             const { error:errC } = await supabase.from(tCat).insert(insRows.map(r => ({ company_id:cid, user_id:uid, fournisseur_id:r.id })))
@@ -5888,6 +5956,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
           <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
             {/* Entrée fichier hors du menu : elle survit à sa fermeture. */}
             <input ref={importInputRef} type="file" accept=".csv" onChange={handleImport} disabled={importing} style={{display:'none'}} />
+            <input ref={mentoresInputRef} type="file" accept=".csv" onChange={rattacherMentores} disabled={rattachant} style={{display:'none'}} />
             {/* Fournisseurs : catégorie demandée avant le modèle CSV ou l'import. */}
             <Modal open={!!csvChoix} onClose={()=>setCsvChoix(null)} title={csvChoix==='modele' ? 'Modèle CSV — choisissez la catégorie' : 'Importer un CSV — choisissez la catégorie'}>
               <p style={{fontSize:13.5,color:'#475569',marginTop:0}}>
@@ -5926,6 +5995,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
               !readOnly && canImport && { couleur:'#15803d', label:importing?'⏳ Import…':'📤 Importer CSV', disabled:importing, onClick:()=> isFourn ? setCsvChoix('import') : importInputRef.current?.click() },
               !readOnly && items.length>0 && { couleur:'#7c3aed', label:corrigeant?'⏳ Correction…':'📞 Corriger les téléphones / NPI (0 manquant)', disabled:corrigeant, onClick:corrigerNumeros },
               !readOnly && isFourn && items.some(f => f.categorie === 'etuveuse') && { couleur:'#b45309', label:fusionEtv?'⏳ Fusion…':'🔗 Fusionner les étuveuses en double', disabled:fusionEtv, onClick:fusionnerEtuveuses },
+              !readOnly && isFourn && items.some(f => f.categorie === 'etuveuse') && { couleur:'#0e7490', label:rattachant?'⏳ Rattachement…':'👥 Rattacher les mentorés (CSV)', disabled:rattachant, onClick:()=>mentoresInputRef.current?.click() },
               !readOnly && table==='compta_fournisseurs' && items.length>0 && null,
               !readOnly && table==='compta_fournisseurs' && items.length>1 && { couleur:'#1d4ed8', label:'🧹 Doublons', onClick:removeDuplicates },
               !readOnly && table==='compta_fournisseurs' && items.length>0 && { label:`🗑️ ${filtered.length!==items.length ? `Supprimer filtrés (${filtered.length})` : 'Vider la liste'}`, danger:true, onClick:deleteAll },
