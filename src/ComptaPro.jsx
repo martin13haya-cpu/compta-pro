@@ -3479,7 +3479,7 @@ function printFicheTiers(it, kind='fournisseur') {
     'mentor_nom','mentor_telephone','mentor_cip',
     'departement','commune','arrondissement','village','nom_bas_fonds','superficie_bas_fonds',
     '_avances','_mentores','prix_contrat',
-    ...(it.categorie==='etuveuse' ? ['nombre_jeunes_femmes','nombre_jeunes_hommes'] : []),
+    ...(it.categorie==='etuveuse' ? ['nombre_jeunes_femmes','nombre_jeunes_hommes','cooperation','numero_pv'] : []),
     'reside_localite','disponible_formation','accepte_bonnes_pratiques','accepte_partenariat','a_deja_cultive_riz','cooperative_partenaire','propriete_terre',
     'niveau_instruction','acces_garanti_terre','mode_acces_terre','decision',
   ])
@@ -3499,7 +3499,7 @@ function printFicheTiers(it, kind='fournisseur') {
   const nbF = mentList.filter(m => /^f/i.test(m.genre||'')).length
   const nbH = mentList.filter(m => /^(m|h)/i.test(m.genre||'')).length
   const mentoresBloc = (isFourn && it.categorie==='etuveuse') ? `
-    <h3 style="margin:18px 0 6px;font-size:11pt;color:#082818">👩‍🏭 Mentorés (${mentList.length}${mentList.length ? ` — ${nbF} femme(s), ${nbH} homme(s)` : ''})</h3>
+    <h3 style="margin:18px 0 6px;font-size:11pt;color:#082818">👩‍🏭 Mentorés (${mentList.length}${nbF + nbH ? ` — ${nbF} femme(s), ${nbH} homme(s)` : ''})</h3>
     ${mentList.length ? `<table><thead><tr><th style="text-align:left">N°</th><th style="text-align:left">Nom et prénom(s)</th><th style="text-align:left">Village</th><th style="text-align:left">Genre</th><th style="text-align:left">Handicap</th><th style="text-align:left">NPI</th><th style="text-align:left">Date de naissance</th><th style="text-align:left">Contact</th></tr></thead><tbody>
       ${mentList.map((m,i)=>`<tr><td>${i+1}</td><td>${echapHtml(m.nom_prenoms||'—')}</td><td>${echapHtml(m.village||'—')}</td><td>${echapHtml(m.genre||'—')}</td><td>${m.handicap?'Oui':'Non'}</td><td>${echapHtml(m.npi||'—')}</td><td>${dateFr(m.date_naissance)}</td><td>${echapHtml(m.contact||'—')}</td></tr>`).join('')}
     </tbody></table>` : `<div style="font-size:10pt;color:#64748b">Aucun mentoré enregistré.</div>`}` : ''
@@ -3563,14 +3563,13 @@ function printFicheTiers(it, kind='fournisseur') {
     ${mentorBloc}
 
     ${isFourn ? `
-    <h3 style="margin:18px 0 6px;font-size:11pt;color:#082818">📍 Localisation & bas-fonds</h3>
+    <h3 style="margin:18px 0 6px;font-size:11pt;color:#082818">📍 ${it.categorie==='etuveuse' ? 'Localisation' : 'Localisation & bas-fonds'}</h3>
     <table><tbody>${rows([
       ['Département', it.departement],
       ['Commune', it.commune],
       ['Arrondissement', it.arrondissement],
       ['Village', it.village],
-      ['Nom du bas-fonds', it.nom_bas_fonds],
-      ['Superficie', superficie],
+      ...(it.categorie==='etuveuse' ? [] : [['Nom du bas-fonds', it.nom_bas_fonds], ['Superficie', superficie]]),
     ])}</tbody></table>` : ''}
 
     ${autresBloc}
