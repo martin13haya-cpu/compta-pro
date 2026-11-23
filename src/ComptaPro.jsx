@@ -3448,6 +3448,32 @@ function CompaniesPage({ companies, refresh, toast, isSuperAdmin=false, currentU
 
 // ── TIERS GENERIQUE (Clients + Fournisseurs partagent la même logique) ───────
 // ── FICHE FOURNISSEUR (PDF) ──────────────────────────────────────────────────
+// Mise en page compacte en « em » : le script réduit la taille du texte jusqu'à ce que
+// la fiche tienne sur une page A4 (largeur fixée à celle de la page imprimée).
+const CSS_FICHE_UNE_PAGE = `
+  @page { size: A4; margin: 10mm; }
+  .fiche1p { width: 190mm; max-width: 100%; margin: 0 auto; font-size: 10pt; }
+  .fiche1p .header { margin-bottom: .6em; padding-bottom: .5em; }
+  .fiche1p .company-name { font-size: 1.45em; }
+  .fiche1p .doc-numero, .fiche1p .doc-date { font-size: .95em; }
+  .fiche1p h3.sec { margin: .7em 0 .25em; font-size: 1.05em; color: #082818; }
+  .fiche1p table { font-size: 1em; margin-bottom: .35em; }
+  .fiche1p th { font-size: .9em; padding: .25em .5em; }
+  .fiche1p td { padding: .18em .5em; }
+  .fiche1p .signatures { margin-top: 1.4em; }
+  .fiche1p .sig-box { font-size: .9em; padding-top: .4em; }
+`
+const SCRIPT_FICHE_UNE_PAGE = '<scr' + 'ipt>' + `
+  (function(){
+    function ajuster(){
+      var f = document.querySelector('.fiche1p'); if (!f) return;
+      var max = 277 * 96 / 25.4 - 8, t = 10;      // hauteur utile A4 (marges 10 mm), en px
+      f.style.fontSize = t + 'pt';
+      while (f.scrollHeight > max && t > 5.5) { t -= 0.25; f.style.fontSize = t + 'pt'; }
+    }
+    if (document.readyState === 'complete') ajuster(); else window.addEventListener('load', ajuster);
+  })();
+` + '</scr' + 'ipt>'
 function printFicheTiers(it, kind='fournisseur') {
   const isFourn = kind==='fournisseur'
   const titreFiche = isFourn ? 'FICHE FOURNISSEUR' : 'FICHE CLIENT'
@@ -3487,7 +3513,7 @@ function printFicheTiers(it, kind='fournisseur') {
 
   // Bloc dynamique : toute autre colonne de la table non listée ci-dessus
   const autres = Object.keys(it)
-    .filter(k => !SKIP.has(k))
+    .filter(k => !SKIP.has(k) && it[k] !== null && it[k] !== undefined && it[k] !== '')
     .map(k => [prettify(k), typeof it[k]==='object' ? JSON.stringify(it[k]) : it[k]])
   const autresBloc = autres.length ? `
     <h3 style="margin:18px 0 6px;font-size:11pt;color:#082818">🗂️ Autres informations</h3>
@@ -3531,8 +3557,9 @@ function printFicheTiers(it, kind='fournisseur') {
 
   const html = `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">
     <title>${fname}</title>
-    <style>${CSS_PRINT}</style></head><body>
+    <style>${CSS_PRINT}${CSS_FICHE_UNE_PAGE}</style></head><body>
     <button class="print-btn" onclick="window.print()">🖨️ Imprimer / PDF</button>
+    <div class="fiche1p">
     <div class="header">
       <div>
         <div class="company-name">${titreFiche}</div>
@@ -3582,9 +3609,11 @@ function printFicheTiers(it, kind='fournisseur') {
       <div class="sig-box">Signature du ${labelTiers}</div>
       <div class="sig-box">Cachet & visa<br><small>${societe}</small></div>
     </div>
+    </div>
+    ${SCRIPT_FICHE_UNE_PAGE}
   </body></html>`
 
-  openPrintWindow(html, fname)
+  openPrintWindow(html.replace(/<h3 style="margin:\d+px 0 6px;font-size:11pt;color:#082818">/g, '<h3 class="sec">'), fname)
 }
 
 // ── PLAN COMPTABLE ───────────────────────────────────────────────────────────
@@ -4075,7 +4104,7 @@ async function poserCodeCategorie(id, companyId, f, { ancien=null, existants=nul
   if (ch.doublon) return { statut:'conflit', code:r.code, doublon:true, avec:ch.avec?.label }
   if (ch.epuise) return { statut:'conflit', code:r.code }
   const { error } = await supabase.from('compta_fournisseurs').update({ code_trace:ch.code }).eq('id', id)
-  if (error) return { statut:'erreur', message:error.message }
+  if (error) return { statut:'erreur', message:error.message, code:ch.code }
   if (existants) existants.set(ch.code, { cip:r.ident, label:labelTiers(f) })
   if (ancien) { try { await majRegistresTracaCodes(companyId, new Map([[ancien, ch.code]])) } catch {} }
   return { statut:'pose', code:ch.code, suffixe:!!ch.suffixe, avec:ch.avec?.label }
@@ -4126,7 +4155,7 @@ async function poserCodeProducteur(id, companyId, f, { ancien=null, existants=nu
   if (ch.doublon) return { statut:'conflit', code:r.code, doublon:true, avec:ch.avec?.label }
   if (ch.epuise) return { statut:'conflit', code:r.code }
   const { error } = await supabase.from('compta_fournisseurs').update({ code_trace:ch.code }).eq('id', id)
-  if (error) return { statut:'erreur', message:error.message }
+  if (error) return { statut:'erreur', message:error.message, code:ch.code }
   if (existants) existants.set(ch.code, { cip, label:labelTiers(f) })
   if (ancien) { try { await majRegistresTracaCodes(companyId, new Map([[ancien, ch.code]])) } catch {} }
   return { statut:'pose', code:ch.code, suffixe:!!ch.suffixe, avec:ch.avec?.label }
@@ -5065,10 +5094,14 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
         }
       }
       if (table==='compta_fournisseurs') {
-        const { data:codesPris } = await fetchAllRows(() => supabase.from('compta_fournisseurs').select('id,type,code_trace,cip,ifu,nom,prenom,nom_societe').eq('company_id', cid).not('code_trace','is',null).order('id'))
+        const { data:codesPris } = await fetchAllRows(() => supabase.from('compta_fournisseurs').select('id,type,code_trace,cip,ifu,nom,prenom,nom_societe').eq('company_id', cid).eq('actif', true).not('code_trace','is',null).order('id'))
         const existants = new Map((codesPris||[]).map(c => [c.code_trace, { cip:onlyDigits(c.type==='morale' && !/-P/.test(c.code_trace) ? c.ifu : c.cip), label:labelTiers(c) }]))
         for (const r of insRows||[]) {
-          const rc = await poserCodeProducteur(r.id, cid, r, { existants })
+          let rc = await poserCodeProducteur(r.id, cid, r, { existants })
+          if (rc.statut==='erreur' && rc.code && /duplicate|unique/i.test(rc.message||'')) {
+            await supabase.from('compta_fournisseurs').update({ code_trace:null }).eq('company_id', cid).eq('actif', false).eq('code_trace', rc.code)
+            rc = await poserCodeProducteur(r.id, cid, r, { existants })
+          }
           if (rc.statut==='ignore') await attribuerCodeTrace('compta_fournisseurs', r.id, cid, 'P')
         }
         // Table propre à la catégorie (étuveuses + mentorés, intermédiaires, transporteurs).
@@ -5083,10 +5116,26 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
               nom_etuveuse: r.type==='morale' ? (r.nom_societe||'') : [r.nom, r.prenom].filter(Boolean).join(' '),
               code_etuveuse:codeDe.get(r.id)||null, code_trace:codeDe.get(r.id)||null, ...(extrasPerRow[idx]?.etv||{}),
             }))
-            const { error:errE } = await supabase.from('compta_etuveuses').insert(etvRows)
+            // Codes encore portés par d'anciennes fiches étuveuses (fiches supprimées) : libérés.
+            const nouveauxCodes = etvRows.map(e => e.code_trace).filter(Boolean)
+            const idsNouv = new Set(insRows.map(r => r.id))
+            for (let i = 0; i < nouveauxCodes.length; i += 150) {
+              const { data:anciens } = await supabase.from('compta_etuveuses').select('id,fournisseur_id').in('code_trace', nouveauxCodes.slice(i, i + 150))
+              for (const a of (anciens||[]).filter(a => !idsNouv.has(a.fournisseur_id)))
+                await supabase.from('compta_etuveuses').update({ code_trace:null, code_etuveuse:null }).eq('id', a.id)
+            }
+            let errE = null
+            for (const e of etvRows) {
+              let { error:er } = await supabase.from('compta_etuveuses').insert(e)
+              if (er && /duplicate|unique/i.test(er.message)) ({ error:er } = await supabase.from('compta_etuveuses').insert({ ...e, code_trace:null, code_etuveuse:null }))
+              if (er) errE = errE || er
+            }
             if (errE) signaler(errE)
             const menRows = insRows.flatMap((r, idx) => (extrasPerRow[idx]?.mentores||[]).map((m, k) => ({ ...m, company_id:cid, user_id:uid, fournisseur_id:r.id, ordre:k })))
-            if (!errE && menRows.length) { const { error:errM } = await supabase.from('compta_etuveuses_mentores').insert(menRows); if (errM) signaler(errM) }
+            for (let i = 0; i < menRows.length; i += 200) {
+              const { error:errM } = await supabase.from('compta_etuveuses_mentores').insert(menRows.slice(i, i + 200))
+              if (errM) { signaler(errM); break }
+            }
           } else {
             const { error:errC } = await supabase.from(tCat).insert(insRows.map(r => ({ company_id:cid, user_id:uid, fournisseur_id:r.id })))
             if (errC) signaler(errC)
