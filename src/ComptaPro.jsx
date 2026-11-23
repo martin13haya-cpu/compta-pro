@@ -4619,6 +4619,51 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     toast.success('Archivé.'); load()
   }
 
+  // Étuveuses importées en double (même nom de mentor, NPI différents — souvent un NPI
+  // incrémenté par Excel) : on garde la plus ancienne, on y rattache les mentorés des
+  // autres, puis on archive les doublons.
+  const [fusionEtv, setFusionEtv] = useState(false)
+  const fusionnerEtuveuses = async () => {
+    if (!companyId) { toast.error("Sélectionnez une société précise (en haut de l'écran)."); return }
+    const cleNom = f => [f.nom, f.prenom, f.nom_societe].map(s => String(s||'').trim().toLowerCase().replace(/\s+/g,' ')).join('|')
+    const groupes = new Map()
+    items.filter(f => f.categorie === 'etuveuse' && cleNom(f).replace(/\|/g,'')).forEach(f => {
+      const k = cleNom(f); if (!groupes.has(k)) groupes.set(k, []); groupes.get(k).push(f)
+    })
+    const doublons = [...groupes.values()].filter(g => g.length > 1)
+      .map(g => g.slice().sort((a,b) => String(a.created_at||'').localeCompare(String(b.created_at||'')) || String(a.id).localeCompare(String(b.id))))
+    if (!doublons.length) { toast.success('Aucune étuveuse en double (même nom) dans cette société.'); return }
+    const liste = doublons.map(g => `• ${displayName(g[0])} : ${g.length} fiches (NPI ${g.map(f => f.cip||'—').join(', ')})`).join('\n')
+    if (!confirm(`${doublons.length} étuveuse(s) en double :\n${liste.slice(0, 1500)}\n\nPour chacune, la fiche la plus ancienne est conservée (son NPI aussi) ; les mentorés des autres fiches y sont rattachés, puis les doublons sont archivés.\n\nFusionner maintenant ?`)) return
+    setFusionEtv(true)
+    let ok = 0, err = null
+    try {
+      for (const [garde, ...autres] of doublons) {
+        const ids = autres.map(f => f.id)
+        const { data:deja } = await supabase.from('compta_etuveuses_mentores').select('id,nom_prenoms,npi').eq('fournisseur_id', garde.id)
+        const { data:ms } = await supabase.from('compta_etuveuses_mentores').select('id,nom_prenoms,npi').in('fournisseur_id', ids).order('ordre')
+        const vu = new Set((deja||[]).map(m => `${String(m.nom_prenoms||'').trim().toLowerCase()}|${m.npi||''}`))
+        let ordre = (deja||[]).length
+        for (const m of ms||[]) {
+          const k = `${String(m.nom_prenoms||'').trim().toLowerCase()}|${m.npi||''}`
+          const { error:e } = vu.has(k)
+            ? await supabase.from('compta_etuveuses_mentores').delete().eq('id', m.id)
+            : await supabase.from('compta_etuveuses_mentores').update({ fournisseur_id:garde.id, ordre:ordre++ }).eq('id', m.id)
+          if (e) { err = err || e; continue }
+          vu.add(k)
+        }
+        await supabase.from('compta_etuveuses').delete().in('fournisseur_id', ids)
+        const { error:e2 } = await supabase.from(table).update({ actif:false }).in('id', ids)
+        if (e2) { err = err || e2; continue }
+        for (const f of autres) if (f.numero_compte) await supabase.from('compta_plan_comptable').delete().eq('company_id', f.company_id).eq('numero', f.numero_compte).eq('est_collectif', false)
+        ok++
+      }
+    } finally { setFusionEtv(false) }
+    if (err) toast.error(`${ok} étuveuse(s) fusionnée(s), erreur : ${err.message}`)
+    else toast.success(`${ok} étuveuse(s) fusionnée(s) : les mentorés sont regroupés sur une seule fiche.`)
+    load()
+  }
+
   // Le n° de contrat peut être un simple entier ("157") ou, pour les contrats générés
   // automatiquement, un format "007 / 2026 / CEPEA KOUANDE" — on trie sur le premier
   // nombre trouvé, les fiches sans numéro passant en dernier.
@@ -4931,9 +4976,16 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
           return { nom_prenoms:obj.mentore_nom, village:obj.mentore_village||null, genre:obj.mentore_genre||null, handicap:ouiNon(obj.mentore_handicap),
             npi:onlyDigits(obj.mentore_npi)||null, date_naissance:dm.iso, contact:obj.mentore_contact||null }
         }
+        // Clés du mentor : son NPI/IFU et son nom. Le nom suffit à regrouper : un NPI
+        // incrémenté par Excel (poignée de recopie) ne doit pas créer une étuveuse en double.
+        const clesEtv = () => {
+          const id = onlyDigits(t==='morale' ? obj.ifu : obj.cip)
+          const nomCle = [obj.nom, obj.prenom, obj.nom_societe].map(s=>String(s||'').trim().toLowerCase().replace(/\s+/g,' ')).join('|')
+          return [id && 'id:' + id, nomCle.replace(/\|/g,'') && 'nom:' + nomCle].filter(Boolean)
+        }
         if (catImp==='etuveuse') {
-          const cle = onlyDigits(t==='morale' ? obj.ifu : obj.cip) || [obj.nom, obj.prenom, obj.nom_societe].map(s=>String(s||'').trim().toLowerCase()).join('|')
-          if (groupesEtv.has(cle) && cle.replace(/\|/g,'')) {
+          const cle = clesEtv().find(k => groupesEtv.has(k))
+          if (cle) {
             const m = mentoreLigne(); if (m) { extrasPerRow[groupesEtv.get(cle)].mentores.push(m); nbMentores++ }
             continue
           }
@@ -4988,8 +5040,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
         })
         avancesPerRow.push(catImp==='producteur' ? avsImp : [])
         if (catImp==='etuveuse') {
-          const cle = onlyDigits(t==='morale' ? obj.ifu : obj.cip) || [obj.nom, obj.prenom, obj.nom_societe].map(s=>String(s||'').trim().toLowerCase()).join('|')
-          groupesEtv.set(cle, rows.length-1)
+          clesEtv().forEach(k => groupesEtv.set(k, rows.length-1))
           const dc = parseDateFR(obj.date_contrat)
           const m = mentoreLigne(); if (m) nbMentores++
           extrasPerRow.push({ etv:{ date_contrat:dc.iso, capacite_kg:numFR(obj.capacite_kg)||0, zone:obj.zone||null, observations:obj.observations||null }, mentores: m ? [m] : [] })
@@ -5825,6 +5876,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
               !readOnly && canImport && { couleur:'#64748b', label:'📥 Modèle CSV', onClick:()=> isFourn ? setCsvChoix('modele') : downloadTemplate() },
               !readOnly && canImport && { couleur:'#15803d', label:importing?'⏳ Import…':'📤 Importer CSV', disabled:importing, onClick:()=> isFourn ? setCsvChoix('import') : importInputRef.current?.click() },
               !readOnly && items.length>0 && { couleur:'#7c3aed', label:corrigeant?'⏳ Correction…':'📞 Corriger les téléphones / NPI (0 manquant)', disabled:corrigeant, onClick:corrigerNumeros },
+              !readOnly && isFourn && items.some(f => f.categorie === 'etuveuse') && { couleur:'#b45309', label:fusionEtv?'⏳ Fusion…':'🔗 Fusionner les étuveuses en double', disabled:fusionEtv, onClick:fusionnerEtuveuses },
               !readOnly && table==='compta_fournisseurs' && items.length>0 && null,
               !readOnly && table==='compta_fournisseurs' && items.length>1 && { couleur:'#1d4ed8', label:'🧹 Doublons', onClick:removeDuplicates },
               !readOnly && table==='compta_fournisseurs' && items.length>0 && { label:`🗑️ ${filtered.length!==items.length ? `Supprimer filtrés (${filtered.length})` : 'Vider la liste'}`, danger:true, onClick:deleteAll },
