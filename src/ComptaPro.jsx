@@ -2393,6 +2393,8 @@ const MVT_COLS = [
   { label:'Type', w:6 }, { label:'Motif', w:12 }, { label:'Référence', w:9 }, { label:'Quantité', w:6, r:true },
   { label:'P.U. (FCFA)', w:6, r:true }, { label:'Montant (FCFA)', w:7, r:true },
 ]
+// Quantité de riz paddy attendue par producteur (inventaire consolidé : % récupéré).
+const KG_ATTENDU_PRODUCTEUR = 515
 // Commune de mouvements de stock de plusieurs sociétés : celle du producteur (bon
 // « Remboursement FRIA … ») ou de l'achat hors FRIA (bon « Achat groupé … »).
 // Renvoie { 'company_id|référence du bon': COMMUNE }.
@@ -2498,8 +2500,18 @@ function ConsolApercu({ open, onClose, selectedIds, allCompanies, colonnes, toas
         const arts = Object.values(grp).map(g => ({ ...g, stock_actuel:Math.round(g.stock_actuel * 1000) / 1000,
           prix_achat:g.stock_actuel ? Math.round(g._val / g.stock_actuel) : 0, prix_vente:g._n ? Math.round(g._pv / g._n) : 0 }))
           .sort((a, b) => a.commune.localeCompare(b.commune, 'fr') || String(a.designation||'').localeCompare(String(b.designation||''), 'fr'))
-        const headers = [{ label:'Commune', w:12 }, ...colonnes.map(c => ({ label:c.key, r:['Stock actuel','Stock min','Prix achat','Prix vente','Valeur stock (FCFA)'].includes(c.key) }))]
-        const rows = arts.map(a => [a.commune, ...colonnes.map(c => consolArticleVal(a, c.key))])
+        // Riz paddy : quantité attendue = producteurs de la commune × 515 kg ; % récupéré = stock / attendu.
+        const { data:prods } = await fetchAllRows(() => supabase.from('compta_fournisseurs').select('id,commune,categorie').eq('actif', true).in('company_id', selectedIds).order('id'))
+        const nbProd = {}
+        ;(prods || []).filter(estProducteur).forEach(f => { const c = toUpperNoAccent(f.commune || '').trim(); if (c) nbProd[c] = (nbProd[c] || 0) + 1 })
+        const estPaddy = a => a.categorie === 'riz_paddy' || /paddy/i.test(a.designation || '')
+        arts.forEach(a => { if (!estPaddy(a)) return
+          a._prod = nbProd[a.commune] || 0; a._attendu = a._prod * KG_ATTENDU_PRODUCTEUR
+          a._taux = a._attendu ? Math.round((+a.stock_actuel || 0) / a._attendu * 1000) / 10 : null })
+        const headers = [{ label:'Commune', w:12 }, ...colonnes.map(c => ({ label:c.key, r:['Stock actuel','Stock min','Prix achat','Prix vente','Valeur stock (FCFA)'].includes(c.key) })),
+          { label:'Producteurs', w:7, r:true }, { label:`Qté attendue (kg) (× ${KG_ATTENDU_PRODUCTEUR})`, w:9, r:true }, { label:'% récupéré', w:7, r:true }]
+        const rows = arts.map(a => [a.commune, ...colonnes.map(c => consolArticleVal(a, c.key)),
+          a._prod ?? '', a._attendu ?? '', a._taux == null ? '' : `${String(a._taux).replace('.', ',')} %`])
         const cats = arts.map(a => a.categorie || '')
         const valeur = arts.reduce((s, a) => s + Math.round((+a.stock_actuel || 0) * (+a.prix_achat || 0)), 0)
         const alertes = arts.filter(a => (+a.stock_actuel || 0) <= (+a.stock_min || 0)).length
@@ -2536,7 +2548,9 @@ function ConsolApercu({ open, onClose, selectedIds, allCompanies, colonnes, toas
     const parUnite = {}
     arts.forEach(a => { const u = a.unite || ''; parUnite[u] = (parUnite[u] || 0) + (+a.stock_actuel || 0) })
     const qte = Object.entries(parUnite).map(([u, v]) => `${nbFr(Math.round(v * 1000) / 1000)}${u ? ' ' + u : ''}`).join(' + ') || '0'
-    return [{ label:'Articles', value:nbFr(arts.length) }, { label:'Quantité totale en stock', value:qte }, { label:'Articles en alerte', value:nbFr(arts.filter(a => (+a.stock_actuel || 0) <= (+a.stock_min || 0)).length) }, { label:'Valeur totale du stock', value:nbFr(valeur) + ' FCFA' }]
+    const pad = arts.filter(a => a._attendu), att = pad.reduce((s, a) => s + a._attendu, 0), rec = pad.reduce((s, a) => s + (+a.stock_actuel || 0), 0)
+    const tauxGlobal = att ? [{ label:'Riz paddy récupéré / attendu', value:`${nbFr(Math.round(rec))} / ${nbFr(att)} kg (${String(Math.round(rec / att * 1000) / 10).replace('.', ',')} %)` }] : []
+    return [{ label:'Articles', value:nbFr(arts.length) }, { label:'Quantité totale en stock', value:qte }, ...tauxGlobal, { label:'Articles en alerte', value:nbFr(arts.filter(a => (+a.stock_actuel || 0) <= (+a.stock_min || 0)).length) }, { label:'Valeur totale du stock', value:nbFr(valeur) + ' FCFA' }]
   })() : (() => {
     const mv = idxVisibles.map(i => res.mv[i])
     const som = (ty, k) => mv.filter(m => m.type === ty).reduce((s, m) => s + (+m[k] || 0), 0)
