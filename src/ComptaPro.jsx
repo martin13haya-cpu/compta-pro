@@ -2239,24 +2239,27 @@ function ConsolStockPeriode({ selectedIds, allCompanies, toast }) {
       if (ea || em) { toast.error((ea || em).message); return }
       const parArt = {}
       for (const m of mvts || []) {
-        const x = parArt[m.article_id] || (parArt[m.article_id] = { entP:0, sorP:0, entApres:0, sorApres:0, net:0 })
+        const x = parArt[m.article_id] || (parArt[m.article_id] = { entP:0, sorP:0, entApres:0, sorApres:0, net:0, avant:0 })
         const qte = +m.quantite || 0, apres = au && m.date_mvt > au, avant = du && m.date_mvt < du
-        if (m.type === 'entree') x.net += qte; else if (m.type === 'sortie') x.net -= qte
-        if (avant) continue
+        const signe = m.type === 'entree' ? 1 : m.type === 'sortie' ? -1 : 0
+        x.net += signe * qte
+        if (avant) { x.avant += signe * qte; continue }
         if (m.type === 'entree') { if (apres) x.entApres += qte; else x.entP += qte }
         else if (m.type === 'sortie') { if (apres) x.sorApres += qte; else x.sorP += qte }
       }
       const r3 = v => Math.round(v * 1000) / 1000
       const lignes = (arts || []).map(a => {
-        const x = parArt[a.id] || { entP:0, sorP:0, entApres:0, sorApres:0, net:0 }
-        const fin = r3((+a.stock_actuel || 0) - x.entApres + x.sorApres)
-        // Écart : stock de la fiche article − stock donné par TOUS ses mouvements. Non nul =
-        // historique incomplet (stock initial saisi, mouvement supprimé, stock modifié…).
+        const x = parArt[a.id] || { entP:0, sorP:0, entApres:0, sorApres:0, net:0, avant:0 }
+        // Stocks calculés à partir des MOUVEMENTS (même source que « Mouvements de stock ») :
+        // début = mouvements avant la période ; fin = début + entrées − sorties de la période.
+        const debut = r3(x.avant)
+        const fin = r3(x.avant + x.entP - x.sorP)
+        // Écart : stock de la fiche article − stock donné par tous ses mouvements. Non nul =
+        // fiche article désynchronisée (stock initial saisi, mouvement supprimé, stock modifié…).
         const ecart = r3((+a.stock_actuel || 0) - x.net)
-        const debut = r3(fin - x.entP + x.sorP)
-        return { societe:nomSoc(a.company_id), company_id:a.company_id, code:a.code || '', designation:a.designation || '', unite:a.unite || '', categorie:CAT_LABELS[a.categorie] || a.categorie || '',
+        return { id:a.id, net:r3(x.net), societe:nomSoc(a.company_id), company_id:a.company_id, code:a.code || '', designation:a.designation || '', unite:a.unite || '', categorie:CAT_LABELS[a.categorie] || a.categorie || '',
           debut, entrees:r3(x.entP), sorties:r3(x.sorP), fin, ecart, actuel:+a.stock_actuel || 0, prix:+a.prix_achat || 0, valeur:Math.round(fin * (+a.prix_achat || 0)), actif:a.actif !== false }
-      }).filter(l => l.actif || l.debut || l.entrees || l.sorties || l.fin)
+      }).filter(l => l.actif || l.debut || l.entrees || l.sorties || l.fin || l.ecart)
       const groupes = {}
       for (const l of lignes) {
         const k = toUpperNoAccent(l.designation).trim() + '|' + (l.unite || '').toLowerCase()
@@ -2268,6 +2271,23 @@ function ConsolStockPeriode({ selectedIds, allCompanies, toast }) {
       lignes.sort((a, b) => a.societe.localeCompare(b.societe, 'fr') || a.designation.localeCompare(b.designation, 'fr'))
       setRes({ lignes, consolide, du, au, nbSoc:selectedIds.length })
     } finally { setChargement(false) }
+  }
+
+  // Corrige le stock des fiches articles pour qu'il égale le total de leurs mouvements.
+  const [aligner, setAligner] = useState(null)   // { lignes, coches:Set }
+  const [alignant, setAlignant] = useState(false)
+  const appliquerAlignement = async () => {
+    const choisies = aligner.lignes.filter(l => aligner.coches.has(l.id))
+    if (!choisies.length) { setAligner(null); return }
+    setAlignant(true)
+    let ok = 0, err = null
+    for (const l of choisies) {
+      const { error } = await supabase.from('compta_articles').update({ stock_actuel:l.net }).eq('id', l.id)
+      if (error) err = err || error; else ok++
+    }
+    setAlignant(false); setAligner(null)
+    if (err) toast.error(`${ok} fiche(s) corrigée(s), erreur : ${err.message}`); else toast.success(`${ok} fiche(s) article corrigée(s) : leur stock égale maintenant le total des mouvements.`)
+    calculer()
   }
 
   const filtre = l => !q || `${l.designation} ${l.societe || ''} ${l.code || ''}`.toLowerCase().includes(q.toLowerCase())
@@ -2306,9 +2326,31 @@ function ConsolStockPeriode({ selectedIds, allCompanies, toast }) {
           <span style={{ fontSize:13 }}>au</span><input type="date" style={champ} value={au} onChange={e=>setAu(e.target.value)} />
           <Btn onClick={calculer} disabled={chargement}>{chargement ? '⏳ Calcul…' : '🏬 Centraliser les stocks'}</Btn>
           {res && <Btn variant="info" onClick={exporter}>📊 Exporter Excel</Btn>}
+          {res && res.lignes.some(l => l.ecart) && <Btn variant="danger" onClick={()=>{ const ls = res.lignes.filter(l => l.ecart); setAligner({ lignes:ls, coches:new Set(ls.map(l => l.id)) }) }}>🔧 Corriger les fiches articles</Btn>}
         </div>
-        <div style={{ fontSize:11.5, color:'#64748b', marginTop:8 }}>Le stock de début et de fin est reconstitué à partir du stock actuel et des mouvements de stock (entrées, sorties, bons). Laissez « Du » vide pour partir de l'origine.</div>
+        <div style={{ fontSize:11.5, color:'#64748b', marginTop:8 }}>Les stocks sont calculés à partir des mouvements de stock (entrées, sorties, bons) : début = mouvements avant la période, fin = début + entrées − sorties. Laissez « Du » vide pour partir de l'origine.</div>
       </Card>
+      <Modal open={!!aligner} onClose={()=>!alignant && setAligner(null)} title="Corriger le stock des fiches articles" size="lg">
+        {aligner && <>
+          <p style={{ fontSize:13, color:'#475569', marginTop:0 }}>Le stock de chaque fiche cochée sera remplacé par le total de ses mouvements de stock.
+            Décochez un article dont le stock de la fiche est juste (par exemple un stock initial réel saisi sans mouvement).</p>
+          <div style={{ maxHeight:'45vh', overflow:'auto', border:'1px solid #e2e8f0', borderRadius:8 }}>
+            <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12.5 }}>
+              <thead><tr>{['', 'Société', 'Article', 'Stock fiche', 'Total mouvements', 'Nouveau stock'].map((h, i) => <th key={i} style={{ padding:'7px 9px', textAlign:i >= 3 ? 'right' : 'left', background:'#f1f5f9', fontSize:11.5, color:'#475569', position:'sticky', top:0 }}>{h}</th>)}</tr></thead>
+              <tbody>{aligner.lignes.map(l => <tr key={l.id} style={{ borderTop:'1px solid #f1f5f9' }}>
+                <td style={{ padding:'6px 9px' }}><input type="checkbox" checked={aligner.coches.has(l.id)} onChange={()=>setAligner(x => { const c = new Set(x.coches); c.has(l.id) ? c.delete(l.id) : c.add(l.id); return { ...x, coches:c } })} /></td>
+                <td style={{ padding:'6px 9px' }}>{l.societe}</td><td style={{ padding:'6px 9px', fontWeight:600 }}>{l.designation}</td>
+                <td style={{ padding:'6px 9px', textAlign:'right', color:l.actuel < 0 ? '#dc2626' : undefined }}>{nbFr(l.actuel)} {l.unite}</td>
+                <td style={{ padding:'6px 9px', textAlign:'right' }}>{nbFr(l.net)} {l.unite}</td>
+                <td style={{ padding:'6px 9px', textAlign:'right', fontWeight:700 }}>{nbFr(l.net)} {l.unite}</td></tr>)}</tbody>
+            </table>
+          </div>
+          <div style={{ display:'flex', gap:10, justifyContent:'flex-end', marginTop:14 }}>
+            <Btn variant="secondary" onClick={()=>setAligner(null)} disabled={alignant}>Annuler</Btn>
+            <Btn onClick={appliquerAlignement} disabled={alignant || !aligner.coches.size}>{alignant ? '⏳ Correction…' : `🔧 Corriger ${aligner.coches.size} fiche(s)`}</Btn>
+          </div>
+        </>}
+      </Modal>
       {res && <Card style={{ padding:0, overflow:'hidden' }}>
         <div style={{ display:'flex', gap:10, alignItems:'center', flexWrap:'wrap', padding:'12px 16px' }}>
           <select style={champ} value={vue} onChange={e=>setVue(e.target.value)}>
@@ -2318,12 +2360,11 @@ function ConsolStockPeriode({ selectedIds, allCompanies, toast }) {
           <input style={{ ...champ, flex:'1 1 200px' }} placeholder="Rechercher un article ou une société…" value={q} onChange={e=>setQ(e.target.value)} />
           <span style={{ fontSize:12.5, color:'#64748b' }}>Du {res.du ? dateDoc(res.du) : "l'origine"} au {res.au ? dateDoc(res.au) : "aujourd'hui"} — {res.nbSoc} société(s)</span>
         </div>
-        {res.lignes.some(l => l.debut < 0 || l.fin < 0 || l.ecart) && <div style={{ margin:'0 16px 12px', padding:'10px 14px', background:'#fef2f2', border:'1px solid #fecaca', borderRadius:8, fontSize:12.5, color:'#7f1d1d', lineHeight:1.5 }}>
-          <strong>Pourquoi des stocks négatifs ?</strong> Le stock de début est recalculé à partir du stock de la fiche article, en retirant les mouvements de la période.
-          Si la colonne <strong>« Écart fiche / mvts »</strong> n'est pas vide, la fiche article et l'historique des mouvements ne concordent pas :
-          entrées présentes dans les mouvements mais non ajoutées au stock de la fiche, sorties faites sans mouvement, mouvement supprimé, ou stock de la fiche modifié à la main.
-          Un <strong>stock de fin négatif</strong> veut dire que la fiche article elle-même est négative (plus de sorties que d'entrées).
-          Passez en vue « Détail par société » pour voir la société concernée, puis contrôlez ses mouvements dans Stock › Mouvements de stock.
+        {res.lignes.some(l => l.ecart) && <div style={{ margin:'0 16px 12px', padding:'10px 14px', background:'#fef2f2', border:'1px solid #fecaca', borderRadius:8, fontSize:12.5, color:'#7f1d1d', lineHeight:1.5 }}>
+          <strong>Fiches articles désynchronisées.</strong> Les stocks du tableau sont calculés à partir des mouvements de stock. La colonne
+          <strong> « Écart fiche / mvts »</strong> montre la différence entre le stock affiché sur la fiche article (page Articles) et le total de ses mouvements :
+          un écart vient d'un stock initial saisi sans mouvement, d'un mouvement supprimé ou d'un stock modifié à la main.
+          Cliquez sur <strong>« 🔧 Corriger les fiches articles »</strong> pour remettre le stock des fiches au total des mouvements (vous choisissez les articles).
         </div>}
         <div style={{ overflowX:'auto' }}>
           <table style={{ width:'100%', borderCollapse:'collapse', fontSize:13 }}>
