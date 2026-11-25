@@ -2398,6 +2398,7 @@ function ConsolApercu({ open, onClose, selectedIds, allCompanies, colonnes, toas
   const [du, setDu] = useState(`${new Date().getFullYear()}-01-01`)
   const [au, setAu] = useState(today())
   const [typeMvt, setTypeMvt] = useState('')
+  const [catArt, setCatArt] = useState('')   // filtre par type (catégorie) d'article
   const [q, setQ] = useState('')
   const [res, setRes] = useState(null)
   const [chargement, setChargement] = useState(false)
@@ -2445,12 +2446,13 @@ function ConsolApercu({ open, onClose, selectedIds, allCompanies, colonnes, toas
           .sort((a, b) => a.commune.localeCompare(b.commune, 'fr') || String(a.designation||'').localeCompare(String(b.designation||''), 'fr'))
         const headers = [{ label:'Commune', w:12 }, ...colonnes.map(c => ({ label:c.key, r:['Stock actuel','Stock min','Prix achat','Prix vente','Valeur stock (FCFA)'].includes(c.key) }))]
         const rows = arts.map(a => [a.commune, ...colonnes.map(c => consolArticleVal(a, c.key))])
+        const cats = arts.map(a => a.categorie || '')
         const valeur = arts.reduce((s, a) => s + Math.round((+a.stock_actuel || 0) * (+a.prix_achat || 0)), 0)
         const alertes = arts.filter(a => (+a.stock_actuel || 0) <= (+a.stock_min || 0)).length
-        setRes({ doc, headers, rows, totaux:[{ label:'Articles', value:nbFr(arts.length) }, { label:'Articles en alerte', value:nbFr(alertes) }, { label:'Valeur totale du stock', value:nbFr(valeur) + ' FCFA' }] })
+        setRes({ doc, headers, rows, cats, arts })
       } else {
         const { data, error } = await fetchAllRows(() => {
-          let r = supabase.from('compta_mouvements_stock').select('*,compta_articles(code,designation,unite)').in('company_id', selectedIds)
+          let r = supabase.from('compta_mouvements_stock').select('*,compta_articles(code,designation,unite,categorie)').in('company_id', selectedIds)
           if (du) r = r.gte('date_mvt', du)
           if (au) r = r.lte('date_mvt', au)
           if (typeMvt) r = r.eq('type', typeMvt)
@@ -2461,32 +2463,42 @@ function ConsolApercu({ open, onClose, selectedIds, allCompanies, colonnes, toas
         const rows = mv.map(m => [dateDoc(m.date_mvt), nomSoc(m.company_id), m.compta_articles?.code || '', m.compta_articles?.designation || '—', m.compta_articles?.unite || '',
           m.type === 'entree' ? 'Entrée' : m.type === 'sortie' ? 'Sortie' : (m.type || ''), m.motif || '', m.reference || '',
           +m.quantite || 0, +m.prix_unitaire || 0, Math.round(+m.montant || 0)])
-        const som = (ty, k) => mv.filter(m => m.type === ty).reduce((s, m) => s + (+m[k] || 0), 0)
-        setRes({ doc, headers:MVT_COLS, rows, totaux:[
-          { label:`Entrées (${mv.filter(m => m.type === 'entree').length})`, value:`${nbFr(som('entree','quantite'))} — ${nbFr(Math.round(som('entree','montant')))} FCFA` },
-          { label:`Sorties (${mv.filter(m => m.type === 'sortie').length})`, value:`${nbFr(som('sortie','quantite'))} — ${nbFr(Math.round(som('sortie','montant')))} FCFA` },
-        ] })
+        setRes({ doc, headers:MVT_COLS, rows, cats:mv.map(m => m.compta_articles?.categorie || ''), mv })
       }
     } finally { setChargement(false) }
   }
   // Le choix du document, de la période ou du type relance l'aperçu.
   useEffect(() => { if (open) charger() }, [open, doc, du, au, typeMvt]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const visibles = res ? res.rows.filter(r => !q || r.join(' ').toLowerCase().includes(q.toLowerCase())) : []
+  const idxVisibles = res ? res.rows.map((r, i) => i).filter(i => (!catArt || res.cats[i] === catArt) && (!q || res.rows[i].join(' ').toLowerCase().includes(q.toLowerCase()))) : []
+  const visibles = idxVisibles.map(i => res.rows[i])
+  const categoriesDispo = res ? [...new Set(res.cats.filter(Boolean))].sort((a, b) => (CAT_LABELS[a] || a).localeCompare(CAT_LABELS[b] || b, 'fr')) : []
+  // Totaux selon les lignes affichées (filtres type d'article et recherche).
+  const totaux = !res ? [] : res.doc === 'inventaire' ? (() => {
+    const arts = idxVisibles.map(i => res.arts[i])
+    const valeur = arts.reduce((s, a) => s + Math.round((+a.stock_actuel || 0) * (+a.prix_achat || 0)), 0)
+    return [{ label:'Articles', value:nbFr(arts.length) }, { label:'Articles en alerte', value:nbFr(arts.filter(a => (+a.stock_actuel || 0) <= (+a.stock_min || 0)).length) }, { label:'Valeur totale du stock', value:nbFr(valeur) + ' FCFA' }]
+  })() : (() => {
+    const mv = idxVisibles.map(i => res.mv[i])
+    const som = (ty, k) => mv.filter(m => m.type === ty).reduce((s, m) => s + (+m[k] || 0), 0)
+    return [{ label:`Entrées (${mv.filter(m => m.type === 'entree').length})`, value:`${nbFr(som('entree','quantite'))} — ${nbFr(Math.round(som('entree','montant')))} FCFA` },
+      { label:`Sorties (${mv.filter(m => m.type === 'sortie').length})`, value:`${nbFr(som('sortie','quantite'))} — ${nbFr(Math.round(som('sortie','montant')))} FCFA` }]
+  })()
   const titre = res?.doc === 'mouvements' ? 'Mouvements de stock consolidés' : 'Inventaire consolidé des stocks'
+  const libCat = catArt ? ` — ${CAT_LABELS[catArt] || catArt}` : ''
   const periode = res?.doc === 'mouvements' ? `Du ${du ? dateDoc(du) : "l'origine"} au ${au ? dateDoc(au) : "aujourd'hui"}${typeMvt ? ` — ${typeMvt === 'entree' ? 'entrées' : 'sorties'} seulement` : ''}` : `État au ${dateDoc(today())}`
   const fmt = (v, h) => h?.r && typeof v === 'number' ? nbFr(v) : (v ?? '')
   const imprimer = () => {
     if (!visibles.length) { toast.error('Rien à imprimer.'); return }
-    printFilteredList({ title:titre, subtitle:`${periode}${q ? ` — recherche « ${echapHtml(q)} »` : ''}`, companyName:nbSocTxt,
-      headers:res.headers, rows:visibles.map(r => r.map((v, j) => echapHtml(fmt(v, res.headers[j])))), totals:res.totaux,
+    printFilteredList({ title:titre + libCat, subtitle:`${periode}${q ? ` — recherche « ${echapHtml(q)} »` : ''}`, companyName:nbSocTxt,
+      headers:res.headers, rows:visibles.map(r => r.map((v, j) => echapHtml(fmt(v, res.headers[j])))), totals:totaux,
       filename:`${res.doc}_consolide_${today()}` })
   }
   const excel = async () => {
     if (!visibles.length) { toast.error('Rien à exporter.'); return }
     const XLSX = await import('https://cdn.sheetjs.com/xlsx-0.20.0/package/xlsx.mjs')
-    const aoa = [[titre], [`${nbSocTxt} — ${periode} — exporté le ${new Date().toLocaleDateString('fr-FR')}`], [],
-      res.headers.map(h => h.label), ...visibles, [], ...res.totaux.map(x => [x.label, x.value])]
+    const aoa = [[titre + libCat], [`${nbSocTxt} — ${periode} — exporté le ${new Date().toLocaleDateString('fr-FR')}`], [],
+      res.headers.map(h => h.label), ...visibles, [], ...totaux.map(x => [x.label, x.value])]
     const ws = XLSX.utils.aoa_to_sheet(aoa)
     ws['!cols'] = res.headers.map(h => ({ wch:h.label === 'Commune' ? 16 : h.label === 'Article' || h.label === 'Désignation' ? 28 : 13 }))
     const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, res.doc === 'mouvements' ? 'Mouvements' : 'Inventaire')
@@ -2510,6 +2522,10 @@ function ConsolApercu({ open, onClose, selectedIds, allCompanies, colonnes, toas
             <option value="">Entrées et sorties</option><option value="entree">Entrées</option><option value="sortie">Sorties</option>
           </select>
         </>}
+        <select style={champ} value={catArt} onChange={e=>setCatArt(e.target.value)} title="Filtrer par type d'article">
+          <option value="">Tous les types d'article</option>
+          {[...new Set([...categoriesDispo, ...(catArt ? [catArt] : [])])].map(c => <option key={c} value={c}>{CAT_LABELS[c] || c}</option>)}
+        </select>
         <input style={{ ...champ, flex:'1 1 180px' }} placeholder="Rechercher (article, commune…)" value={q} onChange={e=>setQ(e.target.value)} />
       </div>
       <div style={{ fontSize:12.5, color:'#64748b', marginBottom:8 }}>
@@ -2526,7 +2542,7 @@ function ConsolApercu({ open, onClose, selectedIds, allCompanies, colonnes, toas
         </table>}
       </div>
       {res && <div style={{ display:'flex', gap:18, flexWrap:'wrap', fontSize:13, marginTop:10 }}>
-        {res.totaux.map(x => <span key={x.label}><span style={{ color:'#64748b' }}>{x.label} : </span><strong>{x.value}</strong></span>)}
+        {totaux.map(x => <span key={x.label}><span style={{ color:'#64748b' }}>{x.label} : </span><strong>{x.value}</strong></span>)}
       </div>}
       <div style={{ display:'flex', gap:10, justifyContent:'flex-end', marginTop:14, flexWrap:'wrap' }}>
         <Btn variant="secondary" onClick={onClose}>Fermer</Btn>
