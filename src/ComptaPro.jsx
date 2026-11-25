@@ -2234,31 +2234,36 @@ function ConsolStockPeriode({ selectedIds, allCompanies, toast }) {
     try {
       const [{ data:arts, error:ea }, { data:mvts, error:em }] = await Promise.all([
         fetchAllRows(() => supabase.from('compta_articles').select('id,company_id,code,designation,unite,categorie,stock_actuel,prix_achat,actif').in('company_id', selectedIds).order('designation')),
-        fetchAllRows(() => { let r = supabase.from('compta_mouvements_stock').select('id,article_id,company_id,type,quantite,date_mvt').in('company_id', selectedIds); if (du) r = r.gte('date_mvt', du); return r.order('date_mvt').order('id') }),
+        fetchAllRows(() => supabase.from('compta_mouvements_stock').select('id,article_id,company_id,type,quantite,date_mvt').in('company_id', selectedIds).order('date_mvt').order('id')),
       ])
       if (ea || em) { toast.error((ea || em).message); return }
       const parArt = {}
       for (const m of mvts || []) {
-        const x = parArt[m.article_id] || (parArt[m.article_id] = { entP:0, sorP:0, entApres:0, sorApres:0 })
-        const qte = +m.quantite || 0, apres = au && m.date_mvt > au
+        const x = parArt[m.article_id] || (parArt[m.article_id] = { entP:0, sorP:0, entApres:0, sorApres:0, net:0 })
+        const qte = +m.quantite || 0, apres = au && m.date_mvt > au, avant = du && m.date_mvt < du
+        if (m.type === 'entree') x.net += qte; else if (m.type === 'sortie') x.net -= qte
+        if (avant) continue
         if (m.type === 'entree') { if (apres) x.entApres += qte; else x.entP += qte }
         else if (m.type === 'sortie') { if (apres) x.sorApres += qte; else x.sorP += qte }
       }
       const r3 = v => Math.round(v * 1000) / 1000
       const lignes = (arts || []).map(a => {
-        const x = parArt[a.id] || { entP:0, sorP:0, entApres:0, sorApres:0 }
+        const x = parArt[a.id] || { entP:0, sorP:0, entApres:0, sorApres:0, net:0 }
         const fin = r3((+a.stock_actuel || 0) - x.entApres + x.sorApres)
+        // Écart : stock de la fiche article − stock donné par TOUS ses mouvements. Non nul =
+        // historique incomplet (stock initial saisi, mouvement supprimé, stock modifié…).
+        const ecart = r3((+a.stock_actuel || 0) - x.net)
         const debut = r3(fin - x.entP + x.sorP)
         return { societe:nomSoc(a.company_id), company_id:a.company_id, code:a.code || '', designation:a.designation || '', unite:a.unite || '', categorie:CAT_LABELS[a.categorie] || a.categorie || '',
-          debut, entrees:r3(x.entP), sorties:r3(x.sorP), fin, prix:+a.prix_achat || 0, valeur:Math.round(fin * (+a.prix_achat || 0)), actif:a.actif !== false }
+          debut, entrees:r3(x.entP), sorties:r3(x.sorP), fin, ecart, actuel:+a.stock_actuel || 0, prix:+a.prix_achat || 0, valeur:Math.round(fin * (+a.prix_achat || 0)), actif:a.actif !== false }
       }).filter(l => l.actif || l.debut || l.entrees || l.sorties || l.fin)
       const groupes = {}
       for (const l of lignes) {
         const k = toUpperNoAccent(l.designation).trim() + '|' + (l.unite || '').toLowerCase()
-        const g = groupes[k] || (groupes[k] = { designation:l.designation, unite:l.unite, categorie:l.categorie, debut:0, entrees:0, sorties:0, fin:0, valeur:0, societes:new Set() })
-        g.debut += l.debut; g.entrees += l.entrees; g.sorties += l.sorties; g.fin += l.fin; g.valeur += l.valeur; g.societes.add(l.company_id)
+        const g = groupes[k] || (groupes[k] = { designation:l.designation, unite:l.unite, categorie:l.categorie, debut:0, entrees:0, sorties:0, fin:0, ecart:0, valeur:0, societes:new Set() })
+        g.debut += l.debut; g.entrees += l.entrees; g.sorties += l.sorties; g.fin += l.fin; g.ecart += l.ecart; g.valeur += l.valeur; g.societes.add(l.company_id)
       }
-      const consolide = Object.values(groupes).map(g => ({ ...g, debut:r3(g.debut), entrees:r3(g.entrees), sorties:r3(g.sorties), fin:r3(g.fin), nbSoc:g.societes.size,
+      const consolide = Object.values(groupes).map(g => ({ ...g, debut:r3(g.debut), entrees:r3(g.entrees), sorties:r3(g.sorties), fin:r3(g.fin), ecart:r3(g.ecart), nbSoc:g.societes.size,
         prixMoyen:g.fin > 0 ? Math.round(g.valeur / g.fin) : 0 })).sort((a, b) => a.designation.localeCompare(b.designation, 'fr'))
       lignes.sort((a, b) => a.societe.localeCompare(b.societe, 'fr') || a.designation.localeCompare(b.designation, 'fr'))
       setRes({ lignes, consolide, du, au, nbSoc:selectedIds.length })
@@ -2271,11 +2276,11 @@ function ConsolStockPeriode({ selectedIds, allCompanies, toast }) {
     const XLSX = await import('https://cdn.sheetjs.com/xlsx-0.20.0/package/xlsx.mjs')
     const periode = `${res.du ? dateDoc(res.du) : "l'origine"} au ${res.au ? dateDoc(res.au) : "aujourd'hui"}`
     const entete = [[`Stocks centralisés — période du ${periode}`], [`${res.nbSoc} société(s) — exporté le ${new Date().toLocaleDateString('fr-FR')}`], []]
-    const t1 = [['Article', 'Unité', 'Catégorie', 'Sociétés', 'Stock début', 'Entrées', 'Sorties', 'Stock fin', 'Prix moyen (FCFA)', 'Valeur stock fin (FCFA)'],
-      ...res.consolide.map(g => [g.designation, g.unite, g.categorie, g.nbSoc, g.debut, g.entrees, g.sorties, g.fin, g.prixMoyen, g.valeur]),
+    const t1 = [['Article', 'Unité', 'Catégorie', 'Sociétés', 'Stock début', 'Entrées', 'Sorties', 'Stock fin', 'Prix moyen (FCFA)', 'Valeur stock fin (FCFA)', 'Écart fiche / mouvements'],
+      ...res.consolide.map(g => [g.designation, g.unite, g.categorie, g.nbSoc, g.debut, g.entrees, g.sorties, g.fin, g.prixMoyen, g.valeur, g.ecart || '']),
       ['TOTAL', '', '', '', '', '', '', '', '', res.consolide.reduce((s, g) => s + g.valeur, 0)]]
-    const t2 = [['Société', 'Code', 'Article', 'Unité', 'Catégorie', 'Stock début', 'Entrées', 'Sorties', 'Stock fin', 'Prix achat (FCFA)', 'Valeur stock fin (FCFA)'],
-      ...res.lignes.map(l => [l.societe, l.code, l.designation, l.unite, l.categorie, l.debut, l.entrees, l.sorties, l.fin, l.prix, l.valeur]),
+    const t2 = [['Société', 'Code', 'Article', 'Unité', 'Catégorie', 'Stock début', 'Entrées', 'Sorties', 'Stock fin', 'Prix achat (FCFA)', 'Valeur stock fin (FCFA)', 'Stock fiche article', 'Écart fiche / mouvements'],
+      ...res.lignes.map(l => [l.societe, l.code, l.designation, l.unite, l.categorie, l.debut, l.entrees, l.sorties, l.fin, l.prix, l.valeur, l.actuel, l.ecart || '']),
       ['TOTAL', '', '', '', '', '', '', '', '', '', res.lignes.reduce((s, l) => s + l.valeur, 0)]]
     const wb = XLSX.utils.book_new()
     const ws1 = XLSX.utils.aoa_to_sheet([...entete, ...t1]); ws1['!cols'] = [{ wch:30 }, { wch:8 }, { wch:16 }, { wch:9 }, ...Array(6).fill({ wch:14 })]
@@ -2288,7 +2293,9 @@ function ConsolStockPeriode({ selectedIds, allCompanies, toast }) {
   const champ = { padding:'7px 10px', borderRadius:8, border:'1px solid #d1d5db', fontSize:13 }
   const th = (h, r) => <th key={h} style={{ padding:'8px 10px', textAlign:r ? 'right' : 'left', fontSize:11.5, color:'#475569', background:'#f1f5f9', whiteSpace:'nowrap' }}>{h}</th>
   const td = (v, r, b) => <td style={{ padding:'7px 10px', textAlign:r ? 'right' : 'left', fontWeight:b ? 700 : 400, borderTop:'1px solid #f1f5f9', whiteSpace:'nowrap' }}>{v}</td>
-  const mouv = l => <>{td(nbFr(l.debut), 1)}{td(<span style={{ color:'#15803d' }}>+{nbFr(l.entrees)}</span>, 1)}{td(<span style={{ color:'#b45309' }}>−{nbFr(l.sorties)}</span>, 1)}{td(nbFr(l.fin), 1, 1)}{td(nbFr(l.valeur), 1)}</>
+  const neg = v => v < 0 ? <span style={{ color:'#dc2626' }}>{nbFr(v)}</span> : nbFr(v)
+  const mouv = l => <>{td(neg(l.debut), 1)}{td(<span style={{ color:'#15803d' }}>+{nbFr(l.entrees)}</span>, 1)}{td(<span style={{ color:'#b45309' }}>−{nbFr(l.sorties)}</span>, 1)}{td(neg(l.fin), 1, 1)}{td(neg(l.valeur), 1)}
+    {td(l.ecart ? <span style={{ color:'#dc2626', fontWeight:700 }} title="Stock de la fiche article − stock donné par tous ses mouvements">{l.ecart > 0 ? '+' : ''}{nbFr(l.ecart)}</span> : <span style={{ color:'#94a3b8' }}>—</span>, 1)}</>
   const liste = res ? (vue === 'consolide' ? res.consolide : res.lignes).filter(filtre) : []
   return (
     <>
@@ -2311,18 +2318,25 @@ function ConsolStockPeriode({ selectedIds, allCompanies, toast }) {
           <input style={{ ...champ, flex:'1 1 200px' }} placeholder="Rechercher un article ou une société…" value={q} onChange={e=>setQ(e.target.value)} />
           <span style={{ fontSize:12.5, color:'#64748b' }}>Du {res.du ? dateDoc(res.du) : "l'origine"} au {res.au ? dateDoc(res.au) : "aujourd'hui"} — {res.nbSoc} société(s)</span>
         </div>
+        {res.lignes.some(l => l.debut < 0 || l.fin < 0 || l.ecart) && <div style={{ margin:'0 16px 12px', padding:'10px 14px', background:'#fef2f2', border:'1px solid #fecaca', borderRadius:8, fontSize:12.5, color:'#7f1d1d', lineHeight:1.5 }}>
+          <strong>Pourquoi des stocks négatifs ?</strong> Le stock de début est recalculé à partir du stock de la fiche article, en retirant les mouvements de la période.
+          Si la colonne <strong>« Écart fiche / mvts »</strong> n'est pas vide, la fiche article et l'historique des mouvements ne concordent pas :
+          entrées présentes dans les mouvements mais non ajoutées au stock de la fiche, sorties faites sans mouvement, mouvement supprimé, ou stock de la fiche modifié à la main.
+          Un <strong>stock de fin négatif</strong> veut dire que la fiche article elle-même est négative (plus de sorties que d'entrées).
+          Passez en vue « Détail par société » pour voir la société concernée, puis contrôlez ses mouvements dans Stock › Mouvements de stock.
+        </div>}
         <div style={{ overflowX:'auto' }}>
           <table style={{ width:'100%', borderCollapse:'collapse', fontSize:13 }}>
             <thead><tr>{vue === 'consolide'
-              ? [th('Article'), th('Unité'), th('Sociétés', 1), th('Stock début', 1), th('Entrées', 1), th('Sorties', 1), th('Stock fin', 1), th('Valeur fin (FCFA)', 1)]
-              : [th('Société'), th('Article'), th('Unité'), th('Stock début', 1), th('Entrées', 1), th('Sorties', 1), th('Stock fin', 1), th('Valeur fin (FCFA)', 1)]}</tr></thead>
+              ? [th('Article'), th('Unité'), th('Sociétés', 1), th('Stock début', 1), th('Entrées', 1), th('Sorties', 1), th('Stock fin', 1), th('Valeur fin (FCFA)', 1), th('Écart fiche / mvts', 1)]
+              : [th('Société'), th('Article'), th('Unité'), th('Stock début', 1), th('Entrées', 1), th('Sorties', 1), th('Stock fin', 1), th('Valeur fin (FCFA)', 1), th('Écart fiche / mvts', 1)]}</tr></thead>
             <tbody>
               {liste.map((l, i) => <tr key={i}>{vue === 'consolide'
                 ? <>{td(l.designation, 0, 1)}{td(l.unite)}{td(l.nbSoc, 1)}{mouv(l)}</>
                 : <>{td(l.societe)}{td(l.designation, 0, 1)}{td(l.unite)}{mouv(l)}</>}</tr>)}
-              {!liste.length && <tr><td colSpan={8} style={{ padding:18, textAlign:'center', color:'#94a3b8' }}>Aucun article.</td></tr>}
+              {!liste.length && <tr><td colSpan={9} style={{ padding:18, textAlign:'center', color:'#94a3b8' }}>Aucun article.</td></tr>}
               {liste.length > 0 && <tr style={{ background:'#f8fafc' }}><td colSpan={7} style={{ padding:'9px 10px', textAlign:'right', fontWeight:700 }}>Valeur totale du stock en fin de période</td>
-                {td(nbFr(liste.reduce((s, l) => s + l.valeur, 0)) + ' FCFA', 1, 1)}</tr>}
+                {td(nbFr(liste.reduce((s, l) => s + l.valeur, 0)) + ' FCFA', 1, 1)}<td /></tr>}
             </tbody>
           </table>
         </div>
