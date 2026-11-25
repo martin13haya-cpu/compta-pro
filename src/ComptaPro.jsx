@@ -6161,32 +6161,64 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
   const selectAllCols = () => setSelectedCols(allColumns.map(c=>c.key))
   const deselectAllCols = () => setSelectedCols([])
 
+  // Colonnes des exports selon la catégorie choisie : une étuveuse, un intermédiaire ou un
+  // transporteur n'a ni bas-fonds, ni Kit FRIA, ni mentor… (le NPI est affiché « NPI »).
+  const COLS_CATEGORIE = {
+    etuveuse: ['Type','Catégorie','Code','Nom','Prénom','Téléphone','N° IFU','N° CIP','Genre','Handicap','Département','Commune','Arrondissement','Village','Date de naissance','Âge','Tranche d\'âge','Nationalité'],
+    intermediaire: ['Type','Catégorie','Code','Nom','Prénom','Téléphone','N° IFU','N° CIP','Email','Adresse','Genre','Handicap','Département','Commune','Arrondissement','Village','Date de naissance','Âge','Nationalité'],
+    transporteur: ['Type','Catégorie','Code','Nom','Prénom','Téléphone','N° IFU','N° CIP','Email','Adresse','Genre','Handicap','Département','Commune','Arrondissement','Village','Date de naissance','Âge','Nationalité'],
+  }
+  const colonnesExport = async () => {
+    const permises = COLS_CATEGORIE[catSel]
+    let cols = visibleColumns.map(c => ({ ...c, label:c.key }))
+    if (permises) {
+      const avecMorale = filteredCat.some(f => f.type === 'morale')
+      cols = cols.filter(c => permises.includes(c.key) && (c.key !== 'N° IFU' || avecMorale))
+        .map(c => c.key === 'N° CIP' ? { ...c, label:'NPI' } : c)
+    }
+    let val = (it, k) => tiersVal(it, k)
+    // Étuveuses : nombre de mentorés en dernière colonne.
+    if (catSel === 'etuveuse') {
+      const nb = {}, ids = filteredCat.map(f => f.id)
+      for (let i = 0; i < ids.length; i += 150) {
+        const { data } = await supabase.from('compta_etuveuses_mentores').select('fournisseur_id').in('fournisseur_id', ids.slice(i, i + 150))
+        ;(data || []).forEach(m => { nb[m.fournisseur_id] = (nb[m.fournisseur_id] || 0) + 1 })
+      }
+      cols = [...cols, { key:'__mentores', label:'Mentorés', w:6 }]
+      val = (it, k) => k === '__mentores' ? (nb[it.id] || 0) : tiersVal(it, k)
+    }
+    return { cols, val }
+  }
+
   const exportExcelTiers = async () => {
     if (visibleColumns.length===0) { toast.error('Sélectionnez au moins une colonne à exporter.'); return }
     if (!filteredCat.length) { toast.error('Aucun fournisseur dans cette catégorie (avec les filtres actuels).'); return }
     const XLSX = await import('https://cdn.sheetjs.com/xlsx-0.20.0/package/xlsx.mjs')
-    const cols = visibleColumns.map(c=>c.key)
+    const { cols:colsExp, val } = await colonnesExport()
+    if (!colsExp.length) { toast.error('Aucune colonne de cette catégorie n\'est cochée (bouton « Colonnes »).'); return }
     const rows = [
       [title],
       [`${companyName}${catSel ? ' - ' + libelleCategorieFrs(catSel) : ''} - ${filteredCat.length} enregistrement(s) - Exporte le ${new Date().toLocaleDateString('fr-FR')}`],
       [],
-      cols,
-      ...filteredCat.map(it => cols.map(c => tiersVal(it,c))),
+      colsExp.map(c => c.label),
+      ...filteredCat.map(it => colsExp.map(c => val(it, c.key))),
     ]
     const ws = XLSX.utils.aoa_to_sheet(rows)
-    ws['!cols'] = visibleColumns.map(c => ({ wch: Math.max(10, c.w||14) }))
+    ws['!cols'] = colsExp.map(c => ({ wch: Math.max(10, c.w||14) }))
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, title.slice(0,31))
     XLSX.writeFile(wb, `${title.toLowerCase().replace(/\s/g,'_')}.xlsx`)
     toast.success('Fichier Excel téléchargé !')
   }
 
-  const printListeTiers = () => {
+  const printListeTiers = async () => {
     if (visibleColumns.length===0) { toast.error('Sélectionnez au moins une colonne à imprimer.'); return }
-    const totalW = visibleColumns.reduce((s,c)=>s+c.w,0) || 1
-    const headers = visibleColumns.map(c=>({label:c.key, w:c.w/totalW*100}))
     if (!filteredCat.length) { toast.error('Aucun fournisseur dans cette catégorie (avec les filtres actuels).'); return }
-    const rows = filteredCat.map(it => visibleColumns.map(c=>tiersVal(it,c.key) || '—'))
+    const { cols:colsExp, val } = await colonnesExport()
+    if (!colsExp.length) { toast.error('Aucune colonne de cette catégorie n\'est cochée (bouton « Colonnes »).'); return }
+    const totalW = colsExp.reduce((s,c)=>s+(c.w||8),0) || 1
+    const headers = colsExp.map(c=>({label:c.label, w:(c.w||8)/totalW*100}))
+    const rows = filteredCat.map(it => colsExp.map(c => { const v = val(it, c.key); return v === '' || v == null ? '—' : v }))
     const filename = `liste_${isFourn?'frs':'clients'}_${catSel||'toutes'}_${companyName}`
     printFilteredList({ title: catSel ? `${title} — ${libelleCategorieFrs(catSel).replace(/^[^\p{L}\p{N}]+/u,'').trim()}` : title, companyName, headers, rows, filename })
   }
