@@ -2331,6 +2331,128 @@ function ConsolStockPeriode({ selectedIds, allCompanies, toast }) {
   )
 }
 
+// ── Aperçu avant téléchargement (Articles & Stock) : inventaire ou mouvements de stock
+// des sociétés sélectionnées, puis impression PDF ou export Excel.
+const MVT_COLS = [
+  { label:'Date', w:8 }, { label:'Société', w:18 }, { label:'Code', w:7 }, { label:'Article', w:16 }, { label:'Unité', w:5 },
+  { label:'Type', w:6 }, { label:'Motif', w:12 }, { label:'Référence', w:9 }, { label:'Quantité', w:6, r:true },
+  { label:'P.U. (FCFA)', w:6, r:true }, { label:'Montant (FCFA)', w:7, r:true },
+]
+function ConsolApercu({ open, onClose, selectedIds, allCompanies, colonnes, toast }) {
+  const [doc, setDoc] = useState('inventaire')
+  const [du, setDu] = useState(`${new Date().getFullYear()}-01-01`)
+  const [au, setAu] = useState(today())
+  const [typeMvt, setTypeMvt] = useState('')
+  const [q, setQ] = useState('')
+  const [res, setRes] = useState(null)
+  const [chargement, setChargement] = useState(false)
+  const nomSoc = id => allCompanies.find(c => c.id === id)?.raison_sociale || '—'
+  const nbSocTxt = `${selectedIds.length} société(s)`
+
+  const charger = async () => {
+    if (!selectedIds.length) { toast.error('Sélectionnez au moins une société.'); return }
+    if (doc === 'mouvements' && du && au && du > au) { toast.error('La date de début est après la date de fin.'); return }
+    setChargement(true)
+    try {
+      if (doc === 'inventaire') {
+        if (!colonnes.length) { toast.error('Sélectionnez au moins une colonne.'); return }
+        const { data, error } = await fetchAllRows(() => supabase.from('compta_articles').select('*').eq('actif', true).in('company_id', selectedIds).order('designation'))
+        if (error) { toast.error(error.message); return }
+        const arts = (data || []).slice().sort((a, b) => nomSoc(a.company_id).localeCompare(nomSoc(b.company_id), 'fr') || String(a.designation||'').localeCompare(String(b.designation||''), 'fr'))
+        const headers = [{ label:'Société', w:22 }, ...colonnes.map(c => ({ label:c.key, r:['Stock actuel','Stock min','Prix achat','Prix vente','Valeur stock (FCFA)'].includes(c.key) }))]
+        const rows = arts.map(a => [nomSoc(a.company_id), ...colonnes.map(c => consolArticleVal(a, c.key))])
+        const valeur = arts.reduce((s, a) => s + Math.round((+a.stock_actuel || 0) * (+a.prix_achat || 0)), 0)
+        const alertes = arts.filter(a => (+a.stock_actuel || 0) <= (+a.stock_min || 0)).length
+        setRes({ doc, headers, rows, totaux:[{ label:'Articles', value:nbFr(arts.length) }, { label:'Articles en alerte', value:nbFr(alertes) }, { label:'Valeur totale du stock', value:nbFr(valeur) + ' FCFA' }] })
+      } else {
+        const { data, error } = await fetchAllRows(() => {
+          let r = supabase.from('compta_mouvements_stock').select('*,compta_articles(code,designation,unite)').in('company_id', selectedIds)
+          if (du) r = r.gte('date_mvt', du)
+          if (au) r = r.lte('date_mvt', au)
+          if (typeMvt) r = r.eq('type', typeMvt)
+          return r.order('date_mvt').order('id')
+        })
+        if (error) { toast.error(error.message); return }
+        const mv = data || []
+        const rows = mv.map(m => [dateDoc(m.date_mvt), nomSoc(m.company_id), m.compta_articles?.code || '', m.compta_articles?.designation || '—', m.compta_articles?.unite || '',
+          m.type === 'entree' ? 'Entrée' : m.type === 'sortie' ? 'Sortie' : (m.type || ''), m.motif || '', m.reference || '',
+          +m.quantite || 0, +m.prix_unitaire || 0, Math.round(+m.montant || 0)])
+        const som = (ty, k) => mv.filter(m => m.type === ty).reduce((s, m) => s + (+m[k] || 0), 0)
+        setRes({ doc, headers:MVT_COLS, rows, totaux:[
+          { label:`Entrées (${mv.filter(m => m.type === 'entree').length})`, value:`${nbFr(som('entree','quantite'))} — ${nbFr(Math.round(som('entree','montant')))} FCFA` },
+          { label:`Sorties (${mv.filter(m => m.type === 'sortie').length})`, value:`${nbFr(som('sortie','quantite'))} — ${nbFr(Math.round(som('sortie','montant')))} FCFA` },
+        ] })
+      }
+    } finally { setChargement(false) }
+  }
+  // Le choix du document, de la période ou du type relance l'aperçu.
+  useEffect(() => { if (open) charger() }, [open, doc, du, au, typeMvt]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const visibles = res ? res.rows.filter(r => !q || r.join(' ').toLowerCase().includes(q.toLowerCase())) : []
+  const titre = res?.doc === 'mouvements' ? 'Mouvements de stock consolidés' : 'Inventaire consolidé des stocks'
+  const periode = res?.doc === 'mouvements' ? `Du ${du ? dateDoc(du) : "l'origine"} au ${au ? dateDoc(au) : "aujourd'hui"}${typeMvt ? ` — ${typeMvt === 'entree' ? 'entrées' : 'sorties'} seulement` : ''}` : `État au ${dateDoc(today())}`
+  const fmt = (v, h) => h?.r && typeof v === 'number' ? nbFr(v) : (v ?? '')
+  const imprimer = () => {
+    if (!visibles.length) { toast.error('Rien à imprimer.'); return }
+    printFilteredList({ title:titre, subtitle:`${periode}${q ? ` — recherche « ${echapHtml(q)} »` : ''}`, companyName:nbSocTxt,
+      headers:res.headers, rows:visibles.map(r => r.map((v, j) => echapHtml(fmt(v, res.headers[j])))), totals:res.totaux,
+      filename:`${res.doc}_consolide_${today()}` })
+  }
+  const excel = async () => {
+    if (!visibles.length) { toast.error('Rien à exporter.'); return }
+    const XLSX = await import('https://cdn.sheetjs.com/xlsx-0.20.0/package/xlsx.mjs')
+    const aoa = [[titre], [`${nbSocTxt} — ${periode} — exporté le ${new Date().toLocaleDateString('fr-FR')}`], [],
+      res.headers.map(h => h.label), ...visibles, [], ...res.totaux.map(x => [x.label, x.value])]
+    const ws = XLSX.utils.aoa_to_sheet(aoa)
+    ws['!cols'] = res.headers.map(h => ({ wch:h.label === 'Société' ? 34 : h.label === 'Article' || h.label === 'Désignation' ? 28 : 13 }))
+    const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, res.doc === 'mouvements' ? 'Mouvements' : 'Inventaire')
+    XLSX.writeFile(wb, `${res.doc}_consolide_${today()}.xlsx`)
+  }
+
+  const champ = { padding:'7px 10px', borderRadius:8, border:'1px solid #d1d5db', fontSize:13 }
+  const onglet = (k, l) => <button key={k} type="button" onClick={()=>{ setDoc(k); setQ('') }}
+    style={{ padding:'8px 14px', borderRadius:8, border:'1.5px solid ' + (doc === k ? '#082818' : '#e2e8f0'), background:doc === k ? '#082818' : 'white', color:doc === k ? 'white' : '#374151', fontSize:13, fontWeight:600, cursor:'pointer' }}>{l}</button>
+  const MAX = 300
+  return (
+    <Modal open={open} onClose={onClose} title="Aperçu avant téléchargement" size="xl">
+      <div style={{ display:'flex', gap:8, flexWrap:'wrap', marginBottom:12 }}>
+        {onglet('inventaire', "📋 Inventaire (état des stocks)")}{onglet('mouvements', '🔄 Mouvements de stock')}
+      </div>
+      <div style={{ display:'flex', gap:10, alignItems:'center', flexWrap:'wrap', marginBottom:12 }}>
+        {doc === 'mouvements' && <>
+          <span style={{ fontSize:13 }}>Du</span><input type="date" style={champ} value={du} onChange={e=>setDu(e.target.value)} />
+          <span style={{ fontSize:13 }}>au</span><input type="date" style={champ} value={au} onChange={e=>setAu(e.target.value)} />
+          <select style={champ} value={typeMvt} onChange={e=>setTypeMvt(e.target.value)}>
+            <option value="">Entrées et sorties</option><option value="entree">Entrées</option><option value="sortie">Sorties</option>
+          </select>
+        </>}
+        <input style={{ ...champ, flex:'1 1 180px' }} placeholder="Rechercher (article, société…)" value={q} onChange={e=>setQ(e.target.value)} />
+      </div>
+      <div style={{ fontSize:12.5, color:'#64748b', marginBottom:8 }}>
+        {chargement ? '⏳ Chargement…' : res ? `${titre} — ${nbSocTxt} — ${periode} — ${visibles.length} ligne(s)${visibles.length > MAX ? ` (aperçu des ${MAX} premières ; le PDF et l'Excel contiennent tout)` : ''}` : ''}
+      </div>
+      <div style={{ overflow:'auto', maxHeight:'48vh', border:'1px solid #e2e8f0', borderRadius:8 }}>
+        {res && <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12.5 }}>
+          <thead><tr>{res.headers.map(h => <th key={h.label} style={{ position:'sticky', top:0, padding:'7px 9px', textAlign:h.r ? 'right' : 'left', fontSize:11.5, color:'#475569', background:'#f1f5f9', whiteSpace:'nowrap' }}>{h.label}</th>)}</tr></thead>
+          <tbody>
+            {visibles.slice(0, MAX).map((r, i) => <tr key={i}>{r.map((v, j) => <td key={j} style={{ padding:'6px 9px', textAlign:res.headers[j]?.r ? 'right' : 'left', borderTop:'1px solid #f1f5f9', whiteSpace:'nowrap',
+              color:res.doc === 'mouvements' && j === 5 ? (v === 'Entrée' ? '#15803d' : '#b45309') : undefined }}>{fmt(v, res.headers[j])}</td>)}</tr>)}
+            {!visibles.length && !chargement && <tr><td colSpan={res.headers.length} style={{ padding:18, textAlign:'center', color:'#94a3b8' }}>Aucune donnée.</td></tr>}
+          </tbody>
+        </table>}
+      </div>
+      {res && <div style={{ display:'flex', gap:18, flexWrap:'wrap', fontSize:13, marginTop:10 }}>
+        {res.totaux.map(x => <span key={x.label}><span style={{ color:'#64748b' }}>{x.label} : </span><strong>{x.value}</strong></span>)}
+      </div>}
+      <div style={{ display:'flex', gap:10, justifyContent:'flex-end', marginTop:14, flexWrap:'wrap' }}>
+        <Btn variant="secondary" onClick={onClose}>Fermer</Btn>
+        <Btn variant="danger" onClick={imprimer} disabled={chargement || !res}>📄 Imprimer / PDF</Btn>
+        <Btn onClick={excel} disabled={chargement || !res}>📊 Excel</Btn>
+      </div>
+    </Modal>
+  )
+}
+
 function ConsolidationPage({ toast }) {
   const [dataType,      setDataType]      = useState('fournisseurs')
   const [allCompanies,  setAllCompanies]  = useState([])
@@ -2340,6 +2462,7 @@ function ConsolidationPage({ toast }) {
   const [selectedCols,  setSelectedCols]  = useState(null) // null = toutes les colonnes
   const [generating,    setGenerating]    = useState(false)
   const [lastResult,    setLastResult]    = useState(null)
+  const [apercu,        setApercu]        = useState(false)
 
   useEffect(()=>{
     (async()=>{
@@ -2517,10 +2640,12 @@ function ConsolidationPage({ toast }) {
       </Card>
 
       <div style={{display:'flex',alignItems:'center',gap:12,flexWrap:'wrap'}}>
+        {dataType==='articles' && <Btn variant="info" onClick={()=>{ if (!selectedIds.length) { toast.error('Sélectionnez au moins une société.'); return } setApercu(true) }}>👁️ Aperçu (inventaire / mouvements)</Btn>}
         <Btn onClick={generate} disabled={generating}>{generating?'⏳ Génération…':'📊 Télécharger Excel consolidé'}</Btn>
         {lastResult && <span style={{fontSize:13,color:'#64748b'}}>Dernier export : {lastResult.total} ligne(s) sur {lastResult.nbSocietes} société(s).</span>}
       </div>
       </>}
+      {apercu && <ConsolApercu open={apercu} onClose={()=>setApercu(false)} selectedIds={selectedIds} allCompanies={allCompanies} colonnes={visibleColumns} toast={toast} />}
     </div>
   )
 }
