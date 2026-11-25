@@ -2389,7 +2389,7 @@ function ConsolStockPeriode({ selectedIds, allCompanies, toast }) {
 // ── Aperçu avant téléchargement (Articles & Stock) : inventaire ou mouvements de stock
 // des sociétés sélectionnées, puis impression PDF ou export Excel.
 const MVT_COLS = [
-  { label:'Date', w:8 }, { label:'Société', w:18 }, { label:'Code', w:7 }, { label:'Article', w:16 }, { label:'Unité', w:5 },
+  { label:'Date', w:8 }, { label:'Commune', w:12 }, { label:'Code', w:7 }, { label:'Article', w:16 }, { label:'Unité', w:5 },
   { label:'Type', w:6 }, { label:'Motif', w:12 }, { label:'Référence', w:9 }, { label:'Quantité', w:6, r:true },
   { label:'P.U. (FCFA)', w:6, r:true }, { label:'Montant (FCFA)', w:7, r:true },
 ]
@@ -2401,11 +2401,29 @@ function ConsolApercu({ open, onClose, selectedIds, allCompanies, colonnes, toas
   const [q, setQ] = useState('')
   const [res, setRes] = useState(null)
   const [chargement, setChargement] = useState(false)
-  const nomSoc = id => allCompanies.find(c => c.id === id)?.raison_sociale || '—'
   const nbSocTxt = `${selectedIds.length} société(s)`
+  // Commune de chaque société : la plus fréquente parmi ses fournisseurs ; à défaut, le
+  // dernier mot de la raison sociale (« … DE KEROU (CEPEA KEROU) » -> KEROU).
+  const communesRef = useRef({})
+  const chargerCommunes = async () => {
+    const manque = selectedIds.filter(id => !communesRef.current[id])
+    if (manque.length) {
+      const { data } = await fetchAllRows(() => supabase.from('compta_fournisseurs').select('id,company_id,commune').in('company_id', manque).eq('actif', true).not('commune', 'is', null).order('id'))
+      const cpt = {}
+      ;(data || []).forEach(f => { const c = toUpperNoAccent(f.commune).trim(); if (!c) return; const m = cpt[f.company_id] || (cpt[f.company_id] = {}); m[c] = (m[c] || 0) + 1 })
+      for (const id of manque) {
+        const m = cpt[id]
+        const viaFrs = m ? Object.entries(m).sort((a, b) => b[1] - a[1])[0][0] : ''
+        const rs = toUpperNoAccent(allCompanies.find(c => c.id === id)?.raison_sociale || '').replace(/\(.*?\)/g, '').trim()
+        communesRef.current[id] = viaFrs || rs.split(/\s+/).pop() || '—'
+      }
+    }
+    return id => communesRef.current[id] || '—'
+  }
 
   const charger = async () => {
     if (!selectedIds.length) { toast.error('Sélectionnez au moins une société.'); return }
+    const nomSoc = await chargerCommunes()
     if (doc === 'mouvements' && du && au && du > au) { toast.error('La date de début est après la date de fin.'); return }
     setChargement(true)
     try {
@@ -2413,9 +2431,20 @@ function ConsolApercu({ open, onClose, selectedIds, allCompanies, colonnes, toas
         if (!colonnes.length) { toast.error('Sélectionnez au moins une colonne.'); return }
         const { data, error } = await fetchAllRows(() => supabase.from('compta_articles').select('*').eq('actif', true).in('company_id', selectedIds).order('designation'))
         if (error) { toast.error(error.message); return }
-        const arts = (data || []).slice().sort((a, b) => nomSoc(a.company_id).localeCompare(nomSoc(b.company_id), 'fr') || String(a.designation||'').localeCompare(String(b.designation||''), 'fr'))
-        const headers = [{ label:'Société', w:22 }, ...colonnes.map(c => ({ label:c.key, r:['Stock actuel','Stock min','Prix achat','Prix vente','Valeur stock (FCFA)'].includes(c.key) }))]
-        const rows = arts.map(a => [nomSoc(a.company_id), ...colonnes.map(c => consolArticleVal(a, c.key))])
+        const grp = {}
+        for (const a of data || []) {
+          const k = `${nomSoc(a.company_id)}|${toUpperNoAccent(a.designation || '').trim()}|${String(a.unite || '').toLowerCase()}`
+          const g = grp[k] || (grp[k] = { commune:nomSoc(a.company_id), code:a.code, designation:a.designation, categorie:a.categorie, unite:a.unite, stock_actuel:0, stock_min:0, _val:0, _pv:0, _n:0 })
+          const s = +a.stock_actuel || 0
+          g.stock_actuel += s; g.stock_min += +a.stock_min || 0; g._val += s * (+a.prix_achat || 0); g._pv += +a.prix_vente || 0; g._n++
+          if (g.code !== a.code) g.code = [g.code, a.code].filter(Boolean).join(' / ')
+        }
+        // Prix d'achat moyen pondéré par le stock (valeur = stock × prix inchangée).
+        const arts = Object.values(grp).map(g => ({ ...g, stock_actuel:Math.round(g.stock_actuel * 1000) / 1000,
+          prix_achat:g.stock_actuel ? Math.round(g._val / g.stock_actuel) : 0, prix_vente:g._n ? Math.round(g._pv / g._n) : 0 }))
+          .sort((a, b) => a.commune.localeCompare(b.commune, 'fr') || String(a.designation||'').localeCompare(String(b.designation||''), 'fr'))
+        const headers = [{ label:'Commune', w:12 }, ...colonnes.map(c => ({ label:c.key, r:['Stock actuel','Stock min','Prix achat','Prix vente','Valeur stock (FCFA)'].includes(c.key) }))]
+        const rows = arts.map(a => [a.commune, ...colonnes.map(c => consolArticleVal(a, c.key))])
         const valeur = arts.reduce((s, a) => s + Math.round((+a.stock_actuel || 0) * (+a.prix_achat || 0)), 0)
         const alertes = arts.filter(a => (+a.stock_actuel || 0) <= (+a.stock_min || 0)).length
         setRes({ doc, headers, rows, totaux:[{ label:'Articles', value:nbFr(arts.length) }, { label:'Articles en alerte', value:nbFr(alertes) }, { label:'Valeur totale du stock', value:nbFr(valeur) + ' FCFA' }] })
@@ -2459,7 +2488,7 @@ function ConsolApercu({ open, onClose, selectedIds, allCompanies, colonnes, toas
     const aoa = [[titre], [`${nbSocTxt} — ${periode} — exporté le ${new Date().toLocaleDateString('fr-FR')}`], [],
       res.headers.map(h => h.label), ...visibles, [], ...res.totaux.map(x => [x.label, x.value])]
     const ws = XLSX.utils.aoa_to_sheet(aoa)
-    ws['!cols'] = res.headers.map(h => ({ wch:h.label === 'Société' ? 34 : h.label === 'Article' || h.label === 'Désignation' ? 28 : 13 }))
+    ws['!cols'] = res.headers.map(h => ({ wch:h.label === 'Commune' ? 16 : h.label === 'Article' || h.label === 'Désignation' ? 28 : 13 }))
     const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, res.doc === 'mouvements' ? 'Mouvements' : 'Inventaire')
     XLSX.writeFile(wb, `${res.doc}_consolide_${today()}.xlsx`)
   }
@@ -2481,7 +2510,7 @@ function ConsolApercu({ open, onClose, selectedIds, allCompanies, colonnes, toas
             <option value="">Entrées et sorties</option><option value="entree">Entrées</option><option value="sortie">Sorties</option>
           </select>
         </>}
-        <input style={{ ...champ, flex:'1 1 180px' }} placeholder="Rechercher (article, société…)" value={q} onChange={e=>setQ(e.target.value)} />
+        <input style={{ ...champ, flex:'1 1 180px' }} placeholder="Rechercher (article, commune…)" value={q} onChange={e=>setQ(e.target.value)} />
       </div>
       <div style={{ fontSize:12.5, color:'#64748b', marginBottom:8 }}>
         {chargement ? '⏳ Chargement…' : res ? `${titre} — ${nbSocTxt} — ${periode} — ${visibles.length} ligne(s)${visibles.length > MAX ? ` (aperçu des ${MAX} premières ; le PDF et l'Excel contiennent tout)` : ''}` : ''}
