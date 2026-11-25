@@ -2393,6 +2393,39 @@ const MVT_COLS = [
   { label:'Type', w:6 }, { label:'Motif', w:12 }, { label:'Référence', w:9 }, { label:'Quantité', w:6, r:true },
   { label:'P.U. (FCFA)', w:6, r:true }, { label:'Montant (FCFA)', w:7, r:true },
 ]
+// Commune de mouvements de stock de plusieurs sociétés : celle du producteur (bon
+// « Remboursement FRIA … ») ou de l'achat hors FRIA (bon « Achat groupé … »).
+// Renvoie { 'company_id|référence du bon': COMMUNE }.
+async function communesMouvementsMulti(mvts) {
+  const parSoc = {}
+  for (const m of mvts) if (m.reference) (parSoc[m.company_id] = parSoc[m.company_id] || new Set()).add(m.reference)
+  const res = {}, propre = c => toUpperNoAccent(c).trim()
+  for (const [cid, set] of Object.entries(parSoc)) {
+    const refs = [...set], bons = []
+    for (let i = 0; i < refs.length; i += 150) {
+      const { data } = await supabase.from('compta_bons_stock').select('numero,tiers').eq('company_id', cid).in('numero', refs.slice(i, i + 150))
+      bons.push(...(data || []))
+    }
+    const fria = {}, grp = {}
+    for (const b of bons) {
+      const f = /^Remboursement FRIA (.+)$/.exec(b.tiers || ''), g = /^Achat groupé (.+)$/.exec(b.tiers || '')
+      if (f) fria[b.numero] = f[1]; else if (g) grp[b.numero] = g[1]
+    }
+    const nf = [...new Set(Object.values(fria))], ng = [...new Set(Object.values(grp))]
+    const mv = [], gs = []
+    for (let i = 0; i < nf.length; i += 150) { const { data } = await supabase.from('compta_fria_mouvements').select('numero,fournisseur_id').eq('company_id', cid).in('numero', nf.slice(i, i + 150)); mv.push(...(data || [])) }
+    for (let i = 0; i < ng.length; i += 150) { const { data } = await supabase.from('compta_achats_groupes').select('numero,commune').eq('company_id', cid).in('numero', ng.slice(i, i + 150)); gs.push(...(data || [])) }
+    const fids = [...new Set(mv.map(m => m.fournisseur_id))], frs = []
+    for (let i = 0; i < fids.length; i += 150) { const { data } = await supabase.from('compta_fournisseurs').select('id,commune').in('id', fids.slice(i, i + 150)); frs.push(...(data || [])) }
+    for (const [ref, num] of Object.entries(fria)) {
+      const m = mv.find(x => x.numero === num), f = m && frs.find(x => String(x.id) === String(m.fournisseur_id))
+      if (propre(f?.commune)) res[`${cid}|${ref}`] = propre(f.commune)
+    }
+    for (const [ref, num] of Object.entries(grp)) { const g = gs.find(x => x.numero === num); if (propre(g?.commune)) res[`${cid}|${ref}`] = propre(g.commune) }
+  }
+  return res
+}
+
 function ConsolApercu({ open, onClose, selectedIds, allCompanies, colonnes, toast }) {
   const [doc, setDoc] = useState('inventaire')
   const [du, setDu] = useState(`${new Date().getFullYear()}-01-01`)
@@ -2413,10 +2446,11 @@ function ConsolApercu({ open, onClose, selectedIds, allCompanies, colonnes, toas
       const cpt = {}
       ;(data || []).forEach(f => { const c = toUpperNoAccent(f.commune).trim(); if (!c) return; const m = cpt[f.company_id] || (cpt[f.company_id] = {}); m[c] = (m[c] || 0) + 1 })
       for (const id of manque) {
-        const m = cpt[id]
-        const viaFrs = m ? Object.entries(m).sort((a, b) => b[1] - a[1])[0][0] : ''
-        const rs = toUpperNoAccent(allCompanies.find(c => c.id === id)?.raison_sociale || '').replace(/\(.*?\)/g, '').trim()
-        communesRef.current[id] = viaFrs || rs.split(/\s+/).pop() || '—'
+        const m = cpt[id] || {}
+        const rs = toUpperNoAccent(allCompanies.find(c => c.id === id)?.raison_sociale || '').replace(/\(.*?\)/g, ' ')
+        const dansRs = Object.keys(m).filter(c => new RegExp(`\\b${c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`).test(rs)).sort((a, b) => m[b] - m[a])[0]
+        const viaFrs = Object.entries(m).sort((a, b) => b[1] - a[1])[0]?.[0] || ''
+        communesRef.current[id] = dansRs || viaFrs || rs.trim().split(/\s+/).pop() || '—'
       }
     }
     return id => communesRef.current[id] || '—'
@@ -2430,16 +2464,36 @@ function ConsolApercu({ open, onClose, selectedIds, allCompanies, colonnes, toas
     try {
       if (doc === 'inventaire') {
         if (!colonnes.length) { toast.error('Sélectionnez au moins une colonne.'); return }
-        const { data, error } = await fetchAllRows(() => supabase.from('compta_articles').select('*').eq('actif', true).in('company_id', selectedIds).order('designation'))
-        if (error) { toast.error(error.message); return }
-        const grp = {}
-        for (const a of data || []) {
-          const k = `${nomSoc(a.company_id)}|${toUpperNoAccent(a.designation || '').trim()}|${String(a.unite || '').toLowerCase()}`
-          const g = grp[k] || (grp[k] = { commune:nomSoc(a.company_id), code:a.code, designation:a.designation, categorie:a.categorie, unite:a.unite, stock_actuel:0, stock_min:0, _val:0, _pv:0, _n:0 })
-          const s = +a.stock_actuel || 0
-          g.stock_actuel += s; g.stock_min += +a.stock_min || 0; g._val += s * (+a.prix_achat || 0); g._pv += +a.prix_vente || 0; g._n++
-          if (g.code !== a.code) g.code = [g.code, a.code].filter(Boolean).join(' / ')
+        const [{ data, error }, { data:mvts, error:em }] = await Promise.all([
+          fetchAllRows(() => supabase.from('compta_articles').select('*').eq('actif', true).in('company_id', selectedIds).order('designation')),
+          fetchAllRows(() => supabase.from('compta_mouvements_stock').select('id,article_id,company_id,type,quantite,reference').in('company_id', selectedIds).order('id')),
+        ])
+        if (error || em) { toast.error((error || em).message); return }
+        const comMvt = await communesMouvementsMulti(mvts || [])
+        const parArtCom = {}   // article -> { commune: quantité nette }
+        for (const m of mvts || []) {
+          const c = comMvt[`${m.company_id}|${m.reference}`]; if (!c) continue
+          const x = parArtCom[m.article_id] || (parArtCom[m.article_id] = {})
+          x[c] = (x[c] || 0) + (m.type === 'entree' ? 1 : m.type === 'sortie' ? -1 : 0) * (+m.quantite || 0)
         }
+        const grp = {}
+        const ajouter = (a, commune, s, premier) => {
+          const k = `${commune}|${toUpperNoAccent(a.designation || '').trim()}|${String(a.unite || '').toLowerCase()}`
+          const g = grp[k] || (grp[k] = { commune, code:a.code, designation:a.designation, categorie:a.categorie, unite:a.unite, stock_actuel:0, stock_min:0, _val:0, _pv:0, _n:0 })
+          g.stock_actuel += s; g._val += s * (+a.prix_achat || 0)
+          if (premier) { g.stock_min += +a.stock_min || 0; g._pv += +a.prix_vente || 0; g._n++ }
+          if (g.code !== a.code && !String(g.code || '').split(' / ').includes(a.code)) g.code = [g.code, a.code].filter(Boolean).join(' / ')
+        }
+        for (const a of data || []) {
+          const total = +a.stock_actuel || 0, parts = parArtCom[a.id] || {}
+          const defaut = nomSoc(a.company_id)
+          let reparti = 0
+          for (const [c, q] of Object.entries(parts)) { if (Math.abs(q) < 1e-9) continue; ajouter(a, c, q, c === defaut); reparti += q }
+          const reste = Math.round((total - reparti) * 1000) / 1000
+          // Stock non rattaché à une commune (stock initial, saisie manuelle…) : commune de la société.
+          if (reste || !Object.keys(parts).length || !(defaut in parts)) ajouter(a, defaut, reste, true)
+        }
+        for (const k of Object.keys(grp)) if (!grp[k].stock_actuel && !grp[k]._n) delete grp[k]
         // Prix d'achat moyen pondéré par le stock (valeur = stock × prix inchangée).
         const arts = Object.values(grp).map(g => ({ ...g, stock_actuel:Math.round(g.stock_actuel * 1000) / 1000,
           prix_achat:g.stock_actuel ? Math.round(g._val / g.stock_actuel) : 0, prix_vente:g._n ? Math.round(g._pv / g._n) : 0 }))
@@ -2460,7 +2514,8 @@ function ConsolApercu({ open, onClose, selectedIds, allCompanies, colonnes, toas
         })
         if (error) { toast.error(error.message); return }
         const mv = data || []
-        const rows = mv.map(m => [dateDoc(m.date_mvt), nomSoc(m.company_id), m.compta_articles?.code || '', m.compta_articles?.designation || '—', m.compta_articles?.unite || '',
+        const comMvt = await communesMouvementsMulti(mv)
+        const rows = mv.map(m => [dateDoc(m.date_mvt), comMvt[`${m.company_id}|${m.reference}`] || nomSoc(m.company_id), m.compta_articles?.code || '', m.compta_articles?.designation || '—', m.compta_articles?.unite || '',
           m.type === 'entree' ? 'Entrée' : m.type === 'sortie' ? 'Sortie' : (m.type || ''), m.motif || '', m.reference || '',
           +m.quantite || 0, +m.prix_unitaire || 0, Math.round(+m.montant || 0)])
         setRes({ doc, headers:MVT_COLS, rows, cats:mv.map(m => m.compta_articles?.categorie || ''), mv })
