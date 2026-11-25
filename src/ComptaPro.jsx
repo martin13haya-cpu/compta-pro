@@ -2477,7 +2477,11 @@ function ConsolApercu({ open, onClose, selectedIds, allCompanies, colonnes, toas
   const totaux = !res ? [] : res.doc === 'inventaire' ? (() => {
     const arts = idxVisibles.map(i => res.arts[i])
     const valeur = arts.reduce((s, a) => s + Math.round((+a.stock_actuel || 0) * (+a.prix_achat || 0)), 0)
-    return [{ label:'Articles', value:nbFr(arts.length) }, { label:'Articles en alerte', value:nbFr(arts.filter(a => (+a.stock_actuel || 0) <= (+a.stock_min || 0)).length) }, { label:'Valeur totale du stock', value:nbFr(valeur) + ' FCFA' }]
+    // Quantité totale en stock, par unité (on n'additionne pas des kg et des sacs).
+    const parUnite = {}
+    arts.forEach(a => { const u = a.unite || ''; parUnite[u] = (parUnite[u] || 0) + (+a.stock_actuel || 0) })
+    const qte = Object.entries(parUnite).map(([u, v]) => `${nbFr(Math.round(v * 1000) / 1000)}${u ? ' ' + u : ''}`).join(' + ') || '0'
+    return [{ label:'Articles', value:nbFr(arts.length) }, { label:'Quantité totale en stock', value:qte }, { label:'Articles en alerte', value:nbFr(arts.filter(a => (+a.stock_actuel || 0) <= (+a.stock_min || 0)).length) }, { label:'Valeur totale du stock', value:nbFr(valeur) + ' FCFA' }]
   })() : (() => {
     const mv = idxVisibles.map(i => res.mv[i])
     const som = (ty, k) => mv.filter(m => m.type === ty).reduce((s, m) => s + (+m[k] || 0), 0)
