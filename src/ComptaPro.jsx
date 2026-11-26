@@ -2554,17 +2554,22 @@ function ConsolApercu({ open, onClose, selectedIds, allCompanies, colonnes, toas
             grp[`${c}|${toUpperNoAccent(a.designation || '').trim()}|${String(a.unite || '').toLowerCase()}`]._recu += q
           }
         }
-        for (const k of Object.keys(grp)) if (!grp[k].stock_actuel && !grp[k]._n && !grp[k]._recu) delete grp[k]
+        // Riz paddy : une ligne pour chaque commune qui a des producteurs, même sans stock
+        // rattaché (sinon une commune comme PEHUNCO disparaît et son attendu n'est pas compté).
+        const { data:prods } = await fetchAllRows(() => supabase.from('compta_fournisseurs').select('id,company_id,commune,categorie').eq('actif', true).in('company_id', selectedIds).order('id'))
+        const nbProd = {}, comSoc = {}
+        ;(prods || []).filter(estProducteur).forEach(f => { const c = toUpperNoAccent(f.commune || '').trim(); if (!c) return
+          nbProd[c] = (nbProd[c] || 0) + 1; (comSoc[f.company_id] = comSoc[f.company_id] || new Set()).add(c) })
+        const estPaddy = a => a.categorie === 'riz_paddy' || estArticlePaddy(a)
+        for (const a of (data || []).filter(estPaddy)) for (const c of comSoc[a.company_id] || []) {
+          ajouter(a, c, 0, false); grp[`${c}|${toUpperNoAccent(a.designation || '').trim()}|${String(a.unite || '').toLowerCase()}`]._garder = true }
+        for (const k of Object.keys(grp)) if (!grp[k].stock_actuel && !grp[k]._n && !grp[k]._recu && !grp[k]._garder) delete grp[k]
         // Prix d'achat moyen pondéré par le stock (valeur = stock × prix inchangée).
         const arts = Object.values(grp).map(g => ({ ...g, stock_actuel:Math.round(g.stock_actuel * 1000) / 1000,
           prix_achat:g.stock_actuel ? Math.round(g._val / g.stock_actuel) : 0, prix_vente:g._n ? Math.round(g._pv / g._n) : 0 }))
           .sort((a, b) => a.commune.localeCompare(b.commune, 'fr') || String(a.designation||'').localeCompare(String(b.designation||''), 'fr'))
         // Riz paddy : quantité attendue = producteurs de la commune × 515 kg ;
         // % récupéré = entrées reçues sur la période / attendu.
-        const { data:prods } = await fetchAllRows(() => supabase.from('compta_fournisseurs').select('id,commune,categorie').eq('actif', true).in('company_id', selectedIds).order('id'))
-        const nbProd = {}
-        ;(prods || []).filter(estProducteur).forEach(f => { const c = toUpperNoAccent(f.commune || '').trim(); if (c) nbProd[c] = (nbProd[c] || 0) + 1 })
-        const estPaddy = a => a.categorie === 'riz_paddy' || estArticlePaddy(a)
         arts.forEach(a => { if (!estPaddy(a)) return
           a._recu = Math.round((a._recu || 0) * 1000) / 1000
           a._prod = nbProd[a.commune] || 0; a._attendu = a._prod * KG_ATTENDU_PRODUCTEUR
