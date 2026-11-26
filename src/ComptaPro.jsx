@@ -3459,6 +3459,327 @@ function CompanySelector({ companies, companyId, setCompanyId }) {
 }
 
 // ── DASHBOARD ────────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+// ── TABLEAU DE BORD DE PILOTAGE : collecte → transformation → stock → ventes ────
+// ═══════════════════════════════════════════════════════════════════════════════
+const PIL_VERT = '#1E824C'
+const pilPct = (a, b) => b > 0 ? Math.round(a / b * 1000) / 10 : null
+const pilTxtPct = v => v == null ? '—' : `${String(v).replace('.', ',')} %`
+// Ordre des produits de la chaîne (stock) : du paddy brut au produit fini.
+const PIL_STOCK = [['paddy','Riz paddy'],['etuve','Riz paddy étuvé'],['decortique','Riz décortiqué'],['calibre','Riz calibré'],['brisures','Brisures'],
+  ['trie','Riz trié (1re qualité)'],['brisures_triees','Brisures triées'],['qualite2','2e qualité (hors normes)'],['rouge_polir','Riz rouge à polir'],
+  ['fini','Riz étuvé — produit fini'],['brisures_fini','Brisures de riz étuvé — produit fini']]
+
+function PilBarre({ label, valeur, max, texte, titre, alerte }) {
+  const w = max > 0 ? Math.max(0, Math.min(100, valeur / max * 100)) : 0
+  return (
+    <div title={titre || `${label} : ${texte}`} style={{ display:'grid', gridTemplateColumns:'minmax(90px,38%) 1fr auto', alignItems:'center', gap:10, padding:'5px 0' }}>
+      <span style={{ fontSize:12.5, color:'#334155', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{label}</span>
+      <div style={{ height:10, background:'#eef2ef', borderRadius:4, overflow:'hidden' }}>
+        <div style={{ width:`${w}%`, height:'100%', background:alerte ? '#dc2626' : PIL_VERT, borderRadius:'0 4px 4px 0' }} />
+      </div>
+      <span style={{ fontSize:12.5, fontWeight:600, color:'#0f172a', whiteSpace:'nowrap', textAlign:'right', minWidth:70 }}>{texte}</span>
+    </div>
+  )
+}
+const PilStatut = ({ ok, oui='Conforme', non='Alerte' }) => (
+  <span style={{ display:'inline-flex', alignItems:'center', gap:4, fontSize:11.5, fontWeight:700, padding:'2px 8px', borderRadius:20,
+    background:ok ? '#dcfce7' : '#fee2e2', color:ok ? '#166534' : '#991b1b' }}>{ok ? '✅' : '⚠️'} {ok ? oui : non}</span>
+)
+function PilBloc({ titre, icone, page, setPage, children, large }) {
+  return (
+    <div style={{ background:'white', borderRadius:12, border:'1px solid #e2e8f0', padding:'16px 18px', gridColumn:large ? '1 / -1' : undefined, minWidth:0 }}>
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:10, gap:8 }}>
+        <div style={{ fontSize:13.5, fontWeight:800, color:'#082818', textTransform:'uppercase', letterSpacing:.3 }}>{icone} {titre}</div>
+        {page && <button onClick={()=>setPage(page)} style={{ fontSize:12, fontWeight:600, color:PIL_VERT, background:'none', border:'none', cursor:'pointer' }}>Voir le détail →</button>}
+      </div>
+      {children}
+    </div>
+  )
+}
+const PilLigne = ({ l, v, fort }) => (
+  <div style={{ display:'flex', justifyContent:'space-between', gap:10, fontSize:12.5, padding:'4px 0', borderBottom:'1px solid #f1f5f9' }}>
+    <span style={{ color:'#475569' }}>{l}</span><span style={{ fontWeight:fort ? 800 : 600, color:'#0f172a', textAlign:'right' }}>{v}</span>
+  </div>
+)
+
+function PilotagePage({ companies, companyId, setPage }) {
+  const [du, setDu] = useState(`${new Date().getFullYear()}-01-01`)
+  const [au, setAu] = useState(today())
+  const [commune, setCommune] = useState('')
+  const [d, setD] = useState(null)
+  const [chargement, setChargement] = useState(true)
+  const { isMobile } = useResponsive()
+  const company = companies.find(c => c.id === companyId)
+
+  useEffect(() => {
+    if (!companyId) return
+    let annule = false
+    ;(async () => {
+      setChargement(true)
+      const tout = (table, sel = '*') => fetchAllRows(() => supabase.from(table).select(sel).eq('company_id', companyId).order('id'))
+      const tables = {
+        articles:tout('compta_articles', 'id,code,designation,categorie,unite,stock_actuel,stock_min,prix_achat,actif'),
+        frs:tout('compta_fournisseurs', 'id,nom,prenom,nom_societe,type,commune,categorie,actif,code_trace'),
+        fria:tout('compta_fria_mouvements', 'id,fournisseur_id,type,quantite_kg,montant,date_mouvement'),
+        avances:tout('compta_avances_fournisseur', 'id,fournisseur_id,valeur_remboursement'),
+        groupes:tout('compta_achats_groupes', 'id,numero,date_achat,statut,commune'),
+        lignesGrp:tout('compta_achats_groupes_lignes', 'id,groupe_id,fournisseur_id,quantite_kg'),
+        envois:tout('compta_envois_etuveuses'), retours:tout('compta_retours_etuveuses'), etuveuses:tout('compta_etuveuses', 'id,nom_etuveuse'),
+        etuvage:tout('compta_etuvage'), decorticage:tout('compta_decorticage'), calibrage:tout('compta_calibrage'),
+        tri:tout('compta_tri_optique'), cond:tout('compta_conditionnement'),
+        lots:tout('compta_lots_production', 'id,numero_lot,statut'), origines:tout('compta_lot_origines', 'id,lot_id,reference,quantite_kg'),
+        dest:tout('compta_lot_destinations'), docs:tout('compta_documents', 'id,type_doc,date_doc,montant_ttc,montant_paye,client_id,statut'),
+        clients:tout('compta_clients', 'id,nom,prenom,nom_societe,type'),
+      }
+      const cles = Object.keys(tables), res = await Promise.all(Object.values(tables))
+      const out = {}; cles.forEach((k, i) => { out[k] = res[i]?.data || [] })
+      const { data:sp } = await supabase.from('compta_seuils_production').select('*').eq('company_id', companyId).maybeSingle()
+      out.seuils = { ...SEUILS_PRODUCTION_DEFAUT, ...(sp || {}) }
+      // Lignes des factures (kg vendus).
+      const facIds = out.docs.filter(x => x.type_doc === 'facture').map(x => x.id), lignes = []
+      for (let i = 0; i < facIds.length; i += 150) {
+        const { data } = await supabase.from('compta_lignes_document').select('document_id,quantite,unite').in('document_id', facIds.slice(i, i + 150))
+        lignes.push(...(data || []))
+      }
+      out.lignesFac = lignes
+      if (!annule) { setD(out); setChargement(false) }
+    })()
+    return () => { annule = true }
+  }, [companyId])
+
+  if (!companyId) return null
+  if (chargement || !d) return <div style={{ padding:24 }}>Chargement du tableau de bord…</div>
+
+  // ── Filtres ──
+  const dansPeriode = v => !!v && (!du || v >= du) && (!au || String(v).slice(0, 10) <= au)
+  const comm = c => toUpperNoAccent(c || '').trim()
+  const frsDe = id => d.frs.find(f => String(f.id) === String(id))
+  const okCommune = f => !commune || comm(f?.commune) === commune
+  const communes = [...new Set(d.frs.filter(estProducteur).map(f => comm(f.commune)).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'fr'))
+  const nomTiers = t => (t?.type === 'morale' ? t?.nom_societe : [t?.nom, t?.prenom].filter(Boolean).join(' ')) || '—'
+
+  // ── 1. Collecte & FRIA ──
+  const producteurs = d.frs.filter(f => f.actif !== false && estProducteur(f) && okCommune(f))
+  const grpDe = id => d.groupes.find(g => String(g.id) === String(id))
+  const recuFria = d.fria.filter(m => m.type === 'remboursement' && dansPeriode(m.date_mouvement) && okCommune(frsDe(m.fournisseur_id)))
+  const recuAchats = d.lignesGrp.filter(l => { const g = grpDe(l.groupe_id); return g && g.statut !== 'annule' && dansPeriode(g.date_achat) && okCommune(frsDe(l.fournisseur_id) || { commune:g.commune }) })
+  const kgFria = recuFria.reduce((s, m) => s + (+m.quantite_kg || 0), 0), kgAchats = recuAchats.reduce((s, l) => s + (+l.quantite_kg || 0), 0)
+  const collecte = kgFria + kgAchats, attendu = producteurs.length * KG_ATTENDU_PRODUCTEUR, tauxRecup = pilPct(collecte, attendu)
+  const parCommune = {}
+  d.frs.filter(f => f.actif !== false && estProducteur(f)).forEach(f => { const c = comm(f.commune) || '—'; (parCommune[c] ||= { nb:0, kg:0 }).nb++ })
+  recuFria.forEach(m => { const c = comm(frsDe(m.fournisseur_id)?.commune) || '—'; (parCommune[c] ||= { nb:0, kg:0 }).kg += +m.quantite_kg || 0 })
+  recuAchats.forEach(l => { const c = comm(frsDe(l.fournisseur_id)?.commune || grpDe(l.groupe_id)?.commune) || '—'; (parCommune[c] ||= { nb:0, kg:0 }).kg += +l.quantite_kg || 0 })
+  const lignesCommune = Object.entries(parCommune).filter(([c]) => !commune || c === commune).map(([c, x]) => ({ c, ...x, att:x.nb * KG_ATTENDU_PRODUCTEUR, pct:pilPct(x.kg, x.nb * KG_ATTENDU_PRODUCTEUR) }))
+    .filter(x => x.nb || x.kg).sort((a, b) => (b.pct ?? -1) - (a.pct ?? -1))
+  const kitParFrs = {}, rembParFrs = {}
+  d.avances.forEach(a => { kitParFrs[a.fournisseur_id] = (kitParFrs[a.fournisseur_id] || 0) + (+a.valeur_remboursement || 0) })
+  d.fria.filter(m => m.type === 'remboursement').forEach(m => { rembParFrs[m.fournisseur_id] = (rembParFrs[m.fournisseur_id] || 0) + (+m.montant || 0) })
+  const kitTotal = Object.entries(kitParFrs).filter(([id]) => okCommune(frsDe(id))).reduce((s, [, v]) => s + v, 0)
+  const rembTotal = Object.entries(rembParFrs).filter(([id]) => okCommune(frsDe(id))).reduce((s, [, v]) => s + v, 0)
+  const retards = Object.entries(kitParFrs).map(([id, kit]) => ({ f:frsDe(id), reste:kit - (rembParFrs[id] || 0), kit }))
+    .filter(x => x.f && x.reste > 0 && okCommune(x.f)).sort((a, b) => b.reste - a.reste).slice(0, 10)
+
+  // ── 2. Transformation ──
+  const per = arr => arr.filter(x => dansPeriode(x.date_etape))
+  const somme = (arr, k) => arr.reduce((s, x) => s + (+x[k] || 0), 0)
+  const envoisP = d.envois.filter(e => !e.annule && dansPeriode(e.date_envoi)), retoursP = d.retours.filter(r => dansPeriode(r.date_retour))
+  const etuvP = per(d.etuvage), decoP = per(d.decorticage), caliP = per(d.calibrage), triP = per(d.tri), condP = per(d.cond)
+  const kgEnvoye = somme(envoisP, 'quantite_envoyee_kg') || somme(etuvP, 'paddy_envoye_kg')
+  const kgEtuveRecu = somme(retoursP, 'riz_etuve_recu_kg') || somme(etuvP, 'riz_etuve_recu_kg')
+  const entonnoir = [
+    ['Paddy envoyé à l\'étuvage', kgEnvoye, 'etv_envois'], ['Riz paddy étuvé reçu', kgEtuveRecu, 'etv_envois'],
+    ['Riz décortiqué', somme(decoP, 'poids_apres'), 'decorticage'], ['Riz calibré (long grain)', somme(caliP, 'poids_long_grain'), 'calibrage'],
+    ['Riz trié (1re qualité)', somme(triP, 'poids_apres_tri'), 'tri_optique'], ['Riz étuvé conditionné', somme(condP, 'poids_total_conditionne'), 'conditionnement'],
+  ]
+  const kgFini = entonnoir[5][1], rendementGlobal = pilPct(kgFini, kgEnvoye)
+  const etapes = [['compta_etuvage','Étuvage',etuvP,'etuvage_pct','etuvage'],['compta_decorticage','Décorticage',decoP,'decorticage_pct','decorticage'],
+    ['compta_calibrage','Calibrage',caliP,'calibrage_pct','calibrage'],['compta_tri_optique','Tri optique',triP,'tri_optique_pct','tri_optique'],
+    ['compta_conditionnement','Conditionnement',condP,'conditionnement_pct','conditionnement']].map(([table, lib, lignes, kSeuil, page]) => {
+    const pcts = lignes.map(x => ecartPctProduction(table, x)).filter(v => v != null)
+    const seuil = +d.seuils[kSeuil] || 0, moy = pcts.length ? Math.round(pcts.reduce((s, v) => s + v, 0) / pcts.length * 100) / 100 : null
+    return { lib, page, n:lignes.length, moy, seuil, alertes:pcts.filter(v => Math.abs(v) > seuil).length }
+  })
+  const sousProduits = [['Brisures (calibrage)', somme(caliP, 'poids_casses')], ['2e qualité (hors normes)', somme(triP, 'hors_normes')],
+    ['Riz rouge à polir', somme(triP, 'rouge_a_polir')], ['Déchets (étuvage + calibrage)', somme(etuvP, 'dechets_kg') + somme(caliP, 'dechets')]]
+  const totSous = sousProduits.reduce((s, x) => s + x[1], 0)
+
+  // ── 3. Étuveuses ──
+  const actifs = d.envois.filter(e => !e.annule).map(e => ({ e, s:situationEnvoi(e, d.retours) }))
+  const chezEtuveuses = actifs.reduce((s, x) => s + x.s.restant, 0)
+  const enRetard = actifs.filter(x => x.s.statut !== 'termine' && x.s.restant > 0 && x.s.jours > 15)
+  const parEtv = {}
+  actifs.forEach(({ e, s }) => { const k = e.etuveuse_id; const x = parEtv[k] ||= { traite:0, recu:0, envois:0, recups:0 }; x.traite += s.traite; x.recu += s.recu; x.envois++; x.recups += s.retours.length })
+  const classementEtv = Object.entries(parEtv).filter(([, x]) => x.traite > 0).map(([id, x]) => ({ nom:d.etuveuses.find(v => String(v.id) === String(id))?.nom_etuveuse || '—', ...x, rend:pilPct(x.recu, x.traite) }))
+    .sort((a, b) => b.rend - a.rend)
+
+  // ── 4. Stock de la chaîne ──
+  const actifsArt = d.articles.filter(a => a.actif !== false)
+  const stockChaine = PIL_STOCK.map(([sorte, lib]) => { const a = trouverArticleEtuvage(actifsArt, ARTICLES_ETUVAGE[sorte]); return a ? { lib, a, q:+a.stock_actuel || 0, v:(+a.stock_actuel || 0) * (+a.prix_achat || 0) } : null }).filter(Boolean)
+  const valeurStock = actifsArt.reduce((s, a) => s + (+a.stock_actuel || 0) * (+a.prix_achat || 0), 0)
+  const stocksNegatifs = actifsArt.filter(a => (+a.stock_actuel || 0) < 0), sousMin = actifsArt.filter(a => (+a.stock_min || 0) > 0 && (+a.stock_actuel || 0) <= (+a.stock_min || 0))
+
+  // ── 5. Commercialisation ──
+  const factures = d.docs.filter(x => x.type_doc === 'facture' && x.statut !== 'annule' && dansPeriode(x.date_doc))
+  const ca = somme(factures, 'montant_ttc'), encaisse = somme(factures, 'montant_paye'), creances = Math.max(0, ca - encaisse)
+  const idsFac = new Set(factures.map(f => f.id))
+  const kgVendus = d.lignesFac.filter(l => idsFac.has(l.document_id) && /kg/i.test(l.unite || 'kg')).reduce((s, l) => s + (+l.quantite || 0), 0)
+  const parMois = {}
+  factures.forEach(f => { const m = String(f.date_doc).slice(0, 7); parMois[m] = (parMois[m] || 0) + (+f.montant_ttc || 0) })
+  const mois = Object.entries(parMois).sort((a, b) => a[0].localeCompare(b[0]))
+  const parClient = {}
+  factures.forEach(f => { parClient[f.client_id || '—'] = (parClient[f.client_id || '—'] || 0) + (+f.montant_ttc || 0) })
+  const topClients = Object.entries(parClient).map(([id, v]) => ({ nom:nomTiers(d.clients.find(c => String(c.id) === String(id))), v })).sort((a, b) => b.v - a.v).slice(0, 10)
+  const destP = d.dest.filter(x => dansPeriode(x.date_livraison)), kgLivresTraces = somme(destP, 'quantite_kg')
+  const formatsLivres = {}
+  destP.forEach(x => { const f = x.formats && typeof x.formats === 'object' ? x.formats : null; if (f) Object.entries(f).forEach(([kg, n]) => { formatsLivres[kg] = (formatsLivres[kg] || 0) + (+n || 0) }) })
+
+  // ── 6. Traçabilité & qualité ──
+  const lotsAvecOrigine = new Set(d.origines.map(o => String(o.lot_id)))
+  const pctLotsOrigine = pilPct(d.lots.filter(l => lotsAvecOrigine.has(String(l.id))).length, d.lots.length)
+  const refsEnv = new Set(d.origines.map(o => o.reference).filter(Boolean))
+  const pctEnvoisProd = pilPct(envoisP.filter(e => refsEnv.has(e.numero)).length, envoisP.length)
+  const toutesEtapes = [...etuvP, ...decoP, ...caliP, ...triP, ...condP]
+  const pctEtapesLot = pilPct(toutesEtapes.filter(x => x.lot_id).length, toutesEtapes.length)
+  const moyenne = (arr, k) => { const v = arr.map(x => +x[k]).filter(x => x > 0); return v.length ? Math.round(v.reduce((s, x) => s + x, 0) / v.length * 100) / 100 : null }
+  const impurete = moyenne(triP, 'taux_impurete'), humidite = moyenne(decoP, 'taux_humidite')
+
+  // ── Exports ──
+  const periodeTxt = `du ${du ? dateDoc(du) : "l'origine"} au ${au ? dateDoc(au) : "aujourd'hui"}${commune ? ` — commune ${commune}` : ''}`
+  const kpis = [
+    ['Paddy collecté', fmtKg(collecte)], ['Taux de récupération FRIA', `${pilTxtPct(tauxRecup)} (${fmtKg(collecte)} / ${fmtKg(attendu)})`],
+    ['Riz étuvé conditionné', fmtKg(kgFini)], ['Rendement global (fini / paddy envoyé)', pilTxtPct(rendementGlobal)],
+    ['Chiffre d\'affaires (factures)', fcfa(ca)], ['Encaissé', fcfa(encaisse)], ['Créances clients', fcfa(creances)], ['Kg vendus (factures)', fmtKg(kgVendus)],
+    ['Valeur du stock', fcfa(valeurStock)], ['Paddy chez les étuveuses', fmtKg(chezEtuveuses)], ['Envois en retard (> 15 j)', String(enRetard.length)],
+    ['Kit FRIA distribué', fcfa(kitTotal)], ['Kit FRIA remboursé', fcfa(rembTotal)], ['Reste à rembourser', fcfa(Math.max(0, kitTotal - rembTotal))],
+    ['Lots avec producteurs d\'origine', pilTxtPct(pctLotsOrigine)], ['Envois avec producteurs', pilTxtPct(pctEnvoisProd)], ['Étapes rattachées à un lot', pilTxtPct(pctEtapesLot)],
+  ]
+  const exporterExcel = async () => {
+    const XLSX = await import('https://cdn.sheetjs.com/xlsx-0.20.0/package/xlsx.mjs')
+    const wb = XLSX.utils.book_new(), feuille = (nom, aoa) => XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([[`Tableau de bord — ${company?.raison_sociale || ''}`], [periodeTxt], [], ...aoa]), nom)
+    feuille('Indicateurs clés', [['Indicateur', 'Valeur'], ...kpis])
+    feuille('Collecte par commune', [['Commune', 'Producteurs', 'Attendu (kg)', 'Reçu (kg)', '% récupéré'], ...lignesCommune.map(x => [x.c, x.nb, x.att, Math.round(x.kg), x.pct ?? ''])])
+    feuille('Transformation', [['Étape', 'Kg'], ...entonnoir.map(([l, v]) => [l, Math.round(v)]), [], ['Étape', 'Opérations', 'Écart moyen %', 'Seuil %', 'Alertes'], ...etapes.map(e => [e.lib, e.n, e.moy ?? '', e.seuil, e.alertes])])
+    feuille('Stock chaîne', [['Produit', 'Article', 'Quantité', 'Unité', 'Valeur (FCFA)'], ...stockChaine.map(x => [x.lib, x.a.designation, x.q, x.a.unite || 'kg', Math.round(x.v)])])
+    feuille('Ventes', [['Mois', 'CA (FCFA)'], ...mois.map(([m, v]) => [m, Math.round(v)]), [], ['Client', 'CA (FCFA)'], ...topClients.map(x => [x.nom, Math.round(x.v)])])
+    feuille('Étuveuses', [['Étuveuse', 'Envois', 'Récupérations', 'Paddy soldé (kg)', 'Riz reçu (kg)', 'Rendement %'], ...classementEtv.map(x => [x.nom, x.envois, x.recups, Math.round(x.traite), Math.round(x.recu), x.rend ?? ''])])
+    XLSX.writeFile(wb, `tableau_de_bord_${today()}.xlsx`)
+  }
+  const imprimer = () => printFilteredList({ title:'Tableau de bord — indicateurs clés', subtitle:periodeTxt, companyName:company?.raison_sociale || '',
+    headers:[{ label:'Indicateur', w:60 }, { label:'Valeur', w:40, r:true }], rows:kpis.map(([l, v]) => [echapHtml(l), echapHtml(v)]), filename:`tableau_de_bord_${today()}` })
+
+  // ── Rendu ──
+  const champ = { padding:'7px 10px', borderRadius:8, border:'1px solid #d1d5db', fontSize:13, background:'white' }
+  const tuile = (lib, valeur, sous, page, alerte) => (
+    <div key={lib} onClick={page ? ()=>setPage(page) : undefined} title={sous}
+      style={{ background:'white', borderRadius:12, border:'1px solid ' + (alerte ? '#fecaca' : '#e2e8f0'), padding:'14px 16px', cursor:page ? 'pointer' : 'default', minWidth:0 }}>
+      <div style={{ fontSize:11.5, color:'#64748b', fontWeight:600, textTransform:'uppercase', letterSpacing:.3 }}>{lib}</div>
+      <div style={{ fontSize:22, fontWeight:800, color:'#0f172a', margin:'4px 0 2px', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{valeur}</div>
+      <div style={{ fontSize:11.5, color:alerte ? '#b91c1c' : '#64748b' }}>{sous}</div>
+    </div>
+  )
+  const maxEnt = Math.max(...entonnoir.map(x => x[1]), 1)
+  return (
+    <div>
+      <PageHeader title="Tableau de bord de pilotage" subtitle={`${company?.raison_sociale || ''} — de la collecte du paddy à la vente`}
+        actions={<><Btn sm variant="danger" onClick={imprimer}>🖨️ PDF</Btn><Btn sm variant="success" onClick={exporterExcel}>📊 Excel</Btn></>} />
+      <div style={{ display:'flex', gap:10, flexWrap:'wrap', alignItems:'center', background:'white', border:'1px solid #e2e8f0', borderRadius:12, padding:'10px 14px', marginBottom:16 }}>
+        <span style={{ fontSize:13, fontWeight:600 }}>Période du</span><input type="date" style={champ} value={du} onChange={e=>setDu(e.target.value)} />
+        <span style={{ fontSize:13 }}>au</span><input type="date" style={champ} value={au} onChange={e=>setAu(e.target.value)} />
+        <select style={champ} value={commune} onChange={e=>setCommune(e.target.value)}><option value="">Toutes les communes</option>{communes.map(c => <option key={c} value={c}>{c}</option>)}</select>
+        <span style={{ fontSize:11.5, color:'#64748b' }}>La commune filtre la collecte et le FRIA.</span>
+      </div>
+
+      <div style={{ display:'grid', gridTemplateColumns:isMobile ? 'repeat(2,1fr)' : 'repeat(6,1fr)', gap:12, marginBottom:16 }}>
+        {tuile('Paddy collecté', fmtKg(collecte), `FRIA ${fmtKg(kgFria)} + achats ${fmtKg(kgAchats)}`, 'epargne_fria')}
+        {tuile('Récupération FRIA', pilTxtPct(tauxRecup), `${fmtKg(collecte)} / ${fmtKg(attendu)} attendus`, 'epargne_fria', tauxRecup != null && tauxRecup < 50)}
+        {tuile('Riz étuvé produit', fmtKg(kgFini), 'conditionné en produit fini', 'conditionnement')}
+        {tuile('Rendement global', pilTxtPct(rendementGlobal), 'fini / paddy envoyé à l\'étuvage', 'suivi_lot')}
+        {tuile('Ventes', fcfa(ca), `${fmtKg(kgVendus)} — créances ${fcfa(creances)}`, 'commercial', creances > 0)}
+        {tuile('Valeur du stock', fcfa(valeurStock), `${stocksNegatifs.length} stock(s) négatif(s)`, 'stock', stocksNegatifs.length > 0)}
+      </div>
+
+      <div style={{ display:'grid', gridTemplateColumns:isMobile ? '1fr' : 'repeat(2, minmax(0,1fr))', gap:16 }}>
+        <PilBloc titre="Collecte par commune" icone="🌾" page="epargne_fria" setPage={setPage}>
+          <div style={{ fontSize:11.5, color:'#64748b', marginBottom:6 }}>Paddy reçu / attendu ({KG_ATTENDU_PRODUCTEUR} kg par producteur)</div>
+          {lignesCommune.length ? lignesCommune.map(x => <PilBarre key={x.c} label={`${x.c} (${x.nb} prod.)`} valeur={x.pct || 0} max={100}
+            texte={pilTxtPct(x.pct)} titre={`${x.c} : ${fmtKg(x.kg)} reçus sur ${fmtKg(x.att)} attendus`} />) : <div style={{ fontSize:12.5, color:'#94a3b8' }}>Aucune collecte sur la période.</div>}
+        </PilBloc>
+
+        <PilBloc titre="Kit FRIA" icone="🏦" page="epargne_fria" setPage={setPage}>
+          <PilLigne l="Kit distribué (valeur)" v={fcfa(kitTotal)} /><PilLigne l="Remboursé" v={`${fcfa(rembTotal)} (${pilTxtPct(pilPct(rembTotal, kitTotal))})`} />
+          <PilLigne l="Reste à rembourser" v={fcfa(Math.max(0, kitTotal - rembTotal))} fort />
+          <div style={{ fontSize:12, fontWeight:700, color:'#334155', margin:'10px 0 4px' }}>Plus gros restes à rembourser</div>
+          {retards.length ? retards.map(x => <PilBarre key={x.f.id} label={`${x.f.code_trace ? x.f.code_trace + ' ' : ''}${nomTiers(x.f)}`} valeur={x.reste} max={retards[0].reste} texte={fcfa(x.reste)} />)
+            : <div style={{ fontSize:12.5, color:'#94a3b8' }}>Aucun reste à rembourser.</div>}
+        </PilBloc>
+
+        <PilBloc titre="Chaîne de transformation (kg)" icone="🏭" page="suivi_lot" setPage={setPage} large>
+          <div style={{ display:'grid', gridTemplateColumns:isMobile ? '1fr' : 'minmax(0,1.2fr) minmax(0,1fr)', gap:18 }}>
+            <div>
+              {entonnoir.map(([l, v], i) => <PilBarre key={l} label={l} valeur={v} max={maxEnt}
+                texte={`${fmtKg(v)}${i > 0 && entonnoir[i - 1][1] > 0 ? ` · ${pilTxtPct(pilPct(v, entonnoir[i - 1][1]))}` : ''}`} titre={`${l} : ${fmtKg(v)}${i > 0 ? ` (${pilTxtPct(pilPct(v, entonnoir[i - 1][1]))} de l'étape précédente)` : ''}`} />)}
+              <div style={{ fontSize:12, fontWeight:700, color:'#334155', margin:'10px 0 4px' }}>Sous-produits ({fmtKg(totSous)})</div>
+              {sousProduits.map(([l, v]) => <PilBarre key={l} label={l} valeur={v} max={Math.max(...sousProduits.map(x => x[1]), 1)} texte={`${fmtKg(v)} · ${pilTxtPct(pilPct(v, totSous))}`} />)}
+            </div>
+            <div style={{ overflowX:'auto' }}>
+              <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12.5 }}>
+                <thead><tr>{['Étape', 'Opér.', 'Écart moyen', 'Seuil', 'État'].map((h, i) => <th key={h} style={{ textAlign:i && i < 4 ? 'right' : 'left', padding:'6px 8px', background:'#f1f5f9', color:'#475569', fontSize:11.5 }}>{h}</th>)}</tr></thead>
+                <tbody>{etapes.map(e => <tr key={e.lib} onClick={()=>setPage(e.page)} style={{ cursor:'pointer', borderTop:'1px solid #f1f5f9' }}>
+                  <td style={{ padding:'6px 8px', fontWeight:600 }}>{e.lib}</td><td style={{ padding:'6px 8px', textAlign:'right' }}>{e.n}</td>
+                  <td style={{ padding:'6px 8px', textAlign:'right' }}>{pilTxtPct(e.moy)}</td><td style={{ padding:'6px 8px', textAlign:'right' }}>{pilTxtPct(e.seuil)}</td>
+                  <td style={{ padding:'6px 8px' }}>{e.n ? <PilStatut ok={!e.alertes} non={`${e.alertes} alerte(s)`} /> : <span style={{ color:'#94a3b8' }}>—</span>}</td></tr>)}</tbody>
+              </table>
+            </div>
+          </div>
+        </PilBloc>
+
+        <PilBloc titre="Étuveuses" icone="🔥" page="etv_envois" setPage={setPage}>
+          <PilLigne l="Paddy actuellement chez les étuveuses" v={fmtKg(chezEtuveuses)} fort />
+          <PilLigne l="Envois en retard (plus de 15 jours)" v={enRetard.length ? <PilStatut ok={false} non={`${enRetard.length} envoi(s)`} /> : <PilStatut ok oui="Aucun" />} />
+          <div style={{ fontSize:12, fontWeight:700, color:'#334155', margin:'10px 0 4px' }}>Rendement par étuveuse (riz reçu / paddy soldé)</div>
+          {classementEtv.length ? classementEtv.slice(0, 10).map(x => <PilBarre key={x.nom} label={x.nom} valeur={x.rend || 0} max={100} texte={pilTxtPct(x.rend)}
+            titre={`${x.nom} : ${x.envois} envoi(s), ${x.recups} récupération(s), ${fmtKg(x.recu)} reçus pour ${fmtKg(x.traite)}`} />) : <div style={{ fontSize:12.5, color:'#94a3b8' }}>Aucun retour enregistré.</div>}
+        </PilBloc>
+
+        <PilBloc titre="Stock de la chaîne" icone="📦" page="stock" setPage={setPage}>
+          <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12.5 }}>
+            <thead><tr>{['Produit', 'Quantité', 'Valeur'].map((h, i) => <th key={h} style={{ textAlign:i ? 'right' : 'left', padding:'6px 8px', background:'#f1f5f9', color:'#475569', fontSize:11.5 }}>{h}</th>)}</tr></thead>
+            <tbody>{stockChaine.map(x => <tr key={x.lib} style={{ borderTop:'1px solid #f1f5f9' }}>
+              <td style={{ padding:'6px 8px' }}>{x.lib}</td><td style={{ padding:'6px 8px', textAlign:'right', color:x.q < 0 ? '#dc2626' : undefined, fontWeight:600 }}>{x.q < 0 ? '⚠️ ' : ''}{fmtKg(x.q)}</td>
+              <td style={{ padding:'6px 8px', textAlign:'right' }}>{fcfa(x.v)}</td></tr>)}
+              {!stockChaine.length && <tr><td colSpan={3} style={{ padding:12, color:'#94a3b8' }}>Aucun article de la chaîne.</td></tr>}</tbody>
+          </table>
+          <div style={{ display:'flex', gap:8, flexWrap:'wrap', marginTop:10 }}>
+            <PilStatut ok={!stocksNegatifs.length} oui="Aucun stock négatif" non={`${stocksNegatifs.length} stock(s) négatif(s)`} />
+            <PilStatut ok={!sousMin.length} oui="Aucun article sous le minimum" non={`${sousMin.length} article(s) sous le minimum`} />
+          </div>
+        </PilBloc>
+
+        <PilBloc titre="Commercialisation" icone="🛒" page="commercial" setPage={setPage}>
+          <PilLigne l="Chiffre d'affaires (factures)" v={fcfa(ca)} fort /><PilLigne l="Encaissé" v={`${fcfa(encaisse)} (${pilTxtPct(pilPct(encaisse, ca))})`} />
+          <PilLigne l="Créances clients" v={fcfa(creances)} /><PilLigne l="Kg vendus (lignes en kg)" v={fmtKg(kgVendus)} />
+          <PilLigne l="Livraisons tracées (rattachées à un lot)" v={`${fmtKg(kgLivresTraces)}${kgVendus > 0 ? ` (${pilTxtPct(pilPct(kgLivresTraces, kgVendus))} des ventes)` : ''}`} />
+          {Object.keys(formatsLivres).length > 0 && <PilLigne l="Sacs livrés par format" v={Object.entries(formatsLivres).sort((a, b) => +a[0] - +b[0]).map(([kg, n]) => `${n} × ${kg} kg`).join(' · ')} />}
+          <div style={{ fontSize:12, fontWeight:700, color:'#334155', margin:'10px 0 4px' }}>Ventes par mois</div>
+          {mois.length ? mois.map(([m, v]) => <PilBarre key={m} label={new Date(m + '-01').toLocaleDateString('fr-FR', { month:'long', year:'numeric' })} valeur={v} max={Math.max(...mois.map(x => x[1]))} texte={fcfa(v)} />)
+            : <div style={{ fontSize:12.5, color:'#94a3b8' }}>Aucune facture sur la période.</div>}
+          {topClients.length > 0 && <><div style={{ fontSize:12, fontWeight:700, color:'#334155', margin:'10px 0 4px' }}>Meilleurs clients</div>
+            {topClients.map(x => <PilBarre key={x.nom} label={x.nom} valeur={x.v} max={topClients[0].v} texte={fcfa(x.v)} />)}</>}
+        </PilBloc>
+
+        <PilBloc titre="Traçabilité et qualité" icone="🔗" page="tracabilite" setPage={setPage}>
+          <PilBarre label="Lots avec producteurs d'origine" valeur={pctLotsOrigine || 0} max={100} texte={pilTxtPct(pctLotsOrigine)} alerte={pctLotsOrigine != null && pctLotsOrigine < 80} />
+          <PilBarre label="Envois avec producteurs" valeur={pctEnvoisProd || 0} max={100} texte={pilTxtPct(pctEnvoisProd)} alerte={pctEnvoisProd != null && pctEnvoisProd < 80} />
+          <PilBarre label="Étapes rattachées à un lot" valeur={pctEtapesLot || 0} max={100} texte={pilTxtPct(pctEtapesLot)} alerte={pctEtapesLot != null && pctEtapesLot < 80} />
+          <PilLigne l="Taux d'impureté moyen (tri)" v={pilTxtPct(impurete)} /><PilLigne l="Humidité moyenne (décorticage)" v={pilTxtPct(humidite)} />
+          <div style={{ fontSize:11.5, color:'#64748b', marginTop:6 }}>En rouge : moins de 80 % des enregistrements sont traçables.</div>
+        </PilBloc>
+      </div>
+    </div>
+  )
+}
+
 function Dashboard({ companyId, toast, setPage }) {
   const [stats, setStats]   = useState(null)
   const [loading, setLoading] = useState(true)
@@ -28254,7 +28575,7 @@ export default function ComptaPro() {
         {...sp} lots={lots} fields={s.fields} setPage={setPage} />
     }
     switch (page) {
-      case 'dashboard':     return <Dashboard {...sp} setPage={setPage} />
+      case 'dashboard':     return sp.companyId ? <PilotagePage {...sp} setPage={setPage} /> : <Dashboard {...sp} setPage={setPage} />
       case 'companies':     return <CompaniesPage companies={companies} refresh={loadCompanies} toast={toast} isSuperAdmin={isSuperAdmin} currentUserId={user?.id} />
       case 'clients':       return <TiersPage table="compta_clients" title="Clients" titleSingle="Client" icon="👥" {...sp}
                               extraFields={{ names:[], headers:[], fields:[], defaults:{type:'physique',nom_societe:''} }} />
