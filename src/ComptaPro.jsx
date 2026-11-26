@@ -2461,19 +2461,25 @@ function ConsolApercu({ open, onClose, selectedIds, allCompanies, colonnes, toas
   const charger = async () => {
     if (!selectedIds.length) { toast.error('Sélectionnez au moins une société.'); return }
     const nomSoc = await chargerCommunes()
-    if (doc === 'mouvements' && du && au && du > au) { toast.error('La date de début est après la date de fin.'); return }
+    if (du && au && du > au) { toast.error('La date de début est après la date de fin.'); return }
     setChargement(true)
     try {
       if (doc === 'inventaire') {
         if (!colonnes.length) { toast.error('Sélectionnez au moins une colonne.'); return }
         const [{ data, error }, { data:mvts, error:em }] = await Promise.all([
           fetchAllRows(() => supabase.from('compta_articles').select('*').eq('actif', true).in('company_id', selectedIds).order('designation')),
-          fetchAllRows(() => supabase.from('compta_mouvements_stock').select('id,article_id,company_id,type,quantite,reference').in('company_id', selectedIds).order('id')),
+          fetchAllRows(() => supabase.from('compta_mouvements_stock').select('id,article_id,company_id,type,quantite,reference,date_mvt').in('company_id', selectedIds).order('id')),
         ])
         if (error || em) { toast.error((error || em).message); return }
         const comMvt = await communesMouvementsMulti(mvts || [])
         const parArtCom = {}   // article -> { commune: quantité nette }
+        const recuArtCom = {}  // article -> { commune: entrées reçues sur la période }
         for (const m of mvts || []) {
+          if (m.type === 'entree' && (!du || m.date_mvt >= du) && (!au || m.date_mvt <= au)) {
+            const cr = comMvt[`${m.company_id}|${m.reference}`] || nomSoc(m.company_id)
+            const r = recuArtCom[m.article_id] || (recuArtCom[m.article_id] = {})
+            r[cr] = (r[cr] || 0) + (+m.quantite || 0)
+          }
           const c = comMvt[`${m.company_id}|${m.reference}`]; if (!c) continue
           const x = parArtCom[m.article_id] || (parArtCom[m.article_id] = {})
           x[c] = (x[c] || 0) + (m.type === 'entree' ? 1 : m.type === 'sortie' ? -1 : 0) * (+m.quantite || 0)
@@ -2481,7 +2487,7 @@ function ConsolApercu({ open, onClose, selectedIds, allCompanies, colonnes, toas
         const grp = {}
         const ajouter = (a, commune, s, premier) => {
           const k = `${commune}|${toUpperNoAccent(a.designation || '').trim()}|${String(a.unite || '').toLowerCase()}`
-          const g = grp[k] || (grp[k] = { commune, code:a.code, designation:a.designation, categorie:a.categorie, unite:a.unite, stock_actuel:0, stock_min:0, _val:0, _pv:0, _n:0 })
+          const g = grp[k] || (grp[k] = { commune, code:a.code, designation:a.designation, categorie:a.categorie, unite:a.unite, stock_actuel:0, stock_min:0, _val:0, _pv:0, _n:0, _recu:0 })
           g.stock_actuel += s; g._val += s * (+a.prix_achat || 0)
           if (premier) { g.stock_min += +a.stock_min || 0; g._pv += +a.prix_vente || 0; g._n++ }
           if (g.code !== a.code && !String(g.code || '').split(' / ').includes(a.code)) g.code = [g.code, a.code].filter(Boolean).join(' / ')
@@ -2494,24 +2500,31 @@ function ConsolApercu({ open, onClose, selectedIds, allCompanies, colonnes, toas
           const reste = Math.round((total - reparti) * 1000) / 1000
           // Stock non rattaché à une commune (stock initial, saisie manuelle…) : commune de la société.
           if (reste || !Object.keys(parts).length || !(defaut in parts)) ajouter(a, defaut, reste, true)
+          for (const [c, q] of Object.entries(recuArtCom[a.id] || {})) {
+            ajouter(a, c, 0, false)
+            grp[`${c}|${toUpperNoAccent(a.designation || '').trim()}|${String(a.unite || '').toLowerCase()}`]._recu += q
+          }
         }
-        for (const k of Object.keys(grp)) if (!grp[k].stock_actuel && !grp[k]._n) delete grp[k]
+        for (const k of Object.keys(grp)) if (!grp[k].stock_actuel && !grp[k]._n && !grp[k]._recu) delete grp[k]
         // Prix d'achat moyen pondéré par le stock (valeur = stock × prix inchangée).
         const arts = Object.values(grp).map(g => ({ ...g, stock_actuel:Math.round(g.stock_actuel * 1000) / 1000,
           prix_achat:g.stock_actuel ? Math.round(g._val / g.stock_actuel) : 0, prix_vente:g._n ? Math.round(g._pv / g._n) : 0 }))
           .sort((a, b) => a.commune.localeCompare(b.commune, 'fr') || String(a.designation||'').localeCompare(String(b.designation||''), 'fr'))
-        // Riz paddy : quantité attendue = producteurs de la commune × 515 kg ; % récupéré = stock / attendu.
+        // Riz paddy : quantité attendue = producteurs de la commune × 515 kg ;
+        // % récupéré = entrées reçues sur la période / attendu.
         const { data:prods } = await fetchAllRows(() => supabase.from('compta_fournisseurs').select('id,commune,categorie').eq('actif', true).in('company_id', selectedIds).order('id'))
         const nbProd = {}
         ;(prods || []).filter(estProducteur).forEach(f => { const c = toUpperNoAccent(f.commune || '').trim(); if (c) nbProd[c] = (nbProd[c] || 0) + 1 })
         const estPaddy = a => a.categorie === 'riz_paddy' || /paddy/i.test(a.designation || '')
         arts.forEach(a => { if (!estPaddy(a)) return
+          a._recu = Math.round((a._recu || 0) * 1000) / 1000
           a._prod = nbProd[a.commune] || 0; a._attendu = a._prod * KG_ATTENDU_PRODUCTEUR
-          a._taux = a._attendu ? Math.round((+a.stock_actuel || 0) / a._attendu * 1000) / 10 : null })
+          a._taux = a._attendu ? Math.round(a._recu / a._attendu * 1000) / 10 : null })
         const headers = [{ label:'Commune', w:12 }, ...colonnes.map(c => ({ label:c.key, r:['Stock actuel','Stock min','Prix achat','Prix vente','Valeur stock (FCFA)'].includes(c.key) })),
-          { label:'Producteurs', w:7, r:true }, { label:`Qté attendue (kg) (× ${KG_ATTENDU_PRODUCTEUR})`, w:9, r:true }, { label:'% récupéré', w:7, r:true }]
+          { label:'Producteurs', w:7, r:true }, { label:`Qté attendue (kg) (× ${KG_ATTENDU_PRODUCTEUR})`, w:9, r:true },
+          { label:'Reçu sur la période (kg)', w:8, r:true }, { label:'% récupéré', w:7, r:true }]
         const rows = arts.map(a => [a.commune, ...colonnes.map(c => consolArticleVal(a, c.key)),
-          a._prod ?? '', a._attendu ?? '', a._taux == null ? '' : `${String(a._taux).replace('.', ',')} %`])
+          a._prod ?? '', a._attendu ?? '', a._attendu != null ? a._recu : '', a._taux == null ? '' : `${String(a._taux).replace('.', ',')} %`])
         const cats = arts.map(a => a.categorie || '')
         const valeur = arts.reduce((s, a) => s + Math.round((+a.stock_actuel || 0) * (+a.prix_achat || 0)), 0)
         const alertes = arts.filter(a => (+a.stock_actuel || 0) <= (+a.stock_min || 0)).length
@@ -2548,8 +2561,8 @@ function ConsolApercu({ open, onClose, selectedIds, allCompanies, colonnes, toas
     const parUnite = {}
     arts.forEach(a => { const u = a.unite || ''; parUnite[u] = (parUnite[u] || 0) + (+a.stock_actuel || 0) })
     const qte = Object.entries(parUnite).map(([u, v]) => `${nbFr(Math.round(v * 1000) / 1000)}${u ? ' ' + u : ''}`).join(' + ') || '0'
-    const pad = arts.filter(a => a._attendu), att = pad.reduce((s, a) => s + a._attendu, 0), rec = pad.reduce((s, a) => s + (+a.stock_actuel || 0), 0)
-    const tauxGlobal = att ? [{ label:'Riz paddy récupéré / attendu', value:`${nbFr(Math.round(rec))} / ${nbFr(att)} kg (${String(Math.round(rec / att * 1000) / 10).replace('.', ',')} %)` }] : []
+    const pad = arts.filter(a => a._attendu), att = pad.reduce((s, a) => s + a._attendu, 0), rec = pad.reduce((s, a) => s + (+a._recu || 0), 0)
+    const tauxGlobal = att ? [{ label:'Riz paddy reçu sur la période / attendu', value:`${nbFr(Math.round(rec))} / ${nbFr(att)} kg (${String(Math.round(rec / att * 1000) / 10).replace('.', ',')} %)` }] : []
     return [{ label:'Articles', value:nbFr(arts.length) }, { label:'Quantité totale en stock', value:qte }, ...tauxGlobal, { label:'Articles en alerte', value:nbFr(arts.filter(a => (+a.stock_actuel || 0) <= (+a.stock_min || 0)).length) }, { label:'Valeur totale du stock', value:nbFr(valeur) + ' FCFA' }]
   })() : (() => {
     const mv = idxVisibles.map(i => res.mv[i])
@@ -2559,7 +2572,7 @@ function ConsolApercu({ open, onClose, selectedIds, allCompanies, colonnes, toas
   })()
   const titre = res?.doc === 'mouvements' ? 'Mouvements de stock consolidés' : 'Inventaire consolidé des stocks'
   const libCat = catArt ? ` — ${CAT_LABELS[catArt] || catArt}` : ''
-  const periode = res?.doc === 'mouvements' ? `Du ${du ? dateDoc(du) : "l'origine"} au ${au ? dateDoc(au) : "aujourd'hui"}${typeMvt ? ` — ${typeMvt === 'entree' ? 'entrées' : 'sorties'} seulement` : ''}` : `État au ${dateDoc(today())}`
+  const periode = res?.doc === 'mouvements' ? `Du ${du ? dateDoc(du) : "l'origine"} au ${au ? dateDoc(au) : "aujourd'hui"}${typeMvt ? ` — ${typeMvt === 'entree' ? 'entrées' : 'sorties'} seulement` : ''}` : `État au ${dateDoc(today())} — paddy reçu du ${du ? dateDoc(du) : "l'origine"} au ${au ? dateDoc(au) : "aujourd'hui"}`
   const fmt = (v, h) => h?.r && typeof v === 'number' ? nbFr(v) : (v ?? '')
   const imprimer = () => {
     if (!visibles.length) { toast.error('Rien à imprimer.'); return }
@@ -2588,13 +2601,14 @@ function ConsolApercu({ open, onClose, selectedIds, allCompanies, colonnes, toas
         {onglet('inventaire', "📋 Inventaire (état des stocks)")}{onglet('mouvements', '🔄 Mouvements de stock')}
       </div>
       <div style={{ display:'flex', gap:10, alignItems:'center', flexWrap:'wrap', marginBottom:12 }}>
-        {doc === 'mouvements' && <>
+        {doc === 'inventaire' && <span style={{ fontSize:12.5, color:'#475569' }}>Entrées de riz paddy reçues (% récupéré)</span>}
+        <>
           <span style={{ fontSize:13 }}>Du</span><input type="date" style={champ} value={du} onChange={e=>setDu(e.target.value)} />
           <span style={{ fontSize:13 }}>au</span><input type="date" style={champ} value={au} onChange={e=>setAu(e.target.value)} />
-          <select style={champ} value={typeMvt} onChange={e=>setTypeMvt(e.target.value)}>
+          {doc === 'mouvements' && <select style={champ} value={typeMvt} onChange={e=>setTypeMvt(e.target.value)}>
             <option value="">Entrées et sorties</option><option value="entree">Entrées</option><option value="sortie">Sorties</option>
-          </select>
-        </>}
+          </select>}
+        </>
         <select style={champ} value={catArt} onChange={e=>setCatArt(e.target.value)} title="Filtrer par type d'article">
           <option value="">Tous les types d'article</option>
           {[...new Set([...categoriesDispo, ...(catArt ? [catArt] : [])])].map(c => <option key={c} value={c}>{CAT_LABELS[c] || c}</option>)}
