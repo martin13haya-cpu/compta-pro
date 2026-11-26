@@ -9810,7 +9810,11 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
   const etape = tableName.replace('compta_','')
   const estEtuvage = tableName === 'compta_etuvage'
   const estDecorticage = tableName === 'compta_decorticage'
-  // Décorticage : riz paddy étuvé disponible en stock (+ ce que cet enregistrement a déjà sorti).
+  // Étapes de transformation : produit de l'étape précédente pris dans le stock (bloquant
+  // s'il n'y est pas) et, si la case est cochée, produits obtenus entrés en stock.
+  const chaine = CHAINE_PRODUCTION[tableName] || null
+  const cleChaine = id => `${chaine.cle}:${id}`
+  // Produit d'entrée disponible en stock (+ ce que cet enregistrement a déjà sorti).
   const [stockEtuve, setStockEtuve] = useState(null)
   // Rendement du décorticage (poids après / poids avant) comparé au seuil des paramètres :
   // le seuil est une perte maximale en %, donc rendement minimal = 100 − seuil.
@@ -9822,12 +9826,12 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
     return { min, rendement, perte, alerte:rendement < min }
   }
   const chargerStockEtuve = async (cid, item) => {
-    if (!estDecorticage || !cid) return
-    const { data } = await supabase.from('compta_articles').select('id,designation,stock_actuel').eq('company_id', cid).eq('actif', true)
-    const art = (data || []).find(a => ARTICLES_ETUVAGE.etuve.motif.test(a.designation || '')) || (data || []).find(a => ARTICLES_ETUVAGE.etuve.ancien.test(a.designation || ''))
+    if (!chaine || !cid) return
+    const { data } = await supabase.from('compta_articles').select('id,code,designation,stock_actuel').eq('company_id', cid).eq('actif', true)
+    const art = trouverArticleEtuvage(data, ARTICLES_ETUVAGE[chaine.entree.sorte])
     let deja = 0
     if (item?.id) {
-      const { data:bons } = await supabase.from('compta_bons_stock').select('lignes').eq('company_id', cid).like('observations', `%[DECO:${item.id}]%`)
+      const { data:bons } = await supabase.from('compta_bons_stock').select('type,lignes').eq('company_id', cid).eq('type', 'sortie').like('observations', `%[${cleChaine(item.id)}]%`)
       deja = (bons || []).reduce((s, b) => s + (b.lignes || []).reduce((x, l) => x + (+l.quantite || 0), 0), 0)
     }
     setStockEtuve({ dispo:Math.round(((+art?.stock_actuel || 0) + deja) * 1000) / 1000, existe:!!art })
@@ -9982,12 +9986,13 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
       df.lot_sortant = `ETUV-${an}-${String((nums.length ? Math.max(...nums) : 0) + 1).padStart(3,'0')}`
       df.etuveuse_id = ''
     }
+    if (chaine) df._entrer_stock = true
     setEditItem(null); setForm(df); setModal(true)
-    chargerStockEtuve(cid, null)
+    setStockEtuve(null); chargerStockEtuve(cid, null)
   }
   const openEdit = it => {
     setEditItem(it)
-    const df = { ...it, company_id: it.company_id||companyId||companies[0]?.id||'', lot_id: it.lot_id||'' }
+    const df = { ...it, company_id: it.company_id||companyId||companies[0]?.id||'', lot_id: it.lot_id||'', ...(chaine ? { _entrer_stock:true } : {}) }
     setForm(df); setModal(true)
     setStockEtuve(null); chargerStockEtuve(df.company_id, it)
   }
@@ -10014,12 +10019,12 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
       pay.seuil_alerte_pct = seuilEtape
       pay.alerte = Math.abs(pay.ecart_pct||0) > seuilEtape
     }
-    // Décorticage : on ne décortique que du riz paddy étuvé présent en stock (bloquant).
-    if (estDecorticage) {
-      const q = +pay.poids_avant || 0
-      if (!(q > 0)) { setSaving(false); toast.error('Saisissez le poids avant (riz paddy étuvé à décortiquer).'); return }
+    // On ne transforme que le produit de l'étape précédente présent en stock (bloquant).
+    if (chaine) {
+      const q = +pay[chaine.entree.champ] || 0, lib = chaine.entree.lib.toLowerCase()
+      if (!(q > 0)) { setSaving(false); toast.error(`Saisissez la quantité de ${lib} prise pour cette étape.`); return }
       if (!stockEtuve || q > stockEtuve.dispo + 0.0005) { setSaving(false)
-        toast.error(`Riz paddy étuvé insuffisant en stock : ${fmtKg(stockEtuve?.dispo || 0)} disponible(s) pour ${fmtKg(q)}. Enregistrez d'abord le retour de l'étuveuse (Étuveuses › Envois aux étuveuses) pour entrer le riz paddy étuvé en stock.`); return }
+        toast.error(`${chaine.entree.lib} insuffisant en stock : ${fmtKg(stockEtuve?.dispo || 0)} disponible(s) pour ${fmtKg(q)}. Enregistrez d'abord l'étape précédente en cochant « Entrer en stock »${chaine.entree.sorte === 'etuve' ? " (ou le retour de l'étuveuse)" : ''}.`); return }
     }
     // Étuvage saisi en direct (pas issu d'un retour d'étuveuse, qui a déjà ses
     // bons) : sortie du paddy envoyé et entrée du riz paddy étuvé reçu.
@@ -10045,17 +10050,32 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
       setSaving(false)
       toast.error(estEtuvage && /etuveuse_id|lot_sortant|dechets_kg|humidite_sortie|ecart_pct|seuil_alerte_pct|alerte|cuve|schema cache/i.test(error.message) ? MSG_SCRIPT_ETUVAGE : error.message); return
     }
-    if (estDecorticage) {
-      const idDeco = editItem ? editItem.id : insEtape.id, cleDeco = `DECO:${idDeco}`
-      if (editItem) await annulerBonsStockAuto(cid, cleDeco)
-      const { article } = await articleEtuvage(cid, uid, 'etuve')
-      const r = article ? await passerBonStockAuto({ companyId:cid, uid, type:'sortie', article, quantite:pay.poids_avant, prix:article.prix_achat, date:pay.date_etape,
-        tiers:'Décorticage', motif:'production', cle:cleDeco, observations:`Décorticage${pay.numero_lot ? ` — lot ${pay.numero_lot}` : ''}` }) : { error:{ message:'article RIZ PADDY ETUVE introuvable' } }
+    if (chaine) {
+      const idEt = editItem ? editItem.id : insEtape.id, cleEt = cleChaine(idEt)
+      if (editItem) await annulerBonsStockAuto(cid, cleEt)
+      const obs = `${title}${pay.numero_lot ? ` — lot ${pay.numero_lot}` : ''}`
+      const qIn = +pay[chaine.entree.champ] || 0
+      const { article:artIn } = await articleEtuvage(cid, uid, chaine.entree.sorte)
+      const msgs = [], erreurs = []
+      const rIn = artIn ? await passerBonStockAuto({ companyId:cid, uid, type:'sortie', article:artIn, quantite:qIn, prix:artIn.prix_achat, date:pay.date_etape,
+        tiers:title, motif:'production', cle:cleEt, observations:obs }) : { error:{ message:`article ${chaine.entree.lib} introuvable` } }
+      if (rIn.error) erreurs.push(`sortie de ${chaine.entree.lib.toLowerCase()} : ${rIn.error.message}`); else msgs.push(`${fmtKg(qIn)} de ${chaine.entree.lib.toLowerCase()} sortis`)
+      // Produits obtenus : entrés en stock au coût du produit consommé, réparti au poids.
+      if (form._entrer_stock) {
+        const outs = chaine.sorties.map(s => ({ ...s, q:+pay[s.champ] || 0 })).filter(s => s.q > 0)
+        const qOut = outs.reduce((s, o) => s + o.q, 0), cout = qIn * (+artIn?.prix_achat || 0)
+        for (const o of outs) {
+          const { article, error:ea } = await articleEtuvage(cid, uid, o.sorte, qOut > 0 ? cout / qOut : 0)
+          const r = article ? await passerBonStockAuto({ companyId:cid, uid, type:'entree', article, quantite:o.q, prix:qOut > 0 ? cout / qOut : 0, date:pay.date_etape,
+            tiers:title, motif:'production', cle:cleEt, observations:obs }) : { error:ea || { message:'article introuvable' } }
+          if (r.error) erreurs.push(`entrée de ${o.lib.toLowerCase()} : ${r.error.message}`); else msgs.push(`${fmtKg(o.q)} de ${o.lib.toLowerCase()} entrés`)
+        }
+      }
       setSaving(false)
-      if (r.error) toast.error('Enregistré, mais la sortie de stock du riz paddy étuvé n\'a pas été passée : ' + r.error.message)
-      else toast.success(`${editItem ? 'Modification enregistrée' : 'Enregistrement réussi'} — ${fmtKg(pay.poids_avant)} de riz paddy étuvé sortis du stock${r.numero ? ` (bon ${r.numero})` : ''}.`)
-      const rd = rendementDecorticage(pay)
-      if (rd.alerte) toast.error(`⚠️ Alerte rendement : ${nbFr(rd.rendement)} % obtenu, en dessous du seuil minimal de ${nbFr(rd.min)} % (perte ${nbFr(rd.perte)} % pour ${nbFr(seuilEtape)} % autorisés).`)
+      toast.success(`${editItem ? 'Modification enregistrée' : 'Enregistrement réussi'} — stock : ${msgs.join(', ')}.`)
+      if (erreurs.length) toast.error('Mouvements de stock non passés : ' + erreurs.join(' ; '))
+      if (estDecorticage) { const rd = rendementDecorticage(pay)
+        if (rd.alerte) toast.error(`⚠️ Alerte rendement : ${nbFr(rd.rendement)} % obtenu, en dessous du seuil minimal de ${nbFr(rd.min)} % (perte ${nbFr(rd.perte)} % pour ${nbFr(seuilEtape)} % autorisés).`) }
       close(); load(); return
     }
     let entree = {}
@@ -10105,9 +10125,9 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
   const del = async id => {
     const it = items.find(x => x.id === id)
     const avecStock = estEtuvage && it?.lot_sortant && !cycleDepuisRetour(it)
-    if (!confirm(`Supprimer cet enregistrement ?${avecStock ? ' Les mouvements de stock de ce cycle (paddy sorti, riz paddy étuvé entré) seront annulés.' : estDecorticage ? ' Le riz paddy étuvé sorti du stock pour ce décorticage y sera remis.' : ''}`)) return
+    if (!confirm(`Supprimer cet enregistrement ?${avecStock ? ' Les mouvements de stock de ce cycle (paddy sorti, riz paddy étuvé entré) seront annulés.' : chaine ? ' Les mouvements de stock de cette étape (produit pris et produits obtenus) seront annulés.' : ''}`)) return
     if (avecStock) await annulerBonsStockAuto(it.company_id || companyId, `ETUV:${it.lot_sortant}`)
-    if (estDecorticage) await annulerBonsStockAuto(it?.company_id || companyId, `DECO:${id}`)
+    if (chaine) await annulerBonsStockAuto(it?.company_id || companyId, cleChaine(id))
     await supabase.from(tableName).delete().eq('id', id)
     toast.success('Supprimé !'); load()
   }
@@ -10261,11 +10281,20 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
                 ? <>Origine du paddy : <strong>{originesLots[form.lot_id].refs.join(', ')||'réceptions producteurs'}</strong> — {originesLots[form.lot_id].producteurs} producteur(s), {fmtKg(originesLots[form.lot_id].kg)}</>
                 : <>Aucun achat relié à ce lot : versez-y un achat (Achats hors FRIA) ou ajoutez ses producteurs dans Traçabilité (QR).</>}
             </div></Span2>}
-            {estDecorticage && (()=>{ const q = parseFloat(form.poids_avant)||0, dispo = stockEtuve?.dispo ?? null, trop = dispo != null && q > dispo + 0.0005
-              return <Span2><div style={{fontSize:12.5,padding:'8px 12px',borderRadius:8,background:trop||dispo===0?'#fef2f2':'#f0f9ff',color:trop||dispo===0?'#b91c1c':'#0c4a6e'}}>
-                📦 Riz paddy étuvé en stock : <strong>{dispo == null ? '…' : fmtKg(dispo)}</strong> — le poids avant sort du stock à l'enregistrement.
-                {trop && ' Le poids avant dépasse le stock : enregistrement impossible.'}
-                {dispo === 0 && !trop && " Aucun riz paddy étuvé en stock : enregistrez d'abord le retour de l'étuveuse."}</div></Span2> })()}
+            {chaine && (()=>{ const champIn = fields.find(f => f.name === chaine.entree.champ)?.label || chaine.entree.champ
+              const q = parseFloat(form[chaine.entree.champ])||0, dispo = stockEtuve?.dispo ?? null, trop = dispo != null && q > dispo + 0.0005
+              return <Span2>
+                <div style={{fontSize:12.5,padding:'8px 12px',borderRadius:8,background:trop||dispo===0?'#fef2f2':'#f0f9ff',color:trop||dispo===0?'#b91c1c':'#0c4a6e'}}>
+                  📦 {chaine.entree.lib} en stock : <strong>{dispo == null ? '…' : fmtKg(dispo)}</strong> — « {champIn} » sort du stock à l'enregistrement.
+                  {trop && ` « ${champIn} » dépasse le stock : enregistrement impossible.`}
+                  {dispo === 0 && !trop && ` Aucun ${chaine.entree.lib.toLowerCase()} en stock : enregistrez d'abord l'étape précédente en cochant « Entrer en stock ».`}</div>
+                <label style={{display:'flex',gap:8,alignItems:'center',fontSize:13,marginTop:8,cursor:'pointer',padding:'8px 12px',borderRadius:8,
+                  background:form._entrer_stock?'#f0fdf4':'#fffbeb',border:'1px solid '+(form._entrer_stock?'#bbf7d0':'#fde68a')}}>
+                  <input type="checkbox" checked={!!form._entrer_stock} onChange={e=>setForm(f=>({...f, _entrer_stock:e.target.checked}))} />
+                  <span>📥 <strong>Entrer en stock</strong> : {chaine.sorties.map(s => `${s.lib} (« ${fields.find(f => f.name === s.champ)?.label || s.champ} »)`).join(' + ')}
+                    {!form._entrer_stock && <span style={{color:'#92400e'}}> — non coché : l'étape suivante ne pourra pas utiliser ce produit</span>}</span>
+                </label>
+              </Span2> })()}
             {estDecorticage && (()=>{ const r = rendementDecorticage(form)
               return <Span2><div style={{fontSize:12.5,padding:'8px 12px',borderRadius:8,border:'1px solid '+(r.alerte?'#fecaca':'#bbf7d0'),background:r.alerte?'#fef2f2':'#f0fdf4',color:r.alerte?'#b91c1c':'#166534'}}>
                 🎯 Seuil (Paramètres › Seuils d'alerte) : perte maximale <strong>{nbFr(seuilEtape)} %</strong>, soit un rendement minimal de <strong>{nbFr(r.min)} %</strong>
@@ -14911,21 +14940,39 @@ const ARTICLES_ETUVAGE = {
   paddy: { motif:/paddy/i, exclure:/etuv|étuv/i, designation:'RIZ PADDY', categorie:'riz_paddy' },
   // Produit de l'étuvage (avant décorticage) : « RIZ PADDY ETUVE ». Le produit fini
   // (après décorticage) garde le nom « Riz étuvé ».
-  etuve: { motif:/paddy\W*(e|é)tuv/i, designation:'RIZ PADDY ETUVE', categorie:'riz_paddy_etuve', ancien:/^\s*riz\s+(e|é)tuv(e|é)\s*$/i },
+  // L'ancien article auto « RIZ ETUVE » (code RIZ-ETUVE) est renommé « RIZ PADDY ETUVE ».
+  etuve: { motif:/paddy\W*(e|é)tuv/i, designation:'RIZ PADDY ETUVE', categorie:'riz_paddy_etuve',
+    ancien:a => /^\s*riz\s+(e|é)tuv(e|é)\s*$/i.test(a.designation || '') && (a.code || '') === 'RIZ-ETUVE' },
+  // Chaîne de transformation : décorticage → calibrage → tri optique → conditionnement.
+  decortique: { motif:/d(e|é)cortiqu/i, designation:'RIZ DECORTIQUE', categorie:'semi_fini' },
+  calibre: { motif:/calibr/i, designation:'RIZ CALIBRE', categorie:'semi_fini' },
+  brisures: { motif:/brisure|cass(e|é)s?\b/i, designation:'BRISURES DE RIZ', categorie:'semi_fini' },
+  trie: { motif:/^\s*riz\s+tri(e|é)\s*$/i, designation:'RIZ TRIE', categorie:'semi_fini' },
+  // Produit fini : « RIZ ETUVE » (jamais l'ancien article auto de code RIZ-ETUVE).
+  fini: { motif:/^\s*riz\s+(e|é)tuv(e|é)\s*$/i, exclureArt:a => (a.code || '') === 'RIZ-ETUVE', designation:'RIZ ETUVE', categorie:'riz_etuve', code:'RIZ-ETUVE-FINI' },
+}
+const trouverArticleEtuvage = (arts, def) => (arts || []).find(a => def.motif.test(a.designation || '') && !(def.exclure && def.exclure.test(a.designation || '')) && !(def.exclureArt && def.exclureArt(a)))
+  || (def.ancien ? (arts || []).find(def.ancien) : null)
+// Étapes de production : produit pris dans le stock (entrée) et produits obtenus (sorties).
+const CHAINE_PRODUCTION = {
+  compta_decorticage:     { cle:'DECO', entree:{ sorte:'etuve', champ:'poids_avant', lib:'Riz paddy étuvé' }, sorties:[{ sorte:'decortique', champ:'poids_apres', lib:'Riz décortiqué' }] },
+  compta_calibrage:       { cle:'CALI', entree:{ sorte:'decortique', champ:'poids_avant', lib:'Riz décortiqué' }, sorties:[{ sorte:'calibre', champ:'poids_long_grain', lib:'Riz calibré (long grain)' }, { sorte:'brisures', champ:'poids_casses', lib:'Brisures (cassés)' }] },
+  compta_tri_optique:     { cle:'TRI', entree:{ sorte:'calibre', champ:'poids_avant', lib:'Riz calibré' }, sorties:[{ sorte:'trie', champ:'poids_apres_tri', lib:'Riz trié' }] },
+  compta_conditionnement: { cle:'COND', entree:{ sorte:'trie', champ:'poids_recu', lib:'Riz trié' }, sorties:[{ sorte:'fini', champ:'poids_total_conditionne', lib:'Riz étuvé (produit fini)' }] },
 }
 
 async function articleEtuvage(companyId, uid, sorte, prixDefaut = 0) {
   const def = ARTICLES_ETUVAGE[sorte]
-  const { data } = await supabase.from('compta_articles').select('id,designation,unite,stock_actuel,prix_achat').eq('company_id', companyId).eq('actif', true)
-  const art = (data || []).find(a => def.motif.test(a.designation || '') && !(def.exclure && def.exclure.test(a.designation || '')))
+  const { data } = await supabase.from('compta_articles').select('id,code,designation,unite,stock_actuel,prix_achat').eq('company_id', companyId).eq('actif', true)
+  const art = (data || []).find(a => def.motif.test(a.designation || '') && !(def.exclure && def.exclure.test(a.designation || '')) && !(def.exclureArt && def.exclureArt(a)))
   if (art) return { article:art }
   // Ancien article « RIZ ETUVE » créé automatiquement : renommé « RIZ PADDY ETUVE » (même stock).
-  const ancien = def.ancien && (data || []).find(a => def.ancien.test(a.designation || ''))
+  const ancien = def.ancien && (data || []).find(def.ancien)
   if (ancien) {
     await supabase.from('compta_articles').update({ designation:def.designation, code:def.designation.replace(/\s/g, '-'), categorie:def.categorie }).eq('id', ancien.id)
     return { article:{ ...ancien, designation:def.designation } }
   }
-  const { data:cree, error } = await supabase.from('compta_articles').insert({ company_id:companyId, user_id:uid, code:def.designation.replace(/\s/g, '-'), designation:def.designation,
+  const { data:cree, error } = await supabase.from('compta_articles').insert({ company_id:companyId, user_id:uid, code:def.code || def.designation.replace(/\s/g, '-'), designation:def.designation,
     categorie:def.categorie, unite:'kg', prix_achat:prixDefaut, prix_vente:0, stock_min:0, stock_actuel:0, actif:true }).select('id,designation,unite,stock_actuel,prix_achat').single()
   return error ? { error } : { article:cree }
 }
