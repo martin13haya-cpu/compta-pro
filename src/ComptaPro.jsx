@@ -1151,13 +1151,13 @@ function Input({ label, name, value, onChange, type='text', required, placeholde
   )
 }
 
-function Sel({ label, name, value, onChange, options, required }) {
+function Sel({ label, name, value, onChange, options, required, disabled }) {
   return (
     <div>
       {label && <label style={{ display:'block', fontSize:12.5, fontWeight:600, color:'#374151', marginBottom:5 }}>
         {label}{required&&' *'}
       </label>}
-      <select name={name} value={value||''} onChange={onChange} required={required}
+      <select name={name} value={value||''} onChange={onChange} required={required} disabled={disabled}
         style={{ width:'100%', padding:'9px 12px', borderRadius:8, border:'1px solid #d1d5db',
           fontSize:13.5, background:'white' }}>
         {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
@@ -7781,12 +7781,69 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
 }
 
 // ── STOCK — ARTICLES ─────────────────────────────────────────────────────────
-function StockPage({ companies, companyId, setPage, toast, readOnly=false }) {
+// Nom normalisé d'un article (majuscules, sans accents ni espaces doubles) + unité.
+const cleArticle = a => `${toUpperNoAccent(a.designation || '').replace(/\s+/g, ' ').trim()}|${String(a.unite || '').trim().toLowerCase()}`
+const ARTICLE_COLS_XLS = ['Code', 'Désignation', 'Catégorie', 'Unité', 'Prix achat', 'Prix vente', 'Stock min']
+// Articles en double dans une société (même nom normalisé, même unité) : on garde celui qui
+// a le plus de mouvements (à défaut le plus ancien) ; les mouvements et les bons des autres
+// lui sont rattachés, leur stock lui est ajouté, puis les doublons sont archivés.
+async function fusionnerArticlesSociete(cid) {
+  const { data:arts } = await supabase.from('compta_articles').select('*').eq('company_id', cid).eq('actif', true)
+  const grp = {}
+  ;(arts || []).forEach(a => { (grp[cleArticle(a)] ||= []).push(a) })
+  const doublons = Object.values(grp).filter(g => g.length > 1)
+  if (!doublons.length) return { n:0 }
+  const ids = doublons.flat().map(a => a.id)
+  const { data:mv } = await fetchAllRows(() => supabase.from('compta_mouvements_stock').select('id,article_id').in('article_id', ids).order('id'))
+  const nbMv = {}; (mv || []).forEach(m => { nbMv[m.article_id] = (nbMv[m.article_id] || 0) + 1 })
+  const { data:bons } = await fetchAllRows(() => supabase.from('compta_bons_stock').select('id,lignes').eq('company_id', cid).order('id'))
+  const remplace = {}
+  let n = 0
+  for (const g of doublons) {
+    const [garde, ...autres] = g.slice().sort((a, b) => (nbMv[b.id] || 0) - (nbMv[a.id] || 0) || String(a.created_at || '').localeCompare(String(b.created_at || '')))
+    const aIds = autres.map(a => a.id)
+    const { error } = await supabase.from('compta_mouvements_stock').update({ article_id:garde.id }).in('article_id', aIds)
+    if (error) return { error }
+    aIds.forEach(id => { remplace[id] = garde })
+    const stock = g.reduce((s, a) => s + (+a.stock_actuel || 0), 0)
+    const val = g.reduce((s, a) => s + Math.max(0, +a.stock_actuel || 0) * (+a.prix_achat || 0), 0), pos = g.reduce((s, a) => s + Math.max(0, +a.stock_actuel || 0), 0)
+    await supabase.from('compta_articles').update({ stock_actuel:Math.round(stock * 1000) / 1000, ...(pos > 0 && val > 0 ? { prix_achat:Math.round(val / pos * 100) / 100 } : {}) }).eq('id', garde.id)
+    await supabase.from('compta_articles').update({ actif:false, stock_actuel:0 }).in('id', aIds)
+    n += aIds.length
+  }
+  for (const b of bons || []) {
+    if (!(b.lignes || []).some(l => remplace[l.article_id])) continue
+    const lignes = b.lignes.map(l => remplace[l.article_id] ? { ...l, article_id:remplace[l.article_id].id, designation:remplace[l.article_id].designation } : l)
+    await supabase.from('compta_bons_stock').update({ lignes }).eq('id', b.id)
+  }
+  return { n }
+}
+// Import d'articles (lignes d'Excel) dans une société : article existant (même nom
+// normalisé et même unité, ou même code) mis à jour avec le nom et le code importés ;
+// sinon créé avec un stock à 0. Le stock n'est jamais modifié par l'import.
+async function importerArticlesSociete(cid, uid, lignes) {
+  const { data:arts } = await supabase.from('compta_articles').select('id,code,designation,unite').eq('company_id', cid).eq('actif', true)
+  let crees = 0, maj = 0
+  for (const l of lignes) {
+    const ex = (arts || []).find(a => cleArticle(a) === cleArticle(l)) || (l.code && (arts || []).find(a => a.code && a.code.trim().toUpperCase() === l.code.toUpperCase() && String(a.unite || '').toLowerCase() === l.unite.toLowerCase()))
+    const pay = { code:l.code || null, designation:l.designation, categorie:l.categorie, unite:l.unite, prix_achat:l.prix_achat, prix_vente:l.prix_vente, stock_min:l.stock_min }
+    const { error } = ex ? await supabase.from('compta_articles').update(pay).eq('id', ex.id)
+      : await supabase.from('compta_articles').insert({ ...pay, company_id:cid, user_id:uid, stock_actuel:0, actif:true })
+    if (error) return { error, crees, maj }
+    if (ex) maj++; else crees++
+  }
+  return { crees, maj }
+}
+
+function StockPage({ companies, companyId, setPage, toast, readOnly=false, profile=null }) {
   const [articles, setArticles] = useState([])
   const [modal,   setModal]    = useState(null)
   const [form,    setForm]     = useState({})
   const [saving,  setSaving]   = useState(false)
   const [catFilter,setCat]     = useState('')
+  const [estSuper, setEstSuper] = useState(profile?.role === 'super_admin')
+  const [imp, setImp] = useState(null)   // import : { lignes, erreurs, cids, fichier }
+  const [occupe, setOccupe] = useState(false)
 
   const load = useCallback(async()=>{
     // Catégories propres à la société (créées dans Stock > Catégories)
@@ -7797,20 +7854,83 @@ function StockPage({ companies, companyId, setPage, toast, readOnly=false }) {
     }
     const { data:ad } = await supabase.auth.getUser()
     const uid = ad?.user?.id; const isAdmin = ad?.user?.email === SUPER_ADMIN_EMAIL
+    setEstSuper(isAdmin || profile?.role === 'super_admin')
     let q = supabase.from('compta_articles').select('*,compta_companies(raison_sociale)').eq('actif',true).order('designation')
     if (isAdmin && companyId) q = q.eq('company_id', companyId)
     else if (companyId) q = q.eq('company_id', companyId)
     else q = q.eq('user_id', uid)
     if (catFilter) q=q.eq('categorie',catFilter)
     const { data } = await q; setArticles(data||[])
-  },[companyId,catFilter])
+  },[companyId,catFilter]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(()=>{ load() },[load])
+
+  // Export Excel des articles (sert aussi de modèle d'import).
+  const exporterArticles = async () => {
+    const XLSX = await import('https://cdn.sheetjs.com/xlsx-0.20.0/package/xlsx.mjs')
+    const rows = [[...ARTICLE_COLS_XLS, 'Stock actuel', 'Société'], ...articles.map(a => [a.code || '', a.designation || '', CAT_LABELS[a.categorie] || a.categorie || '', a.unite || '',
+      +a.prix_achat || 0, +a.prix_vente || 0, +a.stock_min || 0, +a.stock_actuel || 0, a.compta_companies?.raison_sociale || ''])]
+    const ws = XLSX.utils.aoa_to_sheet(rows)
+    ws['!cols'] = rows[0].map((_, i) => ({ wch: i === 1 || i === 8 ? 32 : 14 }))
+    const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Articles')
+    XLSX.writeFile(wb, 'articles.xlsx')
+  }
+  // Import (super admin) : lecture du fichier puis choix des sociétés.
+  const lireImport = async file => {
+    if (!file) return
+    const XLSX = await import('https://cdn.sheetjs.com/xlsx-0.20.0/package/xlsx.mjs')
+    const wb = XLSX.read(await file.arrayBuffer())
+    const brut = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval:'' })
+    const norm = s => toUpperNoAccent(String(s || '')).replace(/[^A-Z]/g, '')
+    const col = (r, nom) => { const k = Object.keys(r).find(x => norm(x) === norm(nom)); return k ? r[k] : '' }
+    const cats = getCatLabels(), catDe = v => { const s = String(v || '').trim(); if (!s) return 'autre'
+      if (cats[s]) return s; return Object.entries(cats).find(([, l]) => norm(l) === norm(s))?.[0] || Object.keys(cats).find(k => norm(k) === norm(s)) || s }
+    const num = v => +String(v ?? '').replace(/\s/g, '').replace(',', '.') || 0
+    const lignes = [], erreurs = [], vus = new Set()
+    brut.forEach((r, i) => {
+      const designation = String(col(r, 'Désignation')).replace(/\s+/g, ' ').trim()
+      if (!designation) { if (Object.values(r).some(v => String(v).trim())) erreurs.push(`Ligne ${i + 2} : désignation vide`); return }
+      const l = { code:String(col(r, 'Code')).trim(), designation, categorie:catDe(col(r, 'Catégorie')), unite:String(col(r, 'Unité')).trim() || 'kg',
+        prix_achat:num(col(r, 'Prix achat')), prix_vente:num(col(r, 'Prix vente')), stock_min:num(col(r, 'Stock min')) }
+      if (vus.has(cleArticle(l))) return   // même article en double dans le fichier
+      vus.add(cleArticle(l)); lignes.push(l)
+    })
+    if (!lignes.length) return toast.error('Aucun article lu. Colonnes attendues : ' + ARTICLE_COLS_XLS.join(', ') + '.')
+    setImp({ lignes, erreurs, cids:companyId ? [companyId] : [], fichier:file.name })
+  }
+  const lancerImport = async () => {
+    if (!imp.cids.length) return toast.error('Cochez au moins une société.')
+    setOccupe(true)
+    const uid = (await supabase.auth.getUser()).data?.user?.id
+    let crees = 0, maj = 0; const err = []
+    try {
+      for (const cid of imp.cids) {
+        const r = await importerArticlesSociete(cid, uid, imp.lignes)
+        crees += r.crees; maj += r.maj
+        if (r.error) err.push(`${companies.find(c => c.id === cid)?.raison_sociale || cid} : ${r.error.message}`)
+      }
+    } finally { setOccupe(false) }
+    if (err.length) toast.error('Import incomplet — ' + err.join(' ; '))
+    else toast.success(`Import terminé dans ${imp.cids.length} société(s) : ${crees} article(s) créé(s), ${maj} mis à jour.`)
+    setImp(null); load()
+  }
+  // Fusion des articles en double (même nom, même unité) : société affichée, ou toutes.
+  const fusionner = async () => {
+    const cids = companyId ? [companyId] : companies.map(c => c.id)
+    if (!confirm(`Fusionner les articles en double (même nom, même unité) dans ${companyId ? 'cette société' : `les ${cids.length} sociétés`} ?\n\nPour chaque doublon, l'article qui a le plus de mouvements est gardé : les mouvements et les bons des autres lui sont rattachés, leur stock lui est ajouté, puis ils sont archivés.`)) return
+    setOccupe(true)
+    let n = 0; const err = []
+    try { for (const cid of cids) { const r = await fusionnerArticlesSociete(cid); n += r.n || 0; if (r.error) err.push(r.error.message) } } finally { setOccupe(false) }
+    if (err.length) toast.error('Fusion incomplète : ' + err.join(' ; '))
+    else toast.success(n ? `${n} article(s) en double fusionné(s).` : 'Aucun article en double.')
+    load()
+  }
 
   const valeur = articles.reduce((s,a)=>s+(a.stock_actuel||0)*(a.prix_achat||0),0)
   const set = e=>setForm(f=>({...f,[e.target.name]:e.target.value}))
 
-  const openAdd = ()=>{ setForm({company_id:companyId||companies[0]?.id||'',code:'',designation:'',categorie:'riz_paddy',unite:'kg',prix_achat:0,prix_vente:0,stock_min:0,stock_actuel:0}); setModal('add') }
+  const openAdd = ()=>{ if (!estSuper) { toast.error('Seul le super administrateur peut créer un article (pour garder les mêmes noms dans toutes les sociétés).'); return }
+    setForm({company_id:companyId||companies[0]?.id||'',code:'',designation:'',categorie:'riz_paddy',unite:'kg',prix_achat:0,prix_vente:0,stock_min:0,stock_actuel:0}); setModal('add') }
   const openEdit = a=>{ setForm({...a, company_id: a.company_id||companyId||companies[0]?.id||''}); setModal('edit') }
   const close = ()=>setModal(null)
 
@@ -7819,6 +7939,9 @@ function StockPage({ companies, companyId, setPage, toast, readOnly=false }) {
     const uid = (await supabase.auth.getUser()).data?.user?.id
     const { company_id,code,designation,categorie,unite,prix_achat,prix_vente,stock_min,stock_actuel } = form
     const pay = { company_id,code,designation,categorie,unite,prix_achat:+prix_achat,prix_vente:+prix_vente,stock_min:+stock_min }
+    if (modal==='add' && !estSuper) { setSaving(false); toast.error('Seul le super administrateur peut créer un article.'); return }
+    if (modal==='add' && articles.some(a => a.company_id === company_id && cleArticle(a) === cleArticle(pay))) { setSaving(false); toast.error(`L'article « ${designation} » (${unite}) existe déjà dans cette société.`); return }
+    if (!estSuper) { delete pay.code; delete pay.designation; delete pay.unite }   // nom harmonisé : modifiable par le super admin seulement
     const { error } = modal==='add'
       ? await supabase.from('compta_articles').insert({...pay,stock_actuel:+stock_actuel,user_id:uid})
       : await supabase.from('compta_articles').update(pay).eq('id',form.id)
@@ -7838,7 +7961,11 @@ function StockPage({ companies, companyId, setPage, toast, readOnly=false }) {
           <Btn sm variant="secondary" onClick={()=>setPage('mouvements')}>↕ Mouvements</Btn>
           <Btn sm variant="secondary" onClick={()=>setPage('bons_stock')}>🧾 Bons d'entrée / sortie</Btn>
           <Btn sm variant="info" onClick={()=>setPage('inventaire')}>📋 Inventaire</Btn>
-          {!readOnly && <Btn onClick={openAdd}>+ Nouvel Article</Btn>}
+          <Btn sm variant="secondary" onClick={exporterArticles} disabled={!articles.length}>📥 Télécharger (Excel)</Btn>
+          {estSuper && !readOnly && <label style={{ display:'inline-flex' }}><input type="file" accept=".xlsx,.xls,.csv" style={{ display:'none' }} onChange={e => { lireImport(e.target.files?.[0]); e.target.value = '' }} />
+            <span style={{ padding:'6px 12px', borderRadius:8, background:'#0e7490', color:'white', fontSize:12.5, fontWeight:600, cursor:'pointer' }}>📤 Importer des articles</span></label>}
+          {estSuper && !readOnly && <Btn sm variant="secondary" onClick={fusionner} disabled={occupe}>{occupe ? '⏳…' : '🔗 Fusionner les doublons'}</Btn>}
+          {estSuper && !readOnly && <Btn onClick={openAdd}>+ Nouvel Article</Btn>}
         </>}
       />
       <Card style={{marginBottom:16,padding:'12px 20px'}}>
@@ -7851,7 +7978,7 @@ function StockPage({ companies, companyId, setPage, toast, readOnly=false }) {
         {articles.length===0 ? (
           <div style={{textAlign:'center',padding:'48px 24px',color:'#64748b'}}>
             <div style={{fontSize:40,marginBottom:8}}>📦</div><p>Aucun article</p>
-            {!readOnly && <Btn onClick={openAdd}>+ Créer un article</Btn>}
+            {estSuper && !readOnly && <Btn onClick={openAdd}>+ Créer un article</Btn>}
           </div>
         ) : (
           <div style={{overflowX:'auto',WebkitOverflowScrolling:'touch'}}>
@@ -7893,11 +8020,12 @@ function StockPage({ companies, companyId, setPage, toast, readOnly=false }) {
       <Modal open={!!modal} onClose={close} title={modal==='add'?'Nouvel Article':'Modifier Article'} size="lg">
         <form onSubmit={save}>
           <Grid cols={2} gap={14} style={{marginBottom:16}}>
-            <Input label="Code article" name="code" value={form.code||''} onChange={set} placeholder="RIZ-PAD-001" />
+            <Input label="Code article" name="code" value={form.code||''} onChange={set} placeholder="RIZ-PAD-001" readOnly={!estSuper} />
             <Sel label="Catégorie" name="categorie" value={form.categorie||''} onChange={set}
               options={Object.entries(getCatLabels()).map(([v,l])=>({value:v,label:l}))} />
-            <Span2><Input label="Désignation *" name="designation" value={form.designation||''} onChange={set} required /></Span2>
-            <Sel label="Unité" name="unite" value={form.unite||''} onChange={set}
+            <Span2><Input label="Désignation *" name="designation" value={form.designation||''} onChange={set} required readOnly={!estSuper} />
+              {!estSuper && <div style={{ fontSize:11.5, color:'#64748b', marginTop:4 }}>🔒 Le code, la désignation et l'unité sont harmonisés par le super administrateur.</div>}</Span2>
+            <Sel label="Unité" name="unite" value={form.unite||''} onChange={set} disabled={!estSuper}
               options={['kg','tonne','sac','carton','litre','unité','m²'].map(u=>({value:u,label:u}))} />
             <Input label="Prix achat (FCFA)" name="prix_achat" type="number" value={form.prix_achat||0} onChange={set} min="0" />
             <Input label="Prix vente (FCFA)" name="prix_vente" type="number" value={form.prix_vente||0} onChange={set} min="0" />
@@ -7906,6 +8034,27 @@ function StockPage({ companies, companyId, setPage, toast, readOnly=false }) {
           </Grid>
           <Row><Btn variant="secondary" onClick={close}>Annuler</Btn><Btn type="submit" disabled={saving}>{saving?'...':'Enregistrer'}</Btn></Row>
         </form>
+      </Modal>
+      <Modal open={!!imp} onClose={() => !occupe && setImp(null)} title="Importer des articles" size="lg">
+        {imp && <>
+          <div style={{ fontSize:13, marginBottom:10 }}>Fichier <b>{imp.fichier}</b> : <b>{imp.lignes.length}</b> article(s) lu(s).
+            Un article qui existe déjà (même nom et même unité, ou même code) prend le nom, le code, la catégorie et les prix du fichier ; sinon il est créé avec un stock à 0. Le stock n'est jamais modifié.</div>
+          {imp.erreurs.length > 0 && <div style={{ fontSize:12, color:'#b45309', marginBottom:8 }}>⚠️ {imp.erreurs.slice(0, 5).join(' ; ')}{imp.erreurs.length > 5 ? ' …' : ''}</div>}
+          <div style={{ maxHeight:150, overflow:'auto', border:'1px solid #e2e8f0', borderRadius:8, marginBottom:12, fontSize:12 }}>
+            <table style={{ width:'100%', borderCollapse:'collapse' }}><tbody>
+              {imp.lignes.map((l, i) => <tr key={i} style={{ borderBottom:'1px solid #f1f5f9' }}><td style={{ padding:'3px 8px' }}>{l.code}</td><td style={{ padding:'3px 8px', fontWeight:600 }}>{l.designation}</td><td style={{ padding:'3px 8px' }}>{CAT_LABELS[l.categorie] || l.categorie}</td><td style={{ padding:'3px 8px' }}>{l.unite}</td><td style={{ padding:'3px 8px', textAlign:'right' }}>{nbFr(l.prix_achat)}</td></tr>)}
+            </tbody></table>
+          </div>
+          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:6 }}>
+            <b style={{ fontSize:13 }}>Sociétés où importer ({imp.cids.length}/{companies.length})</b>
+            <span style={{ fontSize:12 }}><a href="#" onClick={e => { e.preventDefault(); setImp(x => ({ ...x, cids:companies.map(c => c.id) })) }}>Toutes les sociétés</a> · <a href="#" onClick={e => { e.preventDefault(); setImp(x => ({ ...x, cids:[] })) }}>Aucune</a></span>
+          </div>
+          <div style={{ maxHeight:200, overflow:'auto', border:'1px solid #e2e8f0', borderRadius:8, padding:'4px 8px', marginBottom:14 }}>
+            {companies.map(c => <label key={c.id} style={{ display:'flex', gap:8, alignItems:'center', fontSize:12.5, padding:'3px 0', cursor:'pointer' }}>
+              <input type="checkbox" checked={imp.cids.includes(c.id)} onChange={e => setImp(x => ({ ...x, cids:e.target.checked ? [...x.cids, c.id] : x.cids.filter(id => id !== c.id) }))} />{c.raison_sociale}</label>)}
+          </div>
+          <Row><Btn variant="secondary" onClick={() => setImp(null)} disabled={occupe}>Annuler</Btn><Btn onClick={lancerImport} disabled={occupe || !imp.cids.length}>{occupe ? '⏳ Import…' : `📤 Importer dans ${imp.cids.length} société(s)`}</Btn></Row>
+        </>}
       </Modal>
     </div>
   )
@@ -14146,7 +14295,11 @@ async function entrerPaddyEnStock(companyId, { article_id, date_bon, quantite, p
   const { data:existant } = await supabase.from('compta_bons_stock').select('numero').eq('company_id', companyId).eq('tiers', tiers).limit(1)
   if (existant?.length) return { erreur:`Déjà entré en stock (bon ${existant[0].numero}).` }
   let art
-  if (article_id === '__nouveau_paddy__') {
+  const { data:paddyExistant } = article_id === '__nouveau_paddy__'
+    ? await supabase.from('compta_articles').select('id,designation,unite,stock_actuel,prix_achat').eq('company_id', companyId).eq('actif', true) : { data:[] }
+  const dejaPaddy = (paddyExistant || []).find(estArticlePaddy)
+  if (dejaPaddy) art = dejaPaddy
+  else if (article_id === '__nouveau_paddy__') {
     const { data, error } = await supabase.from('compta_articles').insert({ company_id:companyId, user_id:uid, code:'PADDY', designation:'RIZ PADDY',
       categorie:'riz_paddy', unite:'kg', prix_achat:pu, prix_vente:0, stock_min:0, stock_actuel:0, actif:true }).select('id,designation,unite,stock_actuel,prix_achat').single()
     if (error) return { erreur:'Article RIZ PADDY non créé : ' + error.message }
