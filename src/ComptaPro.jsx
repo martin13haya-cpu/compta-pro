@@ -8555,7 +8555,7 @@ function MouvementsPage({ companies, companyId, setPage, toast, readOnly=false }
     const defs = MVT_PDF_COLS.filter(c => cols.includes(c.k))
     if (!defs.length) { toast.error('Cochez au moins une colonne.'); return }
     const groupes = {}
-    vis.forEach(m => { (groupes[m.article_id] ||= { des:m.compta_articles?.designation || '—', u:m.compta_articles?.unite || '', l:[] }).l.push(m) })
+    vis.forEach(m => { (groupes[m.article_id] ||= { des:m.compta_articles?.designation || '—', code:m.compta_articles?.code || '', u:m.compta_articles?.unite || '', l:[] }).l.push(m) })
     const val = (m, k, u) => ({ date:dateDoc(m.date_mvt), type:m.type === 'entree' ? 'Entrée' : 'Sortie', motif:echapHtml(m.motif || ''),
       qte:`${m.type === 'entree' ? '+' : '−'}${nbFr(+m.quantite || 0)} ${echapHtml(u)}`, pu:nbFr(Math.round(+m.prix_unitaire || 0)), montant:nbFr(Math.round(+m.montant || 0)),
       ref:echapHtml(m.reference || ''), commune:echapHtml(communeDe(m)), prod:echapHtml(producteursDe(m)) })[k]
@@ -8564,11 +8564,11 @@ function MouvementsPage({ companies, companyId, setPage, toast, readOnly=false }
     const recap = []
     const tables = Object.values(groupes).sort((a, b) => a.des.localeCompare(b.des, 'fr')).map(g => {
       const l = g.l.slice().sort((a, b) => String(a.date_mvt).localeCompare(String(b.date_mvt))), x = tot(l)
-      recap.push({ des:g.des, u:g.u, n:l.length, ...x })
+      recap.push({ des:g.des, code:g.code, u:g.u, n:l.length, ...x })
       const iQ = defs.findIndex(c => c.k === 'qte'), iM = defs.findIndex(c => c.k === 'montant')
       const cellTot = i => i === iQ ? `<td class="r">+${nbFr(x.qe)}<br>−${nbFr(x.qs)}<br><b>= ${nbFr(Math.round((x.qe - x.qs) * 1000) / 1000)} ${echapHtml(g.u)}</b></td>`
         : i === iM ? `<td class="r">+${nbFr(Math.round(x.me))}<br>−${nbFr(Math.round(x.ms))}</td>` : '<td></td>'
-      return `<div class="art"><h3>${echapHtml(g.des)} <span>(${l.length} mouvement${l.length > 1 ? 's' : ''}${g.u ? ` — ${echapHtml(g.u)}` : ''})</span></h3>
+      return `<div class="art"><h3>${echapHtml(g.des)}${g.code ? ` <span>[${echapHtml(g.code)}]</span>` : ''} <span>(${l.length} mouvement${l.length > 1 ? 's' : ''}${g.u ? ` — ${echapHtml(g.u)}` : ''})</span></h3>
         <table><thead><tr>${defs.map(c => `<th${c.r ? ' class="r"' : ''}>${c.l}</th>`).join('')}</tr></thead><tbody>
         ${l.map(m => `<tr>${defs.map(c => `<td${c.r ? ' class="r"' : ''}${c.k === 'qte' ? ` style="color:${m.type === 'entree' ? '#15803d' : '#b91c1c'}"` : ''}>${val(m, c.k, g.u) || '—'}</td>`).join('')}</tr>`).join('')}
         <tr class="tot">${defs.map((c, i) => i === 0 && iQ !== 0 && iM !== 0 ? `<td><b>Total ${echapHtml(g.des)}</b></td>` : cellTot(i)).join('')}</tr>
@@ -8576,6 +8576,11 @@ function MouvementsPage({ companies, companyId, setPage, toast, readOnly=false }
         ${iQ < 0 || iM < 0 ? `<div class="sous">Entrées : +${nbFr(x.qe)} — Sorties : −${nbFr(x.qs)} — Solde : ${nbFr(Math.round((x.qe - x.qs) * 1000) / 1000)} ${echapHtml(g.u)} — Montant entrées : ${nbFr(Math.round(x.me))} FCFA — sorties : ${nbFr(Math.round(x.ms))} FCFA</div>` : ''}</div>`
     }).join('')
     const G = recap.reduce((s, r) => ({ me:s.me + r.me, ms:s.ms + r.ms, n:s.n + r.n }), { me:0, ms:0, n:0 })
+    // Totaux des quantités par unité (on n'additionne pas des kg et des sacs).
+    const parU = {}
+    recap.forEach(r => { const x = parU[r.u] ||= { qe:0, qs:0 }; x.qe += r.qe; x.qs += r.qs })
+    const totU = f => Object.entries(parU).map(([u, x]) => f(x, u)).join('<br>')
+    const arr = v => nbFr(Math.round(v * 1000) / 1000)
     const comp = companies.find(c => c.id === companyId)
     const periode = `${dateFrom ? dateDoc(dateFrom) : "Origine"} → ${dateTo ? dateDoc(dateTo) : "aujourd'hui"}`
     const html = `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><title>Mouvements de stock par article</title><style>${CSS_PRINT_LANDSCAPE}
@@ -8590,8 +8595,8 @@ function MouvementsPage({ companies, companyId, setPage, toast, readOnly=false }
       ${tables}
       <div class="recap"><h2>Récapitulatif de la période</h2>
         <table><thead><tr><th>Article</th><th class="r">Mouvements</th><th class="r">Entrées</th><th class="r">Sorties</th><th class="r">Solde</th><th class="r">Montant entrées (FCFA)</th><th class="r">Montant sorties (FCFA)</th></tr></thead><tbody>
-        ${recap.map(r => `<tr><td>${echapHtml(r.des)}</td><td class="r">${r.n}</td><td class="r">+${nbFr(r.qe)} ${echapHtml(r.u)}</td><td class="r">−${nbFr(r.qs)} ${echapHtml(r.u)}</td><td class="r"><b>${nbFr(Math.round((r.qe - r.qs) * 1000) / 1000)} ${echapHtml(r.u)}</b></td><td class="r">${nbFr(Math.round(r.me))}</td><td class="r">${nbFr(Math.round(r.ms))}</td></tr>`).join('')}
-        <tr class="tot"><td>Total général</td><td class="r">${G.n}</td><td></td><td></td><td></td><td class="r">${nbFr(Math.round(G.me))}</td><td class="r">${nbFr(Math.round(G.ms))}</td></tr>
+        ${recap.map(r => `<tr><td>${echapHtml(r.des)}${r.code ? ` <span style="color:#64748b">[${echapHtml(r.code)}]</span>` : ''}</td><td class="r">${r.n}</td><td class="r">+${nbFr(r.qe)} ${echapHtml(r.u)}</td><td class="r">−${nbFr(r.qs)} ${echapHtml(r.u)}</td><td class="r"><b>${nbFr(Math.round((r.qe - r.qs) * 1000) / 1000)} ${echapHtml(r.u)}</b></td><td class="r">${nbFr(Math.round(r.me))}</td><td class="r">${nbFr(Math.round(r.ms))}</td></tr>`).join('')}
+        <tr class="tot"><td>Total général</td><td class="r">${G.n}</td><td class="r">${totU((x, u) => `+${arr(x.qe)} ${echapHtml(u)}`)}</td><td class="r">${totU((x, u) => `−${arr(x.qs)} ${echapHtml(u)}`)}</td><td class="r"><b>${totU((x, u) => `${arr(x.qe - x.qs)} ${echapHtml(u)}`)}</b></td><td class="r">${nbFr(Math.round(G.me))}</td><td class="r">${nbFr(Math.round(G.ms))}</td></tr>
         </tbody></table></div>
     </body></html>`
     openPrintWindow(html, `mouvements_par_article_${today()}`)
@@ -8600,7 +8605,7 @@ function MouvementsPage({ companies, companyId, setPage, toast, readOnly=false }
 
   const load = useCallback(async()=>{
     const { data:adock } = await supabase.auth.getUser(); const uidock=adock?.user?.id
-    let q = supabase.from('compta_mouvements_stock').select('*,compta_articles(designation,unite)').order('date_mvt',{ascending:false}).limit(500)
+    let q = supabase.from('compta_mouvements_stock').select('*,compta_articles(code,designation,unite)').order('date_mvt',{ascending:false}).limit(500)
     q = parSociete(q, companyId, uidock)   // toute la société, pas seulement les saisies de l'utilisateur
     if (dateFrom)  q=q.gte('date_mvt',dateFrom)
     if (dateTo)    q=q.lte('date_mvt',dateTo)
