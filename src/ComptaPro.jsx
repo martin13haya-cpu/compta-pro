@@ -8104,6 +8104,62 @@ const ligneBonVide = () => ({ article_id:'', quantite:'', prix_unitaire:'', obse
 const numFrBon = v => parseFloat(String(v ?? '').replace(/\s/g, '').replace(',', '.')) || 0
 const dateFr = d => d ? String(d).slice(0, 10).split('-').reverse().join('/') : ''
 
+// Bons orphelins : bons dont l'opération d'origine a été supprimée (remboursement FRIA,
+// achat groupé, envoi / retour d'étuveuse, étuvage, étapes de production), et mouvements
+// de stock d'un bon (BE-/BS-…) qui n'existe plus. Renvoie { bons, mvts, tousMvts }.
+const SOURCES_BONS = {
+  FRIA:['compta_fria_mouvements','numero'], GRP:['compta_achats_groupes','numero'],
+  RET:['compta_retours_etuveuses','id'], ENV:['compta_envois_etuveuses','numero'], ETUV:['compta_etuvage','lot_sortant'],
+  DECO:['compta_decorticage','id'], CALI:['compta_calibrage','id'], TRI:['compta_tri_optique','id'], COND:['compta_conditionnement','id'],
+}
+async function chercherBonsOrphelins(companyId) {
+  const [{ data:bons, error }, { data:mvts, error:em }] = await Promise.all([
+    fetchAllRows(() => supabase.from('compta_bons_stock').select('*').eq('company_id', companyId).order('id')),
+    fetchAllRows(() => supabase.from('compta_mouvements_stock').select('id,article_id,type,quantite,reference').eq('company_id', companyId).order('id')),
+  ])
+  if (error || em) return { error:error || em }
+  const source = b => {
+    const f = /^Remboursement FRIA (.+)$/.exec(b.tiers || ''); if (f) return ['FRIA', f[1].trim()]
+    const g = /^Achat groupé (.+)$/.exec(b.tiers || ''); if (g) return ['GRP', g[1].trim()]
+    const m = /\[(RET|ENV|ETUV|DECO|CALI|TRI|COND):([^\]]+)\]/.exec(b.observations || ''); return m ? [m[1], m[2]] : null
+  }
+  const parCle = {}
+  ;(bons || []).forEach(b => { const s = source(b); if (s) (parCle[s[0]] = parCle[s[0]] || new Set()).add(s[1]) })
+  const existe = {}   // clé -> valeurs trouvées ; absente = table illisible (on ne touche à rien)
+  for (const [k, set] of Object.entries(parCle)) {
+    const [table, col] = SOURCES_BONS[k], vals = [...set], trouves = new Set()
+    let ok = true
+    for (let i = 0; i < vals.length; i += 150) {
+      const { data, error:e } = await supabase.from(table).select(col).eq('company_id', companyId).in(col, vals.slice(i, i + 150))
+      if (e) { ok = false; break }
+      ;(data || []).forEach(x => trouves.add(String(x[col])))
+    }
+    if (ok) existe[k] = trouves
+  }
+  const orphelins = (bons || []).filter(b => { const s = source(b); return s && existe[s[0]] && !existe[s[0]].has(String(s[1])) })
+  const nums = new Set((bons || []).map(b => b.numero))
+  const sansBon = (mvts || []).filter(m => /^B[ES]-\d{8}-\d+$/.test(m.reference || '') && !nums.has(m.reference))
+  return { bons:orphelins, mvts:sansBon, tousMvts:mvts || [] }
+}
+// Efface les bons orphelins et leurs mouvements, et les mouvements sans bon, en
+// remettant le stock des articles comme si ces mouvements n'avaient jamais existé.
+async function effacerBonsOrphelins(companyId, { bons, mvts, tousMvts }) {
+  const refs = new Set(bons.map(b => b.numero))
+  const aRetirer = [...tousMvts.filter(m => refs.has(m.reference)), ...mvts]
+  const delta = {}
+  aRetirer.forEach(m => { delta[m.article_id] = (delta[m.article_id] || 0) + (m.type === 'entree' ? -1 : m.type === 'sortie' ? 1 : 0) * (+m.quantite || 0) })
+  const ids = Object.keys(delta).filter(id => id && id !== 'null' && Math.abs(delta[id]) > 1e-9)
+  for (let i = 0; i < ids.length; i += 150) {
+    const { data:arts } = await supabase.from('compta_articles').select('id,stock_actuel').in('id', ids.slice(i, i + 150))
+    for (const a of arts || []) await supabase.from('compta_articles').update({ stock_actuel:Math.round(((+a.stock_actuel || 0) + delta[a.id]) * 1000) / 1000 }).eq('id', a.id)
+  }
+  const mids = aRetirer.map(m => m.id)
+  for (let i = 0; i < mids.length; i += 150) { const { error } = await supabase.from('compta_mouvements_stock').delete().in('id', mids.slice(i, i + 150)); if (error) return { error } }
+  const bids = bons.map(b => b.id)
+  for (let i = 0; i < bids.length; i += 150) { const { error } = await supabase.from('compta_bons_stock').delete().in('id', bids.slice(i, i + 150)); if (error) return { error } }
+  return { nbMvts:aRetirer.length }
+}
+
 function BonsStockPage({ companies, companyId, toast, readOnly=false }) {
   const [bons, setBons] = useState([])
   const [articles, setArticles] = useState([])
@@ -8113,7 +8169,22 @@ function BonsStockPage({ companies, companyId, toast, readOnly=false }) {
   const [recherche, setRecherche] = useState('')
   const [form, setForm] = useState(null)   // null = liste ; sinon bon en cours de saisie
   const [saving, setSaving] = useState(false)
+  const [recalcul, setRecalcul] = useState(false)
+  const [filtreCommune, setFiltreCommune] = useState('')
+  const [communesBons, setCommunesBons] = useState({})   // numéro du bon -> commune
   const company = companies.find(c => c.id === companyId)
+
+  // Commune de chaque bon : producteur (FRIA), achat groupé, ou producteurs d'origine du lot.
+  useEffect(() => {
+    let actif = true
+    if (!companyId || !bons.length) { setCommunesBons({}); return }
+    communesMouvementsMulti(bons.map(b => ({ company_id:companyId, reference:b.numero }))).then(map => {
+      if (!actif) return
+      const res = {}; Object.entries(map).forEach(([k, v]) => { res[k.slice(k.indexOf('|') + 1)] = v }); setCommunesBons(res)
+    })
+    return () => { actif = false }
+  }, [bons, companyId])
+  const communesDispo = [...new Set(Object.values(communesBons))].sort((a, b) => a.localeCompare(b, 'fr'))
 
   const charger = useCallback(async () => {
     if (!companyId) { setBons([]); setArticles([]); setLoading(false); return }
@@ -8257,6 +8328,25 @@ OK = tout supprimer — Annuler = garder le groupe (seul le stock est annulé).`
 
   const imprimer = b => imprimerBonStock(company, b)
 
+  // Recalcul : efface de la base les bons dont l'opération d'origine a été supprimée
+  // et les mouvements de stock restés sans bon, puis rétablit le stock.
+  const recalculerBons = async () => {
+    if (!companyId) return
+    setRecalcul(true)
+    try {
+      const r = await chercherBonsOrphelins(companyId)
+      if (r.error) return toast.error(r.error.message)
+      if (!r.bons.length && !r.mvts.length) return toast.success('Tous les bons sont à jour : aucun bon ni mouvement orphelin.')
+      const lb = r.bons.slice(0, 25).map(b => `• ${b.numero} — ${b.tiers || ''} (${dateDoc(b.date_bon)})`)
+      if (r.bons.length > 25) lb.push(`… et ${r.bons.length - 25} autre(s)`)
+      if (!confirm(`Recalcul des bons :\n\n${r.bons.length} bon(s) dont l'opération d'origine a été supprimée :\n${lb.join('\n') || '—'}\n\n${r.mvts.length} mouvement(s) de stock sans bon.\n\nOK = les effacer de la base et rétablir le stock des articles.`)) return
+      const e = await effacerBonsOrphelins(companyId, r)
+      if (e.error) toast.error('Recalcul interrompu : ' + e.error.message)
+      else toast.success(`${r.bons.length} bon(s) et ${e.nbMvts} mouvement(s) effacés — stock rétabli.`)
+      charger()
+    } finally { setRecalcul(false) }
+  }
+
   // ── Formulaire de saisie ──
   if (form) {
     const sortie = form.type === 'sortie'
@@ -8334,12 +8424,14 @@ OK = tout supprimer — Annuler = garder le groupe (seul le stock est annulé).`
   // ── Liste des bons ──
   const t = recherche.trim().toLowerCase()
   const visibles = bons.filter(b => (!filtreType || b.type === filtreType) &&
+    (!filtreCommune || (filtreCommune === '__aucune__' ? !communesBons[b.numero] : communesBons[b.numero] === filtreCommune)) &&
     (!t || [b.numero, b.tiers, b.motif, ...(b.lignes || []).map(l => l.designation)].filter(Boolean).some(x => String(x).toLowerCase().includes(t))))
   return (
     <div>
       <PageHeader title="Bons d'entrée et de sortie" subtitle={company?.raison_sociale ? `${company.raison_sociale} — ${bons.length} bon(s)` : "Sélectionnez une société en haut de l'écran"}
         actions={!readOnly && (
           <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+            <Btn variant="secondary" onClick={recalculerBons} disabled={recalcul || !companyId} title="Efface de la base les bons dont l'opération d'origine (remboursement FRIA, achat groupé, envoi ou retour d'étuveuse, étape de production) a été supprimée, et les mouvements de stock sans bon ; le stock est rétabli.">{recalcul ? '⏳ Recalcul…' : '🔄 Recalculer les bons'}</Btn>
             <Btn variant="success" onClick={() => nouveau('entree')}>↓ Bon d'entrée</Btn>
             <Btn variant="warning" onClick={() => nouveau('sortie')}>↑ Bon de sortie</Btn>
           </div>
@@ -8358,13 +8450,19 @@ OK = tout supprimer — Annuler = garder le groupe (seul le stock est annulé).`
             <option value="entree">Bons d'entrée</option>
             <option value="sortie">Bons de sortie</option>
           </select>
+          <select value={filtreCommune} onChange={e => setFiltreCommune(e.target.value)} title="Commune du producteur (FRIA, achat groupé) ou des producteurs d'origine du lot"
+            style={{ padding:'8px 12px', borderRadius:8, border:`1px solid ${filtreCommune ? '#16a34a' : '#d1d5db'}`, fontSize:13 }}>
+            <option value="">Toutes les communes</option>
+            {communesDispo.map(c => <option key={c} value={c}>{c}</option>)}
+            <option value="__aucune__">Sans commune</option>
+          </select>
         </div>
       </Card>
       {loading ? <Card><div style={{ color:'#94a3b8' }}>Chargement…</div></Card> : (
         <TableWrap>
           <div style={{ overflowX:'auto' }}>
             <table style={{ width:'100%', borderCollapse:'collapse' }}>
-              <thead><tr><TH>N° bon</TH><TH>Type</TH><TH>Date</TH><TH>Destinataire / provenance</TH><TH>Motif</TH><TH right>Articles</TH><TH right>Montant</TH><TH>Enregistré le</TH><TH>Actions</TH></tr></thead>
+              <thead><tr><TH>N° bon</TH><TH>Type</TH><TH>Date</TH><TH>Destinataire / provenance</TH><TH>Commune</TH><TH>Motif</TH><TH right>Articles</TH><TH right>Montant</TH><TH>Enregistré le</TH><TH>Actions</TH></tr></thead>
               <tbody>
                 {visibles.map(b => (
                   <TR key={b.id}>
@@ -8372,6 +8470,7 @@ OK = tout supprimer — Annuler = garder le groupe (seul le stock est annulé).`
                     <TD><Badge type={b.type === 'sortie' ? 'warning' : 'success'}>{b.type === 'sortie' ? 'Sortie' : 'Entrée'}</Badge></TD>
                     <TD>{dateFr(b.date_bon)}</TD>
                     <TD>{b.tiers || '—'}</TD>
+                    <TD sm>{communesBons[b.numero] || '—'}</TD>
                     <TD>{b.motif || '—'}</TD>
                     <TD right>{(b.lignes || []).length}</TD>
                     <TD right>{fcfa(b.total)}</TD>
@@ -8386,7 +8485,7 @@ OK = tout supprimer — Annuler = garder le groupe (seul le stock est annulé).`
                   </TR>
                 ))}
                 {visibles.length === 0 && (
-                  <tr><td colSpan={9} style={{ padding:20, textAlign:'center', color:'#94a3b8' }}>{companyId ? 'Aucun bon.' : "Sélectionnez une société pour voir ses bons."}</td></tr>
+                  <tr><td colSpan={10} style={{ padding:20, textAlign:'center', color:'#94a3b8' }}>{companyId ? 'Aucun bon.' : "Sélectionnez une société pour voir ses bons."}</td></tr>
                 )}
               </tbody>
             </table>
