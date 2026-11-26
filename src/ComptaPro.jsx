@@ -9605,6 +9605,28 @@ function LotsProductionPage({ companies, companyId, toast, readOnly=false }) {
   const companyName = companies.find(c=>c.id===companyId)?.raison_sociale||''
   const companyLogo = companies.find(c=>c.id===companyId)?.logo_url||''
 
+  // Lot annulé : suppression définitive. Ses origines (producteurs) partent avec lui ;
+  // les achats, envois et cycles d'étuvage qui le citaient sont conservés, sans lot.
+  const supprimerLot = async l => {
+    const [{ data:envs }, { data:grps }, { data:etus }] = await Promise.all([
+      supabase.from('compta_envois_etuveuses').select('id').eq('lot_id', l.id),
+      supabase.from('compta_achats_groupes').select('id').eq('lot_id', l.id),
+      supabase.from('compta_etuvage').select('id').eq('lot_id', l.id),
+    ])
+    const liens = [envs?.length && `${envs.length} envoi(s) aux étuveuses`, grps?.length && `${grps.length} achat(s) hors FRIA`, etus?.length && `${etus.length} cycle(s) d'étuvage`].filter(Boolean)
+    if (!confirm(`Supprimer définitivement le lot annulé ${l.numero_lot} ?${liens.length ? `
+
+Il est encore cité par : ${liens.join(', ')}. Ces enregistrements sont conservés mais n'auront plus de lot.` : ''}
+
+Les producteurs d'origine enregistrés dans ce lot seront supprimés. Cette suppression est irréversible.`)) return
+    if (grps?.length) await supabase.from('compta_achats_groupes').update({ lot_id:null, lot_qte_ajoutee:0 }).eq('lot_id', l.id)
+    if (envs?.length) await supabase.from('compta_envois_etuveuses').update({ lot_id:null }).eq('lot_id', l.id)
+    if (etus?.length) await supabase.from('compta_etuvage').update({ lot_id:null }).eq('lot_id', l.id)
+    const { error } = await supabase.from('compta_lots_production').delete().eq('id', l.id)
+    if (error) { toast.error(/foreign key|violates/i.test(error.message) ? `Le lot ${l.numero_lot} est encore utilisé dans une étape de production : retirez-le d'abord de cette étape. (${error.message})` : error.message); return }
+    toast.success(`Lot ${l.numero_lot} supprimé.`); load()
+  }
+
   const printFiltered = () => {
     const headers = [{label:'N° Lot'},{label:'Date début'},{label:'Date fin'},{label:'Qté paddy (kg)',r:true},{label:'Statut'},{label:'Notes'}]
     const rows = lots.map(l=>[l.numero_lot,l.date_debut,l.date_fin||'—',(l.qte_paddy_entree||0).toFixed(2)+' kg',l.statut,l.notes||'—'])
@@ -9653,6 +9675,7 @@ function LotsProductionPage({ companies, companyId, toast, readOnly=false }) {
                       <Btn sm variant="info" onClick={()=>setRowPreview({html:lotHtml,label:l.numero_lot})}>👁️</Btn>
                       <Btn sm variant="danger" onClick={()=>{ openPrintWindow(lotHtml) }}>🖨️</Btn>
                       {!readOnly && <Btn sm variant="secondary" onClick={()=>open(l)}>✏️</Btn>}
+                      {!readOnly && l.statut === 'annule' && <Btn sm variant="danger" title="Supprimer le lot annulé" onClick={()=>supprimerLot(l)}>🗑️</Btn>}
                     </div>
                   </TD>
                 </TR>
