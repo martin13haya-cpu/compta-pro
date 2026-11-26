@@ -317,7 +317,7 @@ function setStoredTheme(m){ try{localStorage.setItem('comptapro_theme',m)}catch{
 
 // ── CATÉGORIES ARTICLES (dynamiques, stockées dans Supabase) ────────────────
 const CAT_LABELS_DEFAULT = {
-  riz_paddy:'Riz Paddy', riz_etuve:'Riz Étuvé', riz_blanc:'Riz Blanc',
+  riz_paddy:'Riz Paddy', riz_paddy_etuve:'Riz Paddy Étuvé', riz_etuve:'Riz Étuvé', riz_blanc:'Riz Blanc',
   semi_fini:'Semi-fini', emballage:'Emballage', autre:'Autre',
 }
 // Store dynamique — mis à jour via CategoriesPage
@@ -326,6 +326,8 @@ const getCatLabels = () => _catLabels
 const setCatLabelsCache = (obj) => { _catLabels = obj }
 // Alias rétrocompatible
 const CAT_LABELS = new Proxy({}, { get: (_,k) => _catLabels[k] })
+// Article de riz paddy (brut) : « RIZ PADDY ETUVE » (produit de l'étuvage) n'en est pas un.
+const estArticlePaddy = a => /paddy/i.test(a?.designation || '') && !/[ée]tuv/i.test(a?.designation || '')
 const TYPE_DOC_LABELS = {
   proforma:'Proforma', bon_commande:'Bon de Commande',
   bon_livraison:'Bon de Livraison', facture:'Facture',
@@ -2515,7 +2517,7 @@ function ConsolApercu({ open, onClose, selectedIds, allCompanies, colonnes, toas
         const { data:prods } = await fetchAllRows(() => supabase.from('compta_fournisseurs').select('id,commune,categorie').eq('actif', true).in('company_id', selectedIds).order('id'))
         const nbProd = {}
         ;(prods || []).filter(estProducteur).forEach(f => { const c = toUpperNoAccent(f.commune || '').trim(); if (c) nbProd[c] = (nbProd[c] || 0) + 1 })
-        const estPaddy = a => a.categorie === 'riz_paddy' || /paddy/i.test(a.designation || '')
+        const estPaddy = a => a.categorie === 'riz_paddy' || estArticlePaddy(a)
         arts.forEach(a => { if (!estPaddy(a)) return
           a._recu = Math.round((a._recu || 0) * 1000) / 1000
           a._prod = nbProd[a.commune] || 0; a._attendu = a._prod * KG_ATTENDU_PRODUCTEUR
@@ -9808,12 +9810,12 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
   const etape = tableName.replace('compta_','')
   const estEtuvage = tableName === 'compta_etuvage'
   const estDecorticage = tableName === 'compta_decorticage'
-  // Décorticage : riz étuvé disponible en stock (+ ce que cet enregistrement a déjà sorti).
+  // Décorticage : riz paddy étuvé disponible en stock (+ ce que cet enregistrement a déjà sorti).
   const [stockEtuve, setStockEtuve] = useState(null)
   const chargerStockEtuve = async (cid, item) => {
     if (!estDecorticage || !cid) return
     const { data } = await supabase.from('compta_articles').select('id,designation,stock_actuel').eq('company_id', cid).eq('actif', true)
-    const art = (data || []).find(a => ARTICLES_ETUVAGE.etuve.motif.test(a.designation || ''))
+    const art = (data || []).find(a => ARTICLES_ETUVAGE.etuve.motif.test(a.designation || '')) || (data || []).find(a => ARTICLES_ETUVAGE.etuve.ancien.test(a.designation || ''))
     let deja = 0
     if (item?.id) {
       const { data:bons } = await supabase.from('compta_bons_stock').select('lignes').eq('company_id', cid).like('observations', `%[DECO:${item.id}]%`)
@@ -10003,15 +10005,15 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
       pay.seuil_alerte_pct = seuilEtape
       pay.alerte = Math.abs(pay.ecart_pct||0) > seuilEtape
     }
-    // Décorticage : on ne décortique que du riz étuvé présent en stock (bloquant).
+    // Décorticage : on ne décortique que du riz paddy étuvé présent en stock (bloquant).
     if (estDecorticage) {
       const q = +pay.poids_avant || 0
-      if (!(q > 0)) { setSaving(false); toast.error('Saisissez le poids avant (riz étuvé à décortiquer).'); return }
+      if (!(q > 0)) { setSaving(false); toast.error('Saisissez le poids avant (riz paddy étuvé à décortiquer).'); return }
       if (!stockEtuve || q > stockEtuve.dispo + 0.0005) { setSaving(false)
-        toast.error(`Riz étuvé insuffisant en stock : ${fmtKg(stockEtuve?.dispo || 0)} disponible(s) pour ${fmtKg(q)}. Enregistrez d'abord le retour de l'étuveuse (Étuveuses › Envois aux étuveuses) pour entrer le riz étuvé en stock.`); return }
+        toast.error(`Riz paddy étuvé insuffisant en stock : ${fmtKg(stockEtuve?.dispo || 0)} disponible(s) pour ${fmtKg(q)}. Enregistrez d'abord le retour de l'étuveuse (Étuveuses › Envois aux étuveuses) pour entrer le riz paddy étuvé en stock.`); return }
     }
     // Étuvage saisi en direct (pas issu d'un retour d'étuveuse, qui a déjà ses
-    // bons) : sortie du paddy envoyé et entrée du riz étuvé reçu.
+    // bons) : sortie du paddy envoyé et entrée du riz paddy étuvé reçu.
     const stockDirect = estEtuvage && pay.lot_sortant && !cycleDepuisRetour(editItem)
     const cle = `ETUV:${pay.lot_sortant}`
     let sortie = { ok:true }
@@ -10039,17 +10041,17 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
       if (editItem) await annulerBonsStockAuto(cid, cleDeco)
       const { article } = await articleEtuvage(cid, uid, 'etuve')
       const r = article ? await passerBonStockAuto({ companyId:cid, uid, type:'sortie', article, quantite:pay.poids_avant, prix:article.prix_achat, date:pay.date_etape,
-        tiers:'Décorticage', motif:'production', cle:cleDeco, observations:`Décorticage${pay.numero_lot ? ` — lot ${pay.numero_lot}` : ''}` }) : { error:{ message:'article RIZ ETUVE introuvable' } }
+        tiers:'Décorticage', motif:'production', cle:cleDeco, observations:`Décorticage${pay.numero_lot ? ` — lot ${pay.numero_lot}` : ''}` }) : { error:{ message:'article RIZ PADDY ETUVE introuvable' } }
       setSaving(false)
-      if (r.error) toast.error('Enregistré, mais la sortie de stock du riz étuvé n\'a pas été passée : ' + r.error.message)
-      else toast.success(`${editItem ? 'Modification enregistrée' : 'Enregistrement réussi'} — ${fmtKg(pay.poids_avant)} de riz étuvé sortis du stock${r.numero ? ` (bon ${r.numero})` : ''}.`)
+      if (r.error) toast.error('Enregistré, mais la sortie de stock du riz paddy étuvé n\'a pas été passée : ' + r.error.message)
+      else toast.success(`${editItem ? 'Modification enregistrée' : 'Enregistrement réussi'} — ${fmtKg(pay.poids_avant)} de riz paddy étuvé sortis du stock${r.numero ? ` (bon ${r.numero})` : ''}.`)
       close(); load(); return
     }
     let entree = {}
     if (stockDirect) entree = await entreeRizEtuve({ companyId:cid, uid, rizRecu:pay.riz_etuve_recu_kg, paddyTraite:pay.paddy_envoye_kg, date:pay.date_etape, cle, toast,
       tiers:`Étuvage ${pay.etuveuse_cooperative || 'interne'}`, observations:`Cycle d'étuvage ${pay.lot_sortant}${pay.numero_lot ? ` — lot ${pay.numero_lot}` : ''}` })
     setSaving(false)
-    toast.success(`${editItem ? 'Modification enregistrée' : 'Enregistrement réussi'}${sortie.numero || entree.numero ? ' — stock mis à jour (paddy sorti, riz étuvé entré)' : ''}.`); close(); load()
+    toast.success(`${editItem ? 'Modification enregistrée' : 'Enregistrement réussi'}${sortie.numero || entree.numero ? ' — stock mis à jour (paddy sorti, riz paddy étuvé entré)' : ''}.`); close(); load()
   }
 
   const exportExcel = () => {
@@ -10092,7 +10094,7 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
   const del = async id => {
     const it = items.find(x => x.id === id)
     const avecStock = estEtuvage && it?.lot_sortant && !cycleDepuisRetour(it)
-    if (!confirm(`Supprimer cet enregistrement ?${avecStock ? ' Les mouvements de stock de ce cycle (paddy sorti, riz étuvé entré) seront annulés.' : estDecorticage ? ' Le riz étuvé sorti du stock pour ce décorticage y sera remis.' : ''}`)) return
+    if (!confirm(`Supprimer cet enregistrement ?${avecStock ? ' Les mouvements de stock de ce cycle (paddy sorti, riz paddy étuvé entré) seront annulés.' : estDecorticage ? ' Le riz paddy étuvé sorti du stock pour ce décorticage y sera remis.' : ''}`)) return
     if (avecStock) await annulerBonsStockAuto(it.company_id || companyId, `ETUV:${it.lot_sortant}`)
     if (estDecorticage) await annulerBonsStockAuto(it?.company_id || companyId, `DECO:${id}`)
     await supabase.from(tableName).delete().eq('id', id)
@@ -10142,8 +10144,8 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
       <Modal open={choixNouveau} onClose={()=>setChoixNouveau(false)} size="md" title="Nouvel étuvage">
         <div style={{ display:'grid', gap:12 }}>
           {[
-            ['🚚', "Envoyer du paddy à une étuveuse (recommandé)", "Bon d'envoi (A4 ou ticket), sortie du paddy du stock. Au retour : bon de réception, entrée du riz étuvé en stock et création automatique du cycle d'étuvage ici.", ()=>{ setChoixNouveau(false); setPage ? setPage('etv_envois') : toast.error('Ouvrez Étuveuses › Envois aux étuveuses.') }],
-            ['✍️', 'Saisir un cycle déjà terminé', "Étuvage interne ou rattrapage d'un cycle passé : paddy envoyé et riz reçu saisis en une fois ; le stock est mis à jour (paddy sorti, riz étuvé entré).", ()=>{ setChoixNouveau(false); openAdd() }],
+            ['🚚', "Envoyer du paddy à une étuveuse (recommandé)", "Bon d'envoi (A4 ou ticket), sortie du paddy du stock. Au retour : bon de réception, entrée du riz paddy étuvé en stock et création automatique du cycle d'étuvage ici.", ()=>{ setChoixNouveau(false); setPage ? setPage('etv_envois') : toast.error('Ouvrez Étuveuses › Envois aux étuveuses.') }],
+            ['✍️', 'Saisir un cycle déjà terminé', "Étuvage interne ou rattrapage d'un cycle passé : paddy envoyé et riz reçu saisis en une fois ; le stock est mis à jour (paddy sorti, riz paddy étuvé entré).", ()=>{ setChoixNouveau(false); openAdd() }],
           ].map(([ic, t, d, go]) => (
             <button key={t} type="button" onClick={go} style={{ textAlign:'left', display:'flex', gap:12, alignItems:'flex-start', padding:'12px 14px', borderRadius:10, border:'1px solid #e2e8f0', background:'#f8fafc', cursor:'pointer' }}>
               <span style={{ fontSize:24 }}>{ic}</span>
@@ -10242,7 +10244,7 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
             <Sel label="Lot de production" name="lot_id" value={form.lot_id||''} onChange={set}
               options={[{value:'',label:localLots.length===0?'— Aucun lot disponible —':'— Choisir un lot —'},...localLots.map(l=>({value:l.id,label:`${l.numero_lot}${l.statut?' ('+l.statut+')':''}${origineLot(l.id)?' — '+origineLot(l.id):''}`}))]} />
             <Input label="Date" name="date_etape" type="date" value={form.date_etape||''} onChange={set} />
-            {estEtuvage && !cycleDepuisRetour(editItem) && <Span2><div style={{fontSize:12,color:'#1d4ed8',marginTop:-6}}>📦 À l'enregistrement : le paddy envoyé sort du stock et le riz étuvé reçu y entre (bons automatiques). Pour un envoi chez une étuveuse, passez plutôt par Étuveuses › Envois aux étuveuses.</div></Span2>}
+            {estEtuvage && !cycleDepuisRetour(editItem) && <Span2><div style={{fontSize:12,color:'#1d4ed8',marginTop:-6}}>📦 À l'enregistrement : le paddy envoyé sort du stock et le riz paddy étuvé reçu y entre (bons automatiques). Pour un envoi chez une étuveuse, passez plutôt par Étuveuses › Envois aux étuveuses.</div></Span2>}
             {form.lot_id && <Span2><div style={{fontSize:12.5,padding:'7px 12px',borderRadius:8,background:originesLots[form.lot_id]?'#f0fdf4':'#fffbeb',color:originesLots[form.lot_id]?'#166534':'#92400e',marginTop:-6}}>
               {originesLots[form.lot_id]
                 ? <>Origine du paddy : <strong>{originesLots[form.lot_id].refs.join(', ')||'réceptions producteurs'}</strong> — {originesLots[form.lot_id].producteurs} producteur(s), {fmtKg(originesLots[form.lot_id].kg)}</>
@@ -10250,9 +10252,9 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
             </div></Span2>}
             {estDecorticage && (()=>{ const q = parseFloat(form.poids_avant)||0, dispo = stockEtuve?.dispo ?? null, trop = dispo != null && q > dispo + 0.0005
               return <Span2><div style={{fontSize:12.5,padding:'8px 12px',borderRadius:8,background:trop||dispo===0?'#fef2f2':'#f0f9ff',color:trop||dispo===0?'#b91c1c':'#0c4a6e'}}>
-                📦 Riz étuvé en stock : <strong>{dispo == null ? '…' : fmtKg(dispo)}</strong> — le poids avant sort du stock à l'enregistrement.
+                📦 Riz paddy étuvé en stock : <strong>{dispo == null ? '…' : fmtKg(dispo)}</strong> — le poids avant sort du stock à l'enregistrement.
                 {trop && ' Le poids avant dépasse le stock : enregistrement impossible.'}
-                {dispo === 0 && !trop && " Aucun riz étuvé en stock : enregistrez d'abord le retour de l'étuveuse."}</div></Span2> })()}
+                {dispo === 0 && !trop && " Aucun riz paddy étuvé en stock : enregistrez d'abord le retour de l'étuveuse."}</div></Span2> })()}
             {estEtuvage && form.lot_id && resteLot(form.lot_id) != null && (()=>{ const reste = resteLot(form.lot_id); const envoye = parseFloat(form.paddy_envoye_kg)||0
               return <Span2><div style={{fontSize:12.5,padding:'8px 12px',borderRadius:8,background:envoye>reste+0.001?'#fef2f2':'#f0f9ff',color:envoye>reste+0.001?'#b91c1c':'#0c4a6e'}}>
                 Paddy du lot : <strong>{fmtKg(localLots.find(l=>l.id===form.lot_id)?.qte_paddy_entree)}</strong> — reste à envoyer à l'étuvage : <strong>{fmtKg(reste)}</strong>
@@ -13566,7 +13568,7 @@ Après la clôture, le bon d'entrée en stock du paddy (${nbFr(totauxAchatGroupe
   // du groupe en kg au prix moyen payé.
   const valeursEntreeStock = g => {
     const t = totauxAchatGroupe(lignesDe(g.id))
-    const article = d.articles.find(a => /paddy/i.test(a.designation))
+    const article = d.articles.find(estArticlePaddy)
     return { article_id:article?.id || '__nouveau_paddy__', date_bon: g.date_achat > today() ? today() : g.date_achat,
       quantite:String(t.quantite_kg), prix_unitaire:String(t.quantite_kg > 0 ? Math.round(t.montant / t.quantite_kg * 100) / 100 : 0) }
   }
@@ -13890,7 +13892,7 @@ Après la clôture, le bon d'entrée en stock du paddy (${nbFr(totauxAchatGroupe
             </div>
             <Grid cols={2} gap={12} style={{ marginBottom:8 }}>
               <Span2><Sel label="Article du stock *" name="article_id" value={entreeStock.article_id} onChange={e=>setEntreeStock(x=>({...x, article_id:e.target.value}))}
-                options={[{ value:'', label:'— Choisir —' }, ...(d.articles.some(a => /paddy/i.test(a.designation)) ? [] : [{ value:'__nouveau_paddy__', label:'+ Créer l\'article « RIZ PADDY » (kg)' }]),
+                options={[{ value:'', label:'— Choisir —' }, ...(d.articles.some(estArticlePaddy) ? [] : [{ value:'__nouveau_paddy__', label:'+ Créer l\'article « RIZ PADDY » (kg)' }]),
                   ...d.articles.map(a => ({ value:a.id, label:`${a.designation}${a.unite ? ` (${a.unite})` : ''} — stock ${nbFr(a.stock_actuel)}` }))]} /></Span2>
               <Input label="Date d'entrée *" name="date_bon" type="date" value={entreeStock.date_bon} onChange={e=>setEntreeStock(x=>({...x, date_bon:e.target.value}))} required />
               <Input label={`Quantité${art?.unite ? ` (${art.unite})` : ''} *`} name="quantite" type="number" step="0.001" min="0" value={entreeStock.quantite} onChange={e=>setEntreeStock(x=>({...x, quantite:e.target.value}))} required />
@@ -13931,7 +13933,7 @@ Après la clôture, le bon d'entrée en stock du paddy (${nbFr(totauxAchatGroupe
                   </label>
                   {vers.entrer_stock && <Grid cols={2} gap={10} style={{ marginTop:8 }}>
                     <Span2><Sel label="Article du stock" name="article_id" value={vers.article_id} onChange={e=>setVers(x=>({...x, article_id:e.target.value}))}
-                      options={[...(d.articles.some(a => /paddy/i.test(a.designation)) ? [] : [{ value:'__nouveau_paddy__', label:"+ Créer l'article « RIZ PADDY » (kg)" }]),
+                      options={[...(d.articles.some(estArticlePaddy) ? [] : [{ value:'__nouveau_paddy__', label:"+ Créer l'article « RIZ PADDY » (kg)" }]),
                         ...d.articles.map(a => ({ value:a.id, label:`${a.designation}${a.unite ? ` (${a.unite})` : ''} — stock ${nbFr(a.stock_actuel)}` }))]} /></Span2>
                     <Input label="Quantité" name="quantite" type="number" step="0.001" min="0" value={vers.quantite} onChange={e=>setVers(x=>({...x, quantite:e.target.value}))} />
                     <Input label="Prix unitaire (FCFA)" name="prix_unitaire" type="number" step="0.01" min="0" value={vers.prix_unitaire} onChange={e=>setVers(x=>({...x, prix_unitaire:e.target.value}))} />
@@ -14160,7 +14162,7 @@ function EpargneFriaPage({ companies, companyId, toast, readOnly=false }) {
     if (type === 'remboursement') {
       const prix = +f.prix_contrat || 0
       setForm({ type, f, s, date:today(), campagne:campSoc, quantite_kg: prix > 0 && s.reste > 0 ? String(Math.floor(s.reste / prix)) : '',
-        prix_unitaire:String(prix || ''), observations:'', stock:false, article_id:d.articles.find(a => /paddy/i.test(a.designation))?.id || '', reference:'' })
+        prix_unitaire:String(prix || ''), observations:'', stock:false, article_id:d.articles.find(estArticlePaddy)?.id || '', reference:'' })
     } else if (type === 'utilisation') {
       if (!(s.epargne > 0)) return toast.error(`${nomTiersTraca(f)} n'a pas d'épargne FRIA disponible.`)
       const campsF = d.avances.filter(a => String(a.fournisseur_id) === String(f.id)).map(a => a.campagne).filter(Boolean).sort()
@@ -14567,7 +14569,7 @@ function EpargneFriaPage({ companies, companyId, toast, readOnly=false }) {
             {!form.edit && <label style={{ fontSize:13, display:'flex', gap:8, alignItems:'center', marginBottom:8 }}>
               <input type="checkbox" checked={form.stock} onChange={e=>setF('stock', e.target.checked)} /> Entrer le paddy en stock (bon d'entrée en magasin)</label>}
             {form.stock && <div style={{ marginBottom:12 }}><Sel label="Article du stock" name="article_id" value={form.article_id} onChange={e=>setF('article_id', e.target.value)}
-              options={[{ value:'', label:'— Choisir —' }, ...d.articles.map(a => ({ value:a.id, label:`${a.designation} (${a.unite||''})` })), ...(d.articles.some(a => /paddy/i.test(a.designation)) ? [] : [{ value:'__nouveau_paddy__', label:'+ Créer l\'article RIZ PADDY' }])]} /></div>}
+              options={[{ value:'', label:'— Choisir —' }, ...d.articles.map(a => ({ value:a.id, label:`${a.designation} (${a.unite||''})` })), ...(d.articles.some(estArticlePaddy) ? [] : [{ value:'__nouveau_paddy__', label:'+ Créer l\'article RIZ PADDY' }])]} /></div>}
             <div style={{ fontSize:12, color:'#64748b', marginBottom:12 }}>Écriture automatique (journal des achats) : Débit 602 Achats de matières premières / Crédit {compteFriaDe(form.f.numero_compte)} Épargne FRIA.</div>
           </>}
           {form.type === 'utilisation' && <>
@@ -14882,15 +14884,17 @@ const CodeTrace = ({ code }) => code ? <div style={{ fontSize:11, color:'#0f766e
 
 // ── STOCK AUTOMATIQUE DE L'ÉTUVAGE ───────────────────────────────────────────
 // Envoi à une étuveuse  → bon de SORTIE du paddy (motif production) ;
-// retour d'étuveuse     → bon d'ENTRÉE du riz étuvé, valorisé au coût du paddy
+// retour d'étuveuse     → bon d'ENTRÉE du riz paddy étuvé, valorisé au coût du paddy
 //                         traité (prix moyen du paddy × paddy traité ÷ riz reçu) ;
 // cycle saisi en direct → les deux à la fois (étuvage interne, rattrapage).
 // Chaque bon porte un marqueur [CLÉ] dans ses observations (ENV:…, RET:…,
 // ETUV:…) : supprimer la source annule ses bons et remet le stock comme avant.
-// Les articles « RIZ PADDY » et « RIZ ETUVE » sont créés s'ils n'existent pas.
+// Les articles « RIZ PADDY » et « RIZ PADDY ETUVE » sont créés s'ils n'existent pas.
 const ARTICLES_ETUVAGE = {
   paddy: { motif:/paddy/i, exclure:/etuv|étuv/i, designation:'RIZ PADDY', categorie:'riz_paddy' },
-  etuve: { motif:/etuv|étuv/i, designation:'RIZ ETUVE', categorie:'riz_etuve' },
+  // Produit de l'étuvage (avant décorticage) : « RIZ PADDY ETUVE ». Le produit fini
+  // (après décorticage) garde le nom « Riz étuvé ».
+  etuve: { motif:/paddy\W*(e|é)tuv/i, designation:'RIZ PADDY ETUVE', categorie:'riz_paddy_etuve', ancien:/^\s*riz\s+(e|é)tuv(e|é)\s*$/i },
 }
 
 async function articleEtuvage(companyId, uid, sorte, prixDefaut = 0) {
@@ -14898,6 +14902,12 @@ async function articleEtuvage(companyId, uid, sorte, prixDefaut = 0) {
   const { data } = await supabase.from('compta_articles').select('id,designation,unite,stock_actuel,prix_achat').eq('company_id', companyId).eq('actif', true)
   const art = (data || []).find(a => def.motif.test(a.designation || '') && !(def.exclure && def.exclure.test(a.designation || '')))
   if (art) return { article:art }
+  // Ancien article « RIZ ETUVE » créé automatiquement : renommé « RIZ PADDY ETUVE » (même stock).
+  const ancien = def.ancien && (data || []).find(a => def.ancien.test(a.designation || ''))
+  if (ancien) {
+    await supabase.from('compta_articles').update({ designation:def.designation, code:def.designation.replace(/\s/g, '-'), categorie:def.categorie }).eq('id', ancien.id)
+    return { article:{ ...ancien, designation:def.designation } }
+  }
   const { data:cree, error } = await supabase.from('compta_articles').insert({ company_id:companyId, user_id:uid, code:def.designation.replace(/\s/g, '-'), designation:def.designation,
     categorie:def.categorie, unite:'kg', prix_achat:prixDefaut, prix_vente:0, stock_min:0, stock_actuel:0, actif:true }).select('id,designation,unite,stock_actuel,prix_achat').single()
   return error ? { error } : { article:cree }
@@ -14954,14 +14964,14 @@ async function sortiePaddyEtuvage({ companyId, uid, quantite, date, tiers, cle, 
   return { ok:true, numero:r.numero, prixPaddy:+article.prix_achat || 0 }
 }
 
-// Entrée du riz étuvé, au coût du paddy traité.
+// Entrée du riz paddy étuvé, au coût du paddy traité.
 async function entreeRizEtuve({ companyId, uid, rizRecu, paddyTraite, date, tiers, cle, observations, toast }) {
   if (!(+rizRecu > 0)) return {}
   const { article:paddy } = await articleEtuvage(companyId, uid, 'paddy')
   const cout = (+paddy?.prix_achat || 0) * (+paddyTraite || 0)
   const pu = +rizRecu > 0 && cout > 0 ? cout / +rizRecu : 0
   const { article, error } = await articleEtuvage(companyId, uid, 'etuve', pu)
-  if (error) { toast.error('Article RIZ ETUVE non créé : ' + error.message); return {} }
+  if (error) { toast.error('Article RIZ PADDY ETUVE non créé : ' + error.message); return {} }
   const r = await passerBonStockAuto({ companyId, uid, type:'entree', article, quantite:rizRecu, prix:pu, date, tiers, motif:'production', cle, observations })
   if (r.error) toast.error('Entrée de stock non passée : ' + r.error.message)
   return r
@@ -15098,7 +15108,7 @@ const FICHES_TRACA = [
   { id:'f10_4', num:'10.4', groupe:'10', titre:'DÉCORTICAGE', cols:[
     { k:'code_lot', l:'Code lot', t:'code', src:'lot', req:true }, { k:'date_heure', l:'Date/heure décorticage', t:'dt' }, { k:'machine', l:'Machine utilisée', t:'t' },
     { k:'qte_entree', l:'Quantité entrée (kg)', t:'n' }, { k:'taux_usinage', l:"Taux d'usinage (%)", t:'c', f:r => ratioT(r.qte_obtenue, r.qte_entree, 100, 1) },
-    { k:'qte_obtenue', l:'Quantité riz étuvé obtenue (kg)', t:'n' }, { k:'brisures', l:'Quantité brisures (kg)', t:'n' }, { k:'sous_produits', l:'Sous-produits (son, balle)', t:'t' }, { k:'operateur', l:'Opérateur', t:'t' }] },
+    { k:'qte_obtenue', l:'Quantité riz paddy étuvé obtenue (kg)', t:'n' }, { k:'brisures', l:'Quantité brisures (kg)', t:'n' }, { k:'sous_produits', l:'Sous-produits (son, balle)', t:'t' }, { k:'operateur', l:'Opérateur', t:'t' }] },
   { id:'f10_5', num:'10.5', groupe:'10', titre:'TRI / CALIBRAGE', cols:[
     { k:'code_lot', l:'Code lot', t:'code', src:'lot', req:true }, { k:'date_heure', l:'Date/heure de tri', t:'dt' },
     { k:'methode', l:'Méthode de tri', t:'s', o:['Manuel', 'Trieur optique', 'Calibreur', 'Mixte'] }, { k:'qte_triee', l:'Quantité triée (kg)', t:'n' },
@@ -15543,7 +15553,7 @@ function EtvEnvoisPage({ companies, companyId, toast, readOnly=false }) {
     const num = k => parseFloat(String(retour[k]).replace(',','.')) || 0
     const recu = num('riz_etuve_recu_kg'), dech = num('dechets_kg')
     if (retour.derniere == null) return toast.error("Indiquez s'il s'agit d'une récupération partielle ou de la dernière récupération.")
-    if (!(recu > 0)) return toast.error('Saisissez le riz étuvé reçu.')
+    if (!(recu > 0)) return toast.error('Saisissez le riz paddy étuvé reçu.')
     if (!retour.derniere && recu + dech > s.restant + 0.001) return toast.error(`Riz reçu + déchets (${fmtKg(recu + dech)}) dépassent le paddy restant chez l'étuveuse (${fmtKg(s.restant)}) : cochez « Dernière récupération ».`)
     const traite = paddySoldeRetour(retour, s)
     setSaving(true)
@@ -15575,12 +15585,12 @@ function EtvEnvoisPage({ companies, companyId, toast, readOnly=false }) {
       company_id:companyId, user_id:uid, envoi_id:env.id, date_retour:retour.date_retour, paddy_traite_kg:traite, riz_etuve_recu_kg:recu,
       dechets_kg:dech, humidite:retour.humidite===''?null:num('humidite'), observation:retour.observation||null, etuvage_id }).select('id').single()
     if (error) { setSaving(false); if (etuvage_id) await supabase.from('compta_etuvage').delete().eq('id', etuvage_id); return toast.error(error.message) }
-    // Le riz étuvé reçu entre en stock (bon d'entrée BE-…), au coût du paddy traité.
+    // Le riz paddy étuvé reçu entre en stock (bon d'entrée BE-…), au coût du paddy traité.
     const etvR = etvDe(env.etuveuse_id), lotR = lotDe(env.lot_id)
     const entree = retour.entrer_stock === false ? {} : await entreeRizEtuve({ companyId, uid, rizRecu:recu, paddyTraite:traite, date:retour.date_retour, tiers:`Étuveuse ${etvR.nom_etuveuse||''}`.trim(),
       cle:`RET:${ret.id}`, toast, observations:`Retour de l'envoi ${env.numero}${lotR.numero_lot ? ` — lot ${lotR.numero_lot}` : ''}` })
     setSaving(false)
-    toast.success(`Retour enregistré${etuvage_id?' — cycle d\'étuvage créé en Production':''}${entree.numero ? ` — ${fmtKg(recu)} de riz étuvé entrés en stock (bon ${entree.numero})` : ''}.`)
+    toast.success(`Retour enregistré${etuvage_id?' — cycle d\'étuvage créé en Production':''}${entree.numero ? ` — ${fmtKg(recu)} de riz paddy étuvé entrés en stock (bon ${entree.numero})` : ''}.`)
     const r = { ...retour, paddy_traite_kg:traite, riz_etuve_recu_kg:recu, dechets_kg:dech, passage:s.retours.length + 1 }
     setRetour(null)
     if (formatRetour.current === 'ticket') ticketReception(env, r, true); else imprimerFicheRetrait(env, r, true)
@@ -15591,7 +15601,7 @@ function EtvEnvoisPage({ companies, companyId, toast, readOnly=false }) {
     if (r.etuvage_id) await supabase.from('compta_etuvage').delete().eq('id', r.etuvage_id)
     await annulerBonsStockAuto(companyId, `RET:${r.id}`)
     await supabase.from('compta_retours_etuveuses').delete().eq('id', r.id)
-    toast.success('Retour supprimé (et son entrée de riz étuvé en stock annulée).'); charger()
+    toast.success('Retour supprimé (et son entrée de riz paddy étuvé en stock annulée).'); charger()
   }
   // Origines de l'envoi et lot créé pour lui (LOT-ENV-…) supprimés avec l'envoi.
   const supprimerLotEnvoi = async env => {
@@ -15665,7 +15675,7 @@ function EtvEnvoisPage({ companies, companyId, toast, readOnly=false }) {
     openPrintWindow(ticketHtml(company, { titre:'BON DE RÉCEPTION (RETOUR ÉTUVEUSE)', numero:env.numero, date:dateDoc(r.date_retour),
       lignes:[...(env.code_trace?[['Code', env.code_trace, true]]:[]), ['Étuveuse', etv.nom_etuveuse||''], ['Lot', lot.numero_lot||'—'], ['Envoi du', dateDoc(env.date_envoi)],
         ['Récupération', (() => { const n = r.passage || (s.retours.findIndex(x => x.id === r.id) + 1) || s.retours.length; return `${n === 1 ? '1ère' : n + 'e'}${s.statut === 'termine' && n === s.retours.length ? ' (dernière)' : ''}` })()], null,
-        ['Paddy traité', fmtKg(traite)], ['Riz étuvé reçu', fmtKg(recu), true], ['Déchets', fmtKg(r.dechets_kg)],
+        ['Paddy traité', fmtKg(traite)], ['Riz paddy étuvé reçu', fmtKg(recu), true], ['Déchets', fmtKg(r.dechets_kg)],
         ['Rendement', traite>0?`${(recu/traite*100).toFixed(1)} %`:'—'], ...(r.humidite?[['Humidité', `${nbFr(r.humidite)} %`]]:[]), null,
         ['Paddy confié', fmtKg(env.quantite_envoyee_kg)], ['Déjà soldé', fmtKg(s.traite)]],
       total:['RESTE CHEZ ÉTUVEUSE', fmtKg(s.restant)], mentions:r.observation,
@@ -15681,7 +15691,7 @@ function EtvEnvoisPage({ companies, companyId, toast, readOnly=false }) {
         ['Statut de l\'envoi', STATUTS_ENVOI[s.statut][0]]],
       tiersLabel:'Étuveuse', tiers:{ nom:`${etv.code_etuveuse?etv.code_etuveuse+' — ':''}${etv.nom_etuveuse||''}`, adresse:etv.zone },
       colonnes:[{label:'Retrait'},{label:'Quantité (kg)',align:'d',largeur:'25%'}],
-      lignes:[['Paddy traité (soldé sur l\'envoi)', nbFr(r.paddy_traite_kg)], ['<strong>Riz étuvé reçu</strong>', `<strong>${nbFr(r.riz_etuve_recu_kg)}</strong>`], ['Déchets', nbFr(r.dechets_kg)],
+      lignes:[['Paddy traité (soldé sur l\'envoi)', nbFr(r.paddy_traite_kg)], ['<strong>Riz paddy étuvé reçu</strong>', `<strong>${nbFr(r.riz_etuve_recu_kg)}</strong>`], ['Déchets', nbFr(r.dechets_kg)],
         ['Écart non justifié', nbFr(Math.round(ecart*1000)/1000)], ...(r.humidite?[['Humidité (%)', nbFr(r.humidite)]]:[])],
       totaux:[['Paddy confié', fmtKg(env.quantite_envoyee_kg)], ['Déjà soldé', fmtKg(s.traite)], ['Restant chez l\'étuveuse', fmtKg(s.restant), true]],
       notes:r.observation, signatures:["L'étuveuse", 'Le réceptionnaire (magasin)'] }), `fiche_retrait_${env.numero}`)
@@ -15694,7 +15704,7 @@ function EtvEnvoisPage({ companies, companyId, toast, readOnly=false }) {
       tiersLabel:'Lot de production', tiers:{ nom:lot.numero_lot||'—' },
       colonnes:[{label:'Envoi',largeur:'13%'},{label:'Étuveuse'},{label:'Date',largeur:'11%'},{label:'Envoyé',align:'d'},{label:'Soldé',align:'d'},{label:'Riz reçu',align:'d'},{label:'Restant',align:'d'},{label:'Statut',largeur:'13%'}],
       lignes:envois.map(e=>{ const s=sit(e), etv=etvDe(e.etuveuse_id); return [e.numero, echapHtml(etv.nom_etuveuse||''), dateDoc(e.date_envoi), nbFr(e.quantite_envoyee_kg), nbFr(s.traite), nbFr(s.recu), `<strong>${nbFr(s.restant)}</strong>`, STATUTS_ENVOI[s.statut][0]] }),
-      totaux:[['Riz étuvé reçu', fmtKg(tot.recu)], ['Rendement', tot.traite>0?`${(tot.recu/tot.traite*100).toFixed(1)} %`:'—'], ['Restant chez les étuveuses', fmtKg(tot.rest), true]],
+      totaux:[['Riz paddy étuvé reçu', fmtKg(tot.recu)], ['Rendement', tot.traite>0?`${(tot.recu/tot.traite*100).toFixed(1)} %`:'—'], ['Restant chez les étuveuses', fmtKg(tot.rest), true]],
       signatures:['Le responsable étuvage', 'Le contrôleur'] }), `repartition_${lot.numero_lot||'lot'}`)
   }
 
@@ -15800,7 +15810,7 @@ function EtvEnvoisPage({ companies, companyId, toast, readOnly=false }) {
           <Input label="Commentaire" name="commentaire" value={form.commentaire||''} onChange={e=>setForm(f=>({...f, commentaire:e.target.value}))} />
           <div style={{ fontSize:12.5, color:'#475569', background:'#f8fafc', borderRadius:8, padding:'8px 12px', margin:'4px 0 14px' }}>
             {form.etuveuse_id && <div>Déjà chez cette étuveuse : <strong>{fmtKg(enCoursChez(form.etuveuse_id, form.id))}</strong>{+etvDe(form.etuveuse_id).capacite_kg>0 && ` — capacité ${fmtKg(etvDe(form.etuveuse_id).capacite_kg)}`}</div>}
-            <div style={{ color:'#1d4ed8' }}>📦 Le paddy envoyé sort du stock (bon de sortie) ; au retour, le riz étuvé reçu y entre (bon d'entrée) et le cycle d'étuvage est créé en Production.</div>
+            <div style={{ color:'#1d4ed8' }}>📦 Le paddy envoyé sort du stock (bon de sortie) ; au retour, le riz paddy étuvé reçu y entre (bon d'entrée) et le cycle d'étuvage est créé en Production.</div>
           </div>
           <Row><Btn variant="secondary" onClick={()=>setForm(null)}>Annuler</Btn><Btn type="submit" disabled={saving}>{saving?'…':form.id?'Enregistrer':"Enregistrer et imprimer le bon d'envoi"}</Btn></Row>
         </form>}
@@ -15814,7 +15824,7 @@ function EtvEnvoisPage({ companies, companyId, toast, readOnly=false }) {
             <div style={{ fontSize:12.5, background:'#f0f9ff', borderRadius:8, padding:'8px 12px', marginBottom:12, lineHeight:1.6 }}>
               <span style={{ display:'inline-block', padding:'2px 10px', borderRadius:20, fontWeight:700, marginRight:8, background:s.retours.length ? '#fef3c7' : '#dcfce7', color:s.retours.length ? '#92400e' : '#166534' }}>
                 {s.retours.length ? `${s.retours.length + 1}e récupération` : '1ère récupération'}</span>
-              {s.retours.length > 0 && <>déjà récupéré en {s.retours.length} passage(s) : <strong>{fmtKg(s.recu)}</strong> de riz étuvé — </>}
+              {s.retours.length > 0 && <>déjà récupéré en {s.retours.length} passage(s) : <strong>{fmtKg(s.recu)}</strong> de riz paddy étuvé — </>}
               paddy restant chez l'étuveuse : <strong>{fmtKg(s.restant)}</strong>
             </div>
             <div style={{ display:'flex', gap:10, flexWrap:'wrap', marginBottom:12 }}>
@@ -15831,7 +15841,7 @@ function EtvEnvoisPage({ companies, companyId, toast, readOnly=false }) {
                 <div style={{padding:'9px 12px',background:'#f1f5f9',borderRadius:8,border:'1px solid #e2e8f0',fontSize:14,fontWeight:700,color:'#334155'}}>{fmtKg(retour.envoi.quantite_envoyee_kg)}</div>
                 <div style={{fontSize:11.5,color:'#64748b',marginTop:4}}>Soldé par ce retour : <strong>{retour.derniere == null ? '—' : fmtKg(paddySoldeRetour(retour, s))}</strong>{retour.derniere === false ? ' (riz reçu + déchets)' : retour.derniere ? ' (tout le restant)' : ''}</div>
               </div>
-              <Input label="Riz étuvé reçu (kg) *" name="riz_etuve_recu_kg" type="number" step="0.001" min="0" value={retour.riz_etuve_recu_kg} onChange={e=>setRetour(r=>({...r, riz_etuve_recu_kg:e.target.value}))} required />
+              <Input label="Riz paddy étuvé reçu (kg) *" name="riz_etuve_recu_kg" type="number" step="0.001" min="0" value={retour.riz_etuve_recu_kg} onChange={e=>setRetour(r=>({...r, riz_etuve_recu_kg:e.target.value}))} required />
               <Input label="Déchets (kg)" name="dechets_kg" type="number" step="0.001" min="0" value={retour.dechets_kg} onChange={e=>setRetour(r=>({...r, dechets_kg:e.target.value}))} />
               <Input label="Humidité (%)" name="humidite" type="number" step="0.1" min="0" value={retour.humidite} onChange={e=>setRetour(r=>({...r, humidite:e.target.value}))} />
               <Input label="Observation" name="observation" value={retour.observation} onChange={e=>setRetour(r=>({...r, observation:e.target.value}))} />
@@ -15844,7 +15854,7 @@ function EtvEnvoisPage({ companies, companyId, toast, readOnly=false }) {
             <label style={{ display:'flex', gap:8, alignItems:'center', fontSize:13, marginBottom:14, cursor:'pointer', padding:'8px 12px', borderRadius:8,
               background:retour.entrer_stock ? '#f0fdf4' : '#fffbeb', border:'1px solid ' + (retour.entrer_stock ? '#bbf7d0' : '#fde68a') }}>
               <input type="checkbox" checked={retour.entrer_stock !== false} onChange={e=>setRetour(r=>({...r, entrer_stock:e.target.checked}))} />
-              <span>📦 <strong>Entrer le riz étuvé reçu en stock</strong> (bon d'entrée « RIZ ETUVE »){retour.entrer_stock === false && <span style={{ color:'#92400e' }}> — non coché : ce riz ne pourra pas être décortiqué tant qu'il n'est pas en stock</span>}</span>
+              <span>📦 <strong>Entrer le riz paddy étuvé reçu en stock</strong> (bon d'entrée « RIZ PADDY ETUVE »){retour.entrer_stock === false && <span style={{ color:'#92400e' }}> — non coché : ce riz ne pourra pas être décortiqué tant qu'il n'est pas en stock</span>}</span>
             </label>
             <Row><Btn variant="secondary" onClick={()=>setRetour(null)}>Annuler</Btn><Btn type="submit" variant="secondary" disabled={saving} onClick={()=>{ formatRetour.current = 'ticket' }}>{saving?'…':'🧾 Enregistrer + ticket'}</Btn>
               <Btn type="submit" variant="success" disabled={saving} onClick={()=>{ formatRetour.current = 'a4' }}>{saving?'…':'🖨️ Enregistrer + fiche A4'}</Btn></Row>
@@ -15867,7 +15877,7 @@ function EtvEnvoisPage({ companies, companyId, toast, readOnly=false }) {
                   </td>
                 </tr>))}</tbody>
             </table>}
-          <div style={{ fontSize:12.5, marginTop:10 }}>Soldé {fmtKg(s.traite)} sur {fmtKg(detail.quantite_envoyee_kg)} — riz étuvé reçu {fmtKg(s.recu)}{s.rendement!=null?` (rendement ${s.rendement} %)`:''} — restant {fmtKg(s.restant)}</div>
+          <div style={{ fontSize:12.5, marginTop:10 }}>Soldé {fmtKg(s.traite)} sur {fmtKg(detail.quantite_envoyee_kg)} — riz paddy étuvé reçu {fmtKg(s.recu)}{s.rendement!=null?` (rendement ${s.rendement} %)`:''} — restant {fmtKg(s.restant)}</div>
         </> })()}
       </Modal>
     </div>
@@ -22094,7 +22104,7 @@ function PaiementsEtuvagePage({ companies, companyId, lots, toast, readOnly=fals
 // ── SUIVI LOT — traçabilité complète d'un lot ────────────────────────────────
 const SUIVI_STAGES = [
   { key:'etuvage',        table:'compta_etuvage',         title:'Étuvage',         icon:'🔥', accent:'#ea580c',
-    kpis:[ {f:'paddy_envoye_kg',l:'Paddy envoyé',u:'kg'}, {f:'riz_etuve_recu_kg',l:'Riz étuvé reçu',u:'kg'}, {f:'taux_rendement',l:'Rendement',u:'%',dec:1}, {f:'controle_qualite',l:'Qualité'} ] },
+    kpis:[ {f:'paddy_envoye_kg',l:'Paddy envoyé',u:'kg'}, {f:'riz_etuve_recu_kg',l:'Riz paddy étuvé reçu',u:'kg'}, {f:'taux_rendement',l:'Rendement',u:'%',dec:1}, {f:'controle_qualite',l:'Qualité'} ] },
   { key:'decorticage',    table:'compta_decorticage',     title:'Décorticage',     icon:'⚙️',  accent:'#7c3aed',
     kpis:[ {f:'poids_avant',l:'Poids avant',u:'kg'}, {f:'poids_apres',l:'Poids après',u:'kg'}, {f:'ecart',l:'Écart',u:'kg'}, {f:'taux_humidite',l:'Humidité',u:'%',dec:1} ] },
   { key:'calibrage',      table:'compta_calibrage',       title:'Calibrage',       icon:'📐', accent:'#0891b2',
@@ -22231,7 +22241,7 @@ function TracabilitePage({ companies, companyId, toast, readOnly=false }) {
         + etapes.map((e,i)=>bloc(`${4+i}. ${e.titre}`, grille(['Date','Entrée','Sortie','Écart %','Responsable'], e.lignes.map(x=>[dateDoc(x.date_etape), fmtKg(x[e.avant]), fmtKg(x[e.apres]), `${(ecartPctProduction(e.table,x)??0).toFixed(2)} %`, echapHtml(x.responsable_section||'')])))).join('')
         + bloc('8. Destinations — clients', grille(['Client','Document','Date','Quantité','Sacs','Produit'], destinations.map(x=>[echapHtml(nomTiersTraca(cliDe(x.client_id))||x.client_nom||''), echapHtml(x.document||''), dateDoc(x.date_livraison), fmtKg(x.quantite_kg), x.nb_sacs||'', echapHtml(x.produit||'')]))),
       colonnes:[{label:'Bilan matière'},{label:'Quantité',align:'d',largeur:'30%'}],
-      lignes:[['Paddy reçu des producteurs', fmtKg(paddyOrigine)], ['Riz étuvé reçu des étuveuses', fmtKg(etuveRecu)], ['Riz conditionné', fmtKg(conditionne)], ['Livré aux clients', fmtKg(livre)]],
+      lignes:[['Paddy reçu des producteurs', fmtKg(paddyOrigine)], ['Riz paddy étuvé reçu des étuveuses', fmtKg(etuveRecu)], ['Riz conditionné', fmtKg(conditionne)], ['Livré aux clients', fmtKg(livre)]],
       totaux:[['Rendement global (conditionné / paddy)', paddyOrigine>0?`${(conditionne/paddyOrigine*100).toFixed(1)} %`:'—'], ['Reste à livrer', fmtKg(Math.max(0, conditionne-livre)), true]],
       signatures:['Le responsable qualité','La direction'] })
     openPrintWindow(html, `tracabilite_${lot.numero_lot}`)
@@ -22282,7 +22292,7 @@ function TracabilitePage({ companies, companyId, toast, readOnly=false }) {
       </Card>
       {!lot ? <Card><div style={{ color:'#64748b', fontSize:13 }}>Recherchez puis choisissez un lot pour afficher toute sa chaîne : producteurs → étuveuses → étapes de production → clients.</div></Card> : <>
         <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))', gap:10, marginBottom:12 }}>
-          {[['Code', codeTraca(lot)], ['Paddy des producteurs', fmtKg(paddyOrigine)], ['Riz étuvé reçu', fmtKg(etuveRecu)], ['Conditionné', fmtKg(conditionne)], ['Livré aux clients', fmtKg(livre)],
+          {[['Code', codeTraca(lot)], ['Paddy des producteurs', fmtKg(paddyOrigine)], ['Riz paddy étuvé reçu', fmtKg(etuveRecu)], ['Conditionné', fmtKg(conditionne)], ['Livré aux clients', fmtKg(livre)],
             ['Rendement global', paddyOrigine>0?`${(conditionne/paddyOrigine*100).toFixed(1)} %`:'—']].map(([l,v])=>(
             <div key={l} style={{ background:'white', border:'1px solid #e2e8f0', borderRadius:10, padding:'10px 12px' }}><div style={{ fontSize:11.5, color:'#64748b' }}>{l}</div><div style={{ fontSize:16, fontWeight:800 }}>{v}</div></div>))}
         </div>
@@ -27976,7 +27986,7 @@ export default function ComptaPro() {
       {name:'etuveuse_cooperative', label:'Étuveuse', type:'etuveuse', summary:true},
       {name:'cuve',             label:'Cuve / site'},
       {name:'paddy_envoye_kg',  label:'Paddy envoyé (kg)',   type:'number', summary:true, unit:'kg'},
-      {name:'riz_etuve_recu_kg',label:'Riz étuvé reçu (kg)', type:'number', summary:true, unit:'kg'},
+      {name:'riz_etuve_recu_kg',label:'Riz paddy étuvé reçu (kg)', type:'number', summary:true, unit:'kg'},
       {name:'dechets_kg',       label:'Déchets (kg)',         type:'number', unit:'kg'},
       {name:'humidite_sortie',  label:'Humidité de sortie (%)', type:'number', dec:1},
       {name:'ecart_kg',         label:'Écart (kg)',           type:'number', unit:'kg', calc:true},
