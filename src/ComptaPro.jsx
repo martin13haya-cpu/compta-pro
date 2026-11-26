@@ -3827,6 +3827,307 @@ function PilotagePage({ companies, companyId, setPage }) {
   )
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// ── TABLEAU DE BORD COMMERCIAL : acheter, revendre avec marge, encaisser ────────
+// ═══════════════════════════════════════════════════════════════════════════════
+const comJour = (iso, n) => { const d = new Date(iso + 'T00:00:00'); d.setDate(d.getDate() + n); return d.toLocaleDateString('sv-SE') }
+const comJours = (a, b) => Math.round((new Date(b + 'T00:00:00') - new Date(a + 'T00:00:00')) / 86400000)
+const comEvol = (v, avant) => avant > 0 ? Math.round((v - avant) / avant * 1000) / 10 : null
+const comNorm = s => toUpperNoAccent(s || '').replace(/\s+/g, ' ').trim()
+
+function ComDashboard({ companies, companyId, setPage }) {
+  const [du, setDu] = useState(`${new Date().getFullYear()}-01-01`)
+  const [au, setAu] = useState(today())
+  const [seuilTreso, setSeuilTreso] = useState(() => { try { return localStorage.getItem('com_seuil_treso') || '' } catch { return '' } })
+  const [d, setD] = useState(null)
+  const [chargement, setChargement] = useState(true)
+  const { isMobile } = useResponsive()
+  const company = companies.find(c => c.id === companyId)
+
+  useEffect(() => {
+    if (!companyId) return
+    let annule = false
+    ;(async () => {
+      setChargement(true)
+      const tout = (table, sel = '*') => fetchAllRows(() => supabase.from(table).select(sel).eq('company_id', companyId).order('id'))
+      const t = {
+        docs:tout('compta_documents', 'id,type_doc,numero,date_doc,date_echeance,montant_ttc,montant_paye,client_id,fournisseur_id,statut'),
+        clients:tout('compta_clients', 'id,nom,prenom,nom_societe,type'), frs:tout('compta_fournisseurs', 'id,nom,prenom,nom_societe,type'),
+        articles:tout('compta_articles', 'id,code,designation,unite,stock_actuel,stock_min,prix_achat,prix_vente,actif'),
+        mvts:tout('compta_mouvements_stock', 'id,article_id,type,quantite,montant,prix_unitaire,date_mvt,motif'),
+        regl:tout('compta_reglements', 'id,tiers_type,tiers_nom,date_paiement,montant_paye'),
+        bons:tout('compta_bons_stock', 'id,type,tiers,total,date_bon,motif'),
+        caisse:tout('compta_journal_caisse', 'id,type_operation,montant,date_operation'), banque:tout('compta_journal_banque', 'id,type_operation,montant,date_operation'),
+        mobile:tout('compta_journal_mobile', 'id,type_operation,montant,date_operation'),
+      }
+      const cles = Object.keys(t), res = await Promise.all(Object.values(t)), out = {}
+      cles.forEach((k, i) => { out[k] = res[i]?.data || [] })
+      const facIds = out.docs.filter(x => x.type_doc === 'facture').map(x => x.id), lignes = []
+      for (let i = 0; i < facIds.length; i += 150) {
+        const { data } = await supabase.from('compta_lignes_document').select('document_id,designation,unite,quantite,prix_unitaire,montant_ligne').in('document_id', facIds.slice(i, i + 150))
+        lignes.push(...(data || []))
+      }
+      out.lignes = lignes
+      if (!annule) { setD(out); setChargement(false) }
+    })()
+    return () => { annule = true }
+  }, [companyId])
+
+  if (!companyId) return null
+  if (chargement || !d) return <div style={{ padding:24 }}>Chargement du tableau de bord…</div>
+
+  // ── Périodes ──
+  const longueur = Math.max(1, comJours(du || `${new Date().getFullYear()}-01-01`, au || today()) + 1)
+  const pAu = comJour(du, -1), pDu = comJour(du, -longueur)
+  const dans = (v, a = du, b = au) => !!v && (!a || v >= a) && (!b || String(v).slice(0, 10) <= b)
+  const nomT = t => (t?.type === 'morale' ? t?.nom_societe : [t?.nom, t?.prenom].filter(Boolean).join(' ')) || '—'
+  const somme = (arr, k) => arr.reduce((s, x) => s + (+x[k] || 0), 0)
+  const valides = d.docs.filter(x => x.statut !== 'annule')
+  const factures = valides.filter(x => x.type_doc === 'facture')
+  const facP = factures.filter(x => dans(x.date_doc)), facAvant = factures.filter(x => dans(x.date_doc, pDu, pAu))
+  const ca = somme(facP, 'montant_ttc'), caAvant = somme(facAvant, 'montant_ttc')
+
+  // ── Marge : coût = quantité × prix d'achat de l'article (désignation identique) ──
+  const artParNom = {}; d.articles.forEach(a => { artParNom[comNorm(a.designation)] = a })
+  const idsP = new Set(facP.map(f => f.id)), lignesP = d.lignes.filter(l => idsP.has(l.document_id))
+  const parArticle = {}
+  let coutConnu = 0, venteCouverte = 0, lignesNeg = 0
+  lignesP.forEach(l => {
+    const a = artParNom[comNorm(l.designation)], q = +l.quantite || 0, v = +l.montant_ligne || q * (+l.prix_unitaire || 0)
+    const k = comNorm(l.designation) || '—', x = parArticle[k] ||= { lib:l.designation || '—', unite:l.unite || a?.unite || '', q:0, ca:0, cout:0, connu:true }
+    x.q += q; x.ca += v
+    if (a && +a.prix_achat > 0) { const c = q * (+a.prix_achat); x.cout += c; coutConnu += c; venteCouverte += v; if ((+l.prix_unitaire || 0) < +a.prix_achat) lignesNeg++ }
+    else x.connu = false
+  })
+  const marge = venteCouverte - coutConnu, tauxMarge = pilPct(marge, venteCouverte)
+  const topArticles = Object.values(parArticle).sort((a, b) => b.ca - a.ca).slice(0, 10)
+
+  // ── Encaissements, créances, recouvrement ──
+  const reglC = d.regl.filter(r => /client/i.test(r.tiers_type || '') && dans(r.date_paiement))
+  const encaisse = somme(reglC, 'montant_paye') || somme(facP, 'montant_paye')
+  const ouvertes = factures.map(f => ({ f, reste:Math.max(0, (+f.montant_ttc || 0) - (+f.montant_paye || 0)), age:comJours(f.date_echeance || f.date_doc, today()) })).filter(x => x.reste > 0.5)
+  const creances = ouvertes.reduce((s, x) => s + x.reste, 0)
+  const dso = ca > 0 ? Math.round(creances / ca * longueur) : null
+  const tranches = [['0-30 j', x => x.age <= 30], ['31-60 j', x => x.age > 30 && x.age <= 60], ['61-90 j', x => x.age > 60 && x.age <= 90], ['Plus de 90 j', x => x.age > 90]]
+    .map(([l, f]) => ({ l, v:ouvertes.filter(f).reduce((s, x) => s + x.reste, 0), n:ouvertes.filter(f).length }))
+  const echues = ouvertes.filter(x => x.f.date_echeance && x.f.date_echeance < today())
+  const debiteurs = {}; ouvertes.forEach(x => { debiteurs[x.f.client_id || '—'] = (debiteurs[x.f.client_id || '—'] || 0) + x.reste })
+  const topDebiteurs = Object.entries(debiteurs).map(([id, v]) => ({ nom:nomT(d.clients.find(c => String(c.id) === String(id))), v })).sort((a, b) => b.v - a.v).slice(0, 8)
+
+  // ── Ventes ──
+  const parMois = {}, parMoisAvant = {}
+  facP.forEach(f => { const m = String(f.date_doc).slice(0, 7); parMois[m] = (parMois[m] || 0) + (+f.montant_ttc || 0) })
+  factures.filter(f => dans(f.date_doc, comJour(du, -365), comJour(au, -365))).forEach(f => { const m = comJour(String(f.date_doc).slice(0, 10), 365).slice(0, 7); parMoisAvant[m] = (parMoisAvant[m] || 0) + (+f.montant_ttc || 0) })
+  const mois = Object.keys({ ...parMois, ...parMoisAvant }).sort()
+  const maxMois = Math.max(1, ...mois.map(m => Math.max(parMois[m] || 0, parMoisAvant[m] || 0)))
+  const parClient = {}; facP.forEach(f => { parClient[f.client_id || '—'] = (parClient[f.client_id || '—'] || 0) + (+f.montant_ttc || 0) })
+  const topClients = Object.entries(parClient).map(([id, v]) => ({ nom:nomT(d.clients.find(c => String(c.id) === String(id))), v })).sort((a, b) => b.v - a.v).slice(0, 10)
+  const panier = facP.length ? ca / facP.length : 0
+  const proformas = valides.filter(x => x.type_doc === 'proforma' && dans(x.date_doc))
+  const tauxTransfo = pilPct(facP.length, proformas.length)
+
+  // ── Achats & fournisseurs ──
+  const achatsP = d.bons.filter(b => b.type === 'entree' && /achat/i.test(b.motif || 'achat') && dans(b.date_bon))
+  const achats = somme(achatsP, 'total')
+  const parFrs = {}; achatsP.forEach(b => { parFrs[b.tiers || '—'] = (parFrs[b.tiers || '—'] || 0) + (+b.total || 0) })
+  const topFrs = Object.entries(parFrs).map(([nom, v]) => ({ nom, v })).sort((a, b) => b.v - a.v).slice(0, 8)
+  const bcs = valides.filter(x => x.type_doc === 'bon_commande')
+  const dettes = bcs.reduce((s, x) => s + Math.max(0, (+x.montant_ttc || 0) - (+x.montant_paye || 0)), 0)
+  const dettesEchues = bcs.filter(x => x.date_echeance && x.date_echeance < today()).reduce((s, x) => s + Math.max(0, (+x.montant_ttc || 0) - (+x.montant_paye || 0)), 0)
+  // Évolution du prix d'achat : premier et dernier prix des entrées « achat » de la période.
+  const prixArt = {}
+  d.mvts.filter(m => m.type === 'entree' && /achat/i.test(m.motif || '') && dans(m.date_mvt) && +m.prix_unitaire > 0).sort((a, b) => String(a.date_mvt).localeCompare(String(b.date_mvt)))
+    .forEach(m => { const x = prixArt[m.article_id] ||= { premier:+m.prix_unitaire, dernier:+m.prix_unitaire, q:0 }; x.dernier = +m.prix_unitaire; x.q += +m.quantite || 0 })
+  const evolPrix = Object.entries(prixArt).map(([id, x]) => ({ a:d.articles.find(a => String(a.id) === String(id)), ...x, ev:comEvol(x.dernier, x.premier) }))
+    .filter(x => x.a).sort((a, b) => b.q - a.q).slice(0, 6)
+
+  // ── Stock ──
+  const arts = d.articles.filter(a => a.actif !== false)
+  const valeurStock = arts.reduce((s, a) => s + (+a.stock_actuel || 0) * (+a.prix_achat || 0), 0)
+  const sortiesP = {}; d.mvts.filter(m => m.type === 'sortie' && dans(m.date_mvt)).forEach(m => { sortiesP[m.article_id] = (sortiesP[m.article_id] || 0) + (+m.quantite || 0) })
+  const derniereSortie = {}; d.mvts.filter(m => m.type === 'sortie').forEach(m => { if (!derniereSortie[m.article_id] || m.date_mvt > derniereSortie[m.article_id]) derniereSortie[m.article_id] = m.date_mvt })
+  const rotation = arts.filter(a => +a.stock_actuel > 0).map(a => { const parJour = (sortiesP[a.id] || 0) / longueur
+    return { a, jours:parJour > 0 ? Math.round((+a.stock_actuel) / parJour) : null, v:(+a.stock_actuel) * (+a.prix_achat || 0) } })
+  const coutVentes = Object.entries(sortiesP).reduce((s, [id, q]) => s + q * (+arts.find(a => String(a.id) === String(id))?.prix_achat || 0), 0)
+  const joursStock = coutVentes > 0 ? Math.round(valeurStock / (coutVentes / longueur)) : null
+  const ruptures = arts.filter(a => (+a.stock_actuel || 0) <= 0), sousMin = arts.filter(a => +a.stock_min > 0 && +a.stock_actuel > 0 && +a.stock_actuel <= +a.stock_min)
+  const dormants = rotation.filter(x => { const ds = derniereSortie[x.a.id]; return !ds || comJours(ds, today()) > 90 })
+  const valeurDormante = dormants.reduce((s, x) => s + x.v, 0)
+
+  // ── Trésorerie ──
+  const solde = arr => arr.reduce((s, r) => s + (r.type_operation === 'entree' ? 1 : -1) * (+r.montant || 0), 0)
+  const comptes = [['Caisse', d.caisse, 'journal_caisse'], ['Banque', d.banque, 'journal_banque'], ['Mobile money', d.mobile, 'journal_mobile']].map(([l, arr, page]) => ({ l, page, s:solde(arr) }))
+  const treso = comptes.reduce((s, c) => s + c.s, 0)
+  const flux = {}
+  ;[...d.caisse, ...d.banque, ...d.mobile].filter(r => dans(r.date_operation)).forEach(r => { const m = String(r.date_operation).slice(0, 7), x = flux[m] ||= { e:0, s:0 }
+    if (r.type_operation === 'entree') x.e += +r.montant || 0; else x.s += +r.montant || 0 })
+  const moisFlux = Object.keys(flux).sort(), maxFlux = Math.max(1, ...moisFlux.map(m => Math.max(flux[m].e, flux[m].s)))
+  const seuilT = parseFloat(String(seuilTreso).replace(',', '.')) || 0
+
+  // ── Alertes ──
+  const alertes = [
+    ruptures.length && ['Stock en rupture ou négatif', `${ruptures.length} article(s)`, 'stock'],
+    sousMin.length && ['Stock sous le minimum', `${sousMin.length} article(s)`, 'stock'],
+    tranches[3].v > 0 && ['Créances de plus de 90 jours', fcfa(tranches[3].v), 'reglements_clients'],
+    lignesNeg && ['Ventes sous le prix d\'achat', `${lignesNeg} ligne(s) de facture`, 'commercial'],
+    seuilT > 0 && treso < seuilT && ['Trésorerie sous le seuil', `${fcfa(treso)} pour ${fcfa(seuilT)}`, 'journal_caisse'],
+    dettesEchues > 0 && ['Dettes fournisseurs échues', fcfa(dettesEchues), 'reglements_fourn'],
+  ].filter(Boolean)
+
+  // ── Exports ──
+  const periodeTxt = `du ${dateDoc(du)} au ${dateDoc(au)} (comparé au ${dateDoc(pDu)} – ${dateDoc(pAu)})`
+  const evTxt = v => v == null ? '' : ` (${v > 0 ? '+' : ''}${String(v).replace('.', ',')} %)`
+  const kpis = [['Chiffre d\'affaires', fcfa(ca) + evTxt(comEvol(ca, caAvant))], ['Marge brute', `${fcfa(marge)} (${pilTxtPct(tauxMarge)})`], ['Encaissements', fcfa(encaisse)],
+    ['Créances clients', `${fcfa(creances)}${dso != null ? ` — délai moyen ${dso} j` : ''}`], ['Trésorerie', fcfa(treso)], ['Valeur du stock', `${fcfa(valeurStock)}${joursStock != null ? ` — ${joursStock} j de stock` : ''}`],
+    ['Factures', String(facP.length)], ['Panier moyen', fcfa(panier)], ['Taux proformas → factures', pilTxtPct(tauxTransfo)], ['Achats', fcfa(achats)], ['Dettes fournisseurs', fcfa(dettes)],
+    ['Articles dormants (> 90 j)', `${dormants.length} — ${fcfa(valeurDormante)}`]]
+  const exporterExcel = async () => {
+    const XLSX = await import('https://cdn.sheetjs.com/xlsx-0.20.0/package/xlsx.mjs')
+    const wb = XLSX.utils.book_new(), feuille = (nom, aoa) => XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([[`Tableau de bord commercial — ${company?.raison_sociale || ''}`], [periodeTxt], [], ...aoa]), nom)
+    feuille('Indicateurs', [['Indicateur', 'Valeur'], ...kpis])
+    feuille('Ventes par article', [['Article', 'Quantité', 'Unité', 'CA', 'Coût', 'Marge', 'Taux %'], ...Object.values(parArticle).map(x => [x.lib, x.q, x.unite, Math.round(x.ca), x.connu ? Math.round(x.cout) : '', x.connu ? Math.round(x.ca - x.cout) : '', x.connu ? pilPct(x.ca - x.cout, x.ca) : ''])])
+    feuille('Clients', [['Client', 'CA'], ...topClients.map(x => [x.nom, Math.round(x.v)]), [], ['Client débiteur', 'Reste dû'], ...topDebiteurs.map(x => [x.nom, Math.round(x.v)])])
+    feuille('Balance âgée', [['Tranche', 'Factures', 'Montant'], ...tranches.map(x => [x.l, x.n, Math.round(x.v)])])
+    feuille('Stock', [['Article', 'Stock', 'Unité', 'Valeur', 'Jours de stock', 'Dernière sortie'], ...rotation.map(x => [x.a.designation, +x.a.stock_actuel, x.a.unite || '', Math.round(x.v), x.jours ?? '', derniereSortie[x.a.id] || ''])])
+    feuille('Trésorerie', [['Compte', 'Solde'], ...comptes.map(c => [c.l, Math.round(c.s)]), [], ['Mois', 'Encaissements', 'Décaissements'], ...moisFlux.map(m => [m, Math.round(flux[m].e), Math.round(flux[m].s)])])
+    XLSX.writeFile(wb, `tableau_de_bord_commercial_${today()}.xlsx`)
+  }
+  const imprimer = () => printFilteredList({ title:'Tableau de bord commercial — indicateurs clés', subtitle:periodeTxt, companyName:company?.raison_sociale || '',
+    headers:[{ label:'Indicateur', w:55 }, { label:'Valeur', w:45, r:true }], rows:kpis.map(([l, v]) => [echapHtml(l), echapHtml(v)]), totals:alertes.map(([l, v]) => ({ label:'⚠ ' + l, value:v })), filename:`tableau_de_bord_commercial_${today()}` })
+
+  // ── Rendu ──
+  const champ = { padding:'7px 10px', borderRadius:8, border:'1px solid #d1d5db', fontSize:13, background:'white' }
+  const tuile = (lib, valeur, sous, page, alerte, ev) => (
+    <div key={lib} onClick={page ? ()=>setPage(page) : undefined} title={sous}
+      style={{ background:'white', borderRadius:12, border:'1px solid ' + (alerte ? '#fecaca' : '#e2e8f0'), padding:'14px 16px', cursor:page ? 'pointer' : 'default', minWidth:0 }}>
+      <div style={{ fontSize:11.5, color:'#64748b', fontWeight:600, textTransform:'uppercase', letterSpacing:.3 }}>{lib}</div>
+      <div style={{ fontSize:21, fontWeight:800, color:'#0f172a', margin:'4px 0 2px', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{valeur}</div>
+      <div style={{ fontSize:11.5, color:alerte ? '#b91c1c' : '#64748b' }}>
+        {ev != null && <span style={{ fontWeight:700, color:ev >= 0 ? '#166534' : '#b91c1c', marginRight:4 }}>{ev >= 0 ? '▲' : '▼'} {String(Math.abs(ev)).replace('.', ',')} %</span>}{sous}</div>
+    </div>
+  )
+  const moisLib = m => new Date(m + '-01T00:00:00').toLocaleDateString('fr-FR', { month:'short', year:'2-digit' })
+  return (
+    <div>
+      <PageHeader title="Tableau de bord commercial" subtitle={`${company?.raison_sociale || ''} — achats, ventes, marge et encaissements`}
+        actions={<><Btn sm variant="danger" onClick={imprimer}>🖨️ PDF</Btn><Btn sm variant="success" onClick={exporterExcel}>📊 Excel</Btn></>} />
+      <div style={{ display:'flex', gap:10, flexWrap:'wrap', alignItems:'center', background:'white', border:'1px solid #e2e8f0', borderRadius:12, padding:'10px 14px', marginBottom:16 }}>
+        <span style={{ fontSize:13, fontWeight:600 }}>Période du</span><input type="date" style={champ} value={du} onChange={e=>e.target.value && setDu(e.target.value)} />
+        <span style={{ fontSize:13 }}>au</span><input type="date" style={champ} value={au} onChange={e=>e.target.value && setAu(e.target.value)} />
+        <span style={{ fontSize:11.5, color:'#64748b' }}>Comparée au {dateDoc(pDu)} – {dateDoc(pAu)}</span>
+        <span style={{ fontSize:12.5, marginLeft:'auto' }}>Seuil de trésorerie</span>
+        <input style={{ ...champ, width:120 }} inputMode="numeric" placeholder="FCFA" value={seuilTreso} onChange={e=>{ setSeuilTreso(e.target.value); try { localStorage.setItem('com_seuil_treso', e.target.value) } catch { /* stockage indisponible */ } }} />
+      </div>
+
+      {alertes.length > 0 && <div style={{ display:'flex', gap:8, flexWrap:'wrap', marginBottom:16 }}>
+        {alertes.map(([l, v, p]) => <button key={l} onClick={()=>setPage(p)} style={{ display:'inline-flex', gap:6, alignItems:'center', padding:'7px 12px', borderRadius:20, border:'1px solid #fecaca', background:'#fef2f2', color:'#991b1b', fontSize:12.5, fontWeight:600, cursor:'pointer' }}>⚠️ {l} : {v}</button>)}
+      </div>}
+
+      <div style={{ display:'grid', gridTemplateColumns:isMobile ? 'repeat(2,1fr)' : 'repeat(6,1fr)', gap:12, marginBottom:16 }}>
+        {tuile('Chiffre d\'affaires', fcfa(ca), `${facP.length} facture(s)`, 'commercial', false, comEvol(ca, caAvant))}
+        {tuile('Marge brute', fcfa(marge), `taux ${pilTxtPct(tauxMarge)}${venteCouverte < ca * 0.95 && ca > 0 ? ` · sur ${pilTxtPct(pilPct(venteCouverte, ca))} des ventes` : ''}`, 'commercial', marge < 0)}
+        {tuile('Encaissements', fcfa(encaisse), `${pilTxtPct(pilPct(encaisse, ca))} du CA`, 'reglements_clients')}
+        {tuile('Créances clients', fcfa(creances), dso != null ? `délai moyen ${dso} jours` : 'aucune vente', 'reglements_clients', tranches[3].v > 0)}
+        {tuile('Trésorerie', fcfa(treso), 'caisse + banque + mobile', 'journal_caisse', seuilT > 0 && treso < seuilT)}
+        {tuile('Valeur du stock', fcfa(valeurStock), joursStock != null ? `${joursStock} jours de stock` : `${ruptures.length} rupture(s)`, 'stock', ruptures.length > 0)}
+      </div>
+
+      <div style={{ display:'grid', gridTemplateColumns:isMobile ? '1fr' : 'repeat(2, minmax(0,1fr))', gap:16 }}>
+        <PilBloc titre="Ventes par mois" icone="📈" page="commercial" setPage={setPage}>
+          <div style={{ display:'flex', gap:14, fontSize:11.5, color:'#475569', marginBottom:6 }}>
+            <span><span style={{ display:'inline-block', width:10, height:10, borderRadius:2, background:PIL_VERT, marginRight:4 }} />Période</span>
+            <span><span style={{ display:'inline-block', width:10, height:10, borderRadius:2, background:'#cbd5e1', marginRight:4 }} />Même mois, année précédente</span>
+          </div>
+          {mois.length ? mois.map(m => <div key={m} title={`${moisLib(m)} : ${fcfa(parMois[m] || 0)} (année précédente : ${fcfa(parMoisAvant[m] || 0)})`} style={{ display:'grid', gridTemplateColumns:'64px 1fr auto', gap:8, alignItems:'center', padding:'3px 0' }}>
+            <span style={{ fontSize:12, color:'#334155' }}>{moisLib(m)}</span>
+            <div style={{ display:'grid', gap:2 }}>
+              <div style={{ height:9, width:`${(parMois[m] || 0) / maxMois * 100}%`, background:PIL_VERT, borderRadius:'0 4px 4px 0' }} />
+              <div style={{ height:5, width:`${(parMoisAvant[m] || 0) / maxMois * 100}%`, background:'#cbd5e1', borderRadius:'0 3px 3px 0' }} />
+            </div>
+            <span style={{ fontSize:12, fontWeight:600, textAlign:'right', minWidth:90 }}>{fcfa(parMois[m] || 0)}</span>
+          </div>) : <div style={{ fontSize:12.5, color:'#94a3b8' }}>Aucune facture sur la période.</div>}
+          <div style={{ marginTop:10 }}>
+            <PilLigne l="Panier moyen" v={fcfa(panier)} /><PilLigne l="Proformas émises" v={proformas.length} />
+            <PilLigne l="Taux de transformation proformas → factures" v={pilTxtPct(tauxTransfo)} />
+          </div>
+        </PilBloc>
+
+        <PilBloc titre="Articles les plus vendus" icone="🏷️" page="commercial" setPage={setPage}>
+          {topArticles.length ? <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12.5 }}>
+            <thead><tr>{['Article', 'Quantité', 'CA', 'Marge'].map((h, i) => <th key={h} style={{ textAlign:i ? 'right' : 'left', padding:'6px 8px', background:'#f1f5f9', color:'#475569', fontSize:11.5 }}>{h}</th>)}</tr></thead>
+            <tbody>{topArticles.map(x => { const mg = x.ca - x.cout, tx = pilPct(mg, x.ca)
+              return <tr key={x.lib} style={{ borderTop:'1px solid #f1f5f9' }}><td style={{ padding:'6px 8px' }}>{x.lib}</td><td style={{ padding:'6px 8px', textAlign:'right' }}>{nbFr(x.q)} {x.unite}</td>
+                <td style={{ padding:'6px 8px', textAlign:'right', fontWeight:600 }}>{fcfa(x.ca)}</td>
+                <td style={{ padding:'6px 8px', textAlign:'right', color:x.connu && mg < 0 ? '#b91c1c' : undefined }}>{x.connu ? `${x.connu && mg < 0 ? '⚠️ ' : ''}${pilTxtPct(tx)}` : <span style={{ color:'#94a3b8' }} title="Article introuvable ou sans prix d'achat">n.c.</span>}</td></tr> })}</tbody>
+          </table> : <div style={{ fontSize:12.5, color:'#94a3b8' }}>Aucune vente sur la période.</div>}
+          <div style={{ fontSize:11, color:'#64748b', marginTop:6 }}>Marge calculée avec le prix d'achat de l'article de même désignation (n.c. : non calculable).</div>
+        </PilBloc>
+
+        <PilBloc titre="Clients" icone="👥" page="clients" setPage={setPage}>
+          {topClients.length ? topClients.map(x => <PilBarre key={x.nom} label={x.nom} valeur={x.v} max={topClients[0].v} texte={fcfa(x.v)} />) : <div style={{ fontSize:12.5, color:'#94a3b8' }}>Aucune vente sur la période.</div>}
+        </PilBloc>
+
+        <PilBloc titre="Recouvrement des créances" icone="💳" page="reglements_clients" setPage={setPage}>
+          <div style={{ fontSize:11.5, color:'#64748b', marginBottom:4 }}>Balance âgée (depuis l'échéance, ou la date de facture)</div>
+          {tranches.map((x, i) => <PilBarre key={x.l} label={`${x.l} (${x.n})`} valeur={x.v} max={Math.max(1, ...tranches.map(y => y.v))} texte={fcfa(x.v)} alerte={i === 3 && x.v > 0} />)}
+          <PilLigne l="Factures échues non payées" v={`${echues.length} — ${fcfa(echues.reduce((s, x) => s + x.reste, 0))}`} />
+          {topDebiteurs.length > 0 && <><div style={{ fontSize:12, fontWeight:700, color:'#334155', margin:'10px 0 4px' }}>Clients les plus débiteurs</div>
+            {topDebiteurs.map(x => <PilBarre key={x.nom} label={x.nom} valeur={x.v} max={topDebiteurs[0].v} texte={fcfa(x.v)} />)}</>}
+        </PilBloc>
+
+        <PilBloc titre="Achats et fournisseurs" icone="🚚" page="reglements_fourn" setPage={setPage}>
+          <PilLigne l="Achats de la période (bons d'entrée)" v={fcfa(achats)} fort />
+          <PilLigne l="Dettes fournisseurs (bons de commande non payés)" v={fcfa(dettes)} />
+          <PilLigne l="Dont échues" v={dettesEchues > 0 ? <span style={{ color:'#b91c1c' }}>⚠️ {fcfa(dettesEchues)}</span> : fcfa(0)} />
+          {topFrs.length > 0 && <><div style={{ fontSize:12, fontWeight:700, color:'#334155', margin:'10px 0 4px' }}>Principaux fournisseurs</div>
+            {topFrs.map(x => <PilBarre key={x.nom} label={x.nom} valeur={x.v} max={topFrs[0].v} texte={fcfa(x.v)} />)}</>}
+          {evolPrix.length > 0 && <><div style={{ fontSize:12, fontWeight:700, color:'#334155', margin:'10px 0 4px' }}>Évolution du prix d'achat (période)</div>
+            {evolPrix.map(x => <PilLigne key={x.a.id} l={x.a.designation} v={<>{fcfa(x.premier)} → {fcfa(x.dernier)} {x.ev != null && x.ev !== 0 && <span style={{ color:x.ev > 0 ? '#b91c1c' : '#166534' }}>{x.ev > 0 ? '▲' : '▼'} {String(Math.abs(x.ev)).replace('.', ',')} %</span>}</>} />)}</>}
+        </PilBloc>
+
+        <PilBloc titre="Stock" icone="📦" page="stock" setPage={setPage}>
+          <PilLigne l="Valeur du stock" v={fcfa(valeurStock)} fort /><PilLigne l="Jours de stock (au rythme des sorties)" v={joursStock != null ? `${joursStock} j` : '—'} />
+          <div style={{ display:'flex', gap:8, flexWrap:'wrap', margin:'8px 0' }}>
+            <PilStatut ok={!ruptures.length} oui="Aucune rupture" non={`${ruptures.length} rupture(s)`} />
+            <PilStatut ok={!sousMin.length} oui="Aucun article sous le minimum" non={`${sousMin.length} sous le minimum`} />
+            <PilStatut ok={!dormants.length} oui="Aucun article dormant" non={`${dormants.length} dormant(s) : ${fcfa(valeurDormante)}`} />
+          </div>
+          {dormants.length > 0 && <><div style={{ fontSize:12, fontWeight:700, color:'#334155', margin:'6px 0 4px' }}>Articles dormants (aucune sortie depuis 90 jours)</div>
+            {dormants.sort((a, b) => b.v - a.v).slice(0, 6).map(x => <PilBarre key={x.a.id} label={x.a.designation} valeur={x.v} max={Math.max(1, dormants[0].v)} texte={fcfa(x.v)}
+              titre={`${x.a.designation} : ${nbFr(x.a.stock_actuel)} ${x.a.unite || ''}, dernière sortie ${derniereSortie[x.a.id] ? dateDoc(derniereSortie[x.a.id]) : 'jamais'}`} />)}</>}
+        </PilBloc>
+
+        <PilBloc titre="Trésorerie" icone="🏦" page="journal_caisse" setPage={setPage} large>
+          <div style={{ display:'grid', gridTemplateColumns:isMobile ? '1fr' : 'minmax(0,1fr) minmax(0,1.4fr)', gap:18 }}>
+            <div>{comptes.map(c => <PilLigne key={c.l} l={<span style={{ cursor:'pointer' }} onClick={()=>setPage(c.page)}>{c.l}</span>} v={<span style={{ color:c.s < 0 ? '#b91c1c' : undefined }}>{fcfa(c.s)}</span>} />)}
+              <PilLigne l="Total" v={fcfa(treso)} fort /></div>
+            <div>
+              <div style={{ display:'flex', gap:14, fontSize:11.5, color:'#475569', marginBottom:6 }}>
+                <span><span style={{ display:'inline-block', width:10, height:10, borderRadius:2, background:PIL_VERT, marginRight:4 }} />Encaissements</span>
+                <span><span style={{ display:'inline-block', width:10, height:10, borderRadius:2, background:'#94a3b8', marginRight:4 }} />Décaissements</span>
+              </div>
+              {moisFlux.length ? moisFlux.map(m => <div key={m} title={`${moisLib(m)} : +${fcfa(flux[m].e)} / −${fcfa(flux[m].s)}`} style={{ display:'grid', gridTemplateColumns:'64px 1fr auto', gap:8, alignItems:'center', padding:'3px 0' }}>
+                <span style={{ fontSize:12, color:'#334155' }}>{moisLib(m)}</span>
+                <div style={{ display:'grid', gap:2 }}>
+                  <div style={{ height:8, width:`${flux[m].e / maxFlux * 100}%`, background:PIL_VERT, borderRadius:'0 4px 4px 0' }} />
+                  <div style={{ height:8, width:`${flux[m].s / maxFlux * 100}%`, background:'#94a3b8', borderRadius:'0 4px 4px 0' }} />
+                </div>
+                <span style={{ fontSize:12, fontWeight:600, textAlign:'right', minWidth:110, color:flux[m].e - flux[m].s < 0 ? '#b91c1c' : '#0f172a' }}>{flux[m].e - flux[m].s >= 0 ? '+' : '−'}{fcfa(Math.abs(flux[m].e - flux[m].s))}</span>
+              </div>) : <div style={{ fontSize:12.5, color:'#94a3b8' }}>Aucune opération de trésorerie sur la période.</div>}
+            </div>
+          </div>
+        </PilBloc>
+      </div>
+    </div>
+  )
+}
+
+// Accueil : tableau de bord commercial ou de transformation selon le type d'activité.
+function TableauDeBordAccueil(props) {
+  const company = props.companies.find(c => c.id === props.companyId)
+  return company?.type_activite === 'commerciale' ? <ComDashboard {...props} /> : <PilotagePage {...props} />
+}
+
 function Dashboard({ companyId, toast, setPage }) {
   const [stats, setStats]   = useState(null)
   const [loading, setLoading] = useState(true)
@@ -4047,8 +4348,8 @@ function CompaniesPage({ companies, refresh, toast, isSuperAdmin=false, currentU
             <Input label="Téléphone" name="tel" type="tel" value={form.tel} onChange={setTel} />
             <Span2><Input label="Adresse" name="adresse" value={form.adresse} onChange={set} /></Span2>
             <Input label="Email" name="email" type="email" value={form.email} onChange={set} />
-            <Sel label="Type d'activité (pour l'IS)" name="type_activite" value={form.type_activite||'industrielle'} onChange={set}
-              options={[{value:'industrielle',label:'Industrielle (IS 25%)'},{value:'commerciale',label:'Commerciale (IS 30%)'}]} />
+            <Sel label="Type d'activité (IS et tableau de bord)" name="type_activite" value={form.type_activite||'industrielle'} onChange={set}
+              options={[{value:'industrielle',label:'Industrielle / transformation (IS 25%) — tableau de bord de transformation'},{value:'commerciale',label:'Commerciale (IS 30%) — tableau de bord commercial'}]} />
             <Span2>
               <div style={{marginBottom:4}}>
                 <label style={{fontSize:12,fontWeight:600,color:'#374151',display:'block',marginBottom:6}}>Logo de l'entreprise</label>
@@ -28624,7 +28925,7 @@ export default function ComptaPro() {
         {...sp} lots={lots} fields={s.fields} setPage={setPage} />
     }
     switch (page) {
-      case 'dashboard':     return sp.companyId ? <PilotagePage {...sp} setPage={setPage} /> : <Dashboard {...sp} setPage={setPage} />
+      case 'dashboard':     return sp.companyId ? <TableauDeBordAccueil {...sp} setPage={setPage} /> : <Dashboard {...sp} setPage={setPage} />
       case 'companies':     return <CompaniesPage companies={companies} refresh={loadCompanies} toast={toast} isSuperAdmin={isSuperAdmin} currentUserId={user?.id} />
       case 'clients':       return <TiersPage table="compta_clients" title="Clients" titleSingle="Client" icon="👥" {...sp}
                               extraFields={{ names:[], headers:[], fields:[], defaults:{type:'physique',nom_societe:''} }} />
