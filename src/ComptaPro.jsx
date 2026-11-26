@@ -15332,6 +15332,8 @@ const STATUTS_ENVOI = { envoye:['Chez l\'étuveuse','info'], partiel:['Retour pa
 
 function EtvEnvoisPage({ companies, companyId, toast, readOnly=false }) {
   const [d, setD] = useState({ envois:[], retours:[], etuveuses:[], lots:[], loading:true, erreur:false })
+  // Producteurs d'origine : paddy reçu (remboursements FRIA + achats hors FRIA) et déjà envoyé.
+  const [prod, setProd] = useState({ liste:[], parEnvoi:{} })
   const [filtre, setFiltre] = useState({ lot:'', etuveuse:'', statut:'en_cours' })
   const [form, setForm] = useState(null)      // envoi en saisie
   const [retour, setRetour] = useState(null)  // retour en saisie
@@ -15350,6 +15352,19 @@ function EtvEnvoisPage({ companies, companyId, toast, readOnly=false }) {
     ])
     setD({ envois:e||[], retours:r||[], etuveuses:et||[], lots:l||[], loading:false, erreur:estErreurEnvois(ee)||estErreurEnvois(er) })
     setOrig(await chargerOriginesLots(companyId, (l||[]).map(x=>x.id)))
+    const [{ data:frs }, { data:fria }, { data:lag }, { data:og }] = await Promise.all([
+      fetchAllRows(() => supabase.from('compta_fournisseurs').select('id,type,nom,prenom,nom_societe,code_trace,commune,village,categorie').eq('company_id', companyId).eq('actif', true).order('id')),
+      fetchAllRows(() => supabase.from('compta_fria_mouvements').select('id,fournisseur_id,quantite_kg').eq('company_id', companyId).eq('type', 'remboursement').order('id')),
+      fetchAllRows(() => supabase.from('compta_achats_groupes_lignes').select('id,fournisseur_id,quantite_kg').eq('company_id', companyId).order('id')),
+      fetchAllRows(() => supabase.from('compta_lot_origines').select('id,lot_id,fournisseur_id,producteur_nom,quantite_kg,reference').eq('company_id', companyId).like('reference', 'ENV-%').order('id')),
+    ])
+    const recu = {}, envoye = {}, parEnvoi = {}
+    ;[...(fria||[]), ...(lag||[])].forEach(x => { if (x.fournisseur_id && +x.quantite_kg > 0) recu[x.fournisseur_id] = (recu[x.fournisseur_id]||0) + (+x.quantite_kg) })
+    ;(og||[]).forEach(o => { if (o.fournisseur_id) envoye[o.fournisseur_id] = (envoye[o.fournisseur_id]||0) + (+o.quantite_kg||0); (parEnvoi[o.reference] = parEnvoi[o.reference] || []).push(o) })
+    const liste = (frs||[]).filter(f => recu[f.id] > 0 || envoye[f.id] > 0).map(f => ({ ...f, recu:recu[f.id]||0, envoye:envoye[f.id]||0,
+      nomAff:(f.type === 'morale' ? f.nom_societe : [f.nom, f.prenom].filter(Boolean).join(' ')) || '—' }))
+      .sort((a, b) => a.nomAff.localeCompare(b.nomAff, 'fr'))
+    setProd({ liste, parEnvoi })
   }, [companyId])
   useEffect(() => { charger() }, [charger])
 
@@ -15362,21 +15377,35 @@ function EtvEnvoisPage({ companies, companyId, toast, readOnly=false }) {
     const envoye = d.envois.filter(e => String(e.lot_id) === String(lotId) && !e.annule && e.id !== sauf).reduce((t,e)=>t+(+e.quantite_envoyee_kg||0),0)
     return Math.round((+lot.qte_paddy_entree - envoye) * 1000) / 1000
   }
+  const prodDe = id => prod.liste.find(x => String(x.id) === String(id))
+  // Paddy d'un producteur pas encore envoyé (sans compter l'envoi en cours de modification).
+  const resteProd = (id, numeroSauf) => { const p = prodDe(id); if (!p) return 0
+    const deja = numeroSauf ? (prod.parEnvoi[numeroSauf]||[]).filter(o => String(o.fournisseur_id) === String(id)).reduce((s,o)=>s+(+o.quantite_kg||0),0) : 0
+    return Math.round((p.recu - p.envoye + deja) * 1000) / 1000 }
+  const libProd = p => `${p.code_trace ? p.code_trace + ' — ' : ''}${p.nomAff}`
+  const originesEnvoi = env => (prod.parEnvoi[env.numero] || [])
+  const totalOrigines = f => Math.round((f.origines||[]).reduce((s,o)=>s+(parseFloat(String(o.kg).replace(',','.'))||0),0) * 1000) / 1000
   // Paddy actuellement chez une étuveuse (envoyé, pas encore rendu).
   const enCoursChez = (etvId, sauf) => d.envois.filter(e => String(e.etuveuse_id) === String(etvId) && !e.annule && e.id !== sauf).reduce((t,e)=>t+sit(e).restant,0)
 
   const nouveau = () => {
     if (!companyId) { toast.error("Sélectionnez une société précise (en haut de l'écran)."); return }
     if (d.erreur) { toast.error(MSG_SCRIPT_ENVOIS); return }
-    setForm({ lot_id:filtre.lot||'', etuveuse_id:filtre.etuveuse||'', date_envoi:today(), quantite_envoyee_kg:'', vehicule:'', convoyeur:'', commentaire:'' })
+    setForm({ lot_id:'', etuveuse_id:filtre.etuveuse||'', date_envoi:today(), quantite_envoyee_kg:'', vehicule:'', convoyeur:'', commentaire:'', origines:[{ fournisseur_id:'', kg:'' }] })
   }
   const enregistrerEnvoi = async e => {
     e.preventDefault()
-    const q = parseFloat(String(form.quantite_envoyee_kg).replace(',','.')) || 0
+    const origines = (form.origines||[]).filter(o => o.fournisseur_id || String(o.kg).trim() || String(o.texte||'').trim())
+      .map(o => ({ fournisseur_id:o.fournisseur_id, kg:Math.round((parseFloat(String(o.kg).replace(',','.'))||0) * 1000) / 1000 }))
     if (!form.etuveuse_id) return toast.error("Choisissez l'étuveuse.")
-    if (!(q > 0)) return toast.error('Saisissez la quantité de paddy envoyée.')
-    const reste = form.lot_id ? resteLotEnvoi(form.lot_id, form.id) : null
-    if (reste != null && q > reste + 0.001 && !confirm(`La quantité (${fmtKg(q)}) dépasse le paddy du lot pas encore envoyé (${fmtKg(reste)}). Continuer ?`)) return
+    if (origines.some(o => !o.fournisseur_id || !(o.kg > 0))) return toast.error('Chaque ligne « Producteur d\'origine » doit avoir un producteur et une quantité.')
+    const ids = origines.map(o => String(o.fournisseur_id))
+    if (new Set(ids).size !== ids.length) return toast.error('Un même producteur est saisi deux fois : regroupez ses quantités sur une seule ligne.')
+    const q = origines.length ? origines.reduce((s,o)=>s+o.kg,0) : (parseFloat(String(form.quantite_envoyee_kg).replace(',','.')) || 0)
+    if (!(q > 0)) return toast.error('Ajoutez les producteurs d\'origine et leurs quantités.')
+    if (!origines.length && !confirm("Aucun producteur d'origine : le paddy de cet envoi ne pourra pas être retracé jusqu'au producteur. Continuer ?")) return
+    const depasse = origines.filter(o => o.kg > resteProd(o.fournisseur_id, form.numero) + 0.001)
+    if (depasse.length && !confirm(`Quantité supérieure au paddy reçu et pas encore envoyé :\n${depasse.map(o => `• ${libProd(prodDe(o.fournisseur_id)||{nomAff:'?'})} : ${fmtKg(o.kg)} (reste ${fmtKg(resteProd(o.fournisseur_id, form.numero))})`).join('\n')}\n\nContinuer ?`)) return
     const cap = +etvDe(form.etuveuse_id).capacite_kg || 0
     if (cap > 0 && enCoursChez(form.etuveuse_id, form.id) + q > cap && !confirm(`Avec cet envoi, l'étuveuse aurait ${fmtKg(enCoursChez(form.etuveuse_id, form.id) + q)} en cours, au-delà de sa capacité (${fmtKg(cap)}). Continuer ?`)) return
     setSaving(true)
@@ -15387,18 +15416,38 @@ function EtvEnvoisPage({ companies, companyId, toast, readOnly=false }) {
       const nums = d.envois.map(x => String(x.numero||'').match(new RegExp(`^ENV-${an}-(\\d+)$`))).filter(Boolean).map(m => parseInt(m[1],10))
       numero = `ENV-${an}-${String((nums.length ? Math.max(...nums) : 0) + 1).padStart(3,'0')}`
     }
-    const pay = { company_id:companyId, numero, lot_id:form.lot_id||null, etuveuse_id:form.etuveuse_id, date_envoi:form.date_envoi,
+    // Lot de l'envoi, créé automatiquement (LOT-ENV-AAAA-NNN) : il relie les producteurs
+    // d'origine à l'étuvage, au riz étuvé obtenu puis à sa vente.
+    let lotId = form.lot_id || null, lotCree = null
+    const lotPropre = lotId && lotDe(lotId).numero_lot === `LOT-${numero}`
+    if (!lotId) {
+      const { data:lot, error:el } = await supabase.from('compta_lots_production').insert({ company_id:companyId, user_id:uid, numero_lot:`LOT-${numero}`,
+        date_debut:form.date_envoi, qte_paddy_entree:q, statut:'en_cours', notes:`Paddy de l'envoi à l'étuvage ${numero}` }).select('id').single()
+      if (el) { setSaving(false); return toast.error('Lot non créé : ' + el.message) }
+      lotId = lot.id; lotCree = lot.id
+      await attribuerCodeTrace('compta_lots_production', lot.id, companyId, 'L', { annee:String(form.date_envoi).slice(0,4) })
+    } else if (lotPropre) await supabase.from('compta_lots_production').update({ qte_paddy_entree:q }).eq('id', lotId)
+    const pay = { company_id:companyId, numero, lot_id:lotId, etuveuse_id:form.etuveuse_id, date_envoi:form.date_envoi,
       quantite_envoyee_kg:q, vehicule:form.vehicule||null, convoyeur:form.convoyeur||null, commentaire:form.commentaire||null }
     // Le paddy confié sort du stock (bon de sortie BS-…) ; une modification
     // annule l'ancienne sortie et repasse la nouvelle quantité.
-    const cle = `ENV:${numero}`, etv = etvDe(form.etuveuse_id), lot = lotDe(form.lot_id)
+    const cle = `ENV:${numero}`, etv = etvDe(form.etuveuse_id), lot = lotDe(lotId).numero_lot ? lotDe(lotId) : { numero_lot:`LOT-${numero}` }
     if (form.id) await annulerBonsStockAuto(companyId, cle)
     const sortie = await sortiePaddyEtuvage({ companyId, uid, quantite:q, date:form.date_envoi, tiers:`Étuveuse ${etv.nom_etuveuse||''}`.trim(), cle, toast,
       observations:`Envoi à l'étuvage ${numero}${lot.numero_lot ? ` — lot ${lot.numero_lot}` : ''}` })
-    if (!sortie.ok) { setSaving(false); return }
+    if (!sortie.ok) { if (lotCree) await supabase.from('compta_lots_production').delete().eq('id', lotCree); setSaving(false); return }
     const { data:insEnv, error } = form.id ? await supabase.from('compta_envois_etuveuses').update(pay).eq('id', form.id)
                               : await supabase.from('compta_envois_etuveuses').insert({ ...pay, user_id:uid }).select('id').single()
-    if (error) { setSaving(false); await annulerBonsStockAuto(companyId, cle); return toast.error(estErreurEnvois(error) ? MSG_SCRIPT_ENVOIS : error.message) }
+    if (error) { setSaving(false); await annulerBonsStockAuto(companyId, cle); if (lotCree) await supabase.from('compta_lots_production').delete().eq('id', lotCree)
+      return toast.error(estErreurEnvois(error) ? MSG_SCRIPT_ENVOIS : error.message) }
+    // Producteurs d'origine de l'envoi (référence = n° d'envoi) : remplacés à chaque enregistrement.
+    await supabase.from('compta_lot_origines').delete().eq('company_id', companyId).eq('reference', numero)
+    if (origines.length) {
+      const { error:eo } = await supabase.from('compta_lot_origines').insert(origines.map(o => { const p = prodDe(o.fournisseur_id) || {}
+        return { company_id:companyId, user_id:uid, lot_id:lotId, fournisseur_id:o.fournisseur_id, producteur_nom:libProd({ ...p, nomAff:p.nomAff||'' }),
+          quantite_kg:o.kg, date_reception:form.date_envoi, reference:numero, observations:`Envoi à l'étuvage ${numero}` } }))
+      if (eo) toast.error(`Envoi enregistré, mais les producteurs d'origine n'ont pas été enregistrés : ${eo.message}`)
+    }
     // Code du passage : nouveau, ou recalculé si le lot ou l'étuveuse a changé.
     const avant = form.id ? d.envois.find(x => x.id === form.id) : null
     let codeTrace = avant?.code_trace || null
@@ -15409,8 +15458,9 @@ function EtvEnvoisPage({ companies, companyId, toast, readOnly=false }) {
     setSaving(false)
     toast.success(`Envoi ${numero} enregistré${sortie.numero ? ` — ${fmtKg(q)} de paddy sortis du stock (bon ${sortie.numero})` : sortie.sansStock ? ' (sans sortie de stock)' : ''}.`)
     const cree = { ...pay, id:form.id || insEnv?.id, code_trace:codeTrace }
+    const lignesOrig = origines.map(o => { const p = prodDe(o.fournisseur_id) || {}; return { fournisseur_id:o.fournisseur_id, producteur_nom:libProd({ ...p, nomAff:p.nomAff||'' }), quantite_kg:o.kg } })
     setForm(null); charger()
-    if (!form.id) imprimerBonEnvoi(cree)
+    if (!form.id) imprimerBonEnvoi(cree, lignesOrig, lot)
   }
 
   const nouveauRetour = envoi => {
@@ -15471,13 +15521,23 @@ function EtvEnvoisPage({ companies, companyId, toast, readOnly=false }) {
     await supabase.from('compta_retours_etuveuses').delete().eq('id', r.id)
     toast.success('Retour supprimé (et son entrée de riz étuvé en stock annulée).'); charger()
   }
+  // Origines de l'envoi et lot créé pour lui (LOT-ENV-…) supprimés avec l'envoi.
+  const supprimerLotEnvoi = async env => {
+    await supabase.from('compta_lot_origines').delete().eq('company_id', companyId).eq('reference', env.numero)
+    if (env.lot_id && lotDe(env.lot_id).numero_lot === `LOT-${env.numero}`) {
+      const { data:autres } = await supabase.from('compta_envois_etuveuses').select('id').eq('lot_id', env.lot_id).limit(1)
+      const { data:etu } = await supabase.from('compta_etuvage').select('id').eq('lot_id', env.lot_id).limit(1)
+      if (!autres?.length && !etu?.length) await supabase.from('compta_lots_production').delete().eq('id', env.lot_id)
+    }
+  }
   const supprimerEnvoi = async env => {
     const s = sit(env)
     if (s.retours.length) { if (!confirm(`L'envoi ${env.numero} a ${s.retours.length} retour(s). L'annuler ? (les retours et cycles d'étuvage sont conservés)`)) return
       await supabase.from('compta_envois_etuveuses').update({ annule:true }).eq('id', env.id) }
     else { if (!confirm(`Supprimer l'envoi ${env.numero} ? Le paddy sorti du stock pour cet envoi y sera remis.`)) return
       await annulerBonsStockAuto(companyId, `ENV:${env.numero}`)
-      await supabase.from('compta_envois_etuveuses').delete().eq('id', env.id) }
+      await supabase.from('compta_envois_etuveuses').delete().eq('id', env.id)
+      await supprimerLotEnvoi(env) }
     charger()
   }
   // Envoi annulé : le rétablir (erreur d'annulation) ou le supprimer pour de bon,
@@ -15499,17 +15559,19 @@ function EtvEnvoisPage({ companies, companyId, toast, readOnly=false }) {
     if (s.retours.length) await supabase.from('compta_retours_etuveuses').delete().eq('envoi_id', env.id)
     const { error } = await supabase.from('compta_envois_etuveuses').delete().eq('id', env.id)
     if (error) return toast.error(error.message)
+    await supprimerLotEnvoi(env)
     toast.success(`Envoi ${env.numero} supprimé.`); charger()
   }
 
   // ── Impressions (gabarit commun des documents) ──
-  const imprimerBonEnvoi = env => {
-    const etv = etvDe(env.etuveuse_id), lot = lotDe(env.lot_id)
+  const imprimerBonEnvoi = (env, origs = originesEnvoi(env), lotForce = null) => {
+    const etv = etvDe(env.etuveuse_id), lot = lotForce || lotDe(env.lot_id)
     openPrintWindow(gabaritDocumentHtml({ comp:company, titre:"BON D'ENVOI À L'ÉTUVAGE", numero:env.numero, date:dateDoc(env.date_envoi),
       infos:[['Code traçabilité', env.code_trace||''], ['Lot de production', lot.numero_lot||'—'], ['Véhicule', env.vehicule||''], ['Convoyeur', env.convoyeur||'']],
       tiersLabel:'Étuveuse', tiers:{ nom:`${etv.code_etuveuse?etv.code_etuveuse+' — ':''}${etv.nom_etuveuse||''}`, adresse:etv.zone },
-      colonnes:[{label:'Désignation'},{label:'Quantité (kg)',align:'d',largeur:'25%'}],
-      lignes:[[`Paddy à étuver${lot.numero_lot?` — lot ${echapHtml(lot.numero_lot)}`:''}`, `<strong>${nbFr(env.quantite_envoyee_kg)}</strong>`]],
+      colonnes:[{label:origs.length ? "Paddy à étuver — producteur d'origine (code)" : 'Désignation'},{label:'Quantité (kg)',align:'d',largeur:'25%'}],
+      lignes:origs.length ? origs.map(o => [echapHtml(o.producteur_nom || '—'), nbFr(o.quantite_kg)])
+        : [[`Paddy à étuver${lot.numero_lot?` — lot ${echapHtml(lot.numero_lot)}`:''}`, `<strong>${nbFr(env.quantite_envoyee_kg)}</strong>`]],
       totaux:[['Paddy confié', fmtKg(env.quantite_envoyee_kg), true]], notes:env.commentaire,
       signatures:["L'expéditeur (magasin)", 'Le convoyeur', "L'étuveuse (reçu)"] }), `bon_envoi_${env.numero}`)
   }
@@ -15518,8 +15580,9 @@ function EtvEnvoisPage({ companies, companyId, toast, readOnly=false }) {
     const etv = etvDe(env.etuveuse_id), lot = lotDe(env.lot_id)
     openPrintWindow(ticketHtml(company, { titre:"BON D'ENVOI À L'ÉTUVAGE", numero:env.numero, date:dateDoc(env.date_envoi),
       lignes:[...(env.code_trace?[['Code', env.code_trace, true]]:[]), ['Étuveuse', `${etv.code_etuveuse?etv.code_etuveuse+' ':''}${etv.nom_etuveuse||''}`], ...(etv.zone?[['Zone', etv.zone]]:[]),
-        ['Lot', lot.numero_lot||'—'], ...(orig.origines[env.lot_id]?.refs?.length?[['Achat', orig.origines[env.lot_id].refs.join(', ')]]:[]),
-        ...(env.vehicule?[['Véhicule', env.vehicule]]:[]), ...(env.convoyeur?[['Convoyeur', env.convoyeur]]:[]), null, ['Produit', 'Paddy à étuver']],
+        ['Lot', lot.numero_lot||'—'], ...(!originesEnvoi(env).length && orig.origines[env.lot_id]?.refs?.length?[['Achat', orig.origines[env.lot_id].refs.join(', ')]]:[]),
+        ...(env.vehicule?[['Véhicule', env.vehicule]]:[]), ...(env.convoyeur?[['Convoyeur', env.convoyeur]]:[]), null, ['Produit', 'Paddy à étuver'],
+        ...originesEnvoi(env).map(o => [o.producteur_nom || '—', fmtKg(o.quantite_kg)])],
       total:['PADDY CONFIÉ', fmtKg(env.quantite_envoyee_kg)], mentions:env.commentaire,
       signatures:["L'expéditeur (magasin)", 'Le convoyeur', "L'étuveuse (reçu)"] }), `ticket_envoi_${env.numero}`)
   }
@@ -15608,7 +15671,8 @@ function EtvEnvoisPage({ companies, companyId, toast, readOnly=false }) {
                       { couleur:'#0891b2', label:`📋 Retours (${s.retours.length})`, onClick:()=>setDetail(e) },
                       { couleur:'#2563eb', label:"🖨️ Bon d'envoi", onClick:()=>imprimerBonEnvoi(e) },
                       { couleur:'#0f766e', label:"🧾 Bon d'envoi (ticket)", onClick:()=>ticketEnvoi(e) },
-                      !readOnly && !s.retours.length && { couleur:'#b45309', label:'✏️ Modifier', onClick:()=>setForm({ ...e, quantite_envoyee_kg:String(e.quantite_envoyee_kg) }) },
+                      !readOnly && !s.retours.length && { couleur:'#b45309', label:'✏️ Modifier', onClick:()=>setForm({ ...e, quantite_envoyee_kg:String(e.quantite_envoyee_kg),
+                        origines:originesEnvoi(e).length ? originesEnvoi(e).map(o => ({ fournisseur_id:o.fournisseur_id||'', kg:String(o.quantite_kg) })) : [] }) },
                       !readOnly && null,
                       !readOnly && !e.annule && { label: s.retours.length ? '🚫 Annuler l\'envoi' : '🗑️ Supprimer', danger:true, onClick:()=>supprimerEnvoi(e) },
                       !readOnly && e.annule && { couleur:'#16a34a', label:"♻️ Rétablir l'envoi", onClick:()=>retablirEnvoi(e) },
@@ -15624,31 +15688,42 @@ function EtvEnvoisPage({ companies, companyId, toast, readOnly=false }) {
       <Modal open={!!form} onClose={()=>setForm(null)} title={form?.id ? `Modifier l'envoi ${form.numero}` : 'Nouvel envoi de paddy'} size="md">
         {form && <form onSubmit={enregistrerEnvoi}>
           <Grid cols={2} gap={14} style={{ marginBottom:12 }}>
-            {orig.groupes.length>0 && <Span2>
-              <Sel label="Achat d'origine (achat groupé)" name="groupe_origine" value={orig.groupes.find(g=>g.lot_id && String(g.lot_id)===String(form.lot_id))?.id||''}
-                onChange={e=>{ const g = orig.groupes.find(x=>x.id===e.target.value); if (!g) return
-                  if (!g.lot_id) return toast.error(`Le groupe ${g.numero} n'est pas encore versé dans un lot de production : faites-le depuis Achats › Achats hors FRIA (🏭 Verser dans un lot).`)
-                  setForm(f=>({...f, lot_id:g.lot_id})) }}
-                options={[{value:'',label:'— Retrouver le lot par son achat groupé —'},...orig.groupes.map(g=>{ const lot = d.lots.find(l=>String(l.id)===String(g.lot_id))
-                  return {value:g.id,label:`${g.numero}${g.village?' — '+g.village:''} → ${lot ? lot.numero_lot : 'pas encore versé dans un lot'}`} })]} />
-            </Span2>}
-            <Sel label="Lot de production" name="lot_id" value={form.lot_id} onChange={e=>setForm(f=>({...f, lot_id:e.target.value}))}
-              options={[{value:'',label:'— Sans lot —'}, ...d.lots.map(l=>({value:l.id,label:`${l.numero_lot}${orig.origines[l.id]?' — '+texteOrigineLot(orig.origines[l.id]):''}`}))]} />
+            <Span2>
+              <div style={{ fontSize:13, fontWeight:700, color:'#082818', marginBottom:6 }}>Producteurs d'origine du paddy *</div>
+              <datalist id="prod-origine">{prod.liste.map(p => <option key={p.id} value={libProd(p)} />)}</datalist>
+              {(form.origines||[]).map((o, i) => { const p = prodDe(o.fournisseur_id), reste = o.fournisseur_id ? resteProd(o.fournisseur_id, form.numero) : null
+                const setO = maj => setForm(f => ({ ...f, origines:f.origines.map((x, j) => j === i ? { ...x, ...maj } : x) }))
+                return <div key={i} style={{ display:'flex', gap:8, alignItems:'center', marginBottom:6 }}>
+                  <input list="prod-origine" placeholder="Code ou nom du producteur" value={o.texte ?? (p ? libProd(p) : '')}
+                    onChange={e => { const brut = e.target.value, v = brut.trim().toLowerCase()
+                      const t2 = prod.liste.find(x => libProd(x).toLowerCase() === v || (x.code_trace && String(x.code_trace).toLowerCase() === v))
+                      setO({ texte:brut, fournisseur_id:t2 ? t2.id : '', ...(t2 && !String(o.kg).trim() ? { kg:String(Math.max(0, resteProd(t2.id, form.numero))) } : {}) }) }}
+                    style={{ flex:'1 1 auto', minWidth:0, padding:'8px 10px', borderRadius:8, border:'1px solid ' + (o.fournisseur_id ? '#86efac' : '#d1d5db'), fontSize:13 }} />
+                  <input type="number" step="0.001" min="0" placeholder="kg" value={o.kg} onChange={e => setO({ kg:e.target.value })}
+                    style={{ width:110, padding:'8px 10px', borderRadius:8, border:'1px solid #d1d5db', fontSize:13, textAlign:'right' }} />
+                  <span style={{ width:120, fontSize:11.5, color:reste != null && (parseFloat(o.kg)||0) > reste + 0.001 ? '#dc2626' : '#64748b' }}>{reste != null ? `reste ${fmtKg(reste)}` : ''}</span>
+                  <button type="button" title="Retirer" onClick={() => setForm(f => ({ ...f, origines:f.origines.filter((x, j) => j !== i) }))}
+                    style={{ border:'none', background:'none', cursor:'pointer', color:'#dc2626', fontSize:16 }}>✕</button>
+                </div> })}
+              <button type="button" onClick={() => setForm(f => ({ ...f, origines:[...(f.origines||[]), { fournisseur_id:'', kg:'' }] }))}
+                style={{ fontSize:12.5, fontWeight:600, color:'#1E824C', background:'#f0fdf4', border:'1px dashed #86efac', borderRadius:8, padding:'6px 12px', cursor:'pointer' }}>+ Ajouter un producteur</button>
+              {!prod.liste.length && <div style={{ fontSize:12, color:'#92400e', marginTop:6 }}>Aucun producteur n'a encore livré de paddy (remboursement FRIA ou achat hors FRIA).</div>}
+              <div style={{ fontSize:12, color:'#475569', marginTop:6 }}>
+                Lot : <strong>{form.lot_id ? (lotDe(form.lot_id).numero_lot || '—') : `LOT-${form.numero || 'ENV-…'} (créé automatiquement)`}</strong> — il relie ces producteurs à l'étuvage, au riz étuvé et à sa vente.
+              </div>
+            </Span2>
             <Sel label="Étuveuse" required name="etuveuse_id" value={form.etuveuse_id} onChange={e=>setForm(f=>({...f, etuveuse_id:e.target.value}))}
               options={[{value:'',label:d.etuveuses.length?'— Choisir —':'— Aucune étuveuse au répertoire —'}, ...d.etuveuses.map(x=>({value:x.id,label:`${x.code_etuveuse?x.code_etuveuse+' — ':''}${x.nom_etuveuse}`}))]} />
-            {form.lot_id && <Span2><div style={{fontSize:12.5,padding:'7px 12px',borderRadius:8,background:orig.origines[form.lot_id]?'#f0fdf4':'#fffbeb',color:orig.origines[form.lot_id]?'#166534':'#92400e',marginTop:-6}}>
-              {orig.origines[form.lot_id]
-                ? <>Origine du paddy : <strong>{orig.origines[form.lot_id].refs.join(', ')||'réceptions producteurs'}</strong> — {orig.origines[form.lot_id].producteurs} producteur(s), {fmtKg(orig.origines[form.lot_id].kg)}</>
-                : <>Aucun achat relié à ce lot.</>}
-            </div></Span2>}
             <Input label="Date d'envoi" name="date_envoi" type="date" value={form.date_envoi} onChange={e=>setForm(f=>({...f, date_envoi:e.target.value}))} required />
-            <Input label="Paddy envoyé (kg)" name="quantite_envoyee_kg" type="number" step="0.001" min="0" value={form.quantite_envoyee_kg} onChange={e=>setForm(f=>({...f, quantite_envoyee_kg:e.target.value}))} required />
+            {(form.origines||[]).some(o => o.fournisseur_id || String(o.kg).trim())
+              ? <div><label style={{display:'block',fontSize:12.5,fontWeight:600,color:'#374151',marginBottom:5}}>Paddy envoyé (kg)</label>
+                  <div style={{padding:'9px 12px',background:'#f0fdf4',borderRadius:8,border:'1px solid #bbf7d0',fontSize:14,fontWeight:700,color:'#166534'}}>{fmtKg(totalOrigines(form))} <span style={{fontWeight:400,fontSize:11.5}}>(total des producteurs)</span></div></div>
+              : <Input label="Paddy envoyé (kg)" name="quantite_envoyee_kg" type="number" step="0.001" min="0" value={form.quantite_envoyee_kg} onChange={e=>setForm(f=>({...f, quantite_envoyee_kg:e.target.value}))} />}
             <Input label="Véhicule" name="vehicule" value={form.vehicule||''} onChange={e=>setForm(f=>({...f, vehicule:e.target.value}))} />
             <Input label="Convoyeur" name="convoyeur" value={form.convoyeur||''} onChange={e=>setForm(f=>({...f, convoyeur:e.target.value}))} />
           </Grid>
           <Input label="Commentaire" name="commentaire" value={form.commentaire||''} onChange={e=>setForm(f=>({...f, commentaire:e.target.value}))} />
           <div style={{ fontSize:12.5, color:'#475569', background:'#f8fafc', borderRadius:8, padding:'8px 12px', margin:'4px 0 14px' }}>
-            {form.lot_id && resteLotEnvoi(form.lot_id, form.id) != null && <div>Paddy du lot pas encore envoyé : <strong>{fmtKg(resteLotEnvoi(form.lot_id, form.id))}</strong></div>}
             {form.etuveuse_id && <div>Déjà chez cette étuveuse : <strong>{fmtKg(enCoursChez(form.etuveuse_id, form.id))}</strong>{+etvDe(form.etuveuse_id).capacite_kg>0 && ` — capacité ${fmtKg(etvDe(form.etuveuse_id).capacite_kg)}`}</div>}
             <div style={{ color:'#1d4ed8' }}>📦 Le paddy envoyé sort du stock (bon de sortie) ; au retour, le riz étuvé reçu y entre (bon d'entrée) et le cycle d'étuvage est créé en Production.</div>
           </div>
