@@ -10038,9 +10038,18 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
         tiers:`Étuvage ${et?.nom_etuveuse || pay.etuveuse_cooperative || 'interne'}`, observations:`Cycle d'étuvage ${pay.lot_sortant}${pay.numero_lot ? ` — lot ${pay.numero_lot}` : ''}` })
       if (!sortie.ok) { setSaving(false); return }
     }
-    const { data:insEtape, error } = editItem
-      ? await supabase.from(tableName).update(pay).eq('id', editItem.id)
-      : await supabase.from(tableName).insert({...pay, user_id:uid}).select('id').single()
+    // Colonne absente de la table (ex. « ecart » calculé, pas encore créé dans la base) :
+    // on l'ôte et on réessaie, au lieu de bloquer l'enregistrement.
+    const ecrire = () => editItem
+      ? supabase.from(tableName).update(pay).eq('id', editItem.id)
+      : supabase.from(tableName).insert({...pay, user_id:uid}).select('id').single()
+    let { data:insEtape, error } = await ecrire()
+    for (let essai = 0; error && essai < 6; essai++) {
+      const col = /Could not find the '([^']+)' column/i.exec(error.message || '')?.[1]
+      if (!col || !(col in pay)) break
+      delete pay[col]
+      ;({ data:insEtape, error } = await ecrire())
+    }
     if (!error && estEtuvage && !editItem) {
       const code = await codePassageEtuvage(cid, pay.lot_id, pay.etuveuse_id)
       if (code) await supabase.from(tableName).update({ code_trace:code }).eq('id', insEtape.id)
