@@ -9812,6 +9812,15 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
   const estDecorticage = tableName === 'compta_decorticage'
   // Décorticage : riz paddy étuvé disponible en stock (+ ce que cet enregistrement a déjà sorti).
   const [stockEtuve, setStockEtuve] = useState(null)
+  // Rendement du décorticage (poids après / poids avant) comparé au seuil des paramètres :
+  // le seuil est une perte maximale en %, donc rendement minimal = 100 − seuil.
+  const rendementDecorticage = f => {
+    const avant = parseFloat(f.poids_avant) || 0, apres = parseFloat(f.poids_apres) || 0
+    const min = Math.round((100 - seuilEtape) * 100) / 100
+    if (!(avant > 0) || !(apres > 0)) return { min, rendement:null, perte:null, alerte:false }
+    const rendement = Math.round(apres / avant * 10000) / 100, perte = Math.round((100 - rendement) * 100) / 100
+    return { min, rendement, perte, alerte:rendement < min }
+  }
   const chargerStockEtuve = async (cid, item) => {
     if (!estDecorticage || !cid) return
     const { data } = await supabase.from('compta_articles').select('id,designation,stock_actuel').eq('company_id', cid).eq('actif', true)
@@ -10045,6 +10054,8 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
       setSaving(false)
       if (r.error) toast.error('Enregistré, mais la sortie de stock du riz paddy étuvé n\'a pas été passée : ' + r.error.message)
       else toast.success(`${editItem ? 'Modification enregistrée' : 'Enregistrement réussi'} — ${fmtKg(pay.poids_avant)} de riz paddy étuvé sortis du stock${r.numero ? ` (bon ${r.numero})` : ''}.`)
+      const rd = rendementDecorticage(pay)
+      if (rd.alerte) toast.error(`⚠️ Alerte rendement : ${nbFr(rd.rendement)} % obtenu, en dessous du seuil minimal de ${nbFr(rd.min)} % (perte ${nbFr(rd.perte)} % pour ${nbFr(seuilEtape)} % autorisés).`)
       close(); load(); return
     }
     let entree = {}
@@ -10255,6 +10266,12 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
                 📦 Riz paddy étuvé en stock : <strong>{dispo == null ? '…' : fmtKg(dispo)}</strong> — le poids avant sort du stock à l'enregistrement.
                 {trop && ' Le poids avant dépasse le stock : enregistrement impossible.'}
                 {dispo === 0 && !trop && " Aucun riz paddy étuvé en stock : enregistrez d'abord le retour de l'étuveuse."}</div></Span2> })()}
+            {estDecorticage && (()=>{ const r = rendementDecorticage(form)
+              return <Span2><div style={{fontSize:12.5,padding:'8px 12px',borderRadius:8,border:'1px solid '+(r.alerte?'#fecaca':'#bbf7d0'),background:r.alerte?'#fef2f2':'#f0fdf4',color:r.alerte?'#b91c1c':'#166534'}}>
+                🎯 Seuil (Paramètres › Seuils d'alerte) : perte maximale <strong>{nbFr(seuilEtape)} %</strong>, soit un rendement minimal de <strong>{nbFr(r.min)} %</strong>
+                {r.rendement != null && <> — rendement obtenu : <strong>{nbFr(r.rendement)} %</strong> (perte {nbFr(r.perte)} %)</>}
+                {r.alerte && <div style={{fontWeight:700,marginTop:4}}>⚠️ Seuil de rendement non atteint : {nbFr(Math.round((r.min - r.rendement)*100)/100)} point(s) en dessous du minimum.</div>}
+              </div></Span2> })()}
             {estEtuvage && form.lot_id && resteLot(form.lot_id) != null && (()=>{ const reste = resteLot(form.lot_id); const envoye = parseFloat(form.paddy_envoye_kg)||0
               return <Span2><div style={{fontSize:12.5,padding:'8px 12px',borderRadius:8,background:envoye>reste+0.001?'#fef2f2':'#f0f9ff',color:envoye>reste+0.001?'#b91c1c':'#0c4a6e'}}>
                 Paddy du lot : <strong>{fmtKg(localLots.find(l=>l.id===form.lot_id)?.qte_paddy_entree)}</strong> — reste à envoyer à l'étuvage : <strong>{fmtKg(reste)}</strong>
