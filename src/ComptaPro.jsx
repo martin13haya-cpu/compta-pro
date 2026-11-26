@@ -9814,6 +9814,10 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
   // s'il n'y est pas) et, si la case est cochée, produits obtenus entrés en stock.
   const chaine = CHAINE_PRODUCTION[tableName] || null
   const cleChaine = id => `${chaine.cle}:${id}`
+  const choixDe = f => chaine?.choix ? (chaine.choix.find(c => c.sorte === f?._produit) || chaine.choix[0]) : null
+  const choixCh = choixDe(form)
+  const entreeCh = chaine ? (choixCh ? { ...chaine.entree, sorte:choixCh.sorte, lib:choixCh.lib } : chaine.entree) : null
+  const sortiesCh = chaine ? (choixCh?.sorties || chaine.sorties) : []
   // Produit d'entrée disponible en stock (+ ce que cet enregistrement a déjà sorti).
   const [stockEtuve, setStockEtuve] = useState(null)
   // Rendement du décorticage (poids après / poids avant) comparé au seuil des paramètres :
@@ -9825,10 +9829,10 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
     const rendement = Math.round(apres / avant * 10000) / 100, perte = Math.round((100 - rendement) * 100) / 100
     return { min, rendement, perte, alerte:rendement < min }
   }
-  const chargerStockEtuve = async (cid, item) => {
+  const chargerStockEtuve = async (cid, item, sorte = entreeCh?.sorte) => {
     if (!chaine || !cid) return
     const { data } = await supabase.from('compta_articles').select('id,code,designation,stock_actuel').eq('company_id', cid).eq('actif', true)
-    const art = trouverArticleEtuvage(data, ARTICLES_ETUVAGE[chaine.entree.sorte])
+    const art = trouverArticleEtuvage(data, ARTICLES_ETUVAGE[sorte])
     let deja = 0
     if (item?.id) {
       const { data:bons } = await supabase.from('compta_bons_stock').select('type,lignes').eq('company_id', cid).eq('type', 'sortie').like('observations', `%[${cleChaine(item.id)}]%`)
@@ -9986,15 +9990,17 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
       df.lot_sortant = `ETUV-${an}-${String((nums.length ? Math.max(...nums) : 0) + 1).padStart(3,'0')}`
       df.etuveuse_id = ''
     }
-    if (chaine) df._entrer_stock = true
+    if (chaine) { df._entrer_stock = true; if (chaine.choix) { df._produit = chaine.choix[0].sorte; df.nom_produit = chaine.choix[0].lib } }
     setEditItem(null); setForm(df); setModal(true)
-    setStockEtuve(null); chargerStockEtuve(cid, null)
+    setStockEtuve(null); chargerStockEtuve(cid, null, chaine ? (chaine.choix ? chaine.choix[0].sorte : chaine.entree.sorte) : undefined)
   }
   const openEdit = it => {
     setEditItem(it)
-    const df = { ...it, company_id: it.company_id||companyId||companies[0]?.id||'', lot_id: it.lot_id||'', ...(chaine ? { _entrer_stock:true } : {}) }
+    // Produit trié / conditionné retrouvé par le « Nom produit » enregistré.
+    const ch = chaine?.choix ? (chaine.choix.find(c => c.lib === it.nom_produit) || chaine.choix[0]) : null
+    const df = { ...it, company_id: it.company_id||companyId||companies[0]?.id||'', lot_id: it.lot_id||'', ...(chaine ? { _entrer_stock:true } : {}), ...(ch ? { _produit:ch.sorte } : {}) }
     setForm(df); setModal(true)
-    setStockEtuve(null); chargerStockEtuve(df.company_id, it)
+    setStockEtuve(null); chargerStockEtuve(df.company_id, it, chaine ? (ch ? ch.sorte : chaine.entree.sorte) : undefined)
   }
   const close = () => { setModal(false); setEditItem(null) }
 
@@ -10023,10 +10029,10 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
     }
     // On ne transforme que le produit de l'étape précédente présent en stock (bloquant).
     if (chaine) {
-      const q = +pay[chaine.entree.champ] || 0, lib = chaine.entree.lib.toLowerCase()
+      const q = +pay[entreeCh.champ] || 0, lib = entreeCh.lib.toLowerCase()
       if (!(q > 0)) { setSaving(false); toast.error(`Saisissez la quantité de ${lib} prise pour cette étape.`); return }
       if (!stockEtuve || q > stockEtuve.dispo + 0.0005) { setSaving(false)
-        toast.error(`${chaine.entree.lib} insuffisant en stock : ${fmtKg(stockEtuve?.dispo || 0)} disponible(s) pour ${fmtKg(q)}. Enregistrez d'abord l'étape précédente en cochant « Entrer en stock »${chaine.entree.sorte === 'etuve' ? " (ou le retour de l'étuveuse)" : ''}.`); return }
+        toast.error(`${entreeCh.lib} insuffisant en stock : ${fmtKg(stockEtuve?.dispo || 0)} disponible(s) pour ${fmtKg(q)}. Enregistrez d'abord l'étape précédente en cochant « Entrer en stock »${entreeCh.sorte === 'etuve' ? " (ou le retour de l'étuveuse)" : ''}.`); return }
     }
     // Étuvage saisi en direct (pas issu d'un retour d'étuveuse, qui a déjà ses
     // bons) : sortie du paddy envoyé et entrée du riz paddy étuvé reçu.
@@ -10066,15 +10072,15 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
       const idEt = editItem ? editItem.id : insEtape.id, cleEt = cleChaine(idEt)
       if (editItem) await annulerBonsStockAuto(cid, cleEt)
       const obs = `${title}${pay.numero_lot ? ` — lot ${pay.numero_lot}` : ''}`
-      const qIn = +valeurs[chaine.entree.champ] || 0
-      const { article:artIn } = await articleEtuvage(cid, uid, chaine.entree.sorte)
+      const qIn = +valeurs[entreeCh.champ] || 0
+      const { article:artIn } = await articleEtuvage(cid, uid, entreeCh.sorte)
       const msgs = [], erreurs = []
       const rIn = artIn ? await passerBonStockAuto({ companyId:cid, uid, type:'sortie', article:artIn, quantite:qIn, prix:artIn.prix_achat, date:pay.date_etape,
-        tiers:title, motif:'production', cle:cleEt, observations:obs }) : { error:{ message:`article ${chaine.entree.lib} introuvable` } }
-      if (rIn.error) erreurs.push(`sortie de ${chaine.entree.lib.toLowerCase()} : ${rIn.error.message}`); else msgs.push(`${fmtKg(qIn)} de ${chaine.entree.lib.toLowerCase()} sortis`)
+        tiers:title, motif:'production', cle:cleEt, observations:obs }) : { error:{ message:`article ${entreeCh.lib} introuvable` } }
+      if (rIn.error) erreurs.push(`sortie de ${entreeCh.lib.toLowerCase()} : ${rIn.error.message}`); else msgs.push(`${fmtKg(qIn)} de ${entreeCh.lib.toLowerCase()} sortis`)
       // Produits obtenus : entrés en stock au coût du produit consommé, réparti au poids.
       if (form._entrer_stock) {
-        const outs = chaine.sorties.map(s => ({ ...s, q:+valeurs[s.champ] || 0 })).filter(s => s.q > 0)
+        const outs = sortiesCh.map(s => ({ ...s, q:+valeurs[s.champ] || 0 })).filter(s => s.q > 0)
         const qOut = outs.reduce((s, o) => s + o.q, 0), cout = qIn * (+artIn?.prix_achat || 0)
         for (const o of outs) {
           const { article, error:ea } = await articleEtuvage(cid, uid, o.sorte, qOut > 0 ? cout / qOut : 0)
@@ -10293,17 +10299,27 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
                 ? <>Origine du paddy : <strong>{originesLots[form.lot_id].refs.join(', ')||'réceptions producteurs'}</strong> — {originesLots[form.lot_id].producteurs} producteur(s), {fmtKg(originesLots[form.lot_id].kg)}</>
                 : <>Aucun achat relié à ce lot : versez-y un achat (Achats hors FRIA) ou ajoutez ses producteurs dans Traçabilité (QR).</>}
             </div></Span2>}
-            {chaine && (()=>{ const champIn = fields.find(f => f.name === chaine.entree.champ)?.label || chaine.entree.champ
-              const q = parseFloat(form[chaine.entree.champ])||0, dispo = stockEtuve?.dispo ?? null, trop = dispo != null && q > dispo + 0.0005
+            {chaine && (()=>{ const champIn = fields.find(f => f.name === entreeCh.champ)?.label || entreeCh.champ
+              const q = parseFloat(form[entreeCh.champ])||0, dispo = stockEtuve?.dispo ?? null, trop = dispo != null && q > dispo + 0.0005
               return <Span2>
+                {chaine.choix && <div style={{marginBottom:8}}>
+                  <label style={{display:'block',fontSize:12.5,fontWeight:600,color:'#374151',marginBottom:5}}>Produit {tableName === 'compta_tri_optique' ? 'à trier' : 'à conditionner'} *</label>
+                  <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+                    {chaine.choix.map(c => <button key={c.sorte} type="button"
+                      onClick={()=>{ setForm(f=>({...f, _produit:c.sorte, nom_produit:!f.nom_produit || chaine.choix.some(x=>x.lib===f.nom_produit) ? c.lib : f.nom_produit }))
+                        setStockEtuve(null); chargerStockEtuve(form.company_id || companyId || companies[0]?.id, editItem, c.sorte) }}
+                      style={{padding:'8px 12px',borderRadius:8,cursor:'pointer',fontSize:13,fontWeight:600,border:'2px solid '+(choixCh?.sorte===c.sorte?'#1E824C':'#e2e8f0'),background:choixCh?.sorte===c.sorte?'#f0fdf4':'white',color:'#082818'}}>{c.lib}</button>)}
+                  </div>
+                  {tableName === 'compta_tri_optique' && choixCh?.sorte === 'decortique' && <div style={{fontSize:11.5,color:'#64748b',marginTop:4}}>Riz envoyé directement au tri, sans passer par la calibreuse (peu de brisures).</div>}
+                </div>}
                 <div style={{fontSize:12.5,padding:'8px 12px',borderRadius:8,background:trop||dispo===0?'#fef2f2':'#f0f9ff',color:trop||dispo===0?'#b91c1c':'#0c4a6e'}}>
-                  📦 {chaine.entree.lib} en stock : <strong>{dispo == null ? '…' : fmtKg(dispo)}</strong> — « {champIn} » sort du stock à l'enregistrement.
+                  📦 {entreeCh.lib} en stock : <strong>{dispo == null ? '…' : fmtKg(dispo)}</strong> — « {champIn} » sort du stock à l'enregistrement.
                   {trop && ` « ${champIn} » dépasse le stock : enregistrement impossible.`}
-                  {dispo === 0 && !trop && ` Aucun ${chaine.entree.lib.toLowerCase()} en stock : enregistrez d'abord l'étape précédente en cochant « Entrer en stock ».`}</div>
+                  {dispo === 0 && !trop && ` Aucun ${entreeCh.lib.toLowerCase()} en stock : enregistrez d'abord l'étape précédente en cochant « Entrer en stock ».`}</div>
                 <label style={{display:'flex',gap:8,alignItems:'center',fontSize:13,marginTop:8,cursor:'pointer',padding:'8px 12px',borderRadius:8,
                   background:form._entrer_stock?'#f0fdf4':'#fffbeb',border:'1px solid '+(form._entrer_stock?'#bbf7d0':'#fde68a')}}>
                   <input type="checkbox" checked={!!form._entrer_stock} onChange={e=>setForm(f=>({...f, _entrer_stock:e.target.checked}))} />
-                  <span>📥 <strong>Entrer en stock</strong> : {chaine.sorties.map(s => `${s.lib} (« ${fields.find(f => f.name === s.champ)?.label || s.champ} »)`).join(' + ')}
+                  <span>📥 <strong>Entrer en stock</strong> : {sortiesCh.map(s => `${s.lib} (« ${fields.find(f => f.name === s.champ)?.label || s.champ} »)`).join(' + ')}
                     {!form._entrer_stock && <span style={{color:'#92400e'}}> — non coché : l'étape suivante ne pourra pas utiliser ce produit</span>}</span>
                 </label>
               </Span2> })()}
@@ -14958,7 +14974,9 @@ const ARTICLES_ETUVAGE = {
   // Chaîne de transformation : décorticage → calibrage → tri optique → conditionnement.
   decortique: { motif:/d(e|é)cortiqu/i, designation:'RIZ DECORTIQUE', categorie:'semi_fini' },
   calibre: { motif:/calibr/i, designation:'RIZ CALIBRE', categorie:'semi_fini' },
-  brisures: { motif:/brisure|cass(e|é)s?\b/i, designation:'BRISURES DE RIZ', categorie:'semi_fini' },
+  brisures: { motif:/brisure|cass(e|é)s?\b/i, exclure:/tri(e|é)|(e|é)tuv/i, designation:'BRISURES DE RIZ', categorie:'semi_fini' },
+  brisures_triees: { motif:/brisures?\W+tri(e|é)/i, designation:'BRISURES TRIEES', categorie:'semi_fini' },
+  brisures_fini: { motif:/brisures?.*(e|é)tuv/i, designation:'BRISURES DE RIZ ETUVE', categorie:'riz_etuve' },
   trie: { motif:/^\s*riz\s+tri(e|é)\s*$/i, designation:'RIZ TRIE', categorie:'semi_fini' },
   // Produit fini : « RIZ ETUVE » (jamais l'ancien article auto de code RIZ-ETUVE).
   fini: { motif:/^\s*riz\s+(e|é)tuv(e|é)\s*$/i, exclureArt:a => (a.code || '') === 'RIZ-ETUVE', designation:'RIZ ETUVE', categorie:'riz_etuve', code:'RIZ-ETUVE-FINI' },
@@ -14969,8 +14987,13 @@ const trouverArticleEtuvage = (arts, def) => (arts || []).find(a => def.motif.te
 const CHAINE_PRODUCTION = {
   compta_decorticage:     { cle:'DECO', entree:{ sorte:'etuve', champ:'poids_avant', lib:'Riz paddy étuvé' }, sorties:[{ sorte:'decortique', champ:'poids_apres', lib:'Riz décortiqué' }] },
   compta_calibrage:       { cle:'CALI', entree:{ sorte:'decortique', champ:'poids_avant', lib:'Riz décortiqué' }, sorties:[{ sorte:'calibre', champ:'poids_long_grain', lib:'Riz calibré (long grain)' }, { sorte:'brisures', champ:'poids_casses', lib:'Brisures (cassés)' }] },
-  compta_tri_optique:     { cle:'TRI', entree:{ sorte:'calibre', champ:'poids_avant', lib:'Riz calibré' }, sorties:[{ sorte:'trie', champ:'poids_apres_tri', lib:'Riz trié' }] },
-  compta_conditionnement: { cle:'COND', entree:{ sorte:'trie', champ:'poids_recu', lib:'Riz trié' }, sorties:[{ sorte:'fini', champ:'poids_total_conditionne', lib:'Riz étuvé (produit fini)' }] },
+  // Tri optique : riz long grain calibré, brisures, ou riz décortiqué envoyé directement
+  // au tri (sans calibrage, quand il y a peu de brisures).
+  compta_tri_optique:     { cle:'TRI', entree:{ sorte:'calibre', champ:'poids_avant', lib:'Riz calibré' }, sorties:[{ sorte:'trie', champ:'poids_apres_tri', lib:'Riz trié' }],
+    choix:[{ sorte:'calibre', lib:'Riz calibré (long grain)' }, { sorte:'brisures', lib:'Brisures (riz cassé)', sorties:[{ sorte:'brisures_triees', champ:'poids_apres_tri', lib:'Brisures triées' }] },
+      { sorte:'decortique', lib:'Riz décortiqué (non calibré)' }] },
+  compta_conditionnement: { cle:'COND', entree:{ sorte:'trie', champ:'poids_recu', lib:'Riz trié' }, sorties:[{ sorte:'fini', champ:'poids_total_conditionne', lib:'Riz étuvé (produit fini)' }],
+    choix:[{ sorte:'trie', lib:'Riz trié' }, { sorte:'brisures_triees', lib:'Brisures triées', sorties:[{ sorte:'brisures_fini', champ:'poids_total_conditionne', lib:'Brisures de riz étuvé (produit fini)' }] }] },
 }
 
 async function articleEtuvage(companyId, uid, sorte, prixDefaut = 0) {
