@@ -15465,16 +15465,23 @@ function EtvEnvoisPage({ companies, companyId, toast, readOnly=false }) {
   }
 
   const nouveauRetour = envoi => {
-    const s = sit(envoi)
-    setRetour({ envoi, date_retour:today(), paddy_traite_kg:String(s.restant), riz_etuve_recu_kg:'', dechets_kg:'0', humidite:'', observation:'', creer_etuvage:true })
+    // Une étuveuse peut être visitée plusieurs fois avant de finir l'envoi : on demande si ce
+    // retour est la dernière récupération (il solde alors tout le paddy restant).
+    setRetour({ envoi, date_retour:today(), derniere:null, riz_etuve_recu_kg:'', dechets_kg:'0', humidite:'', observation:'', creer_etuvage:true })
   }
+  // Paddy soldé par un retour (champ verrouillé) : à la dernière récupération, tout le
+  // paddy restant chez l'étuveuse ; sinon, l'équivalent du riz reçu et des déchets.
+  const paddySoldeRetour = (r, s) => { const n = k => parseFloat(String(r[k]).replace(',','.')) || 0
+    return Math.round((r.derniere ? s.restant : Math.min(s.restant, n('riz_etuve_recu_kg') + n('dechets_kg'))) * 1000) / 1000 }
   const enregistrerRetour = async e => {
     e.preventDefault()
     const env = retour.envoi, s = sit(env)
     const num = k => parseFloat(String(retour[k]).replace(',','.')) || 0
-    const traite = num('paddy_traite_kg'), recu = num('riz_etuve_recu_kg'), dech = num('dechets_kg')
-    if (!(traite > 0) && !(recu > 0)) return toast.error('Saisissez le paddy traité et le riz étuvé reçu.')
-    if (traite > s.restant + 0.001) return toast.error(`Le paddy traité (${fmtKg(traite)}) dépasse le restant de l'envoi (${fmtKg(s.restant)}).`)
+    const recu = num('riz_etuve_recu_kg'), dech = num('dechets_kg')
+    if (retour.derniere == null) return toast.error("Indiquez s'il s'agit d'une récupération partielle ou de la dernière récupération.")
+    if (!(recu > 0)) return toast.error('Saisissez le riz étuvé reçu.')
+    if (!retour.derniere && recu + dech > s.restant + 0.001) return toast.error(`Riz reçu + déchets (${fmtKg(recu + dech)}) dépassent le paddy restant chez l'étuveuse (${fmtKg(s.restant)}) : cochez « Dernière récupération ».`)
+    const traite = paddySoldeRetour(retour, s)
     setSaving(true)
     const uid = (await supabase.auth.getUser()).data?.user?.id
     let etuvage_id = null
@@ -15510,9 +15517,9 @@ function EtvEnvoisPage({ companies, companyId, toast, readOnly=false }) {
       cle:`RET:${ret.id}`, toast, observations:`Retour de l'envoi ${env.numero}${lotR.numero_lot ? ` — lot ${lotR.numero_lot}` : ''}` })
     setSaving(false)
     toast.success(`Retour enregistré${etuvage_id?' — cycle d\'étuvage créé en Production':''}${entree.numero ? ` — ${fmtKg(recu)} de riz étuvé entrés en stock (bon ${entree.numero})` : ''}.`)
-    const r = { ...retour, paddy_traite_kg:traite, riz_etuve_recu_kg:recu, dechets_kg:dech }
+    const r = { ...retour, paddy_traite_kg:traite, riz_etuve_recu_kg:recu, dechets_kg:dech, passage:s.retours.length + 1 }
     setRetour(null)
-    imprimerFicheRetrait(env, r, true)
+    if (retour.format === 'ticket') ticketReception(env, r, true); else imprimerFicheRetrait(env, r, true)
     charger()
   }
   const supprimerRetour = async r => {
@@ -15592,7 +15599,8 @@ function EtvEnvoisPage({ companies, companyId, toast, readOnly=false }) {
     const etv = etvDe(env.etuveuse_id), lot = lotDe(env.lot_id), s = situationEnvoi(env, ajout ? [...d.retours, { ...r, envoi_id:env.id }] : d.retours)
     const traite = +r.paddy_traite_kg||0, recu = +r.riz_etuve_recu_kg||0
     openPrintWindow(ticketHtml(company, { titre:'BON DE RÉCEPTION (RETOUR ÉTUVEUSE)', numero:env.numero, date:dateDoc(r.date_retour),
-      lignes:[...(env.code_trace?[['Code', env.code_trace, true]]:[]), ['Étuveuse', etv.nom_etuveuse||''], ['Lot', lot.numero_lot||'—'], ['Envoi du', dateDoc(env.date_envoi)], null,
+      lignes:[...(env.code_trace?[['Code', env.code_trace, true]]:[]), ['Étuveuse', etv.nom_etuveuse||''], ['Lot', lot.numero_lot||'—'], ['Envoi du', dateDoc(env.date_envoi)],
+        ['Récupération', (() => { const n = r.passage || (s.retours.findIndex(x => x.id === r.id) + 1) || s.retours.length; return `${n === 1 ? '1ère' : n + 'e'}${s.statut === 'termine' && n === s.retours.length ? ' (dernière)' : ''}` })()], null,
         ['Paddy traité', fmtKg(traite)], ['Riz étuvé reçu', fmtKg(recu), true], ['Déchets', fmtKg(r.dechets_kg)],
         ['Rendement', traite>0?`${(recu/traite*100).toFixed(1)} %`:'—'], ...(r.humidite?[['Humidité', `${nbFr(r.humidite)} %`]]:[]), null,
         ['Paddy confié', fmtKg(env.quantite_envoyee_kg)], ['Déjà soldé', fmtKg(s.traite)]],
@@ -15604,7 +15612,9 @@ function EtvEnvoisPage({ companies, companyId, toast, readOnly=false }) {
     const etv = etvDe(env.etuveuse_id), lot = lotDe(env.lot_id), s = situationEnvoi(env, ajout ? [...d.retours, { ...r, envoi_id:env.id }] : d.retours)
     const ecart = (+r.paddy_traite_kg||0) - (+r.riz_etuve_recu_kg||0) - (+r.dechets_kg||0)
     openPrintWindow(gabaritDocumentHtml({ comp:company, titre:'FICHE DE RETRAIT', numero:env.numero, date:dateDoc(r.date_retour),
-      infos:[['Code traçabilité', env.code_trace||''], ['Envoi du', dateDoc(env.date_envoi)], ['Lot de production', lot.numero_lot||'—'], ['Statut de l\'envoi', STATUTS_ENVOI[s.statut][0]]],
+      infos:[['Code traçabilité', env.code_trace||''], ['Envoi du', dateDoc(env.date_envoi)], ['Lot de production', lot.numero_lot||'—'],
+        ['Récupération', (() => { const n = r.passage || (s.retours.findIndex(x => x.id === r.id) + 1) || s.retours.length; return `${n === 1 ? '1ère' : n + 'e'} récupération${s.statut === 'termine' && n === s.retours.length ? ' (dernière)' : ''}` })()],
+        ['Statut de l\'envoi', STATUTS_ENVOI[s.statut][0]]],
       tiersLabel:'Étuveuse', tiers:{ nom:`${etv.code_etuveuse?etv.code_etuveuse+' — ':''}${etv.nom_etuveuse||''}`, adresse:etv.zone },
       colonnes:[{label:'Retrait'},{label:'Quantité (kg)',align:'d',largeur:'25%'}],
       lignes:[['Paddy traité (soldé sur l\'envoi)', nbFr(r.paddy_traite_kg)], ['<strong>Riz étuvé reçu</strong>', `<strong>${nbFr(r.riz_etuve_recu_kg)}</strong>`], ['Déchets', nbFr(r.dechets_kg)],
@@ -15734,14 +15744,29 @@ function EtvEnvoisPage({ companies, companyId, toast, readOnly=false }) {
 
       <Modal open={!!retour} onClose={()=>setRetour(null)} title={retour ? `Retour — envoi ${retour.envoi.numero} (${etvDe(retour.envoi.etuveuse_id).nom_etuveuse||''})` : ''} size="md">
         {retour && (()=>{ const s = sit(retour.envoi); const n = k => parseFloat(String(retour[k]).replace(',','.'))||0
-          const ecart = n('paddy_traite_kg') - n('riz_etuve_recu_kg') - n('dechets_kg'); const pct = n('paddy_traite_kg')>0 ? ecart/n('paddy_traite_kg')*100 : 0
+          const soldé = retour.derniere == null ? 0 : paddySoldeRetour(retour, s)
+          const ecart = soldé - n('riz_etuve_recu_kg') - n('dechets_kg'); const pct = soldé>0 ? ecart/soldé*100 : 0
           return <form onSubmit={enregistrerRetour}>
-            <div style={{ fontSize:12.5, background:'#f0f9ff', borderRadius:8, padding:'8px 12px', marginBottom:12 }}>
-              Envoyé : <strong>{fmtKg(retour.envoi.quantite_envoyee_kg)}</strong> — déjà soldé : <strong>{fmtKg(s.traite)}</strong> — restant : <strong>{fmtKg(s.restant)}</strong>
+            <div style={{ fontSize:12.5, background:'#f0f9ff', borderRadius:8, padding:'8px 12px', marginBottom:12, lineHeight:1.6 }}>
+              <span style={{ display:'inline-block', padding:'2px 10px', borderRadius:20, fontWeight:700, marginRight:8, background:s.retours.length ? '#fef3c7' : '#dcfce7', color:s.retours.length ? '#92400e' : '#166534' }}>
+                {s.retours.length ? `${s.retours.length + 1}e récupération` : '1ère récupération'}</span>
+              {s.retours.length > 0 && <>déjà récupéré en {s.retours.length} passage(s) : <strong>{fmtKg(s.recu)}</strong> de riz étuvé — </>}
+              paddy restant chez l'étuveuse : <strong>{fmtKg(s.restant)}</strong>
+            </div>
+            <div style={{ display:'flex', gap:10, flexWrap:'wrap', marginBottom:12 }}>
+              {[[false, '🔄 Récupération partielle', "l'étuveuse n'a pas fini le paddy confié"], [true, '✅ Dernière récupération', "l'étuveuse a fini : l'envoi est soldé"]].map(([v, l, sous]) => (
+                <button key={String(v)} type="button" onClick={()=>setRetour(r=>({...r, derniere:v}))}
+                  style={{ flex:'1 1 200px', textAlign:'left', padding:'10px 12px', borderRadius:10, cursor:'pointer', border:'2px solid ' + (retour.derniere === v ? '#1E824C' : '#e2e8f0'), background:retour.derniere === v ? '#f0fdf4' : 'white' }}>
+                  <div style={{ fontSize:13.5, fontWeight:700, color:'#082818' }}>{l}</div><div style={{ fontSize:11.5, color:'#64748b' }}>{sous}</div>
+                </button>))}
             </div>
             <Grid cols={2} gap={14} style={{ marginBottom:12 }}>
               <Input label="Date du retour *" name="date_retour" type="date" value={retour.date_retour} onChange={e=>setRetour(r=>({...r, date_retour:e.target.value}))} required />
-              <Input label="Paddy traité, soldé sur l'envoi (kg)" name="paddy_traite_kg" type="number" step="0.001" min="0" value={retour.paddy_traite_kg} onChange={e=>setRetour(r=>({...r, paddy_traite_kg:e.target.value}))} />
+              <div>
+                <label style={{display:'block',fontSize:12.5,fontWeight:600,color:'#374151',marginBottom:5}}>🔒 Paddy reçu par l'étuveuse (kg)</label>
+                <div style={{padding:'9px 12px',background:'#f1f5f9',borderRadius:8,border:'1px solid #e2e8f0',fontSize:14,fontWeight:700,color:'#334155'}}>{fmtKg(retour.envoi.quantite_envoyee_kg)}</div>
+                <div style={{fontSize:11.5,color:'#64748b',marginTop:4}}>Soldé par ce retour : <strong>{retour.derniere == null ? '—' : fmtKg(paddySoldeRetour(retour, s))}</strong>{retour.derniere === false ? ' (riz reçu + déchets)' : retour.derniere ? ' (tout le restant)' : ''}</div>
+              </div>
               <Input label="Riz étuvé reçu (kg) *" name="riz_etuve_recu_kg" type="number" step="0.001" min="0" value={retour.riz_etuve_recu_kg} onChange={e=>setRetour(r=>({...r, riz_etuve_recu_kg:e.target.value}))} required />
               <Input label="Déchets (kg)" name="dechets_kg" type="number" step="0.001" min="0" value={retour.dechets_kg} onChange={e=>setRetour(r=>({...r, dechets_kg:e.target.value}))} />
               <Input label="Humidité (%)" name="humidite" type="number" step="0.1" min="0" value={retour.humidite} onChange={e=>setRetour(r=>({...r, humidite:e.target.value}))} />
@@ -15752,7 +15777,8 @@ function EtvEnvoisPage({ companies, companyId, toast, readOnly=false }) {
               <input type="checkbox" checked={retour.creer_etuvage} onChange={e=>setRetour(r=>({...r, creer_etuvage:e.target.checked}))} />
               Créer le cycle d'étuvage correspondant en Production (lot ETUV-…, écart et alerte)
             </label>
-            <Row><Btn variant="secondary" onClick={()=>setRetour(null)}>Annuler</Btn><Btn type="submit" variant="success" disabled={saving}>{saving?'…':'Enregistrer et imprimer la fiche de retrait'}</Btn></Row>
+            <Row><Btn variant="secondary" onClick={()=>setRetour(null)}>Annuler</Btn><Btn type="submit" variant="secondary" disabled={saving} onClick={()=>setRetour(r=>({...r, format:'ticket'}))}>{saving?'…':'🧾 Enregistrer + ticket'}</Btn>
+              <Btn type="submit" variant="success" disabled={saving} onClick={()=>setRetour(r=>({...r, format:'a4'}))}>{saving?'…':'🖨️ Enregistrer + fiche A4'}</Btn></Row>
           </form> })()}
       </Modal>
 
