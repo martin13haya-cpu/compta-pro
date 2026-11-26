@@ -9953,6 +9953,11 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
     }
 
     // Tri optique
+    // Tri optique : taux d'impureté = hors normes / riz reçu au tri (poids avant).
+    if (tableName === 'compta_tri_optique' && fname === 'taux_impurete') {
+      const avant = parseFloat(form.poids_avant) || 0, hors = parseFloat(form.hors_normes) || 0
+      return avant > 0 ? Math.round(hors / avant * 10000) / 100 : 0
+    }
     if (tableName === 'compta_tri_optique' && fname === 'ecart') {
       const avant  = parseFloat(form.poids_avant)     || 0
       const apres  = parseFloat(form.poids_apres_tri) || 0
@@ -14977,6 +14982,8 @@ const ARTICLES_ETUVAGE = {
   brisures: { motif:/brisure|cass(e|é)s?\b/i, exclure:/tri(e|é)|(e|é)tuv/i, designation:'BRISURES DE RIZ', categorie:'semi_fini' },
   brisures_triees: { motif:/brisures?\W+tri(e|é)/i, designation:'BRISURES TRIEES', categorie:'semi_fini' },
   brisures_fini: { motif:/brisures?.*(e|é)tuv/i, designation:'BRISURES DE RIZ ETUVE', categorie:'riz_etuve' },
+  // Tri optique : 2e qualité (hors normes).
+  qualite2: { motif:/2\s*e?\W*qualit|hors\W*norme/i, designation:'RIZ 2E QUALITE (HORS NORMES)', categorie:'semi_fini' },
   trie: { motif:/^\s*riz\s+tri(e|é)\s*$/i, designation:'RIZ TRIE', categorie:'semi_fini' },
   // Produit fini : « RIZ ETUVE » (jamais l'ancien article auto de code RIZ-ETUVE).
   fini: { motif:/^\s*riz\s+(e|é)tuv(e|é)\s*$/i, exclureArt:a => (a.code || '') === 'RIZ-ETUVE', designation:'RIZ ETUVE', categorie:'riz_etuve', code:'RIZ-ETUVE-FINI' },
@@ -14989,8 +14996,10 @@ const CHAINE_PRODUCTION = {
   compta_calibrage:       { cle:'CALI', entree:{ sorte:'decortique', champ:'poids_avant', lib:'Riz décortiqué' }, sorties:[{ sorte:'calibre', champ:'poids_long_grain', lib:'Riz calibré (long grain)' }, { sorte:'brisures', champ:'poids_casses', lib:'Brisures (cassés)' }] },
   // Tri optique : riz long grain calibré, brisures, ou riz décortiqué envoyé directement
   // au tri (sans calibrage, quand il y a peu de brisures).
-  compta_tri_optique:     { cle:'TRI', entree:{ sorte:'calibre', champ:'poids_avant', lib:'Riz calibré' }, sorties:[{ sorte:'trie', champ:'poids_apres_tri', lib:'Riz trié' }],
-    choix:[{ sorte:'calibre', lib:'Riz calibré (long grain)' }, { sorte:'brisures', lib:'Brisures (riz cassé)', sorties:[{ sorte:'brisures_triees', champ:'poids_apres_tri', lib:'Brisures triées' }] },
+  compta_tri_optique:     { cle:'TRI', entree:{ sorte:'calibre', champ:'poids_avant', lib:'Riz calibré' },
+    // Deux qualités : 1re qualité (poids après tri) et 2e qualité (hors normes).
+    sorties:[{ sorte:'trie', champ:'poids_apres_tri', lib:'Riz trié — 1re qualité' }, { sorte:'qualite2', champ:'hors_normes', lib:'2e qualité (hors normes)' }],
+    choix:[{ sorte:'calibre', lib:'Riz calibré (long grain)' }, { sorte:'brisures', lib:'Brisures (riz cassé)', sorties:[{ sorte:'brisures_triees', champ:'poids_apres_tri', lib:'Brisures triées — 1re qualité' }, { sorte:'qualite2', champ:'hors_normes', lib:'2e qualité (hors normes)' }] },
       { sorte:'decortique', lib:'Riz décortiqué (non calibré)' }] },
   compta_conditionnement: { cle:'COND', entree:{ sorte:'trie', champ:'poids_recu', lib:'Riz trié' }, sorties:[{ sorte:'fini', champ:'poids_total_conditionne', lib:'Riz étuvé (produit fini)' }],
     choix:[{ sorte:'trie', lib:'Riz trié' }, { sorte:'brisures_triees', lib:'Brisures triées', sorties:[{ sorte:'brisures_fini', champ:'poids_total_conditionne', lib:'Brisures de riz étuvé (produit fini)' }] }] },
@@ -28125,7 +28134,7 @@ export default function ComptaPro() {
       {name:'rouge_a_polir',       label:'Rouge à polir (kg)',    type:'number'},
       {name:'ecart',               label:'Écart (kg)',            type:'number', summary:true, calc:true},
       {name:'taux_rouge',          label:'Taux rouge (%)',        type:'number'},
-      {name:'taux_impurete',       label:'Taux impureté (%)',     type:'number'},
+      {name:'taux_impurete',       label:'Taux impureté (%)',     type:'number', calc:true, unit:'%'},
       {name:'observation',         label:'Observation'},
       {name:'recommandation',      label:'Recommandation'},
     ]},
