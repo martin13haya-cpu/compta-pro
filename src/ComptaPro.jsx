@@ -10003,6 +10003,8 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
     const uid = (await supabase.auth.getUser()).data?.user?.id
     const cid = form.company_id || companyId || companies[0]?.id
     if (!cid) { toast.error('Société introuvable. Veuillez en sélectionner une.'); setSaving(false); return }
+    // Traçabilité : chaque étape de production est rattachée à un lot.
+    if (!form.lot_id) { toast.error('Choisissez le lot de production : il est obligatoire pour retracer le produit.'); setSaving(false); return }
     const pay = { company_id:cid, lot_id:form.lot_id||null, date_etape:form.date_etape }
     fields.forEach(f => {
       if (f.calc) {
@@ -10282,7 +10284,7 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
                 options={[{value:'',label:'— Retrouver le lot par son achat groupé —'},...groupesAchat.map(g=>{ const lot = localLots.find(l=>String(l.id)===String(g.lot_id))
                   return {value:g.id,label:`${g.numero}${g.village?' — '+g.village:''} → ${lot ? lot.numero_lot : 'pas encore versé dans un lot'}`} })]} />
             </Span2>}
-            <Sel label="Lot de production" name="lot_id" value={form.lot_id||''} onChange={set}
+            <Sel label="Lot de production *" name="lot_id" value={form.lot_id||''} onChange={set} required
               options={[{value:'',label:localLots.length===0?'— Aucun lot disponible —':'— Choisir un lot —'},...localLots.map(l=>({value:l.id,label:`${l.numero_lot}${l.statut?' ('+l.statut+')':''}${origineLot(l.id)?' — '+origineLot(l.id):''}`}))]} />
             <Input label="Date" name="date_etape" type="date" value={form.date_etape||''} onChange={set} />
             {estEtuvage && !cycleDepuisRetour(editItem) && <Span2><div style={{fontSize:12,color:'#1d4ed8',marginTop:-6}}>📦 À l'enregistrement : le paddy envoyé sort du stock et le riz paddy étuvé reçu y entre (bons automatiques). Pour un envoi chez une étuveuse, passez plutôt par Étuveuses › Envois aux étuveuses.</div></Span2>}
