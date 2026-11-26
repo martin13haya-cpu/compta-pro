@@ -9807,6 +9807,20 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
   // seuils d'alerte d'écart par étape et par société.
   const etape = tableName.replace('compta_','')
   const estEtuvage = tableName === 'compta_etuvage'
+  const estDecorticage = tableName === 'compta_decorticage'
+  // Décorticage : riz étuvé disponible en stock (+ ce que cet enregistrement a déjà sorti).
+  const [stockEtuve, setStockEtuve] = useState(null)
+  const chargerStockEtuve = async (cid, item) => {
+    if (!estDecorticage || !cid) return
+    const { data } = await supabase.from('compta_articles').select('id,designation,stock_actuel').eq('company_id', cid).eq('actif', true)
+    const art = (data || []).find(a => ARTICLES_ETUVAGE.etuve.motif.test(a.designation || ''))
+    let deja = 0
+    if (item?.id) {
+      const { data:bons } = await supabase.from('compta_bons_stock').select('lignes').eq('company_id', cid).like('observations', `%[DECO:${item.id}]%`)
+      deja = (bons || []).reduce((s, b) => s + (b.lignes || []).reduce((x, l) => x + (+l.quantite || 0), 0), 0)
+    }
+    setStockEtuve({ dispo:Math.round(((+art?.stock_actuel || 0) + deja) * 1000) / 1000, existe:!!art })
+  }
   const [etuveuses, setEtuveuses] = useState([])
   const [seuils, setSeuils] = useState(SEUILS_PRODUCTION_DEFAUT)
   const [seuilsModal, setSeuilsModal] = useState(null)
@@ -9958,11 +9972,13 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
       df.etuveuse_id = ''
     }
     setEditItem(null); setForm(df); setModal(true)
+    chargerStockEtuve(cid, null)
   }
   const openEdit = it => {
     setEditItem(it)
     const df = { ...it, company_id: it.company_id||companyId||companies[0]?.id||'', lot_id: it.lot_id||'' }
     setForm(df); setModal(true)
+    setStockEtuve(null); chargerStockEtuve(df.company_id, it)
   }
   const close = () => { setModal(false); setEditItem(null) }
 
@@ -9987,6 +10003,13 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
       pay.seuil_alerte_pct = seuilEtape
       pay.alerte = Math.abs(pay.ecart_pct||0) > seuilEtape
     }
+    // Décorticage : on ne décortique que du riz étuvé présent en stock (bloquant).
+    if (estDecorticage) {
+      const q = +pay.poids_avant || 0
+      if (!(q > 0)) { setSaving(false); toast.error('Saisissez le poids avant (riz étuvé à décortiquer).'); return }
+      if (!stockEtuve || q > stockEtuve.dispo + 0.0005) { setSaving(false)
+        toast.error(`Riz étuvé insuffisant en stock : ${fmtKg(stockEtuve?.dispo || 0)} disponible(s) pour ${fmtKg(q)}. Enregistrez d'abord le retour de l'étuveuse (Étuveuses › Envois aux étuveuses) pour entrer le riz étuvé en stock.`); return }
+    }
     // Étuvage saisi en direct (pas issu d'un retour d'étuveuse, qui a déjà ses
     // bons) : sortie du paddy envoyé et entrée du riz étuvé reçu.
     const stockDirect = estEtuvage && pay.lot_sortant && !cycleDepuisRetour(editItem)
@@ -10010,6 +10033,17 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
       if (stockDirect) await annulerBonsStockAuto(cid, cle)
       setSaving(false)
       toast.error(estEtuvage && /etuveuse_id|lot_sortant|dechets_kg|humidite_sortie|ecart_pct|seuil_alerte_pct|alerte|cuve|schema cache/i.test(error.message) ? MSG_SCRIPT_ETUVAGE : error.message); return
+    }
+    if (estDecorticage) {
+      const idDeco = editItem ? editItem.id : insEtape.id, cleDeco = `DECO:${idDeco}`
+      if (editItem) await annulerBonsStockAuto(cid, cleDeco)
+      const { article } = await articleEtuvage(cid, uid, 'etuve')
+      const r = article ? await passerBonStockAuto({ companyId:cid, uid, type:'sortie', article, quantite:pay.poids_avant, prix:article.prix_achat, date:pay.date_etape,
+        tiers:'Décorticage', motif:'production', cle:cleDeco, observations:`Décorticage${pay.numero_lot ? ` — lot ${pay.numero_lot}` : ''}` }) : { error:{ message:'article RIZ ETUVE introuvable' } }
+      setSaving(false)
+      if (r.error) toast.error('Enregistré, mais la sortie de stock du riz étuvé n\'a pas été passée : ' + r.error.message)
+      else toast.success(`${editItem ? 'Modification enregistrée' : 'Enregistrement réussi'} — ${fmtKg(pay.poids_avant)} de riz étuvé sortis du stock${r.numero ? ` (bon ${r.numero})` : ''}.`)
+      close(); load(); return
     }
     let entree = {}
     if (stockDirect) entree = await entreeRizEtuve({ companyId:cid, uid, rizRecu:pay.riz_etuve_recu_kg, paddyTraite:pay.paddy_envoye_kg, date:pay.date_etape, cle, toast,
@@ -10058,8 +10092,9 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
   const del = async id => {
     const it = items.find(x => x.id === id)
     const avecStock = estEtuvage && it?.lot_sortant && !cycleDepuisRetour(it)
-    if (!confirm(`Supprimer cet enregistrement ?${avecStock ? ' Les mouvements de stock de ce cycle (paddy sorti, riz étuvé entré) seront annulés.' : ''}`)) return
+    if (!confirm(`Supprimer cet enregistrement ?${avecStock ? ' Les mouvements de stock de ce cycle (paddy sorti, riz étuvé entré) seront annulés.' : estDecorticage ? ' Le riz étuvé sorti du stock pour ce décorticage y sera remis.' : ''}`)) return
     if (avecStock) await annulerBonsStockAuto(it.company_id || companyId, `ETUV:${it.lot_sortant}`)
+    if (estDecorticage) await annulerBonsStockAuto(it?.company_id || companyId, `DECO:${id}`)
     await supabase.from(tableName).delete().eq('id', id)
     toast.success('Supprimé !'); load()
   }
@@ -10213,6 +10248,11 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
                 ? <>Origine du paddy : <strong>{originesLots[form.lot_id].refs.join(', ')||'réceptions producteurs'}</strong> — {originesLots[form.lot_id].producteurs} producteur(s), {fmtKg(originesLots[form.lot_id].kg)}</>
                 : <>Aucun achat relié à ce lot : versez-y un achat (Achats hors FRIA) ou ajoutez ses producteurs dans Traçabilité (QR).</>}
             </div></Span2>}
+            {estDecorticage && (()=>{ const q = parseFloat(form.poids_avant)||0, dispo = stockEtuve?.dispo ?? null, trop = dispo != null && q > dispo + 0.0005
+              return <Span2><div style={{fontSize:12.5,padding:'8px 12px',borderRadius:8,background:trop||dispo===0?'#fef2f2':'#f0f9ff',color:trop||dispo===0?'#b91c1c':'#0c4a6e'}}>
+                📦 Riz étuvé en stock : <strong>{dispo == null ? '…' : fmtKg(dispo)}</strong> — le poids avant sort du stock à l'enregistrement.
+                {trop && ' Le poids avant dépasse le stock : enregistrement impossible.'}
+                {dispo === 0 && !trop && " Aucun riz étuvé en stock : enregistrez d'abord le retour de l'étuveuse."}</div></Span2> })()}
             {estEtuvage && form.lot_id && resteLot(form.lot_id) != null && (()=>{ const reste = resteLot(form.lot_id); const envoye = parseFloat(form.paddy_envoye_kg)||0
               return <Span2><div style={{fontSize:12.5,padding:'8px 12px',borderRadius:8,background:envoye>reste+0.001?'#fef2f2':'#f0f9ff',color:envoye>reste+0.001?'#b91c1c':'#0c4a6e'}}>
                 Paddy du lot : <strong>{fmtKg(localLots.find(l=>l.id===form.lot_id)?.qte_paddy_entree)}</strong> — reste à envoyer à l'étuvage : <strong>{fmtKg(reste)}</strong>
@@ -15491,7 +15531,7 @@ function EtvEnvoisPage({ companies, companyId, toast, readOnly=false }) {
   const nouveauRetour = envoi => {
     // Une étuveuse peut être visitée plusieurs fois avant de finir l'envoi : on demande si ce
     // retour est la dernière récupération (il solde alors tout le paddy restant).
-    setRetour({ envoi, date_retour:today(), derniere:null, riz_etuve_recu_kg:'', dechets_kg:'0', humidite:'', observation:'', creer_etuvage:true })
+    setRetour({ envoi, date_retour:today(), derniere:null, riz_etuve_recu_kg:'', dechets_kg:'0', humidite:'', observation:'', creer_etuvage:true, entrer_stock:true })
   }
   // Paddy soldé par un retour (champ verrouillé) : à la dernière récupération, tout le
   // paddy restant chez l'étuveuse ; sinon, l'équivalent du riz reçu et des déchets.
@@ -15537,7 +15577,7 @@ function EtvEnvoisPage({ companies, companyId, toast, readOnly=false }) {
     if (error) { setSaving(false); if (etuvage_id) await supabase.from('compta_etuvage').delete().eq('id', etuvage_id); return toast.error(error.message) }
     // Le riz étuvé reçu entre en stock (bon d'entrée BE-…), au coût du paddy traité.
     const etvR = etvDe(env.etuveuse_id), lotR = lotDe(env.lot_id)
-    const entree = await entreeRizEtuve({ companyId, uid, rizRecu:recu, paddyTraite:traite, date:retour.date_retour, tiers:`Étuveuse ${etvR.nom_etuveuse||''}`.trim(),
+    const entree = retour.entrer_stock === false ? {} : await entreeRizEtuve({ companyId, uid, rizRecu:recu, paddyTraite:traite, date:retour.date_retour, tiers:`Étuveuse ${etvR.nom_etuveuse||''}`.trim(),
       cle:`RET:${ret.id}`, toast, observations:`Retour de l'envoi ${env.numero}${lotR.numero_lot ? ` — lot ${lotR.numero_lot}` : ''}` })
     setSaving(false)
     toast.success(`Retour enregistré${etuvage_id?' — cycle d\'étuvage créé en Production':''}${entree.numero ? ` — ${fmtKg(recu)} de riz étuvé entrés en stock (bon ${entree.numero})` : ''}.`)
@@ -15800,6 +15840,11 @@ function EtvEnvoisPage({ companies, companyId, toast, readOnly=false }) {
             <label style={{ display:'flex', gap:8, alignItems:'center', fontSize:13, marginBottom:14, cursor:'pointer' }}>
               <input type="checkbox" checked={retour.creer_etuvage} onChange={e=>setRetour(r=>({...r, creer_etuvage:e.target.checked}))} />
               Créer le cycle d'étuvage correspondant en Production (lot ETUV-…, écart et alerte)
+            </label>
+            <label style={{ display:'flex', gap:8, alignItems:'center', fontSize:13, marginBottom:14, cursor:'pointer', padding:'8px 12px', borderRadius:8,
+              background:retour.entrer_stock ? '#f0fdf4' : '#fffbeb', border:'1px solid ' + (retour.entrer_stock ? '#bbf7d0' : '#fde68a') }}>
+              <input type="checkbox" checked={retour.entrer_stock !== false} onChange={e=>setRetour(r=>({...r, entrer_stock:e.target.checked}))} />
+              <span>📦 <strong>Entrer le riz étuvé reçu en stock</strong> (bon d'entrée « RIZ ETUVE »){retour.entrer_stock === false && <span style={{ color:'#92400e' }}> — non coché : ce riz ne pourra pas être décortiqué tant qu'il n'est pas en stock</span>}</span>
             </label>
             <Row><Btn variant="secondary" onClick={()=>setRetour(null)}>Annuler</Btn><Btn type="submit" variant="secondary" disabled={saving} onClick={()=>{ formatRetour.current = 'ticket' }}>{saving?'…':'🧾 Enregistrer + ticket'}</Btn>
               <Btn type="submit" variant="success" disabled={saving} onClick={()=>{ formatRetour.current = 'a4' }}>{saving?'…':'🖨️ Enregistrer + fiche A4'}</Btn></Row>
