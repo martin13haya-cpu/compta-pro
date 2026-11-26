@@ -15124,8 +15124,9 @@ function EpargneFriaPage({ companies, companyId, toast, readOnly=false }) {
     .filter(x => okCommune(x.f) && (!filtre.village || (x.f.village||'') === filtre.village)
       && (!filtre.q || normAG(`${nomTiersTraca(x.f)} ${x.f.code_trace||''} ${x.f.cip||''} ${x.f.cooperative_affiliee||''}`).includes(normAG(filtre.q))))
   const tot = k => lignesSit.reduce((t,x)=>t+(k === 'kitC' ? x.kitC : x.s[k]),0)
-  const mvtsVisibles = d.mvts.filter(m => (!filtre.campagne || m.campagne === filtre.campagne) && okCommune(frsDe(m.fournisseur_id))
-    && (!filtre.q || normAG(`${m.numero} ${nomTiersTraca(frsDe(m.fournisseur_id))} ${m.tiers_nom||''}`).includes(normAG(filtre.q))))
+  const frsMvt = id => frsDe(id) || frsArchive(id)
+  const mvtsVisibles = d.mvts.filter(m => (!filtre.campagne || m.campagne === filtre.campagne) && okCommune(frsMvt(m.fournisseur_id))
+    && (!filtre.q || normAG(`${m.numero} ${nomTiersTraca(frsMvt(m.fournisseur_id))} ${m.tiers_nom||''}`).includes(normAG(filtre.q))))
 
   const verifier = () => {
     if (!companyId) { toast.error("Sélectionnez une société précise (en haut de l'écran)."); return false }
@@ -15400,7 +15401,29 @@ function EpargneFriaPage({ companies, companyId, toast, readOnly=false }) {
       signatures:['Le Producteur', 'Le Gérant / Comptable'] }), `fria_${m.numero}`)
   }
 
+  // Vue « Mouvements » : l'état et l'export reprennent seulement les mouvements affichés
+  // (filtres campagne, commune, recherche).
+  const prodMvt = m => frsDe(m.fournisseur_id) || frsArchive(m.fournisseur_id)
+  const totMvts = () => {
+    const r = {}; mvtsVisibles.forEach(m => { const x = r[m.type] ||= { n:0, kg:0, mt:0 }; x.n++; x.kg += +m.quantite_kg || 0; x.mt += +m.montant || 0 }); return r
+  }
+  const imprimerMouvements = () => {
+    if (!mvtsVisibles.length) return toast.error('Aucun mouvement à imprimer avec les filtres actuels.')
+    const tm = totMvts()
+    openPrintWindow(gabaritDocumentHtml({ comp:company, titre:"MOUVEMENTS DE L'ÉPARGNE FRIA", numero:'', date:new Date().toLocaleDateString('fr-FR'),
+      infos:[['Campagne', filtre.campagne||'Toutes'], ['Commune', filtre.commune === '__aucune__' ? 'Non précisée' : filtre.commune||'Toutes'], ...(filtre.q ? [['Recherche', filtre.q]] : []), ['Mouvements', String(mvtsVisibles.length)]],
+      tiersLabel:'Kit FRIA', tiers:{ nom:'Mouvements sélectionnés' },
+      colonnes:[{label:'N° pièce'},{label:'Date'},{label:'Type'},{label:'Producteur'},{label:'Village'},{label:'Campagne'},{label:'Quantité',align:'d'},{label:'Montant',align:'d'},{label:'Bon'}],
+      lignes:mvtsVisibles.map(m => { const f = prodMvt(m), bon = d.bons.find(b => b.tiers === tiersBonFria(m))
+        return [echapHtml(pieceFria(m)), dateDoc(m.date_mouvement), echapHtml(TYPES_MVT_FRIA[m.type]?.[0] || m.type || ''),
+          `${echapHtml(nomTiersTraca(f) || '—')}${f?.code_trace ? `<br><small>${echapHtml(f.code_trace)}</small>` : ''}`, echapHtml(f?.village || ''), echapHtml(m.campagne || ''),
+          +m.quantite_kg > 0 ? `${nbFr(m.quantite_kg)} kg` : '—', `<strong>${nbFr(m.montant)}</strong>`, echapHtml(bon?.numero || '')] }),
+      totaux:[...Object.entries(tm).map(([ty, x]) => [`${TYPES_MVT_FRIA[ty]?.[0] || ty} (${x.n})`, `${x.kg > 0 ? nbFr(Math.round(x.kg * 1000) / 1000) + ' kg — ' : ''}${fcfaDoc(x.mt)}`]),
+        ['Total des montants', fcfaDoc(mvtsVisibles.reduce((s, m) => s + (+m.montant || 0), 0)), true]],
+      signatures:['Le Gérant / Comptable', 'Le Président Coopérative / Groupement'] }), 'mouvements_epargne_fria')
+  }
   const imprimerEtat = () => {
+    if (filtre.vue === 'mouvements') return imprimerMouvements()
     if (!lignesSit.length) return toast.error('Aucun producteur à imprimer.')
     openPrintWindow(gabaritDocumentHtml({ comp:company, titre:'SITUATION DE L\'ÉPARGNE FRIA', numero:'', date:new Date().toLocaleDateString('fr-FR'),
       infos:[['Campagne (kit)', filtre.campagne||'Toutes'], ['Commune', filtre.commune === '__aucune__' ? 'Non précisée' : filtre.commune||'Toutes'], ['Village', filtre.village||'Tous'], ['Producteurs', String(lignesSit.length)]],
@@ -15412,6 +15435,21 @@ function EpargneFriaPage({ companies, companyId, toast, readOnly=false }) {
       signatures:['Le Gérant / Comptable', 'Le Président Coopérative / Groupement'] }), 'situation_epargne_fria')
   }
   const exporterExcel = async () => {
+    if (filtre.vue === 'mouvements') {
+      if (!mvtsVisibles.length) return toast.error('Aucun mouvement à exporter avec les filtres actuels.')
+      const XLSX = await import('https://cdn.sheetjs.com/xlsx-0.20.0/package/xlsx.mjs')
+      const rows = [['N° pièce','Date','Type','Producteur','Code','Commune','Village','Campagne','Quantité (kg)','Montant (FCFA)','Bon'],
+        ...mvtsVisibles.map(m => { const f = prodMvt(m), bon = d.bons.find(b => b.tiers === tiersBonFria(m))
+          return [pieceFria(m), dateDoc(m.date_mouvement), TYPES_MVT_FRIA[m.type]?.[0] || m.type || '', nomTiersTraca(f) || '', f?.code_trace || '', communeF(f), f?.village || '', m.campagne || '',
+            +m.quantite_kg || 0, +m.montant || 0, bon?.numero || ''] }),
+        ['TOTAL','','','','','','','', mvtsVisibles.reduce((s, m) => s + (+m.quantite_kg || 0), 0), mvtsVisibles.reduce((s, m) => s + (+m.montant || 0), 0), '']]
+      const ws = XLSX.utils.aoa_to_sheet(rows)
+      ws['!cols'] = rows[0].map((_,i) => ({ wch: i === 3 ? 30 : 15 }))
+      const wb = XLSX.utils.book_new()
+      XLSX.utils.book_append_sheet(wb, ws, 'Mouvements FRIA')
+      XLSX.writeFile(wb, `mouvements_fria${filtre.commune && filtre.commune !== '__aucune__' ? '_' + filtre.commune : ''}${filtre.campagne ? '_' + filtre.campagne : ''}.xlsx`)
+      return
+    }
     if (!lignesSit.length) return toast.error('Aucun producteur à exporter.')
     const XLSX = await import('https://cdn.sheetjs.com/xlsx-0.20.0/package/xlsx.mjs')
     const rows = [['Producteur','Code','Téléphone','Commune','Village','Coopérative',`Kit ${filtre.campagne||'(toutes campagnes)'}`,'Kit total','Financé par épargne','Remboursé (groupes)','Remboursé (hors groupe)','En cours (groupe ouvert)','Reste à rembourser','Restitué','Épargne FRIA disponible'],
