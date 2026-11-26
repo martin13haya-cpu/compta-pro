@@ -14984,6 +14984,7 @@ const ARTICLES_ETUVAGE = {
   brisures_fini: { motif:/brisures?.*(e|é)tuv/i, designation:'BRISURES DE RIZ ETUVE', categorie:'riz_etuve' },
   // Tri optique : 2e qualité (hors normes).
   qualite2: { motif:/2\s*e?\W*qualit|hors\W*norme/i, designation:'RIZ 2E QUALITE (HORS NORMES)', categorie:'semi_fini' },
+  rouge_polir: { motif:/rouge\W*(a|à)?\W*polir/i, designation:'RIZ ROUGE A POLIR', categorie:'semi_fini' },
   trie: { motif:/^\s*riz\s+tri(e|é)\s*$/i, designation:'RIZ TRIE', categorie:'semi_fini' },
   // Produit fini : « RIZ ETUVE » (jamais l'ancien article auto de code RIZ-ETUVE).
   fini: { motif:/^\s*riz\s+(e|é)tuv(e|é)\s*$/i, exclureArt:a => (a.code || '') === 'RIZ-ETUVE', designation:'RIZ ETUVE', categorie:'riz_etuve', code:'RIZ-ETUVE-FINI' },
@@ -14998,8 +14999,8 @@ const CHAINE_PRODUCTION = {
   // au tri (sans calibrage, quand il y a peu de brisures).
   compta_tri_optique:     { cle:'TRI', entree:{ sorte:'calibre', champ:'poids_avant', lib:'Riz calibré' },
     // Deux qualités : 1re qualité (poids après tri) et 2e qualité (hors normes).
-    sorties:[{ sorte:'trie', champ:'poids_apres_tri', lib:'Riz trié — 1re qualité' }, { sorte:'qualite2', champ:'hors_normes', lib:'2e qualité (hors normes)' }],
-    choix:[{ sorte:'calibre', lib:'Riz calibré (long grain)' }, { sorte:'brisures', lib:'Brisures (riz cassé)', sorties:[{ sorte:'brisures_triees', champ:'poids_apres_tri', lib:'Brisures triées — 1re qualité' }, { sorte:'qualite2', champ:'hors_normes', lib:'2e qualité (hors normes)' }] },
+    sorties:[{ sorte:'trie', champ:'poids_apres_tri', lib:'Riz trié — 1re qualité' }, { sorte:'qualite2', champ:'hors_normes', lib:'2e qualité (hors normes)' }, { sorte:'rouge_polir', champ:'rouge_a_polir', lib:'Riz rouge à polir' }],
+    choix:[{ sorte:'calibre', lib:'Riz calibré (long grain)' }, { sorte:'brisures', lib:'Brisures (riz cassé)', sorties:[{ sorte:'brisures_triees', champ:'poids_apres_tri', lib:'Brisures triées — 1re qualité' }, { sorte:'qualite2', champ:'hors_normes', lib:'2e qualité (hors normes)' }, { sorte:'rouge_polir', champ:'rouge_a_polir', lib:'Riz rouge à polir' }] },
       { sorte:'decortique', lib:'Riz décortiqué (non calibré)' }] },
   compta_conditionnement: { cle:'COND', entree:{ sorte:'trie', champ:'poids_recu', lib:'Riz trié' }, sorties:[{ sorte:'fini', champ:'poids_total_conditionne', lib:'Riz étuvé (produit fini)' }],
     choix:[{ sorte:'trie', lib:'Riz trié' }, { sorte:'brisures_triees', lib:'Brisures triées', sorties:[{ sorte:'brisures_fini', champ:'poids_total_conditionne', lib:'Brisures de riz étuvé (produit fini)' }] }] },
