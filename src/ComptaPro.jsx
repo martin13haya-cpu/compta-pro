@@ -5623,6 +5623,10 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
 
   const archive = async id => {
     const it = items.find(x=>x.id===id)
+    if (table === 'compta_fournisseurs') {
+      const { count } = await supabase.from('compta_fria_mouvements').select('id', { count:'exact', head:true }).eq('fournisseur_id', id)
+      if (count > 0) { toast.error(`Impossible de supprimer « ${displayName(it)||'ce producteur'} » : son épargne FRIA a ${count} mouvement(s) (remboursement, renouvellement…). Supprimez d'abord ces mouvements dans Épargne FRIA.`); return }
+    }
     if (!confirm(`🗑️ Supprimer ${titleSingle.toLowerCase()} « ${displayName(it)||'sans nom'} » ?\n\nLa fiche sera archivée et disparaîtra de la liste.`)) return
     await supabase.from(table).update({actif:false}).eq('id',id)
     // Le n° de compte attribué à ce tiers (sous-compte 4011xxx / 4111xxx) n'appartient
@@ -5743,14 +5747,24 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     if (!confirm(`🔎 ${groups.length} groupe(s) de doublons détecté(s), soit ${totalToRemove} fiche(s) en trop.\n\n${preview}${groups.length>10?'\n…':''}\n\nLa fiche la plus complète de chaque groupe sera conservée, les autres seront archivées. Continuer ?`)) return
 
     const idsToRemove = []
+    const avecFria = new Set()
+    if (table === 'compta_fournisseurs') {
+      const tousIds = groups.flat().map(it => it.id)
+      for (let i=0; i<tousIds.length; i+=150) {
+        const { data } = await supabase.from('compta_fria_mouvements').select('fournisseur_id').in('fournisseur_id', tousIds.slice(i, i+150))
+        ;(data||[]).forEach(x => avecFria.add(String(x.fournisseur_id)))
+      }
+    }
     groups.forEach(g=>{
       const scoreOf = it => Object.entries(it).filter(([k,v])=>k!=='_avances' && k!=='compta_companies' && v!==null && v!=='' && v!==undefined).length
       const sorted = [...g].sort((a,b)=>{
+        const sf = avecFria.has(String(b.id)) - avecFria.has(String(a.id))
+        if (sf !== 0) return sf
         const sd = scoreOf(b) - scoreOf(a)
         if (sd !== 0) return sd
         return new Date(a.created_at||0) - new Date(b.created_at||0)
       })
-      idsToRemove.push(...sorted.slice(1).map(it=>it.id))
+      idsToRemove.push(...sorted.slice(1).filter(it => !avecFria.has(String(it.id))).map(it=>it.id))
     })
 
     // Suppression par lots pour éviter une URL trop longue (erreur "Bad Request") si beaucoup
@@ -15079,12 +15093,20 @@ function EpargneFriaPage({ companies, companyId, toast, readOnly=false }) {
       supabase.from('compta_bons_stock').select('numero,tiers').eq('company_id', companyId).eq('type', 'entree').like('tiers', 'Remboursement FRIA %'),
     ])
     const tous = (f||[]).filter(x => x.actif !== false)
-    setD({ tous, avances:av||[], lignes:l||[], groupes:g||[], mvts:em ? [] : (mv||[]), articles:ar||[], bons:bo||[], loading:false, erreur:!!em && estErreurFria(em),
+    setD({ tous, archives:(f||[]).filter(x => x.actif === false), avances:av||[], lignes:l||[], groupes:g||[], mvts:em ? [] : (mv||[]), articles:ar||[], bons:bo||[], loading:false, erreur:!!em && estErreurFria(em),
       fournisseurs:tous.filter(x => x.type !== 'morale' && estProducteur(x)).sort((x,y)=>nomTiersTraca(x).localeCompare(nomTiersTraca(y),'fr')) })
   }, [companyId])
   useEffect(() => { charger() }, [charger])
 
   const frsDe = id => d.tous.find(f => String(f.id) === String(id))
+  const frsArchive = id => (d.archives || []).find(f => String(f.id) === String(id))
+  // Fiche archivée (supprimée) alors qu'elle porte des mouvements FRIA : on la remet active.
+  const restaurerFiche = async fa => {
+    if (!confirm(`Restaurer la fiche de ${nomTiersTraca(fa) || 'ce producteur'} ?\n\nElle a été supprimée (archivée) alors que son épargne FRIA a des mouvements. Elle réapparaîtra dans la liste des fournisseurs.`)) return
+    const { error } = await supabase.from('compta_fournisseurs').update({ actif:true }).eq('id', fa.id)
+    if (error) return toast.error(error.message)
+    toast.success(`Fiche de ${nomTiersTraca(fa)} restaurée.`); charger()
+  }
   const sit = f => situationFria(f.id, d)
   const kitCampagne = (f, camp) => Math.round(d.avances.filter(a => String(a.fournisseur_id) === String(f.id) && (!camp || a.campagne === camp)).reduce((t,a)=>t+(+a.valeur_remboursement||0),0))
   const campagnes = [...new Set([campSoc, ...d.avances.map(a => a.campagne), ...d.mvts.map(m => m.campagne)].filter(Boolean))].sort().reverse()
@@ -15469,7 +15491,9 @@ function EpargneFriaPage({ companies, companyId, toast, readOnly=false }) {
                   <TR key={m.id}>
                     <TD bold>{pieceFria(m)}</TD><TD sm>{dateDoc(m.date_mouvement)}</TD>
                     <TD><Badge type={TYPES_MVT_FRIA[m.type]?.[1]}>{TYPES_MVT_FRIA[m.type]?.[0]||m.type}</Badge></TD>
-                    <TD>{nomTiersTraca(f)||'—'}</TD><TD sm>{m.campagne||'—'}</TD>
+                    <TD>{f ? (nomTiersTraca(f)||'—') : (() => { const fa = frsArchive(m.fournisseur_id)
+                      return fa ? <>{nomTiersTraca(fa) || '—'}<div style={{ fontSize:10.5, color:'#b91c1c' }}>⚠️ fiche supprimée (archivée){!readOnly && <> — <a href="#" onClick={e => { e.preventDefault(); restaurerFiche(fa) }} style={{ color:'#1d4ed8' }}>♻️ Restaurer</a></>}</div></>
+                        : <span style={{ color:'#b91c1c', fontSize:12 }} title={`fournisseur_id : ${m.fournisseur_id || 'vide'}`}>⚠️ Producteur introuvable</span> })()}</TD><TD sm>{m.campagne||'—'}</TD>
                     <TD right>{+m.quantite_kg > 0 ? `${nbFr(m.quantite_kg)} kg` : '—'}</TD><TD right><strong>{nbFr(m.montant)}</strong></TD>
                     <TD sm>{m.type === 'remboursement' ? <>Achat paddy (602){bon && <div style={{ color:'#1d4ed8' }}>📦 {bon.numero}</div>}</> : m.mode_reglement === 'fournisseur' ? (m.tiers_nom||'Fournisseur') : (JOURNAL_LABEL[m.mode_reglement]||m.mode_reglement||'—')}</TD>
                     <TD><ActionsMenu sm items={[
