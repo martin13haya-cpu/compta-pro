@@ -10040,6 +10040,7 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
     }
     // Colonne absente de la table (ex. « ecart » calculé, pas encore créé dans la base) :
     // on l'ôte et on réessaie, au lieu de bloquer l'enregistrement.
+    const valeurs = { ...pay }   // valeurs saisies, même si une colonne est ôtée ci-dessous
     const ecrire = () => editItem
       ? supabase.from(tableName).update(pay).eq('id', editItem.id)
       : supabase.from(tableName).insert({...pay, user_id:uid}).select('id').single()
@@ -10063,7 +10064,7 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
       const idEt = editItem ? editItem.id : insEtape.id, cleEt = cleChaine(idEt)
       if (editItem) await annulerBonsStockAuto(cid, cleEt)
       const obs = `${title}${pay.numero_lot ? ` — lot ${pay.numero_lot}` : ''}`
-      const qIn = +pay[chaine.entree.champ] || 0
+      const qIn = +valeurs[chaine.entree.champ] || 0
       const { article:artIn } = await articleEtuvage(cid, uid, chaine.entree.sorte)
       const msgs = [], erreurs = []
       const rIn = artIn ? await passerBonStockAuto({ companyId:cid, uid, type:'sortie', article:artIn, quantite:qIn, prix:artIn.prix_achat, date:pay.date_etape,
@@ -10071,7 +10072,7 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
       if (rIn.error) erreurs.push(`sortie de ${chaine.entree.lib.toLowerCase()} : ${rIn.error.message}`); else msgs.push(`${fmtKg(qIn)} de ${chaine.entree.lib.toLowerCase()} sortis`)
       // Produits obtenus : entrés en stock au coût du produit consommé, réparti au poids.
       if (form._entrer_stock) {
-        const outs = chaine.sorties.map(s => ({ ...s, q:+pay[s.champ] || 0 })).filter(s => s.q > 0)
+        const outs = chaine.sorties.map(s => ({ ...s, q:+valeurs[s.champ] || 0 })).filter(s => s.q > 0)
         const qOut = outs.reduce((s, o) => s + o.q, 0), cout = qIn * (+artIn?.prix_achat || 0)
         for (const o of outs) {
           const { article, error:ea } = await articleEtuvage(cid, uid, o.sorte, qOut > 0 ? cout / qOut : 0)
