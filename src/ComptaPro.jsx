@@ -15405,7 +15405,8 @@ function EtvEnvoisPage({ companies, companyId, toast, readOnly=false }) {
     if (!(q > 0)) return toast.error('Ajoutez les producteurs d\'origine et leurs quantités.')
     if (!origines.length && !confirm("Aucun producteur d'origine : le paddy de cet envoi ne pourra pas être retracé jusqu'au producteur. Continuer ?")) return
     const depasse = origines.filter(o => o.kg > resteProd(o.fournisseur_id, form.numero) + 0.001)
-    if (depasse.length && !confirm(`Quantité supérieure au paddy reçu et pas encore envoyé :\n${depasse.map(o => `• ${libProd(prodDe(o.fournisseur_id)||{nomAff:'?'})} : ${fmtKg(o.kg)} (reste ${fmtKg(resteProd(o.fournisseur_id, form.numero))})`).join('\n')}\n\nContinuer ?`)) return
+    // Bloquant : on n'envoie pas plus de paddy qu'un producteur n'en a livré (traçabilité).
+    if (depasse.length) return toast.error(`Envoi impossible : quantité supérieure au paddy livré et pas encore envoyé — ${depasse.map(o => `${libProd(prodDe(o.fournisseur_id)||{nomAff:'?'})} : ${fmtKg(o.kg)} pour ${fmtKg(Math.max(0, resteProd(o.fournisseur_id, form.numero)))} restant(s)`).join(' ; ')}. Enregistrez d'abord sa livraison (remboursement FRIA ou achat hors FRIA).`)
     const cap = +etvDe(form.etuveuse_id).capacite_kg || 0
     if (cap > 0 && enCoursChez(form.etuveuse_id, form.id) + q > cap && !confirm(`Avec cet envoi, l'étuveuse aurait ${fmtKg(enCoursChez(form.etuveuse_id, form.id) + q)} en cours, au-delà de sa capacité (${fmtKg(cap)}). Continuer ?`)) return
     setSaving(true)
