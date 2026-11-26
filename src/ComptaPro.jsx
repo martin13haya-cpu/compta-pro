@@ -15464,6 +15464,7 @@ function EtvEnvoisPage({ companies, companyId, toast, readOnly=false }) {
     if (!form.id) imprimerBonEnvoi(cree, lignesOrig, lot)
   }
 
+  const formatRetour = useRef('a4')   // impression après un retour : 'a4' ou 'ticket'
   const nouveauRetour = envoi => {
     // Une étuveuse peut être visitée plusieurs fois avant de finir l'envoi : on demande si ce
     // retour est la dernière récupération (il solde alors tout le paddy restant).
@@ -15519,7 +15520,7 @@ function EtvEnvoisPage({ companies, companyId, toast, readOnly=false }) {
     toast.success(`Retour enregistré${etuvage_id?' — cycle d\'étuvage créé en Production':''}${entree.numero ? ` — ${fmtKg(recu)} de riz étuvé entrés en stock (bon ${entree.numero})` : ''}.`)
     const r = { ...retour, paddy_traite_kg:traite, riz_etuve_recu_kg:recu, dechets_kg:dech, passage:s.retours.length + 1 }
     setRetour(null)
-    if (retour.format === 'ticket') ticketReception(env, r, true); else imprimerFicheRetrait(env, r, true)
+    if (formatRetour.current === 'ticket') ticketReception(env, r, true); else imprimerFicheRetrait(env, r, true)
     charger()
   }
   const supprimerRetour = async r => {
@@ -15777,8 +15778,8 @@ function EtvEnvoisPage({ companies, companyId, toast, readOnly=false }) {
               <input type="checkbox" checked={retour.creer_etuvage} onChange={e=>setRetour(r=>({...r, creer_etuvage:e.target.checked}))} />
               Créer le cycle d'étuvage correspondant en Production (lot ETUV-…, écart et alerte)
             </label>
-            <Row><Btn variant="secondary" onClick={()=>setRetour(null)}>Annuler</Btn><Btn type="submit" variant="secondary" disabled={saving} onClick={()=>setRetour(r=>({...r, format:'ticket'}))}>{saving?'…':'🧾 Enregistrer + ticket'}</Btn>
-              <Btn type="submit" variant="success" disabled={saving} onClick={()=>setRetour(r=>({...r, format:'a4'}))}>{saving?'…':'🖨️ Enregistrer + fiche A4'}</Btn></Row>
+            <Row><Btn variant="secondary" onClick={()=>setRetour(null)}>Annuler</Btn><Btn type="submit" variant="secondary" disabled={saving} onClick={()=>{ formatRetour.current = 'ticket' }}>{saving?'…':'🧾 Enregistrer + ticket'}</Btn>
+              <Btn type="submit" variant="success" disabled={saving} onClick={()=>{ formatRetour.current = 'a4' }}>{saving?'…':'🖨️ Enregistrer + fiche A4'}</Btn></Row>
           </form> })()}
       </Modal>
 
