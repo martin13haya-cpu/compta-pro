@@ -8393,11 +8393,19 @@ OK = tout supprimer — Annuler = garder le groupe (seul le stock est annulé).`
 }
 
 // ── MOUVEMENTS ────────────────────────────────────────────────────────────────
+// Colonnes possibles du PDF « mouvements par article » (l'article est le titre de chaque tableau).
+const MVT_PDF_COLS = [
+  { k:'date', l:'Date', defaut:true }, { k:'type', l:'Type', defaut:true }, { k:'motif', l:'Motif', defaut:true },
+  { k:'qte', l:'Quantité', r:true, defaut:true }, { k:'pu', l:'P.U (FCFA)', r:true, defaut:true }, { k:'montant', l:'Montant (FCFA)', r:true, defaut:true },
+  { k:'ref', l:'Référence', defaut:true }, { k:'commune', l:'Commune' }, { k:'prod', l:'Producteur(s)' },
+]
 function MouvementsPage({ companies, companyId, setPage, toast, readOnly=false }) {
   const [items, setItems] = useState([])
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo,   setDateTo]   = useState('')
-  const [artFilter,  setArtFilter]  = useState('')
+  const [artFilter,  setArtFilter]  = useState([])   // articles choisis (plusieurs possibles)
+  const [artsOuvert, setArtsOuvert] = useState(false)
+  const [pdfMvt, setPdfMvt] = useState(null)          // { cols:[…] } : choix des colonnes du PDF
   const [typeFilter, setTypeFilter] = useState('')
   const [communeFilter, setCommuneFilter] = useState('')
   const [communes, setCommunes] = useState({})   // référence du bon -> commune
@@ -8418,9 +8426,59 @@ function MouvementsPage({ companies, companyId, setPage, toast, readOnly=false }
     setCommunes(res); setProducteurs(pr)
   }, [companyId])
   const communeDe = m => communes[m.reference] || ''
-  const filtreMvt = m => (!artFilter || m.article_id === artFilter) && (!typeFilter || m.type === typeFilter)
+  const filtreMvt = m => (!artFilter.length || artFilter.includes(m.article_id)) && (!typeFilter || m.type === typeFilter)
     && (!communeFilter || (communeFilter === '__aucune__' ? !communeDe(m) : communeDe(m) === communeFilter))
   const listeCommunes = [...new Set(Object.values(communes))].sort((a, b) => a.localeCompare(b, 'fr'))
+
+  // PDF paysage : un tableau par article (mouvements de la période + total), récapitulatif à la fin.
+  const imprimerParArticle = cols => {
+    const vis = items.filter(filtreMvt)
+    if (!vis.length) { toast.error('Aucun mouvement à imprimer avec les filtres actuels.'); return }
+    const defs = MVT_PDF_COLS.filter(c => cols.includes(c.k))
+    if (!defs.length) { toast.error('Cochez au moins une colonne.'); return }
+    const groupes = {}
+    vis.forEach(m => { (groupes[m.article_id] ||= { des:m.compta_articles?.designation || '—', u:m.compta_articles?.unite || '', l:[] }).l.push(m) })
+    const val = (m, k, u) => ({ date:dateDoc(m.date_mvt), type:m.type === 'entree' ? 'Entrée' : 'Sortie', motif:echapHtml(m.motif || ''),
+      qte:`${m.type === 'entree' ? '+' : '−'}${nbFr(+m.quantite || 0)} ${echapHtml(u)}`, pu:nbFr(Math.round(+m.prix_unitaire || 0)), montant:nbFr(Math.round(+m.montant || 0)),
+      ref:echapHtml(m.reference || ''), commune:echapHtml(communeDe(m)), prod:echapHtml(producteursDe(m)) })[k]
+    const tot = l => { const s = (ty, k) => l.filter(m => m.type === ty).reduce((x, m) => x + (+m[k] || 0), 0)
+      return { qe:s('entree','quantite'), qs:s('sortie','quantite'), me:s('entree','montant'), ms:s('sortie','montant') } }
+    const recap = []
+    const tables = Object.values(groupes).sort((a, b) => a.des.localeCompare(b.des, 'fr')).map(g => {
+      const l = g.l.slice().sort((a, b) => String(a.date_mvt).localeCompare(String(b.date_mvt))), x = tot(l)
+      recap.push({ des:g.des, u:g.u, n:l.length, ...x })
+      const iQ = defs.findIndex(c => c.k === 'qte'), iM = defs.findIndex(c => c.k === 'montant')
+      const cellTot = i => i === iQ ? `<td class="r">+${nbFr(x.qe)}<br>−${nbFr(x.qs)}<br><b>= ${nbFr(Math.round((x.qe - x.qs) * 1000) / 1000)} ${echapHtml(g.u)}</b></td>`
+        : i === iM ? `<td class="r">+${nbFr(Math.round(x.me))}<br>−${nbFr(Math.round(x.ms))}</td>` : '<td></td>'
+      return `<div class="art"><h3>${echapHtml(g.des)} <span>(${l.length} mouvement${l.length > 1 ? 's' : ''}${g.u ? ` — ${echapHtml(g.u)}` : ''})</span></h3>
+        <table><thead><tr>${defs.map(c => `<th${c.r ? ' class="r"' : ''}>${c.l}</th>`).join('')}</tr></thead><tbody>
+        ${l.map(m => `<tr>${defs.map(c => `<td${c.r ? ' class="r"' : ''}${c.k === 'qte' ? ` style="color:${m.type === 'entree' ? '#15803d' : '#b91c1c'}"` : ''}>${val(m, c.k, g.u) || '—'}</td>`).join('')}</tr>`).join('')}
+        <tr class="tot">${defs.map((c, i) => i === 0 && iQ !== 0 && iM !== 0 ? `<td><b>Total ${echapHtml(g.des)}</b></td>` : cellTot(i)).join('')}</tr>
+        </tbody></table>
+        ${iQ < 0 || iM < 0 ? `<div class="sous">Entrées : +${nbFr(x.qe)} — Sorties : −${nbFr(x.qs)} — Solde : ${nbFr(Math.round((x.qe - x.qs) * 1000) / 1000)} ${echapHtml(g.u)} — Montant entrées : ${nbFr(Math.round(x.me))} FCFA — sorties : ${nbFr(Math.round(x.ms))} FCFA</div>` : ''}</div>`
+    }).join('')
+    const G = recap.reduce((s, r) => ({ me:s.me + r.me, ms:s.ms + r.ms, n:s.n + r.n }), { me:0, ms:0, n:0 })
+    const comp = companies.find(c => c.id === companyId)
+    const periode = `${dateFrom ? dateDoc(dateFrom) : "Origine"} → ${dateTo ? dateDoc(dateTo) : "aujourd'hui"}`
+    const html = `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><title>Mouvements de stock par article</title><style>${CSS_PRINT_LANDSCAPE}
+      body{font-size:9.5pt} h1{font-size:15pt;color:#082818;margin-bottom:2px} .meta{color:#555;font-size:9.5pt;margin-bottom:12px;border-bottom:1px solid #e2e8f0;padding-bottom:8px}
+      .art{margin-bottom:16px;page-break-inside:auto} h3{font-size:11pt;color:#082818;margin:0 0 4px} h3 span{font-weight:400;color:#64748b;font-size:9pt}
+      table{font-size:8.5pt;margin-bottom:4px} th{font-size:8pt;padding:5px 6px} td{padding:4px 6px} tr{page-break-inside:avoid} thead{display:table-header-group}
+      tr.tot td{background:#eceff3;font-weight:600;border-top:1.5px solid #94a3b8} .sous{font-size:8.5pt;color:#334155;margin-bottom:6px}
+      .recap{page-break-inside:avoid;margin-top:18px} .recap h2{font-size:12pt;color:#082818;margin-bottom:6px}
+    </style></head><body>
+      <h1>Mouvements de stock par article</h1>
+      <div class="meta"><b>${echapHtml(comp?.raison_sociale || '')}</b> — Période : ${periode}${typeFilter ? ` — ${typeFilter === 'entree' ? 'entrées' : 'sorties'} seulement` : ''}${communeFilter ? ` — commune ${echapHtml(communeFilter === '__aucune__' ? 'non précisée' : communeFilter)}` : ''} — ${recap.length} article(s), ${vis.length} mouvement(s) — Édité le ${new Date().toLocaleDateString('fr-FR')}</div>
+      ${tables}
+      <div class="recap"><h2>Récapitulatif de la période</h2>
+        <table><thead><tr><th>Article</th><th class="r">Mouvements</th><th class="r">Entrées</th><th class="r">Sorties</th><th class="r">Solde</th><th class="r">Montant entrées (FCFA)</th><th class="r">Montant sorties (FCFA)</th></tr></thead><tbody>
+        ${recap.map(r => `<tr><td>${echapHtml(r.des)}</td><td class="r">${r.n}</td><td class="r">+${nbFr(r.qe)} ${echapHtml(r.u)}</td><td class="r">−${nbFr(r.qs)} ${echapHtml(r.u)}</td><td class="r"><b>${nbFr(Math.round((r.qe - r.qs) * 1000) / 1000)} ${echapHtml(r.u)}</b></td><td class="r">${nbFr(Math.round(r.me))}</td><td class="r">${nbFr(Math.round(r.ms))}</td></tr>`).join('')}
+        <tr class="tot"><td>Total général</td><td class="r">${G.n}</td><td></td><td></td><td></td><td class="r">${nbFr(Math.round(G.me))}</td><td class="r">${nbFr(Math.round(G.ms))}</td></tr>
+        </tbody></table></div>
+    </body></html>`
+    openPrintWindow(html, `mouvements_par_article_${today()}`)
+    setPdfMvt(null)
+  }
 
   const load = useCallback(async()=>{
     const { data:adock } = await supabase.auth.getUser(); const uidock=adock?.user?.id
@@ -8536,6 +8594,7 @@ function MouvementsPage({ companies, companyId, setPage, toast, readOnly=false }
           {!readOnly && <Btn sm variant="success" onClick={()=>setPage('stock-entree')}>↓ Entrée</Btn>}
           {!readOnly && <Btn sm variant="warning" onClick={()=>setPage('stock-sortie')}>↑ Sortie</Btn>}
           {!readOnly && <Btn sm variant="secondary" onClick={actualiserAchats} disabled={synchro} title="Entrer en stock le paddy acheté qui n'y est pas encore : remboursements FRIA en nature et achats hors FRIA clôturés">{synchro ? '…' : '🔄 Actualiser les achats'}</Btn>}
+          <Btn sm variant="danger" onClick={()=>setPdfMvt({ cols:MVT_PDF_COLS.filter(c=>c.defaut).map(c=>c.k) })}>📄 PDF par article</Btn>
           <Btn sm variant="info" onClick={exportCSV}>📊 Exporter Excel</Btn>
         </>}
       />
@@ -8559,24 +8618,48 @@ function MouvementsPage({ companies, companyId, setPage, toast, readOnly=false }
             <option value="entree">↓ Entrées</option>
             <option value="sortie">↑ Sorties</option>
           </select>
-          <select value={artFilter} onChange={e=>setArtFilter(e.target.value)}
-            style={{padding:'6px 12px',borderRadius:7,border:'1px solid #d1d5db',fontSize:13,background:'white',maxWidth:200}}>
-            <option value="">Tous les articles</option>
-            {[...new Map(items.map(m=>[m.article_id,m.compta_articles?.designation||'—'])).entries()]
-              .sort((a,b)=>a[1].localeCompare(b[1]))
-              .map(([id,des])=><option key={id} value={id}>{des}</option>)}
-          </select>
+          {(() => { const arts = [...new Map(items.map(m=>[m.article_id,m.compta_articles?.designation||'—'])).entries()].sort((a,b)=>a[1].localeCompare(b[1]))
+            const lib = !artFilter.length ? 'Tous les articles' : artFilter.length === 1 ? (arts.find(a => a[0] === artFilter[0])?.[1] || '1 article') : `${artFilter.length} articles`
+            return <div style={{position:'relative'}}>
+              <button type="button" onClick={()=>setArtsOuvert(o=>!o)}
+                style={{padding:'6px 12px',borderRadius:7,border:'1px solid '+(artFilter.length?'#1E824C':'#d1d5db'),fontSize:13,background:artFilter.length?'#f0fdf4':'white',cursor:'pointer',maxWidth:240,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
+                {lib} ▾</button>
+              {artsOuvert && <>
+                <div onClick={()=>setArtsOuvert(false)} style={{position:'fixed',inset:0,zIndex:40}} />
+                <div style={{position:'absolute',top:'110%',left:0,zIndex:41,background:'white',border:'1px solid #e2e8f0',borderRadius:10,boxShadow:'0 10px 30px rgba(15,32,68,.15)',padding:8,minWidth:260,maxHeight:340,overflowY:'auto'}}>
+                  <div style={{display:'flex',gap:10,padding:'2px 6px 8px',borderBottom:'1px solid #f1f5f9',marginBottom:4}}>
+                    <button type="button" onClick={()=>setArtFilter(arts.map(a=>a[0]))} style={{fontSize:12,color:'#2563eb',background:'none',border:'none',cursor:'pointer',fontWeight:600}}>Tout cocher</button>
+                    <button type="button" onClick={()=>setArtFilter([])} style={{fontSize:12,color:'#64748b',background:'none',border:'none',cursor:'pointer',fontWeight:600}}>Tous les articles</button>
+                  </div>
+                  {arts.map(([id,des]) => <label key={id} style={{display:'flex',gap:8,alignItems:'center',padding:'5px 6px',fontSize:13,cursor:'pointer',borderRadius:6}}>
+                    <input type="checkbox" checked={artFilter.includes(id)} onChange={()=>setArtFilter(l => l.includes(id) ? l.filter(x=>x!==id) : [...l, id])} />{des}</label>)}
+                </div>
+              </>}
+            </div> })()}
           <select value={communeFilter} onChange={e=>setCommuneFilter(e.target.value)}
             style={{padding:'6px 12px',borderRadius:7,border:'1px solid #d1d5db',fontSize:13,background:'white',maxWidth:200}}>
             <option value="">Toutes les communes</option>
             {listeCommunes.map(c=><option key={c} value={c}>{c}</option>)}
             <option value="__aucune__">Commune non précisée</option>
           </select>
-          {(dateFrom||dateTo||artFilter||typeFilter||communeFilter) && (
-            <Btn sm variant="secondary" onClick={()=>{setDateFrom('');setDateTo('');setArtFilter('');setTypeFilter('');setCommuneFilter('')}}>✕ Tout réinitialiser</Btn>
+          {(dateFrom||dateTo||artFilter.length||typeFilter||communeFilter) && (
+            <Btn sm variant="secondary" onClick={()=>{setDateFrom('');setDateTo('');setArtFilter([]);setTypeFilter('');setCommuneFilter('')}}>✕ Tout réinitialiser</Btn>
           )}
         </div>
       </Card>
+      <Modal open={!!pdfMvt} onClose={()=>setPdfMvt(null)} title="PDF des mouvements par article" size="md">
+        {pdfMvt && <>
+          <p style={{fontSize:13,color:'#475569',marginTop:0}}>
+            Document en <b>paysage</b> : un tableau par article ({artFilter.length ? `${artFilter.length} article(s) choisi(s)` : 'tous les articles affichés'}), avec le total de chaque article
+            sous son tableau et un récapitulatif à la fin. Les filtres de la page (période, type, commune) sont appliqués.</p>
+          <div style={{fontSize:13,fontWeight:700,color:'#082818',marginBottom:6}}>Colonnes à imprimer</div>
+          <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(160px,1fr))',gap:8,marginBottom:16}}>
+            {MVT_PDF_COLS.map(c => <label key={c.k} style={{display:'flex',gap:8,alignItems:'center',fontSize:13,cursor:'pointer'}}>
+              <input type="checkbox" checked={pdfMvt.cols.includes(c.k)} onChange={()=>setPdfMvt(p=>({ cols:p.cols.includes(c.k) ? p.cols.filter(x=>x!==c.k) : MVT_PDF_COLS.map(y=>y.k).filter(k => k === c.k || p.cols.includes(k)) }))} />{c.l}</label>)}
+          </div>
+          <Row><Btn variant="secondary" onClick={()=>setPdfMvt(null)}>Annuler</Btn><Btn variant="danger" onClick={()=>imprimerParArticle(pdfMvt.cols)}>📄 Générer le PDF</Btn></Row>
+        </>}
+      </Modal>
       <div style={{background:'white',borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
         {items.length===0 ? (
           <div style={{textAlign:'center',padding:'48px 24px',color:'#64748b'}}>↕️ Aucun mouvement sur cette période</div>
