@@ -22266,6 +22266,16 @@ function TracabilitePage({ companies, companyId, toast, readOnly=false }) {
   const [origine, setOrigine] = useState(null)
   const [destination, setDestination] = useState(null)
   const company = companies.find(c => c.id === companyId)
+  // Formats de sacs de la société (Paramètres › Seuils d'alerte du conditionnement).
+  const [formatsKg, setFormatsKg] = useState(FORMATS_COND_DEFAUT)
+  useEffect(() => { if (!companyId) return
+    supabase.from('compta_seuils_production').select('*').eq('company_id', companyId).maybeSingle()
+      .then(({ data }) => setFormatsKg(Object.fromEntries(Object.keys(FORMATS_COND_DEFAUT).map(k => [k, +data?.[k] || FORMATS_COND_DEFAUT[k]])))) }, [companyId])
+  const sacsDe = x => FORMATS_COND.map(([k]) => [k, parseInt(x?.sacs?.[k]) || 0]).filter(([, n]) => n > 0)
+  const texteFormats = sacs => sacs.map(([k, n]) => `${n} × ${nbFr(formatsKg[k] || FORMATS_COND_DEFAUT[k])} kg`).join(' + ')
+  // Formats lus sur la ligne (colonne « formats ») ou, à défaut, dans les observations.
+  const formatsLigne = x => x.formats ? (typeof x.formats === 'string' ? x.formats : Object.entries(x.formats).map(([kg, n]) => `${n} × ${kg} kg`).join(' + ')) : (/Formats : ([^|]+)/.exec(x.observations || '')?.[1]?.trim() || '')
+  const adresseLigne = x => x.adresse_livraison || /Adresse : ([^|]+)/.exec(x.observations || '')?.[1]?.trim() || ''
 
   const charger = useCallback(async () => {
     if (!companyId) { setD({ vide:true }); return }
@@ -22345,9 +22355,21 @@ function TracabilitePage({ companies, companyId, toast, readOnly=false }) {
     if (!(q>0)) return toast.error('Saisissez la quantité livrée.')
     const uid = (await supabase.auth.getUser()).data?.user?.id
     const c = cliDe(destination.client_id)
-    const { error } = await supabase.from('compta_lot_destinations').insert({ company_id:companyId, user_id:uid, lot_id:lotId, client_id:destination.client_id||null,
+    const sacs = sacsDe(destination), nbSacs = sacs.reduce((s, [, n]) => s + n, 0) || parseInt(destination.nb_sacs) || null
+    const qSacs = sacs.reduce((s, [k, n]) => s + n * (formatsKg[k] || FORMATS_COND_DEFAUT[k]), 0)
+    if (qSacs > q + 0.0005) return toast.error(`Les sacs livrés (${fmtKg(qSacs)}) dépassent la quantité livrée (${fmtKg(q)}).`)
+    const formats = sacs.length ? Object.fromEntries(sacs.map(([k, n]) => [String(formatsKg[k] || FORMATS_COND_DEFAUT[k]), n])) : null
+    const ligne = { company_id:companyId, user_id:uid, lot_id:lotId, client_id:destination.client_id||null,
       client_nom:c?nomTiersTraca(c):destination.client_nom.trim(), document:destination.document||null, date_livraison:destination.date_livraison, quantite_kg:q,
-      nb_sacs:parseInt(destination.nb_sacs)||null, produit:destination.produit||null, observations:destination.observations||null })
+      nb_sacs:nbSacs, produit:destination.produit||null, observations:destination.observations||null,
+      adresse_livraison:destination.adresse_livraison?.trim() || null, formats }
+    let { error } = await supabase.from('compta_lot_destinations').insert(ligne)
+    // Colonnes « adresse_livraison » / « formats » pas encore créées : conservées dans les observations.
+    if (error && /adresse_livraison|formats/i.test(error.message)) {
+      const { adresse_livraison, formats:fm, ...base } = ligne
+      const obs = [base.observations, adresse_livraison && `Adresse : ${adresse_livraison}`, fm && `Formats : ${texteFormats(sacs)}`].filter(Boolean).join(' | ')
+      ;({ error } = await supabase.from('compta_lot_destinations').insert({ ...base, observations:obs || null }))
+    }
     if (error) return toast.error(estErreurTraca(error)?MSG_SCRIPT_TRACA:error.message)
     toast.success('Livraison enregistrée.'); setDestination(null); charger()
   }
@@ -22365,7 +22387,8 @@ function TracabilitePage({ companies, companyId, toast, readOnly=false }) {
         + bloc('2. Envois aux étuveuses', grille(['Envoi','Étuveuse','Date','Envoyé','Soldé','Riz reçu','Statut'], envois.map(e=>{ const s=situationEnvoi(e, d.compta_retours_etuveuses); return [e.numero, echapHtml(etvDe(e.etuveuse_id).nom_etuveuse||''), dateDoc(e.date_envoi), fmtKg(e.quantite_envoyee_kg), fmtKg(s.traite), fmtKg(s.recu), STATUTS_ENVOI[s.statut][0]] })))
         + bloc('3. Étuvage', grille(['Lot produit','Étuveuse','Date','Paddy','Riz reçu','Rendement','Perte','Qualité'], cycles.map(c=>[echapHtml(c.lot_sortant||''), echapHtml(etvDe(c.etuveuse_id).nom_etuveuse||c.etuveuse_cooperative||''), dateDoc(c.date_etape), fmtKg(c.paddy_envoye_kg), fmtKg(c.riz_etuve_recu_kg), `${(+c.taux_rendement||0).toFixed(1)} %`, `${c.alerte?'⚠ ':''}${(ecartPctProduction('compta_etuvage',c)??0).toFixed(2)} %`, ({conforme:'Conforme',non_conforme:'Non conforme',a_verifier:'À vérifier'})[c.controle_qualite]||''])))
         + etapes.map((e,i)=>bloc(`${4+i}. ${e.titre}`, grille(['Date','Entrée','Sortie','Écart %','Responsable'], e.lignes.map(x=>[dateDoc(x.date_etape), fmtKg(x[e.avant]), fmtKg(x[e.apres]), `${(ecartPctProduction(e.table,x)??0).toFixed(2)} %`, echapHtml(x.responsable_section||'')])))).join('')
-        + bloc('8. Destinations — clients', grille(['Client','Document','Date','Quantité','Sacs','Produit'], destinations.map(x=>[echapHtml(nomTiersTraca(cliDe(x.client_id))||x.client_nom||''), echapHtml(x.document||''), dateDoc(x.date_livraison), fmtKg(x.quantite_kg), x.nb_sacs||'', echapHtml(x.produit||'')]))),
+        + bloc('8. Destinations — clients', grille(['Client','Adresse de livraison','Document','Date','Quantité','Sacs (formats)','Produit'], destinations.map(x=>[echapHtml(nomTiersTraca(cliDe(x.client_id))||x.client_nom||''), echapHtml(adresseLigne(x)), echapHtml(x.document||''), dateDoc(x.date_livraison), fmtKg(x.quantite_kg),
+          echapHtml(`${x.nb_sacs||''}${formatsLigne(x) ? ` (${formatsLigne(x)})` : ''}`), echapHtml(x.produit||'')]))),
       colonnes:[{label:'Bilan matière'},{label:'Quantité',align:'d',largeur:'30%'}],
       lignes:[['Paddy reçu des producteurs', fmtKg(paddyOrigine)], ['Riz paddy étuvé reçu des étuveuses', fmtKg(etuveRecu)], ['Riz conditionné', fmtKg(conditionne)], ['Livré aux clients', fmtKg(livre)]],
       totaux:[['Rendement global (conditionné / paddy)', paddyOrigine>0?`${(conditionne/paddyOrigine*100).toFixed(1)} %`:'—'], ['Reste à livrer', fmtKg(Math.max(0, conditionne-livre)), true]],
@@ -22435,8 +22458,9 @@ function TracabilitePage({ companies, companyId, toast, readOnly=false }) {
         {etapes.map(e => <Fragment key={e.table}>{section(e.icone, e.titre, '#7c3aed',
           tbl(['Date','Entrée','Sortie','Écart %','Responsable'], e.lignes.map(x=>[dateDoc(x.date_etape), fmtKg(x[e.avant]), fmtKg(x[e.apres]), `${(ecartPctProduction(e.table,x)??0).toFixed(2)} %`, x.responsable_section||'']), 'Étape non traitée.'))}</Fragment>)}
         {section('🛒','Destinations — clients','#ca8a04',
-          tbl(['Client','Document','Date','Quantité','Sacs','Produit',''], destinations.map(x=>[nomTiersTraca(cliDe(x.client_id))||x.client_nom, x.document||'', dateDoc(x.date_livraison), fmtKg(x.quantite_kg), x.nb_sacs||'', x.produit||'', supp('compta_lot_destinations',x)]), 'Aucune livraison enregistrée pour ce lot.'),
-          !readOnly && <Btn sm variant="secondary" onClick={()=>setDestination({ client_id:'', client_nom:'', document:'', date_livraison:today(), quantite_kg:'', nb_sacs:'', produit:'', observations:'' })}>+ Livraison</Btn>)}
+          tbl(['Client','Adresse de livraison','Document','Date','Quantité','Sacs (formats)','Produit',''], destinations.map(x=>[nomTiersTraca(cliDe(x.client_id))||x.client_nom, adresseLigne(x), x.document||'', dateDoc(x.date_livraison), fmtKg(x.quantite_kg),
+            `${x.nb_sacs||''}${formatsLigne(x) ? ` (${formatsLigne(x)})` : ''}`, x.produit||'', supp('compta_lot_destinations',x)]), 'Aucune livraison enregistrée pour ce lot.'),
+          !readOnly && <Btn sm variant="secondary" onClick={()=>setDestination({ client_id:'', client_nom:'', document:'', date_livraison:today(), quantite_kg:'', nb_sacs:'', produit:'', observations:'', adresse_livraison:'', sacs:{} })}>+ Livraison</Btn>)}
       </>}
 
       <Modal open={!!origine} onClose={()=>setOrigine(null)} title={`Producteur d'origine — lot ${lot?.numero_lot||''}`} size="md">
@@ -22462,8 +22486,23 @@ function TracabilitePage({ companies, companyId, toast, readOnly=false }) {
             <Input label="N° facture / bon de livraison" name="document" value={destination.document} onChange={e=>setDestination(x=>({...x, document:e.target.value}))} />
             <Input label="Date de livraison" name="date_livraison" type="date" value={destination.date_livraison} onChange={e=>setDestination(x=>({...x, date_livraison:e.target.value}))} />
             <Input label="Quantité (kg) *" name="quantite_kg" type="number" step="0.001" min="0" value={destination.quantite_kg} onChange={e=>setDestination(x=>({...x, quantite_kg:e.target.value}))} required />
-            <Input label="Nombre de sacs" name="nb_sacs" type="number" min="0" value={destination.nb_sacs} onChange={e=>setDestination(x=>({...x, nb_sacs:e.target.value}))} />
-            <Input label="Produit" name="produit" value={destination.produit} onChange={e=>setDestination(x=>({...x, produit:e.target.value}))} placeholder="ex. Riz étuvé long grain 25 kg" />
+            <Input label="Produit" name="produit" value={destination.produit} onChange={e=>setDestination(x=>({...x, produit:e.target.value}))} placeholder="ex. Riz étuvé long grain" />
+            <Span2><Input label="Adresse de livraison" name="adresse_livraison" value={destination.adresse_livraison||''} onChange={e=>setDestination(x=>({...x, adresse_livraison:e.target.value}))}
+              placeholder={cliDe(destination.client_id)?.adresse || 'ex. Marché de Natitingou, boutique n° 12'} /></Span2>
+            <Span2>
+              <div style={{ fontSize:12.5, fontWeight:600, color:'#374151', marginBottom:6 }}>Formats de sacs livrés</div>
+              <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(120px, 1fr))', gap:8 }}>
+                {FORMATS_COND.map(([k]) => <label key={k} style={{ fontSize:12, color:'#475569' }}>Sacs de {nbFr(formatsKg[k])} kg
+                  <input type="number" min="0" step="1" value={destination.sacs?.[k] ?? ''} placeholder="0"
+                    onChange={e=>setDestination(x=>{ const sacs = { ...(x.sacs||{}), [k]:e.target.value }
+                      const tot = FORMATS_COND.reduce((s, [kk]) => s + (parseInt(sacs[kk]) || 0) * (formatsKg[kk] || 0), 0)
+                      const auto = !x.quantite_kg || +x.quantite_kg === +x._qteAuto
+                      return { ...x, sacs, ...(auto ? { quantite_kg:tot ? String(tot) : '', _qteAuto:tot } : {}) } })}
+                    style={{ display:'block', width:'100%', marginTop:3, padding:'8px 10px', borderRadius:8, border:'1px solid #d1d5db', fontSize:13, boxSizing:'border-box' }} /></label>)}
+              </div>
+              {sacsDe(destination).length > 0 && <div style={{ fontSize:12.5, color:'#166534', marginTop:6 }}>
+                {sacsDe(destination).reduce((s, [, n]) => s + n, 0)} sac(s) : {texteFormats(sacsDe(destination))} = <strong>{fmtKg(sacsDe(destination).reduce((s, [k, n]) => s + n * (formatsKg[k] || 0), 0))}</strong></div>}
+            </Span2>
           </Grid>
           <Row><Btn variant="secondary" onClick={()=>setDestination(null)}>Annuler</Btn><Btn type="submit">Enregistrer</Btn></Row>
         </form>}
