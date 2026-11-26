@@ -2400,14 +2400,15 @@ const KG_ATTENDU_PRODUCTEUR = 515
 // Commune de mouvements de stock de plusieurs sociétés : celle du producteur (bon
 // « Remboursement FRIA … ») ou de l'achat hors FRIA (bon « Achat groupé … »).
 // Renvoie { 'company_id|référence du bon': COMMUNE }.
-async function communesMouvementsMulti(mvts) {
+// prodOut (facultatif) : reçoit { 'société|référence': [producteurs] }.
+async function communesMouvementsMulti(mvts, prodOut = null) {
   const parSoc = {}
   for (const m of mvts) if (m.reference) (parSoc[m.company_id] = parSoc[m.company_id] || new Set()).add(m.reference)
   const res = {}, propre = c => toUpperNoAccent(c).trim()
   for (const [cid, set] of Object.entries(parSoc)) {
     const refs = [...set], bons = []
     for (let i = 0; i < refs.length; i += 150) {
-      const { data } = await supabase.from('compta_bons_stock').select('numero,tiers').eq('company_id', cid).in('numero', refs.slice(i, i + 150))
+      const { data } = await supabase.from('compta_bons_stock').select('numero,tiers,observations').eq('company_id', cid).in('numero', refs.slice(i, i + 150))
       bons.push(...(data || []))
     }
     const fria = {}, grp = {}
@@ -2420,14 +2421,60 @@ async function communesMouvementsMulti(mvts) {
     for (let i = 0; i < nf.length; i += 150) { const { data } = await supabase.from('compta_fria_mouvements').select('numero,fournisseur_id').eq('company_id', cid).in('numero', nf.slice(i, i + 150)); mv.push(...(data || [])) }
     for (let i = 0; i < ng.length; i += 150) { const { data } = await supabase.from('compta_achats_groupes').select('numero,commune').eq('company_id', cid).in('numero', ng.slice(i, i + 150)); gs.push(...(data || [])) }
     const fids = [...new Set(mv.map(m => m.fournisseur_id))], frs = []
-    for (let i = 0; i < fids.length; i += 150) { const { data } = await supabase.from('compta_fournisseurs').select('id,commune').in('id', fids.slice(i, i + 150)); frs.push(...(data || [])) }
+    for (let i = 0; i < fids.length; i += 150) { const { data } = await supabase.from('compta_fournisseurs').select('id,commune,type,nom,prenom,nom_societe,code_trace').in('id', fids.slice(i, i + 150)); frs.push(...(data || [])) }
+    const nomF = f => f ? `${f.code_trace ? f.code_trace + ' ' : ''}${(f.type === 'morale' ? f.nom_societe : [f.nom, f.prenom].filter(Boolean).join(' ')) || ''}`.trim() : ''
     for (const [ref, num] of Object.entries(fria)) {
       const m = mv.find(x => x.numero === num), f = m && frs.find(x => String(x.id) === String(m.fournisseur_id))
       if (propre(f?.commune)) res[`${cid}|${ref}`] = propre(f.commune)
+      if (prodOut && nomF(f)) prodOut[`${cid}|${ref}`] = [nomF(f)]
     }
     for (const [ref, num] of Object.entries(grp)) { const g = gs.find(x => x.numero === num); if (propre(g?.commune)) res[`${cid}|${ref}`] = propre(g.commune) }
+    if (prodOut && ng.length) {
+      const { data:gids } = await supabase.from('compta_achats_groupes').select('id,numero').eq('company_id', cid).in('numero', ng.slice(0, 150))
+      const ls = (gids || []).length ? (await supabase.from('compta_achats_groupes_lignes').select('groupe_id,nom').in('groupe_id', gids.map(x => x.id))).data || [] : []
+      for (const [ref, num] of Object.entries(grp)) { const g = (gids || []).find(x => x.numero === num)
+        if (g) prodOut[`${cid}|${ref}`] = ls.filter(l => l.groupe_id === g.id).map(l => l.nom).filter(Boolean) }
+    }
+    // Bons de la production (retour d'étuveuse, envoi, étuvage, décorticage…) : commune des
+    // producteurs d'origine du lot ; à défaut, commune de l'étuveuse.
+    const prod = bons.map(b => ({ b, m:/\[(RET|ENV|ETUV|DECO|CALI|TRI|COND):([^\]]+)\]/.exec(b.observations || '') })).filter(x => x.m && !res[`${cid}|${x.b.numero}`])
+    if (prod.length) Object.assign(res, await communesBonsProduction(cid, prod, prodOut))
   }
   return res
+}
+async function communesBonsProduction(cid, prod, prodOut = null) {
+  const propre = c => toUpperNoAccent(c || '').trim(), out = {}
+  const ids = k => [...new Set(prod.filter(x => x.m[1] === k).map(x => x.m[2]))]
+  const lire = async (table, sel, col, vals) => { const r = []; for (let i = 0; i < vals.length; i += 150) { const { data } = await supabase.from(table).select(sel).eq('company_id', cid).in(col, vals.slice(i, i + 150)); r.push(...(data || [])) } return r }
+  const retours = await lire('compta_retours_etuveuses', 'id,envoi_id', 'id', ids('RET'))
+  const envois = await lire('compta_envois_etuveuses', 'id,numero,etuveuse_id,lot_id', 'id', [...new Set(retours.map(r => r.envoi_id))])
+  envois.push(...await lire('compta_envois_etuveuses', 'id,numero,etuveuse_id,lot_id', 'numero', ids('ENV')))
+  const cycles = await lire('compta_etuvage', 'id,lot_sortant,etuveuse_id,lot_id', 'lot_sortant', ids('ETUV'))
+  const etapes = {}
+  for (const [k, table] of [['DECO','compta_decorticage'],['CALI','compta_calibrage'],['TRI','compta_tri_optique'],['COND','compta_conditionnement']])
+    (await lire(table, 'id,lot_id', 'id', ids(k))).forEach(x => { etapes[`${k}:${x.id}`] = x })
+  const lots = [...new Set([...envois, ...cycles, ...Object.values(etapes)].map(x => x.lot_id).filter(Boolean))]
+  const origines = await lire('compta_lot_origines', 'lot_id,fournisseur_id,quantite_kg,producteur_nom', 'lot_id', lots)
+  const etvs = [...new Set([...envois, ...cycles].map(x => x.etuveuse_id).filter(Boolean))]
+  const etvRows = await lire('compta_etuveuses', 'id,fournisseur_id', 'id', etvs)
+  const fids = [...new Set([...origines.map(o => o.fournisseur_id), ...etvRows.map(e => e.fournisseur_id)].filter(Boolean))]
+  const frs = await lire('compta_fournisseurs', 'id,commune', 'id', fids)
+  const comFrs = id => propre(frs.find(f => String(f.id) === String(id))?.commune)
+  const comLot = lotId => { const c = {}; origines.filter(o => String(o.lot_id) === String(lotId)).forEach(o => { const v = comFrs(o.fournisseur_id); if (v) c[v] = (c[v] || 0) + (+o.quantite_kg || 1) })
+    return Object.entries(c).sort((a, b) => b[1] - a[1])[0]?.[0] || '' }
+  const comEtv = etvId => comFrs(etvRows.find(e => String(e.id) === String(etvId))?.fournisseur_id)
+  for (const { b, m } of prod) {
+    const [, k, v] = m
+    let lot = null, etv = null
+    if (k === 'RET') { const r = retours.find(x => String(x.id) === v), e = r && envois.find(x => String(x.id) === String(r.envoi_id)); lot = e?.lot_id; etv = e?.etuveuse_id }
+    else if (k === 'ENV') { const e = envois.find(x => x.numero === v); lot = e?.lot_id; etv = e?.etuveuse_id }
+    else if (k === 'ETUV') { const c = cycles.find(x => x.lot_sortant === v); lot = c?.lot_id; etv = c?.etuveuse_id }
+    else lot = etapes[`${k}:${v}`]?.lot_id
+    const c = (lot && comLot(lot)) || (etv && comEtv(etv))
+    if (c) out[`${cid}|${b.numero}`] = c
+    if (prodOut && lot) prodOut[`${cid}|${b.numero}`] = [...new Set(origines.filter(o => String(o.lot_id) === String(lot)).map(o => o.producteur_nom).filter(Boolean))]
+  }
+  return out
 }
 
 function ConsolApercu({ open, onClose, selectedIds, allCompanies, colonnes, toast }) {
@@ -7575,6 +7622,8 @@ function StockEntreePage({ companies, companyId, setPage, toast }) {
     e.preventDefault(); setSaving(true)
     const uid = (await supabase.auth.getUser()).data?.user?.id
     const qte = parseFloat(form.quantite), pu = parseFloat(form.prix_unitaire)||0
+    const artE = articles.find(a => String(a.id) === String(form.article_id))
+    if (estArticleChaine(artE)) { setSaving(false); toast.error(MSG_ENTREE_CHAINE(artE.designation)); return }
     const { error } = await supabase.from('compta_mouvements_stock').insert({
       article_id:form.article_id, company_id:form.company_id, user_id:uid,
       type:'entree', motif:form.motif, quantite:qte, prix_unitaire:pu, montant:Math.round(qte*pu),
@@ -7818,6 +7867,8 @@ function BonsStockPage({ companies, companyId, toast, readOnly=false }) {
     const stock = Object.fromEntries((frais || []).map(a => [a.id, a]))
     const cumul = {}
     lignes.forEach(l => { cumul[l.article_id] = (cumul[l.article_id] || 0) + numFrBon(l.quantite) })
+    const chaineMan = form.type === 'entree' && ids.map(id => stock[id]).find(estArticleChaine)
+    if (chaineMan) { setSaving(false); toast.error(MSG_ENTREE_CHAINE(chaineMan.designation)); return }
     if (form.type === 'sortie') {
       const manque = ids.find(id => cumul[id] > (stock[id]?.stock_actuel || 0))
       if (manque) {
@@ -8049,32 +8100,21 @@ function MouvementsPage({ companies, companyId, setPage, toast, readOnly=false }
   const [typeFilter, setTypeFilter] = useState('')
   const [communeFilter, setCommuneFilter] = useState('')
   const [communes, setCommunes] = useState({})   // référence du bon -> commune
+  const [producteurs, setProducteurs] = useState({})   // référence du bon -> producteurs d'origine
+  const producteursDe = m => (producteurs[m.reference] || []).join(', ')
 
   // Commune d'un mouvement : celle du producteur (remboursement FRIA) ou de l'achat
   // (achat hors FRIA), retrouvée par le bon d'entrée / de sortie du mouvement.
+  // Commune et producteurs d'un mouvement : producteur (remboursement FRIA), achat hors FRIA,
+  // ou producteurs d'origine du lot pour les bons de la production (retour d'étuveuse, étapes…).
   const chargerCommunes = useCallback(async mvts => {
-    const refs = [...new Set(mvts.map(m => m.reference).filter(Boolean))]
-    if (!companyId || !refs.length) { setCommunes({}); return }
-    const { data:bons } = await supabase.from('compta_bons_stock').select('numero,tiers').eq('company_id', companyId).in('numero', refs)
-    const fria = {}, grp = {}
-    for (const b of bons || []) {
-      const f = /^Remboursement FRIA (.+)$/.exec(b.tiers || ''), g = /^Achat groupé (.+)$/.exec(b.tiers || '')
-      if (f) fria[b.numero] = f[1]; else if (g) grp[b.numero] = g[1]
-    }
-    const [{ data:mv }, { data:gs }] = await Promise.all([
-      Object.keys(fria).length ? supabase.from('compta_fria_mouvements').select('numero,fournisseur_id').eq('company_id', companyId).in('numero', Object.values(fria)) : { data:[] },
-      Object.keys(grp).length ? supabase.from('compta_achats_groupes').select('numero,commune').eq('company_id', companyId).in('numero', Object.values(grp)) : { data:[] },
-    ])
-    const fids = [...new Set((mv || []).map(m => m.fournisseur_id))]
-    const { data:frs } = fids.length ? await supabase.from('compta_fournisseurs').select('id,commune').in('id', fids) : { data:[] }
-    const propre = c => String(c || '').trim().toUpperCase()
-    const res = {}
-    for (const [ref, num] of Object.entries(fria)) {
-      const m = (mv || []).find(x => x.numero === num), f = m && (frs || []).find(x => String(x.id) === String(m.fournisseur_id))
-      if (propre(f?.commune)) res[ref] = propre(f.commune)
-    }
-    for (const [ref, num] of Object.entries(grp)) { const g = (gs || []).find(x => x.numero === num); if (propre(g?.commune)) res[ref] = propre(g.commune) }
-    setCommunes(res)
+    if (!companyId || !mvts.some(m => m.reference)) { setCommunes({}); setProducteurs({}); return }
+    const prod = {}
+    const map = await communesMouvementsMulti(mvts.map(m => ({ ...m, company_id:companyId })), prod)
+    const res = {}, pr = {}
+    Object.entries(map).forEach(([k, v]) => { res[k.slice(k.indexOf('|') + 1)] = v })
+    Object.entries(prod).forEach(([k, v]) => { pr[k.slice(k.indexOf('|') + 1)] = v })
+    setCommunes(res); setProducteurs(pr)
   }, [companyId])
   const communeDe = m => communes[m.reference] || ''
   const filtreMvt = m => (!artFilter || m.article_id === artFilter) && (!typeFilter || m.type === typeFilter)
@@ -8143,7 +8183,7 @@ function MouvementsPage({ companies, companyId, setPage, toast, readOnly=false }
     const XLSX = await import('https://cdn.sheetjs.com/xlsx-0.20.0/package/xlsx.mjs')
     const fq = v => { const n = parseFloat(v)||0; return n%1===0 ? n : parseFloat(n.toFixed(3)) }
     const visibles = items.filter(filtreMvt)
-    const header = ['Date','Article','Unité','Type','Motif','Quantité','Prix Unitaire (FCFA)','Montant (FCFA)','Référence','Commune']
+    const header = ['Date','Article','Unité','Type','Motif','Quantité','Prix Unitaire (FCFA)','Montant (FCFA)','Référence','Commune','Producteur(s)']
     const rows = visibles.map(m=>[
       m.date_mvt||'',
       m.compta_articles?.designation||'',
@@ -8155,6 +8195,7 @@ function MouvementsPage({ companies, companyId, setPage, toast, readOnly=false }
       Math.round(m.montant||0),
       m.reference||'',
       communeDe(m),
+      producteursDe(m),
     ])
     const ws = XLSX.utils.aoa_to_sheet([header,...rows])
     ws['!cols'] = [{wch:12},{wch:28},{wch:8},{wch:8},{wch:18},{wch:12},{wch:20},{wch:18},{wch:20},{wch:16}]
@@ -8243,7 +8284,7 @@ function MouvementsPage({ companies, companyId, setPage, toast, readOnly=false }
             <table style={{width:'100%',borderCollapse:'collapse',minWidth:600}}>
             <thead><tr>
               <TH>Date</TH><TH>Article</TH><TH>Type</TH><TH>Motif</TH>
-              <TH right>Quantité</TH><TH right>P.U</TH><TH right>Montant</TH><TH>Référence</TH><TH>Commune</TH><TH></TH>
+              <TH right>Quantité</TH><TH right>P.U</TH><TH right>Montant</TH><TH>Référence</TH><TH>Commune</TH><TH>Producteur(s)</TH><TH></TH>
             </tr></thead>
             <tbody>
               {items
@@ -8259,6 +8300,7 @@ function MouvementsPage({ companies, companyId, setPage, toast, readOnly=false }
                   <TD right bold>{fcfa(m.montant)}</TD>
                   <TD sm>{m.reference||'—'}</TD>
                   <TD sm>{communeDe(m)||'—'}</TD>
+                  <TD sm>{(() => { const l = producteurs[m.reference] || []; return l.length ? <span title={l.join('\n')}>{l.slice(0, 2).join(', ')}{l.length > 2 ? ` +${l.length - 2}` : ''}</span> : '—' })()}</TD>
                   <TD>{!readOnly && <button onClick={()=>delMvt(m.id)} title="Supprimer" style={{background:'none',border:'none',cursor:'pointer',color:'#dc2626',fontSize:16,padding:'2px 6px',borderRadius:4}} onMouseOver={e=>e.target.style.background='#fee2e2'} onMouseOut={e=>e.target.style.background='none'}>🗑️</button>}</TD>
                 </TR>
               ))}
@@ -8273,7 +8315,7 @@ function MouvementsPage({ companies, companyId, setPage, toast, readOnly=false }
                     {qE > 0 && qS > 0 && <div style={{ fontSize:11.5, color:'#334155' }}>Solde : {fmtQty(qE - qS)}{u}</div>}</td>
                   <td></td>
                   <td style={cel}>{mE > 0 && <div>{fcfa(mE)}</div>}{mS > 0 && <div style={{ color:'#dc2626' }}>−{fcfa(mS)}</div>}</td>
-                  <td colSpan={3}></td></tr> })()}
+                  <td colSpan={4}></td></tr> })()}
             </tbody>
           </table>
           </div>
@@ -10338,6 +10380,8 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
     if (!cid) { toast.error('Société introuvable. Veuillez en sélectionner une.'); setSaving(false); return }
     // Traçabilité : chaque étape de production est rattachée à un lot.
     if (!form.lot_id) { toast.error('Choisissez le lot de production : il est obligatoire pour retracer le produit.'); setSaving(false); return }
+    if (!originesLots[form.lot_id]) { setSaving(false)
+      toast.error("Ce lot n'a aucun producteur d'origine : il ne peut pas être retracé. Choisissez le lot d'un envoi aux étuveuses (LOT-ENV-…) ou ajoutez ses producteurs dans Traçabilité (QR)."); return }
     const pay = { company_id:cid, lot_id:form.lot_id||null, date_etape:form.date_etape }
     fields.forEach(f => {
       if (f.calc) {
@@ -15327,6 +15371,11 @@ const ARTICLES_ETUVAGE = {
   // Produit fini : « RIZ ETUVE » (jamais l'ancien article auto de code RIZ-ETUVE).
   fini: { motif:/^\s*riz\s+(e|é)tuv(e|é)\s*$/i, exclureArt:a => (a.code || '') === 'RIZ-ETUVE', designation:'RIZ ETUVE', categorie:'riz_etuve', code:'RIZ-ETUVE-FINI' },
 }
+// Produit de la chaîne du riz (paddy → produit fini) : entré en stock seulement par ses
+// opérations (FRIA, achat hors FRIA, retour d'étuveuse, étapes), jamais à la main.
+const estArticleChaine = a => !!a && ['paddy','etuve','decortique','calibre','brisures','trie','brisures_triees','qualite2','rouge_polir','fini','brisures_fini']
+  .some(s => trouverArticleEtuvage([a], ARTICLES_ETUVAGE[s]))
+const MSG_ENTREE_CHAINE = d => `« ${d} » ne peut pas être entré en stock à la main : sans producteur d'origine, il ne serait pas traçable. Le riz paddy entre par Épargne FRIA (remboursement) ou Achats hors FRIA ; le riz paddy étuvé par le retour d'une étuveuse ; les autres produits par les étapes de production (case « Entrer en stock »).`
 const trouverArticleEtuvage = (arts, def) => (arts || []).find(a => def.motif.test(a.designation || '') && !(def.exclure && def.exclure.test(a.designation || '')) && !(def.exclureArt && def.exclureArt(a)))
   || (def.ancien ? (arts || []).find(def.ancien) : null)
 // Étapes de production : produit pris dans le stock (entrée) et produits obtenus (sorties).
@@ -15923,7 +15972,7 @@ function EtvEnvoisPage({ companies, companyId, toast, readOnly=false }) {
     if (new Set(ids).size !== ids.length) return toast.error('Un même producteur est saisi deux fois : regroupez ses quantités sur une seule ligne.')
     const q = origines.length ? origines.reduce((s,o)=>s+o.kg,0) : (parseFloat(String(form.quantite_envoyee_kg).replace(',','.')) || 0)
     if (!(q > 0)) return toast.error('Ajoutez les producteurs d\'origine et leurs quantités.')
-    if (!origines.length && !confirm("Aucun producteur d'origine : le paddy de cet envoi ne pourra pas être retracé jusqu'au producteur. Continuer ?")) return
+    if (!origines.length) return toast.error("Ajoutez au moins un producteur d'origine : sans lui, le paddy de cet envoi ne peut pas être retracé.")
     const depasse = origines.filter(o => o.kg > resteProd(o.fournisseur_id, form.numero) + 0.001)
     // Bloquant : on n'envoie pas plus de paddy qu'un producteur n'en a livré (traçabilité).
     if (depasse.length) return toast.error(`Envoi impossible : quantité supérieure au paddy livré et pas encore envoyé — ${depasse.map(o => `${libProd(prodDe(o.fournisseur_id)||{nomAff:'?'})} : ${fmtKg(o.kg)} pour ${fmtKg(Math.max(0, resteProd(o.fournisseur_id, form.numero)))} restant(s)`).join(' ; ')}. Enregistrez d'abord sa livraison (remboursement FRIA ou achat hors FRIA).`)
