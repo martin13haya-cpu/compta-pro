@@ -9848,7 +9848,7 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
       const cid = companyId || companies[0]?.id
       if (!cid) return
       const { data:sp, error:es } = await supabase.from('compta_seuils_production').select('*').eq('company_id', cid).maybeSingle()
-      setSeuils(es || !sp ? SEUILS_PRODUCTION_DEFAUT : { ...SEUILS_PRODUCTION_DEFAUT, ...sp })
+      setSeuils(es || !sp ? { ...SEUILS_PRODUCTION_DEFAUT, ...FORMATS_COND_DEFAUT } : { ...SEUILS_PRODUCTION_DEFAUT, ...FORMATS_COND_DEFAUT, ...sp })
       if (estEtuvage) {
         let q = supabase.from('compta_etuveuses').select('id,nom_etuveuse,code_etuveuse,zone,company_id').order('nom_etuveuse')
         if (companyId) q = q.eq('company_id', companyId)
@@ -9913,15 +9913,16 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
     const s25  = parseFloat(form.nb_sac_25kg)  || 0
     const s50  = parseFloat(form.nb_sac_50kg)  || 0
     const s5x5 = parseFloat(form.nb_sac_5x5kg) || 0
-    const recu = parseFloat(form.poids_recu)   || 0
-    const rest = parseFloat(form.reste)        || 0
-    condTotal = (s5*5) + (s25*25) + (s50*50) + (s5x5*25)
-    condEcart = recu - condTotal - rest
+    const kgF = k => +seuils[k] || FORMATS_COND_DEFAUT[k]
+    condTotal = (s5*kgF('format_5kg')) + (s25*kgF('format_25kg')) + (s50*kgF('format_50kg')) + (s5x5*kgF('format_5x5kg'))
+    condEcart = 0   // le solde (reçu − conditionné) est calculé à part et reste en stock
   }
 
   const getCalcValue = (fname) => {
     // Conditionnement
     if (fname === 'poids_total_conditionne') return Math.round(condTotal * 1000) / 1000
+    // Solde : riz reçu pas encore conditionné (il reste en stock).
+    if (tableName === 'compta_conditionnement' && fname === 'reste') return Math.round(((parseFloat(form.poids_recu) || 0) - condTotal) * 1000) / 1000
     if (tableName === 'compta_conditionnement' && fname === 'ecart') return Math.round(condEcart * 1000) / 1000
 
     // Étuvage
@@ -10032,6 +10033,10 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
       pay.seuil_alerte_pct = seuilEtape
       pay.alerte = Math.abs(pay.ecart_pct||0) > seuilEtape
     }
+    if (tableName === 'compta_conditionnement') {
+      const recu = parseFloat(form.poids_recu) || 0
+      if (condTotal > recu + 0.0005) { setSaving(false); toast.error(`La quantité conditionnée (${fmtKg(condTotal)}) dépasse la quantité reçue (${fmtKg(recu)}) : corrigez le nombre de sacs.`); return }
+    }
     // On ne transforme que le produit de l'étape précédente présent en stock (bloquant).
     if (chaine) {
       const q = +pay[entreeCh.champ] || 0, lib = entreeCh.lib.toLowerCase()
@@ -10077,7 +10082,7 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
       const idEt = editItem ? editItem.id : insEtape.id, cleEt = cleChaine(idEt)
       if (editItem) await annulerBonsStockAuto(cid, cleEt)
       const obs = `${title}${pay.numero_lot ? ` — lot ${pay.numero_lot}` : ''}`
-      const qIn = +valeurs[entreeCh.champ] || 0
+      const qIn = entreeCh.champSortie ? (+valeurs[entreeCh.champSortie] || 0) : (+valeurs[entreeCh.champ] || 0)
       const { article:artIn } = await articleEtuvage(cid, uid, entreeCh.sorte)
       const msgs = [], erreurs = []
       const rIn = artIn ? await passerBonStockAuto({ companyId:cid, uid, type:'sortie', article:artIn, quantite:qIn, prix:artIn.prix_achat, date:pay.date_etape,
@@ -10170,8 +10175,9 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
     const uid = (await supabase.auth.getUser()).data?.user?.id
     const pay = { company_id:cid, user_id:uid, updated_at:new Date().toISOString() }
     Object.keys(SEUILS_PRODUCTION_DEFAUT).forEach(k => { pay[k] = parseFloat(String(seuilsModal[k]).replace(',','.')) || 0 })
+    Object.keys(FORMATS_COND_DEFAUT).forEach(k => { pay[k] = parseFloat(String(seuilsModal[k] ?? '').replace(',','.')) || FORMATS_COND_DEFAUT[k] })
     const { error } = await supabase.from('compta_seuils_production').upsert(pay, { onConflict:'company_id' })
-    if (error) { toast.error(/compta_seuils_production|schema cache|does not exist/i.test(error.message) ? MSG_SCRIPT_ETUVAGE : error.message); return }
+    if (error) { toast.error(/format_/i.test(error.message) ? MSG_SCRIPT_FORMATS : /compta_seuils_production|schema cache|does not exist/i.test(error.message) ? MSG_SCRIPT_ETUVAGE : error.message); return }
     setSeuils({ ...SEUILS_PRODUCTION_DEFAUT, ...pay }); setSeuilsModal(null); toast.success("Seuils d'alerte enregistrés.")
   }
   const companyName = companies.find(c=>c.id===companyId)?.raison_sociale||''
@@ -10338,7 +10344,8 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
               return <Span2><div style={{fontSize:12.5,padding:'8px 12px',borderRadius:8,background:envoye>reste+0.001?'#fef2f2':'#f0f9ff',color:envoye>reste+0.001?'#b91c1c':'#0c4a6e'}}>
                 Paddy du lot : <strong>{fmtKg(localLots.find(l=>l.id===form.lot_id)?.qte_paddy_entree)}</strong> — reste à envoyer à l'étuvage : <strong>{fmtKg(reste)}</strong>
                 {envoye>reste+0.001 && ' — le paddy envoyé dépasse ce reste'}</div></Span2> })()}
-            {fields.filter(f => !f.calc).map(f=> f.type==='etuveuse'
+            {fields.filter(f => !f.calc).map(f => { const fm = tableName === 'compta_conditionnement' && FORMATS_COND.find(x => x[1] === f.name)
+              return fm ? { ...f, label:`Sacs de ${nbFr(+seuils[fm[0]] || FORMATS_COND_DEFAUT[fm[0]])} kg (${f.label})` } : f }).map(f=> f.type==='etuveuse'
               ? <div key={f.name}>
                   <Sel label={`${f.label} (répertoire)`} name="etuveuse_id" value={form.etuveuse_id||''} onChange={set}
                     options={[{value:'',label:etuveuses.length?'— Choisir une étuveuse —':'— Aucune étuveuse au répertoire —'},...etuveuses.map(x=>({value:x.id,label:`${x.code_etuveuse?x.code_etuveuse+' — ':''}${x.nom_etuveuse}${x.zone?' ('+x.zone+')':''}`}))]} />
@@ -10361,6 +10368,12 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
               <Input key={k} label={`${l} (%)`} name={k} type="number" step="0.1" min="0" value={seuilsModal[k]} onChange={e=>setSeuilsModal(x=>({...x,[k]:e.target.value}))} />
             ))}
           </Grid>
+          <div style={{fontSize:13,fontWeight:700,color:'#082818',margin:'4px 0 6px'}}>📦 Formats de conditionnement (kg contenus dans chaque sac)</div>
+          <Grid cols={2} gap={12} style={{marginBottom:16}}>
+            {FORMATS_COND.map(([k,,l])=>(
+              <Input key={k} label={`${l} (kg)`} name={k} type="number" step="0.01" min="0" value={seuilsModal[k] ?? FORMATS_COND_DEFAUT[k]} onChange={e=>setSeuilsModal(x=>({...x,[k]:e.target.value}))} />
+            ))}
+          </Grid>
           <Row><Btn variant="secondary" onClick={()=>setSeuilsModal(null)}>Annuler</Btn><Btn onClick={enregistrerSeuils}>Enregistrer</Btn></Row>
         </>}
       </Modal>
@@ -10371,6 +10384,10 @@ function ProductionStagePage({ tableName, title, accentColor, companies, company
 // Seuils d'alerte d'écart par défaut (repris de CePEA-PSARIZ) et écart en %
 // de chaque étape, rapporté à la quantité entrée dans l'étape.
 const SEUILS_PRODUCTION_DEFAUT = { etuvage_pct:5, decorticage_pct:5, calibrage_pct:5, tri_optique_pct:5, conditionnement_pct:0.5 }
+// Conditionnement : quantité (kg) contenue dans chaque format de sac, réglable par société.
+const FORMATS_COND_DEFAUT = { format_5kg:5, format_25kg:25, format_50kg:50, format_5x5kg:25 }
+const FORMATS_COND = [['format_5kg','nb_sac_5kg','Format « sac 5 kg »'], ['format_25kg','nb_sac_25kg','Format « sac 25 kg »'], ['format_50kg','nb_sac_50kg','Format « sac 50 kg »'], ['format_5x5kg','nb_sac_5x5kg','Format « 5 × 5 kg »']]
+const MSG_SCRIPT_FORMATS = `Exécutez d'abord le script supabase/migrations/20261126_formats_conditionnement.sql dans Supabase (SQL Editor) pour enregistrer les formats.`
 const MSG_SCRIPT_ETUVAGE = "Exécutez d'abord le script supabase/migrations/20261008_etuvage_tracabilite.sql dans Supabase (projet ComptaPro, SQL Editor)."
 const fmtKg = v => `${(+v||0).toLocaleString('fr-FR', { maximumFractionDigits:3 })} kg`
 function ecartPctProduction(tableName, it) {
@@ -15002,7 +15019,7 @@ const CHAINE_PRODUCTION = {
     sorties:[{ sorte:'trie', champ:'poids_apres_tri', lib:'Riz trié — 1re qualité' }, { sorte:'qualite2', champ:'hors_normes', lib:'2e qualité (hors normes)' }, { sorte:'rouge_polir', champ:'rouge_a_polir', lib:'Riz rouge à polir' }],
     choix:[{ sorte:'calibre', lib:'Riz calibré (long grain)' }, { sorte:'brisures', lib:'Brisures (riz cassé)', sorties:[{ sorte:'brisures_triees', champ:'poids_apres_tri', lib:'Brisures triées — 1re qualité' }, { sorte:'qualite2', champ:'hors_normes', lib:'2e qualité (hors normes)' }, { sorte:'rouge_polir', champ:'rouge_a_polir', lib:'Riz rouge à polir' }] },
       { sorte:'decortique', lib:'Riz décortiqué (non calibré)' }] },
-  compta_conditionnement: { cle:'COND', entree:{ sorte:'trie', champ:'poids_recu', lib:'Riz trié' }, sorties:[{ sorte:'fini', champ:'poids_total_conditionne', lib:'Riz étuvé (produit fini)' }],
+  compta_conditionnement: { cle:'COND', entree:{ sorte:'trie', champ:'poids_recu', champSortie:'poids_total_conditionne', lib:'Riz trié' }, sorties:[{ sorte:'fini', champ:'poids_total_conditionne', lib:'Riz étuvé (produit fini)' }],
     choix:[{ sorte:'trie', lib:'Riz trié' }, { sorte:'brisures_triees', lib:'Brisures triées', sorties:[{ sorte:'brisures_fini', champ:'poids_total_conditionne', lib:'Brisures de riz étuvé (produit fini)' }] }] },
 }
 
@@ -28148,7 +28165,7 @@ export default function ComptaPro() {
       {name:'nb_sac_50kg',              label:'Sacs 50 kg',             type:'number', summary:true},
       {name:'nb_sac_5x5kg',             label:'Sacs 5×5 kg',           type:'number'},
       {name:'poids_total_conditionne',  label:'Total conditionné (kg)', type:'number', unit:'kg', calc:true},
-      {name:'reste',                    label:'Reste (kg)',             type:'number'},
+      {name:'reste',                    label:'Solde (kg)',             type:'number', calc:true, unit:'kg'},
       {name:'ecart',                    label:'Écart (kg)',             type:'number', calc:true},
       {name:'observation',              label:'Observation'},
       {name:'recommandation',           label:'Recommandation'},
