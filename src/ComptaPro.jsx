@@ -2520,6 +2520,16 @@ function ConsolApercu({ open, onClose, selectedIds, allCompanies, colonnes, toas
           fetchAllRows(() => supabase.from('compta_mouvements_stock').select('id,article_id,company_id,type,quantite,reference,date_mvt').in('company_id', selectedIds).order('id')),
         ])
         if (error || em) { toast.error((error || em).message); return }
+        // Article supprimé (archivé) dont les mouvements existent encore : il compte toujours
+        // (sinon son stock disparaît de l'inventaire) ; son stock = solde de ses mouvements.
+        const artsTous = [...(data || [])]
+        const connus = new Set(artsTous.map(a => String(a.id)))
+        const manq = [...new Set((mvts || []).map(m => m.article_id).filter(id => id && !connus.has(String(id))))]
+        for (let i = 0; i < manq.length; i += 150) {
+          const { data:ina } = await supabase.from('compta_articles').select('*').in('id', manq.slice(i, i + 150))
+          ;(ina || []).forEach(a => { const s = (mvts || []).filter(m => String(m.article_id) === String(a.id)).reduce((t, m) => t + (m.type === 'entree' ? 1 : m.type === 'sortie' ? -1 : 0) * (+m.quantite || 0), 0)
+            artsTous.push({ ...a, stock_actuel:Math.round(s * 1000) / 1000, stock_min:0 }) })
+        }
         const comMvt = await communesMouvementsMulti(mvts || [])
         const parArtCom = {}   // article -> { commune: quantité nette }
         const recuArtCom = {}  // article -> { commune: entrées reçues sur la période }
@@ -2541,7 +2551,7 @@ function ConsolApercu({ open, onClose, selectedIds, allCompanies, colonnes, toas
           if (premier) { g.stock_min += +a.stock_min || 0; g._pv += +a.prix_vente || 0; g._n++ }
           if (g.code !== a.code && !String(g.code || '').split(' / ').includes(a.code)) g.code = [g.code, a.code].filter(Boolean).join(' / ')
         }
-        for (const a of data || []) {
+        for (const a of artsTous) {
           const total = +a.stock_actuel || 0, parts = parArtCom[a.id] || {}
           const defaut = nomSoc(a.company_id)
           let reparti = 0
@@ -2561,7 +2571,7 @@ function ConsolApercu({ open, onClose, selectedIds, allCompanies, colonnes, toas
         ;(prods || []).filter(estProducteur).forEach(f => { const c = toUpperNoAccent(f.commune || '').trim(); if (!c) return
           nbProd[c] = (nbProd[c] || 0) + 1; (comSoc[f.company_id] = comSoc[f.company_id] || new Set()).add(c) })
         const estPaddy = a => a.categorie === 'riz_paddy' || estArticlePaddy(a)
-        for (const a of (data || []).filter(estPaddy)) for (const c of comSoc[a.company_id] || []) {
+        for (const a of artsTous.filter(estPaddy)) for (const c of comSoc[a.company_id] || []) {
           ajouter(a, c, 0, false); grp[`${c}|${toUpperNoAccent(a.designation || '').trim()}|${String(a.unite || '').toLowerCase()}`]._garder = true }
         for (const k of Object.keys(grp)) if (!grp[k].stock_actuel && !grp[k]._n && !grp[k]._recu && !grp[k]._garder) delete grp[k]
         // Prix d'achat moyen pondéré par le stock (valeur = stock × prix inchangée).
@@ -7788,19 +7798,21 @@ const ARTICLE_COLS_XLS = ['Code', 'Désignation', 'Catégorie', 'Unité', 'Prix 
 // a le plus de mouvements (à défaut le plus ancien) ; les mouvements et les bons des autres
 // lui sont rattachés, leur stock lui est ajouté, puis les doublons sont archivés.
 async function fusionnerArticlesSociete(cid) {
-  const { data:arts } = await supabase.from('compta_articles').select('*').eq('company_id', cid).eq('actif', true)
+  const { data:arts } = await supabase.from('compta_articles').select('*').eq('company_id', cid)
+  const { data:mv } = await fetchAllRows(() => supabase.from('compta_mouvements_stock').select('id,article_id,type,quantite').eq('company_id', cid).order('id'))
+  const nbMv = {}, solde = {}
+  ;(mv || []).forEach(m => { nbMv[m.article_id] = (nbMv[m.article_id] || 0) + 1
+    solde[m.article_id] = (solde[m.article_id] || 0) + (m.type === 'entree' ? 1 : m.type === 'sortie' ? -1 : 0) * (+m.quantite || 0) })
+  // Article archivé encore porteur de mouvements : rattaché lui aussi ; son stock = solde de ses mouvements.
+  const cands = (arts || []).filter(a => a.actif !== false || nbMv[a.id]).map(a => a.actif === false ? { ...a, stock_actuel:solde[a.id] || 0 } : a)
   const grp = {}
-  ;(arts || []).forEach(a => { (grp[cleArticle(a)] ||= []).push(a) })
-  const doublons = Object.values(grp).filter(g => g.length > 1)
-  if (!doublons.length) return { n:0 }
-  const ids = doublons.flat().map(a => a.id)
-  const { data:mv } = await fetchAllRows(() => supabase.from('compta_mouvements_stock').select('id,article_id').in('article_id', ids).order('id'))
-  const nbMv = {}; (mv || []).forEach(m => { nbMv[m.article_id] = (nbMv[m.article_id] || 0) + 1 })
+  cands.forEach(a => { (grp[cleArticle(a)] ||= []).push(a) })
+  const doublons = Object.values(grp).filter(g => g.length > 1 && g.some(a => a.actif !== false))
   const { data:bons } = await fetchAllRows(() => supabase.from('compta_bons_stock').select('id,lignes').eq('company_id', cid).order('id'))
   const remplace = {}
   let n = 0
   for (const g of doublons) {
-    const [garde, ...autres] = g.slice().sort((a, b) => (nbMv[b.id] || 0) - (nbMv[a.id] || 0) || String(a.created_at || '').localeCompare(String(b.created_at || '')))
+    const [garde, ...autres] = g.slice().sort((a, b) => (b.actif !== false) - (a.actif !== false) || (nbMv[b.id] || 0) - (nbMv[a.id] || 0) || String(a.created_at || '').localeCompare(String(b.created_at || '')))
     const aIds = autres.map(a => a.id)
     const { error } = await supabase.from('compta_mouvements_stock').update({ article_id:garde.id }).in('article_id', aIds)
     if (error) return { error }
@@ -7950,7 +7962,10 @@ function StockPage({ companies, companyId, setPage, toast, readOnly=false, profi
     toast.success('Article enregistré !'); close(); load()
   }
 
-  const archive = async id=>{ if(!confirm('Supprimer cet article ?')) return; await supabase.from('compta_articles').update({actif:false}).eq('id',id); toast.success('Article supprimé.'); load() }
+  const archive = async id=>{
+    const { count } = await supabase.from('compta_mouvements_stock').select('id', { count:'exact', head:true }).eq('article_id', id)
+    if (count > 0) { toast.error(`Impossible de supprimer cet article : il a ${count} mouvement(s) de stock. Pour regrouper deux articles du même nom, utilisez « 🔗 Fusionner les doublons » (super admin).`); return }
+    if(!confirm('Supprimer cet article ?')) return; await supabase.from('compta_articles').update({actif:false}).eq('id',id); toast.success('Article supprimé.'); load() }
 
   return (
     <div>
