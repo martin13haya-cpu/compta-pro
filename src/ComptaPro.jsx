@@ -7856,6 +7856,9 @@ function StockPage({ companies, companyId, setPage, toast, readOnly=false, profi
   const [estSuper, setEstSuper] = useState(profile?.role === 'super_admin')
   const [imp, setImp] = useState(null)   // import : { lignes, erreurs, cids, fichier }
   const [occupe, setOccupe] = useState(false)
+  const [communeF, setCommuneF] = useState('')
+  const [stockCom, setStockCom] = useState({})   // article -> { commune: solde des mouvements }
+  const [archives, setArchives] = useState([])   // articles archivés qui ont encore du stock (mouvements)
 
   const load = useCallback(async()=>{
     // Catégories propres à la société (créées dans Stock > Catégories)
@@ -7873,6 +7876,20 @@ function StockPage({ companies, companyId, setPage, toast, readOnly=false, profi
     else q = q.eq('user_id', uid)
     if (catFilter) q=q.eq('categorie',catFilter)
     const { data } = await q; setArticles(data||[])
+    // Stock par commune (solde des mouvements : producteur FRIA, achat groupé, lot d'origine)
+    // et articles archivés dont les mouvements portent encore du stock.
+    if (!companyId) { setStockCom({}); setArchives([]); return }
+    const { data:mv } = await fetchAllRows(() => supabase.from('compta_mouvements_stock').select('id,article_id,company_id,type,quantite,reference').eq('company_id', companyId).order('id'))
+    const com = await communesMouvementsMulti(mv || [])
+    const sc = {}
+    ;(mv || []).forEach(m => { const c = com[`${m.company_id}|${m.reference}`] || '__aucune__', x = sc[m.article_id] ||= {}
+      x[c] = (x[c] || 0) + (m.type === 'entree' ? 1 : m.type === 'sortie' ? -1 : 0) * (+m.quantite || 0) })
+    setStockCom(sc)
+    const actifs = new Set((data || []).map(a => String(a.id)))
+    const manq = Object.keys(sc).filter(id => !actifs.has(String(id)) && Math.abs(Object.values(sc[id]).reduce((s, v) => s + v, 0)) > 1e-9)
+    const arch = []
+    for (let i = 0; i < manq.length; i += 150) { const { data:a } = await supabase.from('compta_articles').select('*').in('id', manq.slice(i, i + 150)); arch.push(...(a || []).filter(x => x.actif === false && (!catFilter || x.categorie === catFilter))) }
+    setArchives(arch.map(a => ({ ...a, _archive:true, stock_actuel:Math.round(Object.values(sc[a.id]).reduce((s, v) => s + v, 0) * 1000) / 1000 })))
   },[companyId,catFilter]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(()=>{ load() },[load])
@@ -7938,7 +7955,11 @@ function StockPage({ companies, companyId, setPage, toast, readOnly=false, profi
     load()
   }
 
-  const valeur = articles.reduce((s,a)=>s+(a.stock_actuel||0)*(a.prix_achat||0),0)
+  const communesStock = [...new Set(Object.values(stockCom).flatMap(x => Object.keys(x)).filter(c => c !== '__aucune__'))].sort((a, b) => a.localeCompare(b, 'fr'))
+  // Liste affichée : articles actifs + archivés encore en stock ; avec une commune, stock = solde de ses mouvements.
+  const affiches = [...articles, ...archives].map(a => communeF ? { ...a, stock_actuel:Math.round((stockCom[a.id]?.[communeF] || 0) * 1000) / 1000 } : a)
+    .filter(a => !communeF || stockCom[a.id]?.[communeF] !== undefined)
+  const valeur = affiches.reduce((s,a)=>s+(a.stock_actuel||0)*(a.prix_achat||0),0)
   const set = e=>setForm(f=>({...f,[e.target.name]:e.target.value}))
 
   const openAdd = ()=>{ if (!estSuper) { toast.error('Seul le super administrateur peut créer un article (pour garder les mêmes noms dans toutes les sociétés).'); return }
@@ -7977,9 +7998,9 @@ function StockPage({ companies, companyId, setPage, toast, readOnly=false, profi
           <Btn sm variant="secondary" onClick={()=>setPage('bons_stock')}>🧾 Bons d'entrée / sortie</Btn>
           <Btn sm variant="info" onClick={()=>setPage('inventaire')}>📋 Inventaire</Btn>
           <Btn sm variant="secondary" onClick={exporterArticles} disabled={!articles.length}>📥 Télécharger (Excel)</Btn>
-          {estSuper && !readOnly && <label style={{ display:'inline-flex' }}><input type="file" accept=".xlsx,.xls,.csv" style={{ display:'none' }} onChange={e => { lireImport(e.target.files?.[0]); e.target.value = '' }} />
+          {estSuper && <label style={{ display:'inline-flex' }}><input type="file" accept=".xlsx,.xls,.csv" style={{ display:'none' }} onChange={e => { lireImport(e.target.files?.[0]); e.target.value = '' }} />
             <span style={{ padding:'6px 12px', borderRadius:8, background:'#0e7490', color:'white', fontSize:12.5, fontWeight:600, cursor:'pointer' }}>📤 Importer des articles</span></label>}
-          {estSuper && !readOnly && <Btn sm variant="secondary" onClick={fusionner} disabled={occupe}>{occupe ? '⏳…' : '🔗 Fusionner les doublons'}</Btn>}
+          {estSuper && <Btn sm variant="secondary" onClick={fusionner} disabled={occupe}>{occupe ? '⏳…' : '🔗 Fusionner les doublons'}</Btn>}
           {estSuper && !readOnly && <Btn onClick={openAdd}>+ Nouvel Article</Btn>}
         </>}
       />
@@ -7988,9 +8009,17 @@ function StockPage({ companies, companyId, setPage, toast, readOnly=false, profi
           <option value="">Toutes catégories</option>
           {Object.entries(getCatLabels()).map(([v,l])=><option key={v} value={v}>{l}</option>)}
         </select>
+        {companyId && <select value={communeF} onChange={e=>setCommuneF(e.target.value)} title="Stock de la commune : solde des mouvements de ses producteurs (FRIA, achats, lots d'origine)"
+          style={{padding:'7px 12px',borderRadius:8,border:`1px solid ${communeF?'#16a34a':'#d1d5db'}`,fontSize:13,marginLeft:10}}>
+          <option value="">Toutes les communes</option>
+          {communesStock.map(c=><option key={c} value={c}>{c}</option>)}
+          <option value="__aucune__">Sans commune (stock non rattaché)</option>
+        </select>}
+        {communeF && <span style={{fontSize:12,color:'#64748b',marginLeft:10}}>Stock calculé à partir des mouvements de la commune.</span>}
+        {archives.length > 0 && <div style={{fontSize:12,color:'#b45309',marginTop:8}}>⚠️ {archives.length} article(s) supprimé(s) (archivé(s)) portent encore du stock : {archives.map(a => `${a.designation} ${a.code ? `[${a.code}] ` : ''}(${fmtQty(a.stock_actuel)} ${a.unite||''})`).join(', ')}. {estSuper ? 'Cliquez sur « 🔗 Fusionner les doublons » pour les rattacher à l\'article actif du même nom.' : 'Demandez au super administrateur de fusionner les doublons.'}</div>}
       </Card>
       <div style={{background:'white',borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
-        {articles.length===0 ? (
+        {affiches.length===0 ? (
           <div style={{textAlign:'center',padding:'48px 24px',color:'#64748b'}}>
             <div style={{fontSize:40,marginBottom:8}}>📦</div><p>Aucun article</p>
             {estSuper && !readOnly && <Btn onClick={openAdd}>+ Créer un article</Btn>}
@@ -8005,12 +8034,12 @@ function StockPage({ companies, companyId, setPage, toast, readOnly=false, profi
               <TH>Statut</TH><TH>Actions</TH>
             </tr></thead>
             <tbody>
-              {articles.map(a=>{
+              {affiches.map(a=>{
                 const alerte = (a.stock_actuel||0)<=(a.stock_min||0)
                 return (
                   <TR key={a.id}>
                     <TD sm>{a.code||'—'}</TD>
-                    <TD bold>{a.designation}</TD>
+                    <TD bold>{a.designation}{a._archive && <div style={{fontSize:10.5,color:'#b45309',fontWeight:600}}>⚠️ article supprimé (archivé) — à fusionner</div>}</TD>
                     <TD sm>{CAT_LABELS[a.categorie]||a.categorie}</TD>
                     <TD>{a.unite}</TD>
                     <TD right color={alerte?'#dc2626':'inherit'}><strong style={{fontWeight:alerte?700:400}}>{fmtQty(a.stock_actuel||0)}</strong></TD>
@@ -8020,8 +8049,8 @@ function StockPage({ companies, companyId, setPage, toast, readOnly=false, profi
                     <TD><Badge type={alerte?'warning':'success'}>{alerte?'⚠ Alerte':'✓ OK'}</Badge></TD>
                     <TD>
                       <div style={{display:'flex',gap:6}}>
-                        {!readOnly && <Btn sm variant="secondary" onClick={()=>openEdit(a)}>✏️ Modifier</Btn>}
-                        {!readOnly && <Btn sm variant="danger" onClick={()=>archive(a.id)}>🗑️ Supprimer</Btn>}
+                        {!readOnly && !a._archive && <Btn sm variant="secondary" onClick={()=>openEdit(a)}>✏️ Modifier</Btn>}
+                        {!readOnly && !a._archive && <Btn sm variant="danger" onClick={()=>archive(a.id)}>🗑️ Supprimer</Btn>}
                       </div>
                     </TD>
                   </TR>
