@@ -6317,6 +6317,44 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
   const itemsCat = items.filter(i => dansCat(i))
   const filteredCat = filtered.filter(i => dansCat(i))
   const mentors = isFourn ? [...new Set(itemsCat.map(i=>i.mentor_nom).filter(Boolean))].sort() : []
+  // Étuveuses : chaque étuveuse est elle-même la mentor ; ses mentorés sont sur sa fiche
+  // (compta_etuveuses_mentores), pas dans le champ « mentor » des producteurs.
+  const etvMode = isFourn && catSel === 'etuveuse'
+  const mentorsEtv = etvMode ? itemsCat.filter(i => i.categorie === 'etuveuse').sort((a, b) => displayName(a).localeCompare(displayName(b), 'fr')) : []
+  const chargerMentores = async ids => {
+    const r = []
+    for (let i = 0; i < ids.length; i += 150) {
+      const { data, error } = await supabase.from('compta_etuveuses_mentores').select('fournisseur_id,nom_prenoms,village,genre,handicap,npi,date_naissance,contact,ordre').in('fournisseur_id', ids.slice(i, i + 150)).order('ordre')
+      if (error) { toast.error(error.message); return null }
+      r.push(...(data || []))
+    }
+    return r
+  }
+  const ficheMentorEtvHtml = (f, ms) => {
+    const e = v => echapHtml(v == null || v === '' ? '—' : String(v))
+    const dfr = d => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(d || ''); return m ? `${m[3]}/${m[2]}/${m[1]}` : (d || '—') }
+    const nbF = ms.filter(m => /^f/i.test(m.genre || '')).length, nbH = ms.filter(m => /^(m|h)/i.test(m.genre || '')).length
+    return gabaritDocumentHtml({ comp:company, titre:'FICHE MENTOR — ÉTUVEUSE', numero:f.code_trace || '', date:new Date().toLocaleDateString('fr-FR'),
+      infos:[['Intitulé du projet', mentorInfo.intitule_projet || '—'], ['Financement', mentorInfo.financement || '—'], ['Structure de pilotage', mentorInfo.structure_pilote || '—'],
+        ['Campagne agricole', mentorInfo.campagne_agricole || '—'], ...(mentorInfo.numero_contrat ? [['N° contrat', mentorInfo.numero_contrat]] : []),
+        ['NPI de la mentor', f.cip || '—'], ['Commune', f.commune || '—']],
+      tiersLabel:'Mentor (étuveuse)', tiers:{ nom:`${displayName(f)}${f.code_trace ? ` — ${f.code_trace}` : ''}`, adresse:[f.village, f.arrondissement, f.commune].filter(Boolean).join(', '), telephone:f.telephone || '' },
+      colonnes:[{ label:'N°', align:'c', largeur:'5%' }, { label:'Nom et prénom(s)' }, { label:'Village' }, { label:'Genre', align:'c' }, { label:'Handicap', align:'c' }, { label:'NPI' }, { label:'Date de naissance', align:'c' }, { label:'Contact' }],
+      lignes:ms.map((m, i) => [String(i + 1), e(m.nom_prenoms), e(m.village), e(m.genre), m.handicap ? 'Oui' : 'Non', e(m.npi), dfr(m.date_naissance), e(m.contact)]),
+      lignesMin:0,
+      totaux:[['Mentorés', String(ms.length), true], ['Femmes', String(nbF)], ['Hommes', String(nbH)]],
+      signatures:['La Mentor', 'Le Gérant / Responsable'] })
+  }
+  const imprimerFichesMentorsEtv = async liste => {
+    const ms = await chargerMentores(liste.map(f => f.id))
+    if (!ms) return
+    const docs = liste.map(f => ficheMentorEtvHtml(f, ms.filter(m => String(m.fournisseur_id) === String(f.id))))
+    const style = (docs[0].match(/<style[^>]*>([\s\S]*?)<\/style>/i) || [])[1] || ''
+    const corps = docs.map((h, i) => `<div class="fiche-page">${(h.match(/<body[^>]*>([\s\S]*)<\/body>/i) || [])[1] || h}</div>${i < docs.length - 1 ? '<div style="page-break-after:always"></div>' : ''}`).join('')
+    openPrintWindow(`<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><title>Fiches mentors étuveuses — ${echapHtml(companyName)}</title><style>${style} .fiche-page{page-break-inside:avoid} @media print { @page { margin:10mm 12mm; size:A4 portrait } }</style></head><body>${corps}</body></html>`,
+      liste.length === 1 ? `fiche_mentor_${displayName(liste[0]).replace(/\s+/g, '_')}` : `fiches_mentors_etuveuses_${companyName.replace(/\s+/g, '_')}`)
+    setMentorModalOpen(false)
+  }
   useEffect(() => {
     if (!catAction) return
     const a = catAction; setCatAction(null)
@@ -6326,6 +6364,12 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
   }, [catAction]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const openMentorModal = () => {
+    if (etvMode) {
+      if (!mentorsEtv.length) { toast.error('Aucune étuveuse dans cette société.'); return }
+      setSelectedMentor(String(mentorsEtv[0].id))
+      setMentorInfo({ intitule_projet:company?.intitule_projet||'', financement:company?.financement||'', structure_pilote:company?.structure_pilote||'', campagne_agricole:company?.campagne_agricole||'', numero_contrat:'' })
+      setMentorBatchMode(false); setMentorModalOpen(true); return
+    }
     if (mentors.length===0) { toast.error(`Aucun fournisseur${catSel ? ' de cette catégorie' : ''} n'a de mentor renseigné.`); return }
     setSelectedMentor(mentors[0])
     setMentorInfo({ intitule_projet:company?.intitule_projet||'', financement:company?.financement||'', structure_pilote:company?.structure_pilote||'', campagne_agricole:company?.campagne_agricole||'', numero_contrat:'' })
@@ -6334,6 +6378,11 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
   }
 
   const openMentorModalAll = () => {
+    if (etvMode) {
+      if (!mentorsEtv.length) { toast.error('Aucune étuveuse dans cette société.'); return }
+      setMentorInfo({ intitule_projet:company?.intitule_projet||'', financement:company?.financement||'', structure_pilote:company?.structure_pilote||'', campagne_agricole:company?.campagne_agricole||'', numero_contrat:'' })
+      setMentorBatchMode(true); setMentorModalOpen(true); return
+    }
     if (mentors.length===0) { toast.error(`Aucun fournisseur${catSel ? ' de cette catégorie' : ''} n'a de mentor renseigné.`); return }
     setMentorInfo({ intitule_projet:company?.intitule_projet||'', financement:company?.financement||'', structure_pilote:company?.structure_pilote||'', campagne_agricole:company?.campagne_agricole||'', numero_contrat:'' })
     setMentorBatchMode(true)
@@ -6497,6 +6546,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
   }
 
   const printFicheMentor = async () => {
+    if (etvMode) { const f = mentorsEtv.find(x => String(x.id) === String(selectedMentor)); if (f) await imprimerFichesMentorsEtv([f]); return }
     const ids = itemsCat.filter(i=>i.mentor_nom===selectedMentor).map(i=>i.id)
     const parF = await chargerOuvriers(ids)
     if (!parF) return
@@ -6507,6 +6557,7 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
   }
 
   const printFichesMentorsTout = async () => {
+    if (etvMode) { await imprimerFichesMentorsEtv(mentorsEtv); return }
     if (mentors.length===0) { toast.error(`Aucun fournisseur${catSel ? ' de cette catégorie' : ''} n'a de mentor renseigné.`); return }
     const parF = await chargerOuvriers(itemsCat.filter(i=>i.mentor_nom).map(i=>i.id))
     if (!parF) return
@@ -6629,7 +6680,24 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     load()
   }
 
-  const exportExcelMentors = () => {
+  const exportExcelMentors = async () => {
+    if (etvMode) {
+      if (!mentorsEtv.length) { toast.error('Aucune étuveuse dans cette société.'); return }
+      const ms = await chargerMentores(mentorsEtv.map(f => f.id))
+      if (!ms) return
+      const XLSX = await import('https://cdn.sheetjs.com/xlsx-0.20.0/package/xlsx.mjs')
+      const de = f => ms.filter(m => String(m.fournisseur_id) === String(f.id))
+      const rows = [['Code','Mentor (étuveuse)','NPI','Téléphone','Commune','Village','Nb. mentorés','Femmes','Hommes'],
+        ...mentorsEtv.map(f => { const l = de(f); return [f.code_trace || '', displayName(f), f.cip || '', f.telephone || '', f.commune || '', f.village || '', l.length,
+          l.filter(m => /^f/i.test(m.genre || '')).length, l.filter(m => /^(m|h)/i.test(m.genre || '')).length] })]
+      const det = [['Mentor (étuveuse)','Code','N°','Mentoré(e)','Village','Genre','Handicap','NPI','Date de naissance','Contact'],
+        ...mentorsEtv.flatMap(f => de(f).map((m, i) => [displayName(f), f.code_trace || '', i + 1, m.nom_prenoms || '', m.village || '', m.genre || '', m.handicap ? 'Oui' : 'Non', m.npi || '', m.date_naissance || '', m.contact || '']))]
+      const wb = XLSX.utils.book_new()
+      const w1 = XLSX.utils.aoa_to_sheet(rows); w1['!cols'] = rows[0].map((_, i) => ({ wch:i === 1 ? 30 : 14 })); XLSX.utils.book_append_sheet(wb, w1, 'Mentors')
+      const w2 = XLSX.utils.aoa_to_sheet(det); w2['!cols'] = det[0].map((_, i) => ({ wch:i === 0 || i === 3 ? 30 : 13 })); XLSX.utils.book_append_sheet(wb, w2, 'Mentorés')
+      XLSX.writeFile(wb, `liste_mentors_etuveuses_${companyName.replace(/\s+/g, '_')}.xlsx`)
+      return
+    }
     if (mentors.length===0) { toast.error(`Aucun fournisseur${catSel ? ' de cette catégorie' : ''} n'a de mentor renseigné.`); return }
     const rows = mentors.map(m => {
       const producteurs = itemsCat.filter(i=>i.mentor_nom===m)
@@ -7695,10 +7763,11 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
             <label style={{display:'block',fontSize:12.5,fontWeight:600,color:'#374151',marginBottom:5}}>Mentor</label>
             <select value={selectedMentor} onChange={e=>setSelectedMentor(e.target.value)}
               style={{width:'100%',padding:'9px 12px',borderRadius:8,border:'1px solid #d1d5db',fontSize:13.5,background:'white'}}>
-              {mentors.map(m=><option key={m} value={m}>{m}</option>)}
+              {etvMode ? mentorsEtv.map(f=><option key={f.id} value={String(f.id)}>{displayName(f)}{f.code_trace ? ` — ${f.code_trace}` : ''}</option>)
+                : mentors.map(m=><option key={m} value={m}>{m}</option>)}
             </select>
             <div style={{fontSize:12,color:'#64748b',marginTop:8}}>
-              {itemsCat.filter(i=>i.mentor_nom===selectedMentor).length} fournisseur(s) à la charge de ce mentor.
+              {etvMode ? "La fiche reprend l'étuveuse et la liste de ses mentorés." : `${itemsCat.filter(i=>i.mentor_nom===selectedMentor).length} fournisseur(s) à la charge de ce mentor.`}
             </div>
           </div>
         )}
