@@ -4464,15 +4464,17 @@ const CSS_FICHE_UNE_PAGE = `
 const SCRIPT_FICHE_UNE_PAGE = '<scr' + 'ipt>' + `
   (function(){
     function ajuster(){
-      var f = document.querySelector('.fiche1p'); if (!f) return;
-      var max = 277 * 96 / 25.4 - 8, t = 10;      // hauteur utile A4 (marges 10 mm), en px
-      f.style.fontSize = t + 'pt';
-      while (f.scrollHeight > max && t > 5.5) { t -= 0.25; f.style.fontSize = t + 'pt'; }
+      var max = 277 * 96 / 25.4 - 8;      // hauteur utile A4 (marges 10 mm), en px
+      document.querySelectorAll('.fiche1p').forEach(function(f){
+        var t = 10; f.style.fontSize = t + 'pt';
+        while (f.scrollHeight > max && t > 5.5) { t -= 0.25; f.style.fontSize = t + 'pt'; }
+      });
     }
     if (document.readyState === 'complete') ajuster(); else window.addEventListener('load', ajuster);
   })();
 ` + '</scr' + 'ipt>'
-function printFicheTiers(it, kind='fournisseur') {
+// retourHtml : renvoie le document au lieu de l'ouvrir (fiches regroupées).
+function printFicheTiers(it, kind='fournisseur', retourHtml=false) {
   const isFourn = kind==='fournisseur'
   const titreFiche = isFourn ? 'FICHE FOURNISSEUR' : 'FICHE CLIENT'
   const labelTiers = isFourn ? 'fournisseur' : 'client'
@@ -4545,7 +4547,7 @@ function printFicheTiers(it, kind='fournisseur') {
       <tr><td style="font-weight:600;width:42%">Riz paddy équivalente</td><td class="r" style="text-align:left">${prixC>0?rizP.toLocaleString('fr-FR')+' kg':'—'}</td></tr>
     </tbody></table>` : ''
 
-  const mentorBloc = (isFourn && !isMorale) ? `
+  const mentorBloc = (isFourn && !isMorale && it.categorie!=='etuveuse') ? `
     <h3 style="margin:18px 0 6px;font-size:11pt;color:#082818">👤 Informations du mentor</h3>
     <table><tbody>${rows([
       ['Nom et prénom(s)', it.mentor_nom],
@@ -4610,7 +4612,9 @@ function printFicheTiers(it, kind='fournisseur') {
     ${SCRIPT_FICHE_UNE_PAGE}
   </body></html>`
 
-  openPrintWindow(html.replace(/<h3 style="margin:\d+px 0 6px;font-size:11pt;color:#082818">/g, '<h3 class="sec">'), fname)
+  const final = html.replace(/<h3 style="margin:\d+px 0 6px;font-size:11pt;color:#082818">/g, '<h3 class="sec">')
+  if (retourHtml) return final
+  openPrintWindow(final, fname)
 }
 
 // ── PLAN COMPTABLE ───────────────────────────────────────────────────────────
@@ -6330,29 +6334,18 @@ function TiersPage({ table, title, titleSingle, icon, companies, companyId, toas
     }
     return r
   }
-  const ficheMentorEtvHtml = (f, ms) => {
-    const e = v => echapHtml(v == null || v === '' ? '—' : String(v))
-    const dfr = d => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(d || ''); return m ? `${m[3]}/${m[2]}/${m[1]}` : (d || '—') }
-    const nbF = ms.filter(m => /^f/i.test(m.genre || '')).length, nbH = ms.filter(m => /^(m|h)/i.test(m.genre || '')).length
-    return gabaritDocumentHtml({ comp:company, titre:'FICHE MENTOR — ÉTUVEUSE', numero:f.code_trace || '', date:new Date().toLocaleDateString('fr-FR'),
-      infos:[['Intitulé du projet', mentorInfo.intitule_projet || '—'], ['Financement', mentorInfo.financement || '—'], ['Structure de pilotage', mentorInfo.structure_pilote || '—'],
-        ['Campagne agricole', mentorInfo.campagne_agricole || '—'], ...(mentorInfo.numero_contrat ? [['N° contrat', mentorInfo.numero_contrat]] : []),
-        ['NPI de la mentor', f.cip || '—'], ['Commune', f.commune || '—']],
-      tiersLabel:'Mentor (étuveuse)', tiers:{ nom:`${displayName(f)}${f.code_trace ? ` — ${f.code_trace}` : ''}`, adresse:[f.village, f.arrondissement, f.commune].filter(Boolean).join(', '), telephone:f.telephone || '' },
-      colonnes:[{ label:'N°', align:'c', largeur:'5%' }, { label:'Nom et prénom(s)' }, { label:'Village' }, { label:'Genre', align:'c' }, { label:'Handicap', align:'c' }, { label:'NPI' }, { label:'Date de naissance', align:'c' }, { label:'Contact' }],
-      lignes:ms.map((m, i) => [String(i + 1), e(m.nom_prenoms), e(m.village), e(m.genre), m.handicap ? 'Oui' : 'Non', e(m.npi), dfr(m.date_naissance), e(m.contact)]),
-      lignesMin:0,
-      totaux:[['Mentorés', String(ms.length), true], ['Femmes', String(nbF)], ['Hommes', String(nbH)]],
-      signatures:['La Mentor', 'Le Gérant / Responsable'] })
-  }
   const imprimerFichesMentorsEtv = async liste => {
     const ms = await chargerMentores(liste.map(f => f.id))
     if (!ms) return
-    const docs = liste.map(f => ficheMentorEtvHtml(f, ms.filter(m => String(m.fournisseur_id) === String(f.id))))
-    const style = (docs[0].match(/<style[^>]*>([\s\S]*?)<\/style>/i) || [])[1] || ''
-    const corps = docs.map((h, i) => `<div class="fiche-page">${(h.match(/<body[^>]*>([\s\S]*)<\/body>/i) || [])[1] || h}</div>${i < docs.length - 1 ? '<div style="page-break-after:always"></div>' : ''}`).join('')
-    openPrintWindow(`<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><title>Fiches mentors étuveuses — ${echapHtml(companyName)}</title><style>${style} .fiche-page{page-break-inside:avoid} @media print { @page { margin:10mm 12mm; size:A4 portrait } }</style></head><body>${corps}</body></html>`,
-      liste.length === 1 ? `fiche_mentor_${displayName(liste[0]).replace(/\s+/g, '_')}` : `fiches_mentors_etuveuses_${companyName.replace(/\s+/g, '_')}`)
+    const docs = liste.map(f => printFicheTiers({ ...f, _mentores:ms.filter(m => String(m.fournisseur_id) === String(f.id)) }, 'fournisseur', true))
+    if (liste.length === 1) openPrintWindow(docs[0], `fiche_mentor_${displayName(liste[0]).replace(/\s+/g, '_')}`)
+    else {
+      const style = (docs[0].match(/<style[^>]*>([\s\S]*?)<\/style>/i) || [])[1] || ''
+      const script = (docs[0].match(/<script>[\s\S]*?<\/script>/i) || [])[0] || ''
+      const corps = docs.map((h, i) => `${((h.match(/<body[^>]*>([\s\S]*)<\/body>/i) || [])[1] || h).replace(/<button class="print-btn"[\s\S]*?<\/button>/, '').replace(/<script>[\s\S]*?<\/script>/i, '')}${i < docs.length - 1 ? '<div style="page-break-after:always"></div>' : ''}`).join('')
+      openPrintWindow(`<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><title>Fiches mentors étuveuses — ${echapHtml(companyName)}</title><style>${style}</style></head><body>${corps}${script}</body></html>`,
+        `fiches_mentors_etuveuses_${companyName.replace(/\s+/g, '_')}`)
+    }
     setMentorModalOpen(false)
   }
   useEffect(() => {
