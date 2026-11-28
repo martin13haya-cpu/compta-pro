@@ -4591,7 +4591,6 @@ function printFicheTiers(it, kind='fournisseur', retourHtml=false) {
     ${isFourn ? `
     <h3 style="margin:18px 0 6px;font-size:11pt;color:#082818">📍 ${it.categorie==='etuveuse' ? 'Localisation' : 'Localisation & bas-fonds'}</h3>
     <table><tbody>${rows([
-      ['Département', it.departement],
       ['Commune', it.commune],
       ['Arrondissement', it.arrondissement],
       ['Village', it.village],
@@ -4606,7 +4605,7 @@ function printFicheTiers(it, kind='fournisseur', retourHtml=false) {
 
     <div class="signatures" style="margin-top:26px">
       <div class="sig-box">Signature du ${labelTiers}</div>
-      <div class="sig-box">Cachet & visa<br><small>${societe}</small></div>
+      <div class="sig-box">Le Gérant</div>
     </div>
     </div>
     ${SCRIPT_FICHE_UNE_PAGE}
